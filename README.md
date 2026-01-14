@@ -1,96 +1,103 @@
 # OpenWork
 
-OpenWork is a native (Tauri) desktop UI for running **OpenCode** with a friendly, non-technical workflow.
+OpenWork is an **extensible, open-source “Claude Work” style system for knowledge workers**.
 
-It supports:
-- **Host mode**: start `opencode serve` locally in a chosen project folder.
+It’s a native desktop app (Tauri) that runs **OpenCode** under the hood, but presents it as a clean, guided workflow:
+- pick a workspace
+- start a run
+- watch progress + plan updates
+- approve permissions when needed
+- reuse what works (templates + skills)
+
+The goal: make “agentic work” feel like a product, not a terminal.
+
+## Why
+
+Knowledge workers don’t want to learn a CLI, fight config sprawl, or rebuild the same workflows in every repo.
+OpenWork is designed to be:
+- **Extensible**: skills and workflows are installable modules.
+- **Auditable**: show what happened, when, and why.
+- **Permissioned**: explicit user approval for risky actions.
+- **Portable**: keep logic in prompts/skills, not bespoke code.
+
+## What’s Included (v0.1)
+
+- **Host mode**: start `opencode serve` locally in a chosen folder.
 - **Client mode**: connect to an existing OpenCode server by URL.
-- **Sessions**: create/select sessions, send prompts, stream live updates via SSE.
+- **Sessions**: create/select sessions and send prompts.
+- **Live streaming**: SSE `/event` subscription for realtime updates.
 - **Execution plan**: render OpenCode todos as a timeline.
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
-- **Skills manager**: view installed skills and install/import skills via OpenPackage.
+- **Skills manager**:
+  - list installed `.opencode/skill` folders
+  - install from OpenPackage (`opkg install ...`)
+  - import a local skill folder into `.opencode/skill/<skill-name>`
 
-## Requirements
+## Quick Start
+
+### Requirements
 
 - Node.js + `pnpm`
 - Rust toolchain (for Tauri): `cargo`, `rustc`
 - OpenCode CLI installed and available on PATH: `opencode`
 
-## Quick Start
-
-Install dependencies:
+### Install
 
 ```bash
 pnpm install
 ```
 
-Run as a desktop app (Tauri):
+### Run (Desktop)
 
 ```bash
 pnpm dev
 ```
 
-Run the web UI only:
+### Run (Web UI only)
 
 ```bash
 pnpm dev:web
 ```
 
-## How It Works
+## Architecture (high-level)
 
 - In **Host mode**, OpenWork spawns:
   - `opencode serve --hostname 127.0.0.1 --port <free-port>`
-  - with the selected project folder as the process working directory.
+  - with your selected project folder as the process working directory.
 - The UI uses `@opencode-ai/sdk/v2/client` to:
   - connect to the server
   - list/create sessions
   - send prompts
-  - subscribe to `/event` SSE
+  - subscribe to SSE events
   - read todos and permission requests
 
 ## Folder Picker
 
-The folder picker uses the Tauri dialog plugin. The capability permission file is at:
+The folder picker uses the Tauri dialog plugin.
+Capability permissions are defined in:
 - `src-tauri/capabilities/default.json`
 
-## Skills (OpenPackage)
+## OpenPackage Notes
 
-The **Skills** screen supports:
-- Installing a package (e.g. `github:anthropics/claude-code`) into the current workspace.
-- Importing a local skill folder into `.opencode/skill/<skill-name>`.
+If `opkg` is not installed globally, OpenWork falls back to:
 
-Notes:
-- If `opkg` is not installed globally, OpenWork falls back to `pnpm dlx opkg ...`.
+```bash
+pnpm dlx opkg install <package>
+```
 
-## Useful Scripts
-
-Typecheck:
+## Useful Commands
 
 ```bash
 pnpm typecheck
-```
-
-Build web bundle:
-
-```bash
 pnpm build:web
-```
-
-API smoke tests (non-UI):
-
-```bash
 pnpm test:e2e
-pnpm test:events
-pnpm test:sessions
-pnpm test:health
 ```
 
 ## Security Notes
 
-- OpenWork intentionally hides model reasoning/tool metadata by default.
-- Permissions are surfaced via OpenCode permission requests (when configured to ask).
-- Host mode is local by default (`127.0.0.1`).
+- OpenWork hides model reasoning and sensitive tool metadata by default.
+- Host mode binds to `127.0.0.1` by default.
 
 ## License
 

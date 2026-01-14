@@ -290,7 +290,28 @@ export default function App() {
   const [developerMode, setDeveloperMode] = createSignal(false);
 
   const [busy, setBusy] = createSignal(false);
+  const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
+  const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+
+  const busySeconds = createMemo(() => {
+    const start = busyStartedAt();
+    if (!start) return 0;
+    return Math.max(0, Math.round((Date.now() - start) / 1000));
+  });
+
+  const newTaskDisabled = createMemo(() => {
+    const label = busyLabel();
+    // Allow creating a new session even while a run is in progress.
+    if (busy() && label === "Running") return false;
+
+    // Otherwise, block during engine / connection transitions.
+    if (busy() && (label === "Connecting" || label === "Starting engine" || label === "Disconnecting")) {
+      return true;
+    }
+
+    return busy();
+  });
 
   const selectedSession = createMemo(() => {
     const id = selectedSessionId();
@@ -351,6 +372,8 @@ export default function App() {
   async function connectToServer(nextBaseUrl: string, directory?: string) {
     setError(null);
     setBusy(true);
+    setBusyLabel("Connecting");
+    setBusyStartedAt(Date.now());
     setSseConnected(false);
 
     try {
@@ -375,10 +398,12 @@ export default function App() {
     } catch (e) {
       setClient(null);
       setConnectedVersion(null);
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setError(e instanceof Error ? e.message : safeStringify(e));
       return false;
     } finally {
       setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
     }
   }
 
@@ -396,6 +421,8 @@ export default function App() {
 
     setError(null);
     setBusy(true);
+    setBusyLabel("Starting engine");
+    setBusyStartedAt(Date.now());
 
     try {
       const info = await engineStart(dir);
@@ -407,15 +434,21 @@ export default function App() {
       }
 
       return true;
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : safeStringify(e));
-                          }
-
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+      return false;
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
   }
 
   async function stopHost() {
     setError(null);
     setBusy(true);
+    setBusyLabel("Disconnecting");
+    setBusyStartedAt(Date.now());
 
     try {
       if (isTauriRuntime()) {
@@ -437,9 +470,11 @@ export default function App() {
       setOnboardingStep("mode");
       setView("onboarding");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
     }
   }
 
@@ -471,6 +506,8 @@ export default function App() {
     if (!c) return;
 
     setBusy(true);
+    setBusyLabel("Creating session");
+    setBusyStartedAt(Date.now());
     setError(null);
 
     try {
@@ -479,9 +516,11 @@ export default function App() {
       await selectSession(session.id);
       setView("session");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
     }
   }
 
@@ -494,6 +533,8 @@ export default function App() {
     if (!content) return;
 
     setBusy(true);
+    setBusyLabel("Running");
+    setBusyStartedAt(Date.now());
     setError(null);
 
     try {
@@ -517,9 +558,11 @@ export default function App() {
 
       await loadSessions(c);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      setError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
       setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
     }
   }
 
@@ -998,6 +1041,12 @@ export default function App() {
     return bits.join(" · ");
   });
 
+  const busyHint = createMemo(() => {
+    if (!busy() || !busyLabel()) return null;
+    const seconds = busySeconds();
+    return seconds > 0 ? `${busyLabel()} · ${seconds}s` : busyLabel();
+  });
+
   function OnboardingView() {
     return (
       <Switch>
@@ -1406,6 +1455,7 @@ export default function App() {
       );
     };
 
+
     const content = () => (
       <Switch>
         <Match when={tab() === "home"}>
@@ -1420,7 +1470,8 @@ export default function App() {
                 </div>
                 <Button
                   onClick={createSessionAndOpen}
-                  disabled={busy()}
+                  disabled={newTaskDisabled()}
+                  title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}
                   class="w-full md:w-auto py-3 px-6 text-base"
                 >
                   <Play size={18} />
@@ -1816,10 +1867,13 @@ export default function App() {
               </div>
               <h1 class="text-lg font-medium">{title()}</h1>
               <span class="text-xs text-zinc-600">{headerStatus()}</span>
+              <Show when={busyHint()}>
+                <span class="text-xs text-zinc-500">· {busyHint()}</span>
+              </Show>
             </div>
             <div class="flex items-center gap-2">
               <Show when={tab() === "home" || tab() === "sessions"}>
-                <Button onClick={createSessionAndOpen} disabled={busy()}>
+                <Button onClick={createSessionAndOpen} disabled={newTaskDisabled()} title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}>
                   <Play size={16} />
                   New Task
                 </Button>
