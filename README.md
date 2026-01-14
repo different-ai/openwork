@@ -1,8 +1,11 @@
 # OpenWork
 
+<img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 19 02 PM" src="https://github.com/user-attachments/assets/7a1b8662-19a0-4327-87c9-c0295a0d54f1" />
+
+
 OpenWork is an **extensible, open-source “Claude Work” style system for knowledge workers**.
 
-It’s a native desktop app (Tauri) that runs **OpenCode** under the hood, but presents it as a clean, guided workflow:
+It’s a native desktop app that runs **OpenCode** under the hood, but presents it as a clean, guided workflow:
 - pick a workspace
 - start a run
 - watch progress + plan updates
@@ -10,6 +13,8 @@ It’s a native desktop app (Tauri) that runs **OpenCode** under the hood, but p
 - reuse what works (templates + skills)
 
 The goal: make “agentic work” feel like a product, not a terminal.
+
+
 
 ## Why
 
@@ -33,6 +38,15 @@ OpenWork is designed to be:
   - list installed `.opencode/skill` folders
   - install from OpenPackage (`opkg install ...`)
   - import a local skill folder into `.opencode/skill/<skill-name>`
+ 
+
+## Skill Manager    
+<img width="1292" height="932" alt="image" src="https://github.com/user-attachments/assets/b500c1c6-a218-42ce-8a11-52787f5642b6" />
+
+
+## Works on local computer or servers
+<img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 05 16 PM" src="https://github.com/user-attachments/assets/9c864390-de69-48f2-82c1-93b328dd60c3" />
+
 
 ## Quick Start
 
