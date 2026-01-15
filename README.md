@@ -136,4 +136,4 @@ pnpm test:e2e
 
 ## License
 
-TBD.
+MIT — see `LICENSE`.
