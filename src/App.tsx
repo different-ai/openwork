@@ -83,7 +83,13 @@ type Mode = "host" | "client";
 
 type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
-type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
+type DashboardTab =
+  | "home"
+  | "sessions"
+  | "templates"
+  | "skills"
+  | "plugins"
+  | "settings";
 
 type Template = {
   id: string;
@@ -205,7 +211,9 @@ function modelEquals(a: ModelRef, b: ModelRef) {
 
 function formatModelLabel(model: ModelRef) {
   if (model.providerID === ZEN_PROVIDER_ID) {
-    const match = ZEN_MODEL_OPTIONS.find((opt) => opt.modelID === model.modelID);
+    const match = ZEN_MODEL_OPTIONS.find(
+      (opt) => opt.modelID === model.modelID,
+    );
     return match?.label ?? `${ZEN_PROVIDER_LABEL} · ${model.modelID}`;
   }
 
@@ -216,7 +224,8 @@ const CURATED_PACKAGES: CuratedPackage[] = [
   {
     name: "OpenPackage Essentials",
     source: "essentials",
-    description: "Starter rules, commands, and skills from the OpenPackage registry.",
+    description:
+      "Starter rules, commands, and skills from the OpenPackage registry.",
     tags: ["registry", "starter"],
     installable: true,
   },
@@ -229,7 +238,8 @@ const CURATED_PACKAGES: CuratedPackage[] = [
   },
   {
     name: "Claude Code Commit Commands",
-    source: "github:anthropics/claude-code#subdirectory=plugins/commit-commands",
+    source:
+      "github:anthropics/claude-code#subdirectory=plugins/commit-commands",
     description: "Commit message helper commands (Claude Code plugin).",
     tags: ["github", "workflow"],
     installable: true,
@@ -244,7 +254,8 @@ const CURATED_PACKAGES: CuratedPackage[] = [
   {
     name: "Awesome Claude Skills",
     source: "https://github.com/ComposioHQ/awesome-claude-skills",
-    description: "Curated list of Claude skills and prompts (not an OpenPackage yet).",
+    description:
+      "Curated list of Claude skills and prompts (not an OpenPackage yet).",
     tags: ["community", "list"],
     installable: false,
   },
@@ -268,7 +279,8 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
     steps: [
       {
         title: "Run the installer",
-        description: "Installs the extension + native host and prepares the local broker.",
+        description:
+          "Installs the extension + native host and prepares the local broker.",
         command: "bunx @different-ai/opencode-browser@latest install",
         note: "Use npx @different-ai/opencode-browser@latest install if you do not have bunx.",
       },
@@ -277,7 +289,9 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
         description:
           "Open chrome://extensions, enable Developer mode, click Load unpacked, and select the extension folder.",
         url: "chrome://extensions",
-        path: "~/.opencode-browser/extension",
+        path: navigator.platform.includes("Win")
+          ? "%USERPROFILE%\\.opencode-browser\\extension"
+          : "~/.opencode-browser/extension",
       },
       {
         title: "Pin the extension",
@@ -285,14 +299,17 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
       },
       {
         title: "Add plugin to config",
-        description: "Click Add to write @different-ai/opencode-browser into opencode.json.",
+        description:
+          "Click Add to write @different-ai/opencode-browser into opencode.json.",
       },
     ],
   },
 ];
 
 function isTauriRuntime() {
-  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
+  return (
+    typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null
+  );
 }
 
 function readModePreference(): Mode | null {
@@ -470,7 +487,11 @@ function upsertPart(list: MessageWithParts[], nextPart: Part) {
   return copy;
 }
 
-function removePart(list: MessageWithParts[], messageID: string, partID: string) {
+function removePart(
+  list: MessageWithParts[],
+  messageID: string,
+  partID: string,
+) {
   const msgIdx = list.findIndex((m) => m.info.id === messageID);
   if (msgIdx === -1) return list;
 
@@ -499,7 +520,8 @@ function modelFromUserMessage(info: Message): ModelRef | null {
   const providerID = (model as any).providerID;
   const modelID = (model as any).modelID;
 
-  if (typeof providerID !== "string" || typeof modelID !== "string") return null;
+  if (typeof providerID !== "string" || typeof modelID !== "string")
+    return null;
   return { providerID, modelID };
 }
 
@@ -515,14 +537,20 @@ function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
 export default function App() {
   const [view, setView] = createSignal<View>("onboarding");
   const [mode, setMode] = createSignal<Mode | null>(null);
-  const [onboardingStep, setOnboardingStep] = createSignal<OnboardingStep>("mode");
+  const [onboardingStep, setOnboardingStep] =
+    createSignal<OnboardingStep>("mode");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [tab, setTab] = createSignal<DashboardTab>("home");
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
-  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
-  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
-  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+  const [engineDoctorResult, setEngineDoctorResult] =
+    createSignal<EngineDoctorResult | null>(null);
+  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<
+    number | null
+  >(null);
+  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(
+    null,
+  );
 
   const [projectDir, setProjectDir] = createSignal("");
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
@@ -532,18 +560,26 @@ export default function App() {
   const [clientDirectory, setClientDirectory] = createSignal("");
 
   const [client, setClient] = createSignal<Client | null>(null);
-  const [connectedVersion, setConnectedVersion] = createSignal<string | null>(null);
+  const [connectedVersion, setConnectedVersion] = createSignal<string | null>(
+    null,
+  );
   const [sseConnected, setSseConnected] = createSignal(false);
 
   const [sessions, setSessions] = createSignal<Session[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
-  const [sessionStatusById, setSessionStatusById] = createSignal<Record<string, string>>({});
+  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
+    null,
+  );
+  const [sessionStatusById, setSessionStatusById] = createSignal<
+    Record<string, string>
+  >({});
 
   const [messages, setMessages] = createSignal<MessageWithParts[]>([]);
   const [todos, setTodos] = createSignal<
     Array<{ id: string; content: string; status: string; priority: string }>
   >([]);
-  const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
+  const [pendingPermissions, setPendingPermissions] = createSignal<
+    PendingPermission[]
+  >([]);
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
 
   const [prompt, setPrompt] = createSignal("");
@@ -552,7 +588,8 @@ export default function App() {
   const [templates, setTemplates] = createSignal<Template[]>([]);
   const [templateModalOpen, setTemplateModalOpen] = createSignal(false);
   const [templateDraftTitle, setTemplateDraftTitle] = createSignal("");
-  const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
+  const [templateDraftDescription, setTemplateDraftDescription] =
+    createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
@@ -561,20 +598,29 @@ export default function App() {
   const [packageSearch, setPackageSearch] = createSignal("");
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
-  const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
+  const [pluginConfig, setPluginConfig] =
+    createSignal<OpencodeConfigFile | null>(null);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
-  const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
+  const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(
+    null,
+  );
 
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
-  const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
-  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
+  const [modelPickerTarget, setModelPickerTarget] = createSignal<
+    "session" | "default"
+  >("session");
+  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
+    Record<string, ModelRef>
+  >({});
+  const [sessionModelById, setSessionModelById] = createSignal<
+    Record<string, ModelRef>
+  >({});
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
@@ -593,7 +639,12 @@ export default function App() {
     if (busy() && label === "Running") return false;
 
     // Otherwise, block during engine / connection transitions.
-    if (busy() && (label === "Connecting" || label === "Starting engine" || label === "Disconnecting")) {
+    if (
+      busy() &&
+      (label === "Connecting" ||
+        label === "Starting engine" ||
+        label === "Disconnecting")
+    ) {
       return true;
     }
 
@@ -605,7 +656,12 @@ export default function App() {
     if (!query) return CURATED_PACKAGES;
 
     return CURATED_PACKAGES.filter((pkg) => {
-      const haystack = [pkg.name, pkg.source, pkg.description, pkg.tags.join(" ")]
+      const haystack = [
+        pkg.name,
+        pkg.source,
+        pkg.description,
+        pkg.tags.join(" "),
+      ]
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
@@ -663,7 +719,9 @@ export default function App() {
 
   const isPluginInstalled = (pluginName: string, aliases: string[] = []) => {
     const list = pluginNamesLower();
-    return [pluginName, ...aliases].some((entry) => list.has(entry.toLowerCase()));
+    return [pluginName, ...aliases].some((entry) =>
+      list.has(entry.toLowerCase()),
+    );
   };
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
@@ -673,12 +731,16 @@ export default function App() {
     }
 
     try {
-      const parsed = parse(config.content) as Record<string, unknown> | undefined;
+      const parsed = parse(config.content) as
+        | Record<string, unknown>
+        | undefined;
       const next = normalizePluginList(parsed?.plugin);
       setPluginList(next);
     } catch (e) {
       setPluginList([]);
-      setPluginStatus(e instanceof Error ? e.message : "Failed to parse opencode.json");
+      setPluginStatus(
+        e instanceof Error ? e.message : "Failed to parse opencode.json",
+      );
     }
   };
 
@@ -710,7 +772,9 @@ export default function App() {
     return defaultModel();
   });
 
-  const selectedSessionModelLabel = createMemo(() => formatModelLabel(selectedSessionModel()));
+  const selectedSessionModelLabel = createMemo(() =>
+    formatModelLabel(selectedSessionModel()),
+  );
 
   const modelPickerCurrent = createMemo(() =>
     modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel(),
@@ -797,7 +861,10 @@ export default function App() {
     setPendingPermissions((current) => {
       const now = Date.now();
       const byId = new Map(current.map((p) => [p.id, p] as const));
-      return list.map((p) => ({ ...p, receivedAt: byId.get(p.id)?.receivedAt ?? now }));
+      return list.map((p) => ({
+        ...p,
+        receivedAt: byId.get(p.id)?.receivedAt ?? now,
+      }));
     });
   }
 
@@ -857,14 +924,19 @@ export default function App() {
       setEngineDoctorCheckedAt(Date.now());
 
       if (!result.found) {
+        const isWindows = navigator.platform.includes("Win");
         setError(
-          "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+          isWindows
+            ? "OpenCode CLI not found. Install with `npm install -g opencode-ai` or download from https://opencode.ai/install, then retry."
+            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;
       }
 
       if (!result.supportsServe) {
-        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
+        setError(
+          "OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.",
+        );
         return false;
       }
     } catch (e) {
@@ -881,7 +953,10 @@ export default function App() {
       setEngine(info);
 
       if (info.baseUrl) {
-        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
+        const ok = await connectToServer(
+          info.baseUrl,
+          info.projectDir ?? undefined,
+        );
         if (!ok) return false;
       }
 
@@ -1189,7 +1264,9 @@ export default function App() {
 
       if (!config.exists) {
         setPluginList([]);
-        setPluginStatus("No opencode.json found yet. Add a plugin to create one.");
+        setPluginStatus(
+          "No opencode.json found yet. Add a plugin to create one.",
+        );
         return;
       }
 
@@ -1197,7 +1274,9 @@ export default function App() {
     } catch (e) {
       setPluginConfig(null);
       setPluginList([]);
-      setPluginStatus(e instanceof Error ? e.message : "Failed to load opencode.json");
+      setPluginStatus(
+        e instanceof Error ? e.message : "Failed to load opencode.json",
+      );
     }
   }
 
@@ -1235,7 +1314,11 @@ export default function App() {
           $schema: "https://opencode.ai/config.json",
           plugin: [pluginName],
         };
-        await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+        await writeOpencodeConfig(
+          scope,
+          targetDir,
+          `${JSON.stringify(payload, null, 2)}\n`,
+        );
         if (isManualInput) {
           setPluginInput("");
         }
@@ -1247,7 +1330,11 @@ export default function App() {
       const plugins = normalizePluginList(parsed?.plugin);
 
       const desired = stripPluginVersion(pluginName).toLowerCase();
-      if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
+      if (
+        plugins.some(
+          (entry) => stripPluginVersion(entry).toLowerCase() === desired,
+        )
+      ) {
         setPluginStatus("Plugin already listed in opencode.json.");
         return;
       }
@@ -1264,7 +1351,9 @@ export default function App() {
       }
       await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(e instanceof Error ? e.message : "Failed to update opencode.json");
+      setPluginStatus(
+        e instanceof Error ? e.message : "Failed to update opencode.json",
+      );
     }
   }
 
@@ -1283,7 +1372,9 @@ export default function App() {
     }
 
     if (!pkg) {
-      setError("Enter an OpenPackage source (e.g. github:anthropics/claude-code).");
+      setError(
+        "Enter an OpenPackage source (e.g. github:anthropics/claude-code).",
+      );
       return;
     }
 
@@ -1295,7 +1386,9 @@ export default function App() {
     try {
       const result = await opkgInstall(targetDir, pkg);
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
+        setSkillsStatus(
+          result.stderr || result.stdout || `opkg failed (${result.status})`,
+        );
       } else {
         setSkillsStatus(result.stdout || "Installed.");
       }
@@ -1339,15 +1432,23 @@ export default function App() {
     try {
       const selection = await pickDirectory({ title: "Select skill folder" });
       const sourceDir =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+        typeof selection === "string"
+          ? selection
+          : Array.isArray(selection)
+            ? selection[0]
+            : null;
 
       if (!sourceDir) {
         return;
       }
 
-      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
+      const result = await importSkill(targetDir, sourceDir, {
+        overwrite: false,
+      });
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
+        setSkillsStatus(
+          result.stderr || result.stdout || `Import failed (${result.status})`,
+        );
       } else {
         setSkillsStatus(result.stdout || "Imported.");
       }
@@ -1360,7 +1461,10 @@ export default function App() {
     }
   }
 
-  async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
+  async function respondPermission(
+    requestID: string,
+    reply: "once" | "always" | "reject",
+  ) {
     const c = client();
     if (!c || permissionReplyBusy()) return;
 
@@ -1405,25 +1509,35 @@ export default function App() {
           setBaseUrl(storedBaseUrl);
         }
 
-        const storedClientDir = window.localStorage.getItem("openwork.clientDirectory");
+        const storedClientDir = window.localStorage.getItem(
+          "openwork.clientDirectory",
+        );
         if (storedClientDir) {
           setClientDirectory(storedClientDir);
         }
 
-        const storedProjectDir = window.localStorage.getItem("openwork.projectDir");
+        const storedProjectDir = window.localStorage.getItem(
+          "openwork.projectDir",
+        );
         if (storedProjectDir) {
           setProjectDir(storedProjectDir);
         }
 
-        const storedAuthorized = window.localStorage.getItem("openwork.authorizedDirs");
+        const storedAuthorized = window.localStorage.getItem(
+          "openwork.authorizedDirs",
+        );
         if (storedAuthorized) {
           const parsed = JSON.parse(storedAuthorized) as unknown;
-          if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
+          if (
+            Array.isArray(parsed) &&
+            parsed.every((v) => typeof v === "string")
+          ) {
             setAuthorizedDirs(parsed);
           }
         }
 
-        const storedTemplates = window.localStorage.getItem("openwork.templates");
+        const storedTemplates =
+          window.localStorage.getItem("openwork.templates");
         if (storedTemplates) {
           const parsed = JSON.parse(storedTemplates) as unknown;
           if (Array.isArray(parsed)) {
@@ -1438,7 +1552,10 @@ export default function App() {
         } else {
           setDefaultModel(DEFAULT_MODEL);
           try {
-            window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(DEFAULT_MODEL));
+            window.localStorage.setItem(
+              MODEL_PREF_KEY,
+              formatModelRef(DEFAULT_MODEL),
+            );
           } catch {
             // ignore
           }
@@ -1464,7 +1581,10 @@ export default function App() {
 
       if (info?.running && info.baseUrl) {
         setOnboardingStep("connecting");
-        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
+        const ok = await connectToServer(
+          info.baseUrl,
+          info.projectDir ?? undefined,
+        );
         if (!ok) {
           setMode(null);
           setOnboardingStep("mode");
@@ -1526,7 +1646,10 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.clientDirectory", clientDirectory());
+      window.localStorage.setItem(
+        "openwork.clientDirectory",
+        clientDirectory(),
+      );
     } catch {
       // ignore
     }
@@ -1544,7 +1667,10 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.authorizedDirs", JSON.stringify(authorizedDirs()));
+      window.localStorage.setItem(
+        "openwork.authorizedDirs",
+        JSON.stringify(authorizedDirs()),
+      );
     } catch {
       // ignore
     }
@@ -1553,7 +1679,10 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.templates", JSON.stringify(templates()));
+      window.localStorage.setItem(
+        "openwork.templates",
+        JSON.stringify(templates()),
+      );
     } catch {
       // ignore
     }
@@ -1562,7 +1691,10 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(defaultModel()));
+      window.localStorage.setItem(
+        MODEL_PREF_KEY,
+        formatModelRef(defaultModel()),
+      );
     } catch {
       // ignore
     }
@@ -1577,7 +1709,9 @@ export default function App() {
 
     (async () => {
       try {
-        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
+        const sub = await c.event.subscribe(undefined, {
+          signal: controller.signal,
+        });
 
         for await (const raw of sub.stream) {
           if (cancelled) break;
@@ -1591,16 +1725,24 @@ export default function App() {
 
           if (developerMode()) {
             setEvents((current) => {
-              const next = [{ type: event.type, properties: event.properties }, ...current];
+              const next = [
+                { type: event.type, properties: event.properties },
+                ...current,
+              ];
               return next.slice(0, 150);
             });
           }
 
-          if (event.type === "session.updated" || event.type === "session.created") {
+          if (
+            event.type === "session.updated" ||
+            event.type === "session.created"
+          ) {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
               if (record.info && typeof record.info === "object") {
-                setSessions((current) => upsertSession(current, record.info as Session));
+                setSessions((current) =>
+                  upsertSession(current, record.info as Session),
+                );
               }
             }
           }
@@ -1610,7 +1752,9 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               const info = record.info as Session | undefined;
               if (info?.id) {
-                setSessions((current) => current.filter((s) => s.id !== info.id));
+                setSessions((current) =>
+                  current.filter((s) => s.id !== info.id),
+                );
               }
             }
           }
@@ -1618,7 +1762,8 @@ export default function App() {
           if (event.type === "session.status") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+              const sessionID =
+                typeof record.sessionID === "string" ? record.sessionID : null;
               if (sessionID) {
                 setSessionStatusById((current) => ({
                   ...current,
@@ -1631,7 +1776,8 @@ export default function App() {
           if (event.type === "session.idle") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+              const sessionID =
+                typeof record.sessionID === "string" ? record.sessionID : null;
               if (sessionID) {
                 setSessionStatusById((current) => ({
                   ...current,
@@ -1662,7 +1808,10 @@ export default function App() {
                   });
                 }
 
-                if (selectedSessionId() && info.sessionID === selectedSessionId()) {
+                if (
+                  selectedSessionId() &&
+                  info.sessionID === selectedSessionId()
+                ) {
                   setMessages((current) => upsertMessage(current, info));
                 }
               }
@@ -1677,7 +1826,9 @@ export default function App() {
                 record.sessionID === selectedSessionId() &&
                 typeof record.messageID === "string"
               ) {
-                setMessages((current) => current.filter((m) => m.info.id !== record.messageID));
+                setMessages((current) =>
+                  current.filter((m) => m.info.id !== record.messageID),
+                );
               }
             }
           }
@@ -1687,7 +1838,10 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               if (record.part && typeof record.part === "object") {
                 const part = record.part as Part;
-                if (selectedSessionId() && part.sessionID === selectedSessionId()) {
+                if (
+                  selectedSessionId() &&
+                  part.sessionID === selectedSessionId()
+                ) {
                   setMessages((current) => upsertPart(current, part));
                 }
               }
@@ -1697,19 +1851,34 @@ export default function App() {
           if (event.type === "message.part.removed") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              const messageID = typeof record.messageID === "string" ? record.messageID : null;
-              const partID = typeof record.partID === "string" ? record.partID : null;
+              const sessionID =
+                typeof record.sessionID === "string" ? record.sessionID : null;
+              const messageID =
+                typeof record.messageID === "string" ? record.messageID : null;
+              const partID =
+                typeof record.partID === "string" ? record.partID : null;
 
-              if (sessionID && selectedSessionId() && sessionID === selectedSessionId() && messageID && partID) {
-                setMessages((current) => removePart(current, messageID, partID));
+              if (
+                sessionID &&
+                selectedSessionId() &&
+                sessionID === selectedSessionId() &&
+                messageID &&
+                partID
+              ) {
+                setMessages((current) =>
+                  removePart(current, messageID, partID),
+                );
               }
             }
           }
 
           if (event.type === "todo.updated") {
             const id = selectedSessionId();
-            if (id && event.properties && typeof event.properties === "object") {
+            if (
+              id &&
+              event.properties &&
+              typeof event.properties === "object"
+            ) {
               const record = event.properties as Record<string, unknown>;
               if (record.sessionID === id && Array.isArray(record.todos)) {
                 setTodos(record.todos as any);
@@ -1717,7 +1886,10 @@ export default function App() {
             }
           }
 
-          if (event.type === "permission.asked" || event.type === "permission.replied") {
+          if (
+            event.type === "permission.asked" ||
+            event.type === "permission.replied"
+          ) {
             try {
               await refreshPendingPermissions(c);
             } catch {
@@ -1783,10 +1955,14 @@ export default function App() {
               </div>
               <div class="text-center">
                 <h2 class="text-xl font-medium mb-2">
-                  {mode() === "host" ? "Starting OpenCode Engine..." : "Searching for Host..."}
+                  {mode() === "host"
+                    ? "Starting OpenCode Engine..."
+                    : "Searching for Host..."}
                 </h2>
                 <p class="text-zinc-500 text-sm">
-                  {mode() === "host" ? `Initializing ${localHostLabel()}` : "Verifying secure handshake"}
+                  {mode() === "host"
+                    ? `Initializing ${localHostLabel()}`
+                    : "Verifying secure handshake"}
                 </p>
               </div>
             </div>
@@ -1802,16 +1978,21 @@ export default function App() {
                 <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
                   <Shield class="text-zinc-400" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">Authorized Workspaces</h2>
+                <h2 class="text-2xl font-bold tracking-tight">
+                  Authorized Workspaces
+                </h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
-                  OpenWork runs locally. Select which folders it is allowed to access.
+                  OpenWork runs locally. Select which folders it is allowed to
+                  access.
                 </p>
               </div>
 
               <div class="space-y-4">
                 <div>
                   <div class="mb-1 flex items-center justify-between gap-3">
-                    <div class="text-xs font-medium text-zinc-300">Project folder</div>
+                    <div class="text-xs font-medium text-zinc-300">
+                      Project folder
+                    </div>
                   </div>
                   <div class="flex gap-2">
                     <input
@@ -1825,7 +2006,9 @@ export default function App() {
                         variant="secondary"
                         onClick={async () => {
                           try {
-                            const selection = await pickDirectory({ title: "Select project folder" });
+                            const selection = await pickDirectory({
+                              title: "Select project folder",
+                            });
                             const path =
                               typeof selection === "string"
                                 ? selection
@@ -1836,7 +2019,9 @@ export default function App() {
                               setProjectDir(path);
                             }
                           } catch (e) {
-                            setError(e instanceof Error ? e.message : "Unknown error");
+                            setError(
+                              e instanceof Error ? e.message : "Unknown error",
+                            );
                           }
                         }}
                         disabled={busy()}
@@ -1858,7 +2043,9 @@ export default function App() {
                       <div class="group flex items-center justify-between p-4 bg-zinc-900/50 rounded-xl border border-zinc-800/80 hover:border-zinc-700 transition-colors">
                         <div class="flex items-center gap-3 overflow-hidden">
                           <Folder size={18} class="text-indigo-400 shrink-0" />
-                          <span class="font-mono text-sm text-zinc-300 truncate">{folder}</span>
+                          <span class="font-mono text-sm text-zinc-300 truncate">
+                            {folder}
+                          </span>
                         </div>
                         <button
                           onClick={() => removeAuthorizedDir(idx())}
@@ -1873,7 +2060,8 @@ export default function App() {
 
                   <Show when={!authorizedDirs().length}>
                     <div class="text-xs text-zinc-600">
-                      No authorized folders yet. Add at least your project folder.
+                      No authorized folders yet. Add at least your project
+                      folder.
                     </div>
                   </Show>
 
@@ -1882,7 +2070,9 @@ export default function App() {
                       class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
                       placeholder="Add folder path…"
                       value={newAuthorizedDir()}
-                      onInput={(e) => setNewAuthorizedDir(e.currentTarget.value)}
+                      onInput={(e) =>
+                        setNewAuthorizedDir(e.currentTarget.value)
+                      }
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           addAuthorizedDir();
@@ -1894,7 +2084,9 @@ export default function App() {
                         variant="outline"
                         onClick={async () => {
                           try {
-                            const selection = await pickDirectory({ title: "Add authorized folder" });
+                            const selection = await pickDirectory({
+                              title: "Add authorized folder",
+                            });
                             const path =
                               typeof selection === "string"
                                 ? selection
@@ -1903,11 +2095,15 @@ export default function App() {
                                   : null;
                             if (path) {
                               setAuthorizedDirs((current) =>
-                                current.includes(path) ? current : [...current, path],
+                                current.includes(path)
+                                  ? current
+                                  : [...current, path],
                               );
                             }
                           } catch (e) {
-                            setError(e instanceof Error ? e.message : safeStringify(e));
+                            setError(
+                              e instanceof Error ? e.message : safeStringify(e),
+                            );
                           }
                         }}
                         disabled={busy()}
@@ -1929,7 +2125,9 @@ export default function App() {
                     <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
                       <div class="flex items-start justify-between gap-4">
                         <div class="min-w-0">
-                          <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                          <div class="text-sm font-medium text-white">
+                            OpenCode CLI
+                          </div>
                           <div class="mt-1 text-xs text-zinc-500">
                             <Show
                               when={engineDoctorResult()}
@@ -1937,7 +2135,11 @@ export default function App() {
                             >
                               <Show
                                 when={engineDoctorResult()?.found}
-                                fallback={<span>Not found. Install to run Host mode.</span>}
+                                fallback={
+                                  <span>
+                                    Not found. Install to run Host mode.
+                                  </span>
+                                }
                               >
                                 <span class="font-mono">
                                   {engineDoctorResult()?.version ?? "Installed"}
@@ -1965,12 +2167,25 @@ export default function App() {
                         </Button>
                       </div>
 
-                      <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
+                      <Show
+                        when={
+                          engineDoctorResult() && !engineDoctorResult()!.found
+                        }
+                      >
                         <div class="mt-4 space-y-2">
-                          <div class="text-xs text-zinc-500">Install one of these:</div>
-                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                            brew install anomalyco/tap/opencode
+                          <div class="text-xs text-zinc-500">
+                            Install one of these:
                           </div>
+                          <Show when={navigator.platform.includes("Win")}>
+                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                              npm install -g opencode-ai
+                            </div>
+                          </Show>
+                          <Show when={!navigator.platform.includes("Win")}>
+                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                              brew install anomalyco/tap/opencode
+                            </div>
+                          </Show>
                           <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
                             curl -fsSL https://opencode.ai/install | bash
                           </div>
@@ -1986,18 +2201,24 @@ export default function App() {
 
                                 try {
                                   const result = await engineInstall();
-                                  const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
+                                  const combined =
+                                    `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
                                   setEngineInstallLogs(combined || null);
 
                                   if (!result.ok) {
                                     setError(
-                                      result.stderr.trim() || "OpenCode install failed. See logs above.",
+                                      result.stderr.trim() ||
+                                        "OpenCode install failed. See logs above.",
                                     );
                                   }
 
                                   await refreshEngineDoctor();
                                 } catch (e) {
-                                  setError(e instanceof Error ? e.message : safeStringify(e));
+                                  setError(
+                                    e instanceof Error
+                                      ? e.message
+                                      : safeStringify(e),
+                                  );
                                 } finally {
                                   setBusy(false);
                                   setBusyLabel(null);
@@ -2011,7 +2232,8 @@ export default function App() {
                             <Button
                               variant="outline"
                               onClick={() => {
-                                const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
+                                const notes =
+                                  engineDoctorResult()?.notes?.join("\n") ?? "";
                                 setEngineInstallLogs(notes || null);
                               }}
                               disabled={busy()}
@@ -2023,12 +2245,17 @@ export default function App() {
                       </Show>
 
                       <Show when={engineInstallLogs()}>
-                        <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{engineInstallLogs()}</pre>
+                        <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">
+                          {engineInstallLogs()}
+                        </pre>
                       </Show>
 
                       <Show when={engineDoctorCheckedAt()}>
                         <div class="mt-3 text-[11px] text-zinc-600">
-                          Last checked {new Date(engineDoctorCheckedAt()!).toLocaleTimeString()}
+                          Last checked{" "}
+                          {new Date(
+                            engineDoctorCheckedAt()!,
+                          ).toLocaleTimeString()}
                         </div>
                       </Show>
                     </div>
@@ -2094,7 +2321,9 @@ export default function App() {
                 <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
                   <Smartphone class="text-zinc-400" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">Connect to Host</h2>
+                <h2 class="text-2xl font-bold tracking-tight">
+                  Connect to Host
+                </h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
                   Pair with an existing OpenCode server (LAN or tunnel).
                 </p>
@@ -2122,7 +2351,9 @@ export default function App() {
 
                     const ok = await connectToServer(
                       baseUrl().trim(),
-                      clientDirectory().trim() ? clientDirectory().trim() : undefined,
+                      clientDirectory().trim()
+                        ? clientDirectory().trim()
+                        : undefined,
                     );
 
                     if (!ok) {
@@ -2169,7 +2400,9 @@ export default function App() {
                   </div>
                   <h1 class="text-3xl font-bold tracking-tight">OpenWork</h1>
                 </div>
-                <h2 class="text-xl text-zinc-400 font-light">How would you like to run OpenWork today?</h2>
+                <h2 class="text-xl text-zinc-400 font-light">
+                  How would you like to run OpenWork today?
+                </h2>
               </div>
 
               <div class="space-y-4">
@@ -2187,7 +2420,9 @@ export default function App() {
                     <HardDrive class="text-indigo-400 w-7 h-7" />
                   </div>
                   <div>
-                    <h3 class="text-xl font-medium text-white mb-2">Start Host Engine</h3>
+                    <h3 class="text-xl font-medium text-white mb-2">
+                      Start Host Engine
+                    </h3>
                     <p class="text-zinc-500 text-sm leading-relaxed mb-4">
                       Run OpenCode locally. Best for your primary computer.
                     </p>
@@ -2204,7 +2439,9 @@ export default function App() {
                 <Show when={engine()?.running && engine()?.baseUrl}>
                   <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-5 flex items-center justify-between">
                     <div>
-                      <div class="text-sm text-white font-medium">Engine already running</div>
+                      <div class="text-sm text-white font-medium">
+                        Engine already running
+                      </div>
                       <div class="text-xs text-zinc-500 font-mono truncate max-w-[14rem] md:max-w-[22rem]">
                         {engine()?.baseUrl}
                       </div>
@@ -2272,7 +2509,9 @@ export default function App() {
                   </div>
                 </Show>
 
-                <div class="text-center text-xs text-zinc-700">{headerStatus()}</div>
+                <div class="text-center text-xs text-zinc-700">
+                  {headerStatus()}
+                </div>
               </div>
             </div>
           </div>
@@ -2315,7 +2554,9 @@ export default function App() {
       return (
         <button
           class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-            active() ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-900/50"
+            active()
+              ? "bg-zinc-900 text-white"
+              : "text-zinc-500 hover:text-white hover:bg-zinc-900/50"
           }`}
           onClick={() => setTab(t)}
         >
@@ -2325,7 +2566,6 @@ export default function App() {
       );
     };
 
-
     const content = () => (
       <Switch>
         <Match when={tab() === "home"}>
@@ -2333,15 +2573,18 @@ export default function App() {
             <div class="bg-gradient-to-r from-zinc-900 to-zinc-800 rounded-3xl p-1 border border-zinc-800 shadow-2xl">
               <div class="bg-zinc-950 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div class="space-y-2 text-center md:text-left">
-                  <h2 class="text-2xl font-semibold text-white">What should we do today?</h2>
+                  <h2 class="text-2xl font-semibold text-white">
+                    What should we do today?
+                  </h2>
                   <p class="text-zinc-400">
-                    Describe an outcome. OpenWork will run it and keep an audit trail.
+                    Describe an outcome. OpenWork will run it and keep an audit
+                    trail.
                   </p>
                 </div>
                 <Button
                   onClick={createSessionAndOpen}
                   disabled={newTaskDisabled()}
-                  title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}
+                  title={newTaskDisabled() ? (busyHint() ?? "Busy") : ""}
                   class="w-full md:w-auto py-3 px-6 text-base"
                 >
                   <Play size={18} />
@@ -2353,7 +2596,9 @@ export default function App() {
 
           <section>
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Quick Start Templates</h3>
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                Quick Start Templates
+              </h3>
               <button
                 class="text-sm text-zinc-500 hover:text-white"
                 onClick={() => setTab("templates")}
@@ -2381,7 +2626,9 @@ export default function App() {
                         <FileText size={20} class="text-indigo-400" />
                       </div>
                       <h4 class="font-medium text-white mb-1">{t.title}</h4>
-                      <p class="text-sm text-zinc-500">{t.description || "Run a saved workflow"}</p>
+                      <p class="text-sm text-zinc-500">
+                        {t.description || "Run a saved workflow"}
+                      </p>
                     </button>
                   )}
                 </For>
@@ -2390,14 +2637,18 @@ export default function App() {
           </section>
 
           <section>
-            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Recent Sessions</h3>
+            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
+              Recent Sessions
+            </h3>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
               <For each={sessions().slice(0, 12)}>
                 {(s, idx) => (
                   <button
                     class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
-                      idx() !== Math.min(sessions().length, 12) - 1 ? "border-b border-zinc-800/50" : ""
+                      idx() !== Math.min(sessions().length, 12) - 1
+                        ? "border-b border-zinc-800/50"
+                        : ""
                     }`}
                     onClick={async () => {
                       await selectSession(s.id);
@@ -2410,9 +2661,12 @@ export default function App() {
                         #{s.slug?.slice(0, 2) ?? ".."}
                       </div>
                       <div>
-                        <div class="font-medium text-sm text-zinc-200">{s.title}</div>
+                        <div class="font-medium text-sm text-zinc-200">
+                          {s.title}
+                        </div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
-                          <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Clock size={10} />{" "}
+                          {formatRelativeTime(s.time.updated)}
                         </div>
                       </div>
                     </div>
@@ -2436,14 +2690,18 @@ export default function App() {
 
         <Match when={tab() === "sessions"}>
           <section>
-            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">All Sessions</h3>
+            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
+              All Sessions
+            </h3>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
               <For each={sessions()}>
                 {(s, idx) => (
                   <button
                     class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
-                      idx() !== sessions().length - 1 ? "border-b border-zinc-800/50" : ""
+                      idx() !== sessions().length - 1
+                        ? "border-b border-zinc-800/50"
+                        : ""
                     }`}
                     onClick={async () => {
                       await selectSession(s.id);
@@ -2455,9 +2713,12 @@ export default function App() {
                         #{s.slug?.slice(0, 2) ?? ".."}
                       </div>
                       <div>
-                        <div class="font-medium text-sm text-zinc-200">{s.title}</div>
+                        <div class="font-medium text-sm text-zinc-200">
+                          {s.title}
+                        </div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
-                          <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Clock size={10} />{" "}
+                          {formatRelativeTime(s.time.updated)}
                         </div>
                       </div>
                     </div>
@@ -2482,7 +2743,9 @@ export default function App() {
         <Match when={tab() === "templates"}>
           <section class="space-y-4">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Templates</h3>
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                Templates
+              </h3>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -2513,17 +2776,31 @@ export default function App() {
                       <div class="min-w-0">
                         <div class="flex items-center gap-2">
                           <FileText size={16} class="text-indigo-400" />
-                          <div class="font-medium text-white truncate">{t.title}</div>
+                          <div class="font-medium text-white truncate">
+                            {t.title}
+                          </div>
                         </div>
-                        <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
-                        <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                        <div class="mt-1 text-sm text-zinc-500">
+                          {t.description || ""}
+                        </div>
+                        <div class="mt-2 text-xs text-zinc-600 font-mono">
+                          {formatRelativeTime(t.createdAt)}
+                        </div>
                       </div>
                       <div class="shrink-0 flex gap-2">
-                        <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
+                        <Button
+                          variant="secondary"
+                          onClick={() => runTemplate(t)}
+                          disabled={busy()}
+                        >
                           <Play size={16} />
                           Run
                         </Button>
-                        <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
+                        <Button
+                          variant="danger"
+                          onClick={() => deleteTemplate(t.id)}
+                          disabled={busy()}
+                        >
                           <Trash2 size={16} />
                         </Button>
                       </div>
@@ -2538,15 +2815,23 @@ export default function App() {
         <Match when={tab() === "skills"}>
           <section class="space-y-6">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Skills</h3>
-              <Button variant="secondary" onClick={() => refreshSkills()} disabled={busy()}>
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                Skills
+              </h3>
+              <Button
+                variant="secondary"
+                onClick={() => refreshSkills()}
+                disabled={busy()}
+              >
                 Refresh
               </Button>
             </div>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between gap-3">
-                <div class="text-sm font-medium text-white">Install from OpenPackage</div>
+                <div class="text-sm font-medium text-white">
+                  Install from OpenPackage
+                </div>
                 <Show when={mode() !== "host"}>
                   <div class="text-xs text-zinc-500">Host mode only</div>
                 </Show>
@@ -2568,11 +2853,14 @@ export default function App() {
                 </Button>
               </div>
               <div class="text-xs text-zinc-500">
-                Installs OpenPackage packages into the current workspace. Skills should land in `.opencode/skill`.
+                Installs OpenPackage packages into the current workspace. Skills
+                should land in `.opencode/skill`.
               </div>
 
               <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-                <div class="text-sm font-medium text-white">Import local skill</div>
+                <div class="text-sm font-medium text-white">
+                  Import local skill
+                </div>
                 <Button
                   variant="secondary"
                   onClick={importLocalSkill}
@@ -2592,8 +2880,12 @@ export default function App() {
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between">
-                <div class="text-sm font-medium text-white">Curated packages</div>
-                <div class="text-xs text-zinc-500">{filteredPackages().length}</div>
+                <div class="text-sm font-medium text-white">
+                  Curated packages
+                </div>
+                <div class="text-xs text-zinc-500">
+                  {filteredPackages().length}
+                </div>
               </div>
 
               <input
@@ -2617,9 +2909,15 @@ export default function App() {
                       <div class="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-4">
                         <div class="flex items-start justify-between gap-4">
                           <div class="space-y-2">
-                            <div class="text-sm font-medium text-white">{pkg.name}</div>
-                            <div class="text-xs text-zinc-500 font-mono break-all">{pkg.source}</div>
-                            <div class="text-sm text-zinc-500">{pkg.description}</div>
+                            <div class="text-sm font-medium text-white">
+                              {pkg.name}
+                            </div>
+                            <div class="text-xs text-zinc-500 font-mono break-all">
+                              {pkg.source}
+                            </div>
+                            <div class="text-sm text-zinc-500">
+                              {pkg.description}
+                            </div>
                             <div class="flex flex-wrap gap-2">
                               <For each={pkg.tags}>
                                 {(tag) => (
@@ -2635,7 +2933,8 @@ export default function App() {
                             onClick={() => useCuratedPackage(pkg)}
                             disabled={
                               busy() ||
-                              (pkg.installable && (mode() !== "host" || !isTauriRuntime()))
+                              (pkg.installable &&
+                                (mode() !== "host" || !isTauriRuntime()))
                             }
                           >
                             {pkg.installable ? "Install" : "View"}
@@ -2648,14 +2947,17 @@ export default function App() {
               </Show>
 
               <div class="text-xs text-zinc-500">
-                Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.
+                Publishing to the OpenPackage registry (`opkg push`) requires
+                authentication today. A registry search + curated list sync is
+                planned.
               </div>
             </div>
 
-
             <div>
               <div class="flex items-center justify-between mb-3">
-                <div class="text-sm font-medium text-white">Installed skills</div>
+                <div class="text-sm font-medium text-white">
+                  Installed skills
+                </div>
                 <div class="text-xs text-zinc-500">{skills().length}</div>
               </div>
 
@@ -2676,9 +2978,13 @@ export default function App() {
                           <div class="font-medium text-white">{s.name}</div>
                         </div>
                         <Show when={s.description}>
-                          <div class="mt-1 text-sm text-zinc-500">{s.description}</div>
+                          <div class="mt-1 text-sm text-zinc-500">
+                            {s.description}
+                          </div>
                         </Show>
-                        <div class="mt-2 text-xs text-zinc-600 font-mono">{s.path}</div>
+                        <div class="mt-2 text-xs text-zinc-600 font-mono">
+                          {s.path}
+                        </div>
                       </div>
                     )}
                   </For>
@@ -2693,9 +2999,12 @@ export default function App() {
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-1">
-                  <div class="text-sm font-medium text-white">OpenCode plugins</div>
+                  <div class="text-sm font-medium text-white">
+                    OpenCode plugins
+                  </div>
                   <div class="text-xs text-zinc-500">
-                    Manage `opencode.json` for your project or global OpenCode plugins.
+                    Manage `opencode.json` for your project or global OpenCode
+                    plugins.
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -2725,7 +3034,10 @@ export default function App() {
                   >
                     Global
                   </button>
-                  <Button variant="ghost" onClick={() => refreshPlugins().catch(() => undefined)}>
+                  <Button
+                    variant="ghost"
+                    onClick={() => refreshPlugins().catch(() => undefined)}
+                  >
                     Refresh
                   </Button>
                 </div>
@@ -2739,21 +3051,31 @@ export default function App() {
               </div>
 
               <div class="space-y-3">
-                <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Suggested plugins</div>
+                <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">
+                  Suggested plugins
+                </div>
                 <div class="grid gap-3">
                   <For each={SUGGESTED_PLUGINS}>
                     {(plugin) => {
                       const isGuided = () => plugin.installMode === "guided";
                       const isInstalled = () =>
-                        isPluginInstalled(plugin.packageName, plugin.aliases ?? []);
-                      const isGuideOpen = () => activePluginGuide() === plugin.packageName;
+                        isPluginInstalled(
+                          plugin.packageName,
+                          plugin.aliases ?? [],
+                        );
+                      const isGuideOpen = () =>
+                        activePluginGuide() === plugin.packageName;
 
                       return (
                         <div class="rounded-2xl border border-zinc-800/60 bg-zinc-950/40 p-4 space-y-3">
                           <div class="flex items-start justify-between gap-4">
                             <div>
-                              <div class="text-sm font-medium text-white font-mono">{plugin.name}</div>
-                              <div class="text-xs text-zinc-500 mt-1">{plugin.description}</div>
+                              <div class="text-sm font-medium text-white font-mono">
+                                {plugin.name}
+                              </div>
+                              <div class="text-xs text-zinc-500 mt-1">
+                                {plugin.description}
+                              </div>
                               <Show when={plugin.packageName !== plugin.name}>
                                 <div class="text-xs text-zinc-600 font-mono mt-1">
                                   {plugin.packageName}
@@ -2765,20 +3087,25 @@ export default function App() {
                                 <Button
                                   variant="ghost"
                                   onClick={() =>
-                                    setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)
+                                    setActivePluginGuide(
+                                      isGuideOpen() ? null : plugin.packageName,
+                                    )
                                   }
                                 >
                                   {isGuideOpen() ? "Hide setup" : "Setup"}
                                 </Button>
                               </Show>
                               <Button
-                                variant={isInstalled() ? "outline" : "secondary"}
+                                variant={
+                                  isInstalled() ? "outline" : "secondary"
+                                }
                                 onClick={() => addPlugin(plugin.packageName)}
                                 disabled={
                                   busy() ||
                                   isInstalled() ||
                                   !isTauriRuntime() ||
-                                  (pluginScope() === "project" && !projectDir().trim())
+                                  (pluginScope() === "project" &&
+                                    !projectDir().trim())
                                 }
                               >
                                 {isInstalled() ? "Added" : "Add"}
@@ -2802,23 +3129,33 @@ export default function App() {
                                     <div class="text-xs font-medium text-zinc-300">
                                       {idx() + 1}. {step.title}
                                     </div>
-                                    <div class="text-xs text-zinc-500">{step.description}</div>
+                                    <div class="text-xs text-zinc-500">
+                                      {step.description}
+                                    </div>
                                     <Show when={step.command}>
                                       <div class="text-xs font-mono text-zinc-200 bg-zinc-900/60 border border-zinc-800/70 rounded-lg px-3 py-2">
                                         {step.command}
                                       </div>
                                     </Show>
                                     <Show when={step.note}>
-                                      <div class="text-xs text-zinc-500">{step.note}</div>
+                                      <div class="text-xs text-zinc-500">
+                                        {step.note}
+                                      </div>
                                     </Show>
                                     <Show when={step.url}>
                                       <div class="text-xs text-zinc-500">
-                                        Open: <span class="font-mono text-zinc-400">{step.url}</span>
+                                        Open:{" "}
+                                        <span class="font-mono text-zinc-400">
+                                          {step.url}
+                                        </span>
                                       </div>
                                     </Show>
                                     <Show when={step.path}>
                                       <div class="text-xs text-zinc-500">
-                                        Path: <span class="font-mono text-zinc-400">{step.path}</span>
+                                        Path:{" "}
+                                        <span class="font-mono text-zinc-400">
+                                          {step.path}
+                                        </span>
                                       </div>
                                     </Show>
                                   </div>
@@ -2845,8 +3182,12 @@ export default function App() {
                   <For each={pluginList()}>
                     {(pluginName) => (
                       <div class="flex items-center justify-between rounded-xl border border-zinc-800/60 bg-zinc-950/40 px-4 py-2.5">
-                        <div class="text-sm text-zinc-200 font-mono">{pluginName}</div>
-                        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Enabled</div>
+                        <div class="text-sm text-zinc-200 font-mono">
+                          {pluginName}
+                        </div>
+                        <div class="text-[10px] uppercase tracking-wide text-zinc-500">
+                          Enabled
+                        </div>
                       </div>
                     )}
                   </For>
@@ -2888,7 +3229,10 @@ export default function App() {
               <div class="text-xs text-zinc-500">{headerStatus()}</div>
               <div class="text-xs text-zinc-600 font-mono">{baseUrl()}</div>
               <div class="pt-2 flex flex-wrap gap-2">
-                <Button variant="secondary" onClick={() => setDeveloperMode((v) => !v)}>
+                <Button
+                  variant="secondary"
+                  onClick={() => setDeveloperMode((v) => !v)}
+                >
                   <Shield size={16} />
                   {developerMode() ? "Developer On" : "Developer Off"}
                 </Button>
@@ -2898,7 +3242,11 @@ export default function App() {
                   </Button>
                 </Show>
                 <Show when={mode() === "client"}>
-                  <Button variant="outline" onClick={stopHost} disabled={busy()}>
+                  <Button
+                    variant="outline"
+                    onClick={stopHost}
+                    disabled={busy()}
+                  >
                     Disconnect
                   </Button>
                 </Show>
@@ -2907,12 +3255,18 @@ export default function App() {
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-white">Model</div>
-              <div class="text-xs text-zinc-500">Default model for new sessions.</div>
+              <div class="text-xs text-zinc-500">
+                Default model for new sessions.
+              </div>
 
               <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-zinc-200 truncate">{formatModelLabel(defaultModel())}</div>
-                  <div class="text-xs text-zinc-600 font-mono truncate">{formatModelRef(defaultModel())}</div>
+                  <div class="text-sm text-zinc-200 truncate">
+                    {formatModelLabel(defaultModel())}
+                  </div>
+                  <div class="text-xs text-zinc-600 font-mono truncate">
+                    {formatModelRef(defaultModel())}
+                  </div>
                 </div>
                 <Button
                   variant="outline"
@@ -2937,13 +3291,23 @@ export default function App() {
                         : "bg-emerald-500/10 text-emerald-400"
                     }`}
                   >
-                    <Show when={mode() === "host"} fallback={<Smartphone size={18} />}>
+                    <Show
+                      when={mode() === "host"}
+                      fallback={<Smartphone size={18} />}
+                    >
                       <HardDrive size={18} />
                     </Show>
                   </div>
-                  <span class="capitalize text-sm font-medium text-white">{mode()} mode</span>
+                  <span class="capitalize text-sm font-medium text-white">
+                    {mode()} mode
+                  </span>
                 </div>
-                <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={stopHost} disabled={busy()}>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={stopHost}
+                  disabled={busy()}
+                >
                   Switch
                 </Button>
               </div>
@@ -2956,21 +3320,29 @@ export default function App() {
                 }}
               >
                 <span class="text-zinc-300">Reset default startup mode</span>
-                <RefreshCcw size={14} class="text-zinc-500 group-hover:rotate-180 transition-transform" />
+                <RefreshCcw
+                  size={14}
+                  class="text-zinc-500 group-hover:rotate-180 transition-transform"
+                />
               </Button>
 
               <p class="text-xs text-zinc-600">
-                This clears your saved preference and shows mode selection on next launch.
+                This clears your saved preference and shows mode selection on
+                next launch.
               </p>
             </div>
 
             <Show when={developerMode()}>
               <section>
-                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
+                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
+                  Developer
+                </h3>
 
                 <div class="grid md:grid-cols-2 gap-4">
                   <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                    <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
+                    <div class="text-xs text-zinc-500 mb-2">
+                      Pending permissions
+                    </div>
                     <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                       {safeStringify(pendingPermissions())}
                     </pre>
@@ -3013,7 +3385,11 @@ export default function App() {
           <div class="space-y-4">
             <div class="px-3 py-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
               <div class="flex items-center gap-2 text-xs font-medium text-zinc-400 mb-2">
-                {mode() === "host" ? <Cpu size={12} /> : <Smartphone size={12} />}
+                {mode() === "host" ? (
+                  <Cpu size={12} />
+                ) : (
+                  <Smartphone size={12} />
+                )}
                 {mode() === "host" ? "Local Engine" : "Client Mode"}
               </div>
               <div class="flex items-center gap-2">
@@ -3028,17 +3404,29 @@ export default function App() {
                   {client() ? "Connected" : "Disconnected"}
                 </span>
               </div>
-              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">{baseUrl()}</div>
+              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">
+                {baseUrl()}
+              </div>
             </div>
 
             <Show when={mode() === "host"}>
-              <Button variant="danger" onClick={stopHost} disabled={busy()} class="w-full">
+              <Button
+                variant="danger"
+                onClick={stopHost}
+                disabled={busy()}
+                class="w-full"
+              >
                 Stop & Disconnect
               </Button>
             </Show>
 
             <Show when={mode() === "client"}>
-              <Button variant="outline" onClick={stopHost} disabled={busy()} class="w-full">
+              <Button
+                variant="outline"
+                onClick={stopHost}
+                disabled={busy()}
+                class="w-full"
+              >
                 Disconnect
               </Button>
             </Show>
@@ -3059,7 +3447,11 @@ export default function App() {
             </div>
             <div class="flex items-center gap-2">
               <Show when={tab() === "home" || tab() === "sessions"}>
-                <Button onClick={createSessionAndOpen} disabled={newTaskDisabled()} title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}>
+                <Button
+                  onClick={createSessionAndOpen}
+                  disabled={newTaskDisabled()}
+                  title={newTaskDisabled() ? (busyHint() ?? "Busy") : ""}
+                >
                   <Play size={16} />
                   New Task
                 </Button>
@@ -3079,13 +3471,18 @@ export default function App() {
                   New
                 </Button>
               </Show>
-              <Button variant="ghost" onClick={() => setDeveloperMode((v) => !v)}>
+              <Button
+                variant="ghost"
+                onClick={() => setDeveloperMode((v) => !v)}
+              >
                 <Shield size={16} />
               </Button>
             </div>
           </header>
 
-          <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">{content()}</div>
+          <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
+            {content()}
+          </div>
 
           <Show when={error()}>
             <div class="mx-auto max-w-5xl px-6 md:px-10 pb-24 md:pb-10">
@@ -3200,7 +3597,9 @@ export default function App() {
                 <ArrowRight class="rotate-180 w-5 h-5" />
               </Button>
               <div>
-                <h2 class="font-semibold text-sm">{selectedSession()?.title ?? "Session"}</h2>
+                <h2 class="font-semibold text-sm">
+                  {selectedSession()?.title ?? "Session"}
+                </h2>
                 <div class="flex items-center gap-2 text-xs text-zinc-400">
                   <span
                     class={`w-2 h-2 rounded-full ${
@@ -3228,10 +3627,19 @@ export default function App() {
                 <ChevronRight size={14} class="text-zinc-500" />
               </button>
 
-              <Button variant="ghost" class="text-xs" onClick={openTemplateModal} disabled={busy()}>
+              <Button
+                variant="ghost"
+                class="text-xs"
+                onClick={openTemplateModal}
+                disabled={busy()}
+              >
                 <FileText size={14} />
               </Button>
-              <Button variant="ghost" class="text-xs" onClick={() => setDeveloperMode((v) => !v)}>
+              <Button
+                variant="ghost"
+                class="text-xs"
+                onClick={() => setDeveloperMode((v) => !v)}
+              >
                 <Shield size={14} />
               </Button>
             </div>
@@ -3247,7 +3655,8 @@ export default function App() {
                     </div>
                     <h3 class="text-xl font-medium">Ready to work</h3>
                     <p class="text-zinc-500 text-sm max-w-xs mx-auto">
-                      Describe a task. I’ll show progress and ask for permissions when needed.
+                      Describe a task. I’ll show progress and ask for
+                      permissions when needed.
                     </p>
                   </div>
                 </Show>
@@ -3260,7 +3669,10 @@ export default function App() {
                           return developerMode();
                         }
 
-                        if (p.type === "step-start" || p.type === "step-finish") {
+                        if (
+                          p.type === "step-start" ||
+                          p.type === "step-finish"
+                        ) {
                           // Too noisy for normal users.
                           return developerMode();
                         }
@@ -3274,7 +3686,9 @@ export default function App() {
 
                     return (
                       <Show when={renderableParts().length > 0}>
-                        <div class={`flex ${msg.info.role === "user" ? "justify-end" : "justify-start"}`}>
+                        <div
+                          class={`flex ${msg.info.role === "user" ? "justify-end" : "justify-start"}`}
+                        >
                           <div
                             class={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
                               msg.info.role === "user"
@@ -3284,11 +3698,21 @@ export default function App() {
                           >
                             <For each={renderableParts()}>
                               {(p, idx) => (
-                                <div class={idx() === renderableParts().length - 1 ? "" : "mb-2"}>
+                                <div
+                                  class={
+                                    idx() === renderableParts().length - 1
+                                      ? ""
+                                      : "mb-2"
+                                  }
+                                >
                                   <PartView
                                     part={p}
                                     developerMode={developerMode()}
-                                    tone={msg.info.role === "user" ? "dark" : "light"}
+                                    tone={
+                                      msg.info.role === "user"
+                                        ? "dark"
+                                        : "light"
+                                    }
                                   />
                                 </div>
                               )}
@@ -3308,7 +3732,8 @@ export default function App() {
               <div class="p-4 border-b border-zinc-800 font-medium text-sm text-zinc-400 flex items-center justify-between">
                 <span>Execution Plan</span>
                 <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
-                  {todos().filter((t) => t.status === "completed").length}/{todos().length}
+                  {todos().filter((t) => t.status === "completed").length}/
+                  {todos().length}
                 </span>
               </div>
               <div class="p-4 space-y-4 overflow-y-auto flex-1">
@@ -3326,7 +3751,9 @@ export default function App() {
                         <Show when={idx() !== todos().length - 1}>
                           <div
                             class={`absolute left-[9px] top-6 bottom-0 w-px ${
-                              t.status === "completed" ? "bg-emerald-500/20" : "bg-zinc-800"
+                              t.status === "completed"
+                                ? "bg-emerald-500/20"
+                                : "bg-zinc-800"
                             }`}
                           />
                         </Show>
@@ -3395,7 +3822,9 @@ export default function App() {
                     sendPrompt().catch(() => undefined);
                   }
                 }}
-                placeholder={busy() ? "Working..." : "Ask OpenWork to do something..."}
+                placeholder={
+                  busy() ? "Working..." : "Ask OpenWork to do something..."
+                }
                 class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-5 pr-14 text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all disabled:opacity-50"
               />
               <button
@@ -3418,7 +3847,9 @@ export default function App() {
                       <Shield size={24} />
                     </div>
                     <div>
-                      <h3 class="text-lg font-semibold text-white">Permission Required</h3>
+                      <h3 class="text-lg font-semibold text-white">
+                        Permission Required
+                      </h3>
                       <p class="text-sm text-zinc-400 mt-1">
                         OpenCode is requesting permission to continue.
                       </p>
@@ -3429,7 +3860,9 @@ export default function App() {
                     <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">
                       Permission
                     </div>
-                    <div class="text-sm text-zinc-200 font-mono">{activePermission()!.permission}</div>
+                    <div class="text-sm text-zinc-200 font-mono">
+                      {activePermission()!.permission}
+                    </div>
 
                     <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">
                       Scope
@@ -3439,9 +3872,16 @@ export default function App() {
                       {activePermission()!.patterns.join(", ")}
                     </div>
 
-                    <Show when={Object.keys(activePermission()!.metadata ?? {}).length > 0}>
+                    <Show
+                      when={
+                        Object.keys(activePermission()!.metadata ?? {}).length >
+                        0
+                      }
+                    >
                       <details class="mt-4 rounded-lg bg-black/20 p-2">
-                        <summary class="cursor-pointer text-xs text-zinc-400">Details</summary>
+                        <summary class="cursor-pointer text-xs text-zinc-400">
+                          Details
+                        </summary>
                         <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-200">
                           {safeStringify(activePermission()!.metadata)}
                         </pre>
@@ -3453,7 +3893,9 @@ export default function App() {
                     <Button
                       variant="outline"
                       class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
-                      onClick={() => respondPermission(activePermission()!.id, "reject")}
+                      onClick={() =>
+                        respondPermission(activePermission()!.id, "reject")
+                      }
                       disabled={permissionReplyBusy()}
                     >
                       Deny
@@ -3462,7 +3904,9 @@ export default function App() {
                       <Button
                         variant="secondary"
                         class="text-xs"
-                        onClick={() => respondPermission(activePermission()!.id, "once")}
+                        onClick={() =>
+                          respondPermission(activePermission()!.id, "once")
+                        }
                         disabled={permissionReplyBusy()}
                       >
                         Once
@@ -3470,7 +3914,9 @@ export default function App() {
                       <Button
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
-                        onClick={() => respondPermission(activePermission()!.id, "always")}
+                        onClick={() =>
+                          respondPermission(activePermission()!.id, "always")
+                        }
                         disabled={permissionReplyBusy()}
                       >
                         Allow
@@ -3509,12 +3955,16 @@ export default function App() {
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-white">
-                    {modelPickerTarget() === "default" ? "Default model" : "Model"}
+                    {modelPickerTarget() === "default"
+                      ? "Default model"
+                      : "Model"}
                   </h3>
                   <p class="text-sm text-zinc-400 mt-1">
-                    Zen models work without setup. This selection {modelPickerTarget() === "default"
+                    Zen models work without setup. This selection{" "}
+                    {modelPickerTarget() === "default"
                       ? "will be used for new sessions"
-                      : "applies to your next message"}.
+                      : "applies to your next message"}
+                    .
                   </p>
                 </div>
                 <Button
@@ -3550,15 +4000,23 @@ export default function App() {
                                 </span>
                               </Show>
                             </div>
-                            <div class="text-xs text-zinc-500 mt-1">{opt.description}</div>
+                            <div class="text-xs text-zinc-500 mt-1">
+                              {opt.description}
+                            </div>
                             <div class="text-[11px] text-zinc-600 font-mono mt-2">
                               {formatModelRef(opt)}
                             </div>
                           </div>
 
                           <div class="pt-0.5 text-zinc-500">
-                            <Show when={active()} fallback={<Circle size={14} />}>
-                              <CheckCircle2 size={14} class="text-emerald-400" />
+                            <Show
+                              when={active()}
+                              fallback={<Circle size={14} />}
+                            >
+                              <CheckCircle2
+                                size={14}
+                                class="text-emerald-400"
+                              />
                             </Show>
                           </div>
                         </div>
@@ -3569,7 +4027,10 @@ export default function App() {
               </div>
 
               <div class="mt-6 flex justify-end">
-                <Button variant="outline" onClick={() => setModelPickerOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setModelPickerOpen(false)}
+                >
                   Done
                 </Button>
               </div>
@@ -3584,8 +4045,12 @@ export default function App() {
             <div class="p-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-white">Save Template</h3>
-                  <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
+                  <h3 class="text-lg font-semibold text-white">
+                    Save Template
+                  </h3>
+                  <p class="text-sm text-zinc-400 mt-1">
+                    Reuse a workflow with one tap.
+                  </p>
                 </div>
                 <Button
                   variant="ghost"
@@ -3607,24 +4072,35 @@ export default function App() {
                 <TextInput
                   label="Description (optional)"
                   value={templateDraftDescription()}
-                  onInput={(e) => setTemplateDraftDescription(e.currentTarget.value)}
+                  onInput={(e) =>
+                    setTemplateDraftDescription(e.currentTarget.value)
+                  }
                   placeholder="What does this template do?"
                 />
 
                 <label class="block">
-                  <div class="mb-1 text-xs font-medium text-neutral-300">Prompt</div>
+                  <div class="mb-1 text-xs font-medium text-neutral-300">
+                    Prompt
+                  </div>
                   <textarea
                     class="w-full min-h-40 rounded-xl bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20"
                     value={templateDraftPrompt()}
-                    onInput={(e) => setTemplateDraftPrompt(e.currentTarget.value)}
+                    onInput={(e) =>
+                      setTemplateDraftPrompt(e.currentTarget.value)
+                    }
                     placeholder="Write the instructions you want to reuse…"
                   />
-                  <div class="mt-1 text-xs text-neutral-500">This becomes the first user message.</div>
+                  <div class="mt-1 text-xs text-neutral-500">
+                    This becomes the first user message.
+                  </div>
                 </label>
               </div>
 
               <div class="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setTemplateModalOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setTemplateModalOpen(false)}
+                >
                   Cancel
                 </Button>
                 <Button onClick={saveTemplate}>Save</Button>

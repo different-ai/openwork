@@ -96,17 +96,14 @@ This captures OpenWork’s preferred reactivity + UI state patterns (avoid globa
 
 ## Skill: Trigger a Release
 
-OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
+OpenWork releases are built by GitHub Actions (`Release App`) and publish signed + notarized macOS DMGs to the GitHub Release for a tag.
 
 ### Standard release (recommended)
 
-1. Ensure `main` is green and up to date.
-2. Bump versions (keep these in sync):
-   - `apps/openwork/package.json` (`version`)
-   - `apps/openwork/src-tauri/tauri.conf.json` (`version`)
-   - `apps/openwork/src-tauri/Cargo.toml` (`version`)
-3. Merge the version bump to `main`.
-4. Create and push a tag:
+1. Bump versions (at minimum `apps/openwork/package.json`, and keep Tauri/Rust versions in sync).
+2. Merge to `main`.
+3. Create and push a version tag:
+
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
 
@@ -120,7 +117,7 @@ If the workflow needs to be re-run for an existing tag (e.g. notarization retry)
 
 ### Verify
 
-- Runs: `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
-- Release: `gh release view vX.Y.Z --repo different-ai/openwork`
+- `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
+- `gh release view vX.Y.Z --repo different-ai/openwork`
 
 Confirm the DMG assets are attached and versioned correctly.
