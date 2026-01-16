@@ -29,9 +29,9 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg,updater"
+            args: "--target aarch64-apple-darwin --bundles dmg,app"
           - target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg,updater"
+            args: "--target x86_64-apple-darwin --bundles dmg,app"
 
     steps:
       - name: Checkout
@@ -122,7 +122,10 @@ jobs:
 
           UPDATER_DIR="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
 
-          UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
-          UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
-
-          gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber
+          if ls -1 "$UPDATER_DIR/"*.app.tar.gz >/dev/null 2>&1; then
+            UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
+            UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
+            gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber
+          else
+            echo "No updater artifacts found in $UPDATER_DIR; skipping."
+          fi
