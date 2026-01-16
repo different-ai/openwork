@@ -9,8 +9,50 @@ export type EngineInfo = {
   pid: number | null;
 };
 
+export type WorkspaceInfo = {
+  id: string;
+  name: string;
+  path: string;
+  preset: string;
+};
+
+export type WorkspaceList = {
+  activeId: string;
+  workspaces: WorkspaceInfo[];
+};
+
 export async function engineStart(projectDir: string): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", { projectDir });
+}
+
+export async function workspaceBootstrap(): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_bootstrap");
+}
+
+export async function workspaceSetActive(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_active", { workspaceId });
+}
+
+export async function workspaceCreate(input: {
+  folderPath: string;
+  name: string;
+  preset: string;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_create", {
+    folderPath: input.folderPath,
+    name: input.name,
+    preset: input.preset,
+  });
+}
+
+export async function workspaceAddAuthorizedRoot(input: {
+  workspacePath: string;
+  folderPath: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_add_authorized_root", {
+    workspacePath: input.workspacePath,
+    folderPath: input.folderPath,
+  });
 }
 
 export async function engineStop(): Promise<EngineInfo> {

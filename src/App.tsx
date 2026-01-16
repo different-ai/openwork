@@ -45,9 +45,12 @@ import {
 } from "lucide-solid";
 
 import Button from "./components/Button";
+import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OpenWorkLogo from "./components/OpenWorkLogo";
 import PartView from "./components/PartView";
 import TextInput from "./components/TextInput";
+import WorkspaceChip from "./components/WorkspaceChip";
+import WorkspacePicker from "./components/WorkspacePicker";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   engineInfo,
@@ -57,9 +60,14 @@ import {
   opkgInstall,
   pickDirectory,
   readOpencodeConfig,
+  workspaceAddAuthorizedRoot,
+  workspaceBootstrap,
+  workspaceCreate,
+  workspaceSetActive,
   writeOpencodeConfig,
   type EngineInfo,
   type OpencodeConfigFile,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 
 type Client = ReturnType<typeof createClient>;
@@ -81,6 +89,12 @@ type Mode = "host" | "client";
 type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
 type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
+
+type WorkspacePreset = "starter" | "automation" | "minimal";
+
+type WorkspaceTemplate = Template & {
+  scope: "workspace" | "global";
+};
 
 type Template = {
   id: string;
@@ -416,6 +430,10 @@ export default function App() {
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
 
   const [projectDir, setProjectDir] = createSignal("");
+
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
+
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
   const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
 
@@ -439,11 +457,12 @@ export default function App() {
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
-  const [templates, setTemplates] = createSignal<Template[]>([]);
+  const [templates, setTemplates] = createSignal<WorkspaceTemplate[]>([]);
   const [templateModalOpen, setTemplateModalOpen] = createSignal(false);
   const [templateDraftTitle, setTemplateDraftTitle] = createSignal("");
   const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
+  const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
@@ -456,6 +475,157 @@ export default function App() {
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
   const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
+
+  const activeWorkspace = createMemo(() => {
+    const id = activeWorkspaceId();
+    return workspaces().find((w) => w.id === id) ?? null;
+  });
+
+   const activeWorkspacePath = createMemo(() => activeWorkspace()?.path ?? "");
+
+  const defaultWorkspaceTemplates = createMemo<WorkspaceTemplate[]>(() => [
+    {
+      id: "tmpl_understand_workspace",
+      title: "Understand this workspace",
+      description: "Explains local vs global tools",
+      prompt:
+        "Explain how this workspace is configured and what tools are available locally. Be concise and actionable.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_create_skill",
+      title: "Create a new skill",
+      description: "Guide to adding capabilities",
+      prompt: "I want to create a new skill for this workspace. Guide me through it.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_run_scheduled_task",
+      title: "Run a scheduled task",
+      description: "Demo of the scheduler plugin",
+      prompt: "Show me how to schedule a task to run every morning.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_task_to_template",
+      title: "Turn task into template",
+      description: "Save workflow for later",
+      prompt: "Help me turn the last task into a reusable template.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+  ]);
+
+  const workspaceTemplates = createMemo(() => {
+    const explicit = templates().filter((t) => t.scope === "workspace");
+    if (explicit.length) return explicit;
+    return defaultWorkspaceTemplates();
+  });
+
+  const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
+
+  const activeWorkspaceDisplay = createMemo(() => {
+    const ws = activeWorkspace();
+    if (!ws) {
+      return {
+        id: "starter",
+        name: "Workspace",
+        path: "",
+        preset: "starter",
+      } satisfies WorkspaceInfo;
+    }
+    return ws;
+  });
+
+  const showWorkspacePicker = createSignal(false);
+  const showCreateWorkspaceModal = createSignal(false);
+
+  const [workspacePickerOpen, setWorkspacePickerOpen] = showWorkspacePicker;
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = showCreateWorkspaceModal;
+
+  const [workspaceSearch, setWorkspaceSearch] = createSignal("");
+
+  const filteredWorkspaces = createMemo(() => {
+    const query = workspaceSearch().trim().toLowerCase();
+    if (!query) return workspaces();
+
+    return workspaces().filter((w) => {
+      const haystack = `${w.name} ${w.path}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  });
+
+  async function activateWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const next = workspaces().find((w) => w.id === id) ?? null;
+    if (!next) return;
+
+    setActiveWorkspaceId(id);
+    setProjectDir(next.path);
+
+    if (!authorizedDirs().includes(next.path)) {
+      setAuthorizedDirs([next.path]);
+    }
+
+    if (isTauriRuntime()) {
+      try {
+        await workspaceSetActive(id);
+      } catch {
+        // ignore
+      }
+    }
+
+    if (mode() === "host" && engine()?.running && engine()?.baseUrl) {
+      // Already connected to an engine; keep current connection for now.
+      // Future: support multi-workspace host connections.
+      return;
+    }
+  }
+
+  async function createWorkspaceFlow(preset: WorkspacePreset) {
+    if (!isTauriRuntime()) {
+      setError("Workspace creation requires the Tauri app runtime.");
+      return;
+    }
+
+    try {
+      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const folder =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!folder) return;
+
+      setBusy(true);
+      setBusyLabel("Creating workspace");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      const name = folder.split("/").filter(Boolean).pop() ?? "Workspace";
+      const ws = await workspaceCreate({ folderPath: folder, name, preset });
+      setWorkspaces(ws.workspaces);
+      setActiveWorkspaceId(ws.activeId);
+
+      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+      if (active) {
+        setProjectDir(active.path);
+        setAuthorizedDirs([active.path]);
+      }
+
+      setWorkspacePickerOpen(false);
+      setCreateWorkspaceOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
 
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
@@ -660,15 +830,15 @@ export default function App() {
     }
   }
 
-  async function startHost() {
+  async function startHost(options?: { workspacePath?: string }) {
     if (!isTauriRuntime()) {
       setError("Host mode requires the Tauri app runtime. Use `pnpm dev`.");
       return false;
     }
 
-    const dir = projectDir().trim();
+    const dir = (options?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
     if (!dir) {
-      setError("Pick a folder path to start OpenCode in.");
+      setError("Pick a workspace folder to start OpenCode in.");
       return false;
     }
 
@@ -678,6 +848,12 @@ export default function App() {
     setBusyStartedAt(Date.now());
 
     try {
+      // Keep legacy state in sync for now.
+      setProjectDir(dir);
+      if (!authorizedDirs().length) {
+        setAuthorizedDirs([dir]);
+      }
+
       const info = await engineStart(dir);
       setEngine(info);
 
@@ -826,6 +1002,7 @@ export default function App() {
     setTemplateDraftTitle(seedTitle);
     setTemplateDraftDescription("");
     setTemplateDraftPrompt(seedPrompt);
+    setTemplateDraftScope("workspace");
     setTemplateModalOpen(true);
   }
 
@@ -839,12 +1016,13 @@ export default function App() {
       return;
     }
 
-    const template: Template = {
+    const template: WorkspaceTemplate = {
       id: `tmpl_${Date.now()}`,
       title,
       description,
       prompt: promptText,
       createdAt: Date.now(),
+      scope: templateDraftScope(),
     };
 
     setTemplates((current) => [template, ...current]);
@@ -855,7 +1033,7 @@ export default function App() {
     setTemplates((current) => current.filter((t) => t.id !== templateId));
   }
 
-  async function runTemplate(template: Template) {
+  async function runTemplate(template: WorkspaceTemplate) {
     const c = client();
     if (!c) return;
 
@@ -1139,6 +1317,27 @@ export default function App() {
     }
   }
 
+  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
+    if (reply === "always" && activeWorkspacePath().trim()) {
+      const permission = activePermission()?.permission;
+      if (permission && typeof permission === "string" && permission.trim()) {
+        // Best-effort: record the permission string as an authorized root.
+        // OpenCode permissions are pattern-based; for now we store the raw value to keep the
+        // "Add to workspace" intent durable until we add richer parsing.
+        try {
+          await workspaceAddAuthorizedRoot({
+            workspacePath: activeWorkspacePath().trim(),
+            folderPath: permission,
+          });
+        } catch {
+          // ignore persistence failure; still respond
+        }
+      }
+    }
+
+    await respondPermission(requestID, reply);
+  }
+
   function addAuthorizedDir() {
     const next = newAuthorizedDir().trim();
     if (!next) return;
@@ -1148,6 +1347,29 @@ export default function App() {
       return [...current, next];
     });
     setNewAuthorizedDir("");
+  }
+
+  async function addAuthorizedDirFromPicker(options?: { persistToWorkspace?: boolean }) {
+    if (!isTauriRuntime()) return;
+
+    try {
+      const selection = await pickDirectory({ title: "Add folder" });
+      const path =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!path) return;
+
+      setAuthorizedDirs((current) => (current.includes(path) ? current : [...current, path]));
+
+      if (options?.persistToWorkspace && activeWorkspacePath().trim()) {
+        await workspaceAddAuthorizedRoot({
+          workspacePath: activeWorkspacePath().trim(),
+          folderPath: path,
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
   }
 
   function removeAuthorizedDir(index: number) {
@@ -1172,8 +1394,9 @@ export default function App() {
           setClientDirectory(storedClientDir);
         }
 
+        // Legacy: projectDir is now derived from the active workspace.
         const storedProjectDir = window.localStorage.getItem("openwork.projectDir");
-        if (storedProjectDir) {
+        if (storedProjectDir && !projectDir().trim()) {
           setProjectDir(storedProjectDir);
         }
 
@@ -1189,7 +1412,41 @@ export default function App() {
         if (storedTemplates) {
           const parsed = JSON.parse(storedTemplates) as unknown;
           if (Array.isArray(parsed)) {
-            setTemplates(parsed as Template[]);
+            const normalized = (parsed as unknown[])
+              .filter((v) => v && typeof v === "object")
+              .map((entry) => {
+                const record = entry as Record<string, unknown>;
+                return {
+                  id: typeof record.id === "string" ? record.id : `tmpl_${Date.now()}`,
+                  title: typeof record.title === "string" ? record.title : "Untitled",
+                  description: typeof record.description === "string" ? record.description : "",
+                  prompt: typeof record.prompt === "string" ? record.prompt : "",
+                  createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+                  scope: record.scope === "global" ? "global" : "workspace",
+                } satisfies WorkspaceTemplate;
+              })
+              .filter((t) => t.prompt.trim().length > 0);
+
+            setTemplates(normalized);
+          }
+        } else {
+          // Seed global storage with starter templates for a non-empty first-run experience.
+          try {
+            window.localStorage.setItem(
+              "openwork.templates",
+              JSON.stringify(
+                defaultWorkspaceTemplates().map((t) => ({
+                  id: t.id,
+                  title: t.title,
+                  description: t.description,
+                  prompt: t.prompt,
+                  createdAt: Date.now(),
+                  scope: t.scope,
+                })),
+              ),
+            );
+          } catch {
+            // ignore
           }
         }
       } catch {
@@ -1197,15 +1454,34 @@ export default function App() {
       }
     }
 
-    await refreshEngine();
+     await refreshEngine();
 
-    const info = engine();
-    if (info?.baseUrl) {
-      setBaseUrl(info.baseUrl);
-    }
+     // Bootstrap workspaces (Host mode only).
+     if (isTauriRuntime()) {
+       try {
+         const ws = await workspaceBootstrap();
+         setWorkspaces(ws.workspaces);
+         setActiveWorkspaceId(ws.activeId);
+         const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+         if (active) {
+           setProjectDir(active.path);
+           if (!authorizedDirs().length) {
+             setAuthorizedDirs([active.path]);
+           }
+         }
+       } catch {
+         // ignore
+       }
+     }
 
-    // Auto-continue based on saved preference.
-    if (!modePref) return;
+     const info = engine();
+     if (info?.baseUrl) {
+       setBaseUrl(info.baseUrl);
+     }
+
+     // Auto-continue based on saved preference.
+     if (!modePref) return;
+
 
     if (modePref === "host") {
       setMode("host");
@@ -1220,23 +1496,23 @@ export default function App() {
         return;
       }
 
-      if (isTauriRuntime() && projectDir().trim()) {
-        if (!authorizedDirs().length && projectDir().trim()) {
-          setAuthorizedDirs([projectDir().trim()]);
-        }
+       if (isTauriRuntime() && activeWorkspacePath().trim()) {
+         if (!authorizedDirs().length && activeWorkspacePath().trim()) {
+           setAuthorizedDirs([activeWorkspacePath().trim()]);
+         }
 
-        setOnboardingStep("connecting");
-        const ok = await startHost();
-        if (!ok) {
-          setOnboardingStep("host");
-        }
-        return;
-      }
+         setOnboardingStep("connecting");
+         const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+         if (!ok) {
+           setOnboardingStep("host");
+         }
+         return;
+       }
 
-      // Missing required info; take them directly to Host setup.
-      setOnboardingStep("host");
-      return;
-    }
+       // Missing required info; take them directly to Host setup.
+       setOnboardingStep("host");
+       return;
+     }
 
     // Client preference.
     setMode("client");
@@ -1276,6 +1552,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // Legacy key: keep for backwards compatibility.
     try {
       window.localStorage.setItem("openwork.projectDir", projectDir());
     } catch {
@@ -1295,7 +1572,19 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem("openwork.templates", JSON.stringify(templates()));
+       window.localStorage.setItem(
+         "openwork.templates",
+         JSON.stringify(
+           templates().map((t) => ({
+             id: t.id,
+             title: t.title,
+             description: t.description,
+             prompt: t.prompt,
+             createdAt: t.createdAt,
+             scope: t.scope,
+           })),
+         ),
+       );
     } catch {
       // ignore
     }
@@ -1516,174 +1805,80 @@ export default function App() {
 
             <div class="max-w-md w-full z-10 space-y-8">
               <div class="text-center space-y-2">
-                <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
-                  <Shield class="text-zinc-400" />
+                <div class="w-12 h-12 bg-white rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-white/10 mb-6">
+                  <Folder size={22} class="text-black" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">Authorized Workspaces</h2>
+                <h2 class="text-2xl font-bold tracking-tight">Create your first workspace</h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
-                  OpenWork runs locally. Select which folders it is allowed to access.
+                  A workspace is a <span class="font-semibold text-white">folder</span> with its own skills, plugins, and templates.
                 </p>
               </div>
 
               <div class="space-y-4">
-                <div>
-                  <div class="mb-1 flex items-center justify-between gap-3">
-                    <div class="text-xs font-medium text-zinc-300">Project folder</div>
+                <div class="bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-5 space-y-3">
+                  <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+
+                  <div class="space-y-2">
+                    <div class="text-sm font-medium text-white">Starter Workspace</div>
+                    <div class="text-xs text-zinc-500">
+                      OpenWork will create a ready-to-run folder and start OpenCode inside it.
+                    </div>
+                    <div class="text-xs text-zinc-600 font-mono break-all">{activeWorkspacePath() || "(initializing...)"}</div>
                   </div>
-                  <div class="flex gap-2">
-                    <input
-                      class="w-full bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20 rounded-xl"
-                      placeholder="/path/to/project"
-                      value={projectDir()}
-                      onInput={(e) => setProjectDir(e.currentTarget.value)}
-                    />
-                    <Show when={isTauriRuntime()}>
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({ title: "Select project folder" });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setProjectDir(path);
-                            }
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : "Unknown error");
-                          }
-                        }}
-                        disabled={busy()}
-                      >
-                        Browse
-                      </Button>
-                    </Show>
-                  </div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {isTauriRuntime()
-                      ? "Engine will start in this folder."
-                      : "Host mode requires the Tauri app runtime."}
+
+                  <div class="pt-3 border-t border-zinc-800/60 space-y-2">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Scheduler plugin (workspace-scoped)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Starter templates ("Understand this workspace", etc.)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        You can add more folders just-in-time
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                <div class="space-y-3">
-                  <For each={authorizedDirs()}>
-                    {(folder, idx) => (
-                      <div class="group flex items-center justify-between p-4 bg-zinc-900/50 rounded-xl border border-zinc-800/80 hover:border-zinc-700 transition-colors">
-                        <div class="flex items-center gap-3 overflow-hidden">
-                          <Folder size={18} class="text-indigo-400 shrink-0" />
-                          <span class="font-mono text-sm text-zinc-300 truncate">{folder}</span>
-                        </div>
-                        <button
-                          onClick={() => removeAuthorizedDir(idx())}
-                          class="text-zinc-600 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-all"
-                          title="Remove"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
+                <Button
+                  onClick={async () => {
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+                    if (!ok) {
+                      setOnboardingStep("host");
+                    }
+                  }}
+                  disabled={busy() || !activeWorkspacePath().trim()}
+                  class="w-full py-3 text-base"
+                >
+                  Start Engine
+                </Button>
 
-                  <Show when={!authorizedDirs().length}>
-                    <div class="text-xs text-zinc-600">
-                      No authorized folders yet. Add at least your project folder.
-                    </div>
-                  </Show>
-
-                  <div class="flex gap-2">
-                    <input
-                      class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
-                      placeholder="Add folder path…"
-                      value={newAuthorizedDir()}
-                      onInput={(e) => setNewAuthorizedDir(e.currentTarget.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          addAuthorizedDir();
-                        }
-                      }}
-                    />
-                    <Show when={isTauriRuntime()}>
-                      <Button
-                        variant="outline"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({ title: "Add authorized folder" });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setAuthorizedDirs((current) =>
-                                current.includes(path) ? current : [...current, path],
-                              );
-                            }
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : safeStringify(e));
-                          }
-                        }}
-                        disabled={busy()}
-                      >
-                        Pick
-                      </Button>
-                    </Show>
-                    <Button
-                      variant="secondary"
-                      onClick={addAuthorizedDir}
-                      disabled={!newAuthorizedDir().trim()}
-                    >
-                      <Plus size={16} />
-                      Add
-                    </Button>
-                  </div>
-
-                  <Button
-                    onClick={async () => {
-                      if (!authorizedDirs().length && projectDir().trim()) {
-                        setAuthorizedDirs([projectDir().trim()]);
-                      }
-
-                      setMode("host");
-                      setOnboardingStep("connecting");
-                      const ok = await startHost();
-                      if (!ok) {
-                        setOnboardingStep("host");
-                      }
-                    }}
-                    disabled={busy()}
-                    class="w-full py-3 text-base"
-                  >
-                    Confirm & Start Engine
-                  </Button>
-
-                  <Button
-                    variant="ghost"
+                <div class="flex justify-center">
+                  <button
                     onClick={() => {
                       setMode(null);
                       setOnboardingStep("mode");
                     }}
                     disabled={busy()}
-                    class="w-full"
+                    class="text-zinc-600 hover:text-zinc-400 text-sm font-medium transition-colors flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-zinc-900/50"
                   >
                     Back
-                  </Button>
-
-                  <p class="text-center text-xs text-zinc-600">
-                    You can change these later in Settings.
-                  </p>
+                  </button>
                 </div>
+
+                <Show when={error()}>
+                  <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20">
+                    {error()}
+                  </div>
+                </Show>
               </div>
-
-              <Show when={error()}>
-                <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20">
-                  {error()}
-                </div>
-              </Show>
             </div>
           </div>
         </Match>
@@ -1902,7 +2097,7 @@ export default function App() {
       }
     });
 
-    const quickTemplates = createMemo(() => templates().slice(0, 3));
+    const quickTemplates = createMemo(() => workspaceTemplates().slice(0, 3));
 
     createEffect(() => {
       if (tab() === "skills") {
@@ -1968,9 +2163,9 @@ export default function App() {
             <Show
               when={quickTemplates().length}
               fallback={
-                <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session.
-                </div>
+                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
+                   No templates yet. Starter templates will appear here.
+                 </div>
               }
             >
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2102,15 +2297,15 @@ export default function App() {
             </div>
 
             <Show
-              when={templates().length}
+              when={workspaceTemplates().length}
               fallback={
                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session, or create one here.
+                  Starter templates will appear here. Create one or save from a session.
                 </div>
               }
             >
               <div class="space-y-3">
-                <For each={templates()}>
+                <For each={workspaceTemplates()}>
                   {(t) => (
                     <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
                       <div class="min-w-0">
@@ -2634,6 +2829,13 @@ export default function App() {
               <div class="md:hidden">
                 <Menu class="text-zinc-400" />
               </div>
+              <WorkspaceChip
+                workspace={activeWorkspaceDisplay()}
+                onClick={() => {
+                  setWorkspaceSearch("");
+                  setWorkspacePickerOpen(true);
+                }}
+              />
               <h1 class="text-lg font-medium">{title()}</h1>
               <span class="text-xs text-zinc-600">{headerStatus()}</span>
               <Show when={busyHint()}>
@@ -2677,6 +2879,23 @@ export default function App() {
               </div>
             </div>
           </Show>
+
+          <WorkspacePicker
+            open={workspacePickerOpen()}
+            workspaces={filteredWorkspaces()}
+            activeWorkspaceId={activeWorkspaceId()}
+            search={workspaceSearch()}
+            onSearch={setWorkspaceSearch}
+            onClose={() => setWorkspacePickerOpen(false)}
+            onSelect={activateWorkspace}
+            onCreateNew={() => setCreateWorkspaceOpen(true)}
+          />
+
+          <CreateWorkspaceModal
+            open={createWorkspaceOpen()}
+            onClose={() => setCreateWorkspaceOpen(false)}
+            onConfirm={(preset) => createWorkspaceFlow(preset)}
+          />
 
           <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
             <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
@@ -3044,10 +3263,10 @@ export default function App() {
                       <Button
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
-                        onClick={() => respondPermission(activePermission()!.id, "always")}
+                        onClick={() => respondPermissionAndRemember(activePermission()!.id, "always")}
                         disabled={busy()}
                       >
-                        Allow
+                        Add to workspace
                       </Button>
                     </div>
                   </div>
