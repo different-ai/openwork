@@ -166,6 +166,8 @@ type SuggestedPlugin = {
 
 type PluginScope = "project" | "global";
 
+type ReloadReason = "plugins" | "skills";
+
 type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
 };
@@ -603,6 +605,12 @@ export default function App() {
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
   const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
 
+  const [reloadRequired, setReloadRequired] = createSignal(false);
+  const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
+  const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
+  const [reloadBusy, setReloadBusy] = createSignal(false);
+  const [reloadError, setReloadError] = createSignal<string | null>(null);
+
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
 
@@ -905,6 +913,97 @@ export default function App() {
   function anyActiveRuns() {
     const statuses = sessionStatusById();
     return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+  }
+
+  function markReloadRequired(reason: ReloadReason) {
+    setReloadRequired(true);
+    setReloadLastTriggeredAt(Date.now());
+    setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
+  }
+
+  function clearReloadRequired() {
+    setReloadRequired(false);
+    setReloadReasons([]);
+    setReloadError(null);
+  }
+
+  const reloadCopy = createMemo(() => {
+    const reasons = reloadReasons();
+    if (!reasons.length) {
+      return {
+        title: "Reload required",
+        body: "OpenWork detected changes that require reloading the OpenCode instance.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "plugins") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "skills") {
+      return {
+        title: "Reload required",
+        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
+      };
+    }
+
+    return {
+      title: "Reload required",
+      body: "OpenWork detected plugin/skill changes. Reload the engine to apply them.",
+    };
+  });
+
+  const canReloadEngine = createMemo(() => {
+    if (!reloadRequired()) return false;
+    if (!client()) return false;
+    if (reloadBusy()) return false;
+    if (anyActiveRuns()) return false;
+    if (mode() !== "host") return false;
+    return true;
+  });
+
+  async function reloadEngineInstance() {
+    const c = client();
+    if (!c) return;
+
+    if (mode() !== "host") {
+      setReloadError("Reload is only available in Host mode.");
+      return;
+    }
+
+    if (anyActiveRuns()) {
+      setReloadError("A run is in progress. Stop it before reloading the engine.");
+      return;
+    }
+
+    setReloadBusy(true);
+    setReloadError(null);
+
+    try {
+      unwrap(await c.instance.dispose());
+      await waitForHealthy(c, { timeoutMs: 12_000 });
+
+      try {
+        const cfg = unwrap(await c.config.providers());
+        setProviders(cfg.providers);
+        setProviderDefaults(cfg.default);
+      } catch {
+        setProviders([]);
+        setProviderDefaults({});
+      }
+
+      await refreshPlugins().catch(() => undefined);
+      await refreshSkills().catch(() => undefined);
+
+      clearReloadRequired();
+    } catch (e) {
+      setReloadError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setReloadBusy(false);
+    }
   }
 
   async function checkForUpdates(options?: { quiet?: boolean }) {
@@ -1499,12 +1598,14 @@ export default function App() {
           $schema: "https://opencode.ai/config.json",
           plugin: [pluginName],
         };
-        await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
-        if (isManualInput) {
-          setPluginInput("");
-        }
-        await refreshPlugins(scope);
-        return;
+      await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+      markReloadRequired("plugins");
+      if (isManualInput) {
+        setPluginInput("");
+      }
+      await refreshPlugins(scope);
+      return;
+
       }
 
       const parsed = parse(raw) as Record<string, unknown> | undefined;
@@ -1523,6 +1624,7 @@ export default function App() {
       const updated = applyEdits(raw, edits);
 
       await writeOpencodeConfig(scope, targetDir, updated);
+      markReloadRequired("plugins");
       if (isManualInput) {
         setPluginInput("");
       }
@@ -1562,6 +1664,7 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Installed.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -1614,6 +1717,7 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Imported.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -2959,6 +3063,50 @@ export default function App() {
               </Button>
             </div>
 
+            <Show when={reloadRequired()}>
+              <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-amber-200">{reloadCopy().title}</div>
+                    <div class="mt-1 text-xs text-amber-100/80">{reloadCopy().body}</div>
+                    <Show when={reloadError()}>
+                      <div class="mt-2 text-xs text-red-200">{reloadError()}</div>
+                    </Show>
+                    <Show when={anyActiveRuns()}>
+                      <div class="mt-2 text-xs text-amber-100/70">
+                        A run is in progress. Stop it before reloading.
+                      </div>
+                    </Show>
+                    <Show when={mode() !== "host"}>
+                      <div class="mt-2 text-xs text-amber-100/70">
+                        Connected in Client mode. Ask the host to reload.
+                      </div>
+                    </Show>
+                  </div>
+                  <div class="shrink-0 flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => clearReloadRequired()}
+                      disabled={reloadBusy()}
+                      class="text-amber-200 border-amber-500/30 hover:border-amber-500/50"
+                    >
+                      Dismiss
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => reloadEngineInstance().catch(() => undefined)}
+                      disabled={!canReloadEngine()}
+                      title={!canReloadEngine() ? "Reload is only available when Host mode is idle." : ""}
+                      class="border-amber-500/30"
+                    >
+                      <RefreshCcw size={16} />
+                      {reloadBusy() ? "Reloading…" : "Reload engine"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Show>
+
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between gap-3">
                 <div class="text-sm font-medium text-white">Install from OpenPackage</div>
@@ -3105,6 +3253,50 @@ export default function App() {
 
         <Match when={tab() === "plugins"}>
           <section class="space-y-6">
+            <Show when={reloadRequired()}>
+              <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                <div class="flex items-start justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-sm font-medium text-amber-200">{reloadCopy().title}</div>
+                    <div class="mt-1 text-xs text-amber-100/80">{reloadCopy().body}</div>
+                    <Show when={reloadError()}>
+                      <div class="mt-2 text-xs text-red-200">{reloadError()}</div>
+                    </Show>
+                    <Show when={anyActiveRuns()}>
+                      <div class="mt-2 text-xs text-amber-100/70">
+                        A run is in progress. Stop it before reloading.
+                      </div>
+                    </Show>
+                    <Show when={mode() !== "host"}>
+                      <div class="mt-2 text-xs text-amber-100/70">
+                        Connected in Client mode. Ask the host to reload.
+                      </div>
+                    </Show>
+                  </div>
+                  <div class="shrink-0 flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => clearReloadRequired()}
+                      disabled={reloadBusy()}
+                      class="text-amber-200 border-amber-500/30 hover:border-amber-500/50"
+                    >
+                      Dismiss
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => reloadEngineInstance().catch(() => undefined)}
+                      disabled={!canReloadEngine()}
+                      title={!canReloadEngine() ? "Reload is only available when Host mode is idle." : ""}
+                      class="border-amber-500/30"
+                    >
+                      <RefreshCcw size={16} />
+                      {reloadBusy() ? "Reloading…" : "Reload engine"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </Show>
+
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-1">
