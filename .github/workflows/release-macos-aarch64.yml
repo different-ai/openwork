@@ -29,9 +29,9 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            args: "--target aarch64-apple-darwin --bundles dmg,updater"
           - target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg"
+            args: "--target x86_64-apple-darwin --bundles dmg,updater"
 
     steps:
       - name: Checkout
