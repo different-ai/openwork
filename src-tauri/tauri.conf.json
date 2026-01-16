@@ -34,7 +34,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmluaWduIHB1YmxpYyBrZXk6IDQ0OTZCOTU4MzI2OEQ0MEIKUldRTDFHZ3lXTG1XUkNPazcxdGpTcTQ4OGJrOFB3TGVKdXNCSHRicXd5bVdsZUh5djhxd2tIMW0K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUwNDdCNTAwMTcxNUUxQTQKUldTazRSVVhBTFZIVUpNRi9OQnNRaElZY1NUWUQxS1ZJOTFUeUdPd2d6ZnFmMW5QV2xJQ1hXTTkK",
       "endpoints": ["https://github.com/different-ai/openwork/releases/latest/download/latest.json"]
     }
   }
