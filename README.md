@@ -18,7 +18,33 @@ The goal: make “agentic work” feel like a product, not a terminal.
 
 
 ## Quick start
-Download the dmg here https://github.com/different-ai/openwork/releases (or install from source below)
+
+Download the installer for your platform from [GitHub Releases](https://github.com/different-ai/openwork/releases):
+
+| Platform | Download | Notes |
+|----------|----------|-------|
+| **Windows** | `OpenWork_{version}_x64-setup.exe` or `OpenWork_{version}_x64_en-US.msi` | Run the installer, then launch OpenWork |
+| **macOS (Apple Silicon)** | `OpenWork_{version}_aarch64.dmg` | Drag to Applications, then open |
+| **macOS (Intel)** | `OpenWork_{version}_x64.dmg` | Drag to Applications, then open |
+
+> **Prerequisite**: You need [OpenCode CLI](https://opencode.ai) installed on your system. OpenWork will detect it automatically or guide you through installation on first launch.
+
+### Windows Installation (1-Click)
+
+1. Download `OpenWork_{version}_x64-setup.exe` from [Releases](https://github.com/different-ai/openwork/releases)
+2. Run the installer
+3. Launch **OpenWork** from Start Menu
+4. If OpenCode CLI is not installed, OpenWork will show instructions (install via [Scoop](https://scoop.sh), [Chocolatey](https://chocolatey.org), or from https://opencode.ai/install)
+
+### macOS Installation
+
+1. Download the `.dmg` for your architecture from [Releases](https://github.com/different-ai/openwork/releases)
+2. Open the DMG and drag **OpenWork** to `/Applications`
+3. Launch from `/Applications`
+
+If macOS blocks the app:
+- **Finder**: Control-click → **Open** → **Open**
+- **System Settings**: Privacy & Security → **Open Anyway**
 
 ## Why
 

@@ -73,6 +73,9 @@ fn find_free_port() -> Result<u16, String> {
 #[cfg(windows)]
 const OPENCODE_EXECUTABLE: &str = "opencode.exe";
 
+#[cfg(windows)]
+const OPENCODE_CMD: &str = "opencode.cmd";
+
 #[cfg(not(windows))]
 const OPENCODE_EXECUTABLE: &str = "opencode";
 
@@ -112,20 +115,49 @@ fn resolve_in_path(name: &str) -> Option<PathBuf> {
   None
 }
 
+#[cfg(windows)]
+fn npm_global_bin_dir() -> Option<PathBuf> {
+  // npm global bin on Windows is typically %APPDATA%\npm
+  if let Ok(appdata) = env::var("APPDATA") {
+    if !appdata.trim().is_empty() {
+      return Some(PathBuf::from(appdata).join("npm"));
+    }
+  }
+  None
+}
+
 fn candidate_opencode_paths() -> Vec<PathBuf> {
   let mut candidates = Vec::new();
 
-  if let Some(home) = home_dir() {
-    candidates.push(home.join(".opencode").join("bin").join(OPENCODE_EXECUTABLE));
+  let home = home_dir();
+
+  if let Some(ref h) = home {
+    candidates.push(h.join(".opencode").join("bin").join(OPENCODE_EXECUTABLE));
   }
 
-  // Homebrew default paths.
-  candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  #[cfg(windows)]
+  {
+    // npm global bin on Windows (opencode.cmd wrapper script)
+    if let Some(npm_bin) = npm_global_bin_dir() {
+      candidates.push(npm_bin.join(OPENCODE_CMD));
+      candidates.push(npm_bin.join(OPENCODE_EXECUTABLE));
+    }
 
-  // Common Linux paths.
-  candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+    // Also check in user's home .opencode\bin with .cmd extension
+    if let Some(ref h) = home {
+      candidates.push(h.join(".opencode").join("bin").join(OPENCODE_CMD));
+    }
+  }
+
+  #[cfg(not(windows))]
+  {
+    // Homebrew default paths.
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+
+    // Common Linux paths.
+    candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
+  }
 
   candidates
 }
@@ -159,7 +191,17 @@ fn opencode_supports_serve(program: &OsStr) -> bool {
 fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
   let mut notes = Vec::new();
 
+  // Try to find opencode executable in PATH first.
+  // On Windows, we check for both opencode.exe and opencode.cmd (npm wrapper).
+  // On Unix, we check for opencode.
   if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
+    notes.push(format!("Found in PATH: {}", path.display()));
+    return (Some(path), true, notes);
+  }
+
+  // On Windows, also check for opencode.cmd (npm's wrapper script)
+  #[cfg(windows)]
+  if let Some(path) = resolve_in_path(OPENCODE_CMD) {
     notes.push(format!("Found in PATH: {}", path.display()));
     return (Some(path), true, notes);
   }
@@ -331,7 +373,7 @@ fn engine_install() -> Result<ExecResult, String> {
       ok: false,
       status: -1,
       stdout: String::new(),
-      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart OpenWork.".to_string(),
+      stderr: "Guided install is not supported on Windows yet. Install OpenCode via:\n- npm install -g opencode-ai\n- https://opencode.ai/install\n\nThen restart OpenWork.".to_string(),
     });
   }
 
@@ -377,8 +419,13 @@ fn engine_start(manager: State<EngineManager>, project_dir: String) -> Result<En
   let (program, _in_path, notes) = resolve_opencode_executable();
   let Some(program) = program else {
     let notes_text = notes.join("\n");
+    #[cfg(windows)]
     return Err(format!(
-      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+      "OpenCode CLI not found.\n\nInstall with:\n- npm install -g opencode-ai\n- https://opencode.ai/install\n\nNotes:\n{notes_text}"
+    ));
+    #[cfg(not(windows))]
+    return Err(format!(
+      "OpenCode CLI not found.\n\nInstall with:\n- npm install -g opencode-ai\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
     ));
   };
 

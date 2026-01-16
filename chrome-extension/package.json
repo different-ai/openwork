@@ -1,0 +1,27 @@
+{
+  "name": "@different-ai/openwork-extension",
+  "private": true,
+  "version": "0.1.6",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/copy-manifest.mjs",
+    "build:extension": "npm run build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.19",
+    "lucide-solid": "^0.562.0",
+    "solid-js": "^1.9.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.268",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.1",
+    "vite-plugin-solid": "^2.11.0"
+  }
+}
