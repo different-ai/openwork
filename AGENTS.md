@@ -13,6 +13,7 @@ OpenWork exists to bring OpenCode's agentic power to non-technical people throug
 
 - **Purpose-first UI**: prioritize clarity, safety, and approachability for non-technical users.
 - **Parity with OpenCode**: anything the UI can do must map cleanly to OpenCode tools.
+- **Prefer OpenCode primitives**: represent concepts using OpenCode’s native surfaces first (folders/projects, `.opencode`, `opencode.json`, skills, plugins) before introducing new abstractions.
 - **Self-referential**: maintain a gitignored mirror of OpenCode at `vendor/opencode` for inspection.
 - **Self-building**: prefer prompts, skills, and composable primitives over bespoke logic.
 - **Open source**: keep the repo portable; no secrets committed.
@@ -85,3 +86,42 @@ Key primitives to expose:
 | Animation frame rate | 60fps |
 | Interaction latency | <100ms |
 | Bundle size (JS) | <200KB gzipped |
+
+## Skill: SolidJS Patterns
+
+When editing SolidJS UI (`src/**/*.tsx`), consult:
+
+- `.opencode/skill/solidjs-patterns/SKILL.md`
+
+This captures OpenWork’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
+
+## Skill: Trigger a Release
+
+OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
+
+### Standard release (recommended)
+
+1. Ensure `main` is green and up to date.
+2. Bump versions (keep these in sync):
+   - `apps/openwork/package.json` (`version`)
+   - `apps/openwork/src-tauri/tauri.conf.json` (`version`)
+   - `apps/openwork/src-tauri/Cargo.toml` (`version`)
+3. Merge the version bump to `main`.
+4. Create and push a tag:
+   - `git tag vX.Y.Z`
+   - `git push origin vX.Y.Z`
+
+This triggers the workflow automatically (`on: push.tags: v*`).
+
+### Re-run / repair an existing release
+
+If the workflow needs to be re-run for an existing tag (e.g. notarization retry), use workflow dispatch:
+
+- `gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z`
+
+### Verify
+
+- Runs: `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
+- Release: `gh release view vX.Y.Z --repo different-ai/openwork`
+
+Confirm the DMG assets are attached and versioned correctly.

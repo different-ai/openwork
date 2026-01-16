@@ -5,6 +5,7 @@ dist/
 
 # Tauri/Rust
 src-tauri/target/
+src-tauri/sidecars/
 
 # Env
 .env

@@ -1,4 +1,4 @@
-name: Release macOS (Apple Silicon)
+name: Release App
 
 on:
   push:
@@ -14,14 +14,46 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  release-macos-aarch64:
+  publish-tauri:
+    name: Build + Publish (${{ matrix.target }})
     runs-on: macos-14
     timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin --bundles dmg"
+          - target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin --bundles dmg"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG_INPUT="${{ inputs.tag }}"
+          if [ -n "$TAG_INPUT" ]; then
+            if [[ "$TAG_INPUT" == v* ]]; then
+              TAG="$TAG_INPUT"
+            else
+              TAG="v$TAG_INPUT"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -39,38 +71,7 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin
-
-      - name: Import Apple signing certificate
-        env:
-          APPLE_CODESIGN_CERT_P12_BASE64: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CODESIGN_CERT_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          KEYCHAIN_PATH="$RUNNER_TEMP/openwork-signing.keychain-db"
-          KEYCHAIN_PASSWORD="$(openssl rand -hex 12)"
-
-          echo "KEYCHAIN_PATH=$KEYCHAIN_PATH" >> "$GITHUB_ENV"
-          echo "KEYCHAIN_PASSWORD=$KEYCHAIN_PASSWORD" >> "$GITHUB_ENV"
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security default-keychain -s "$KEYCHAIN_PATH"
-
-          CERT_P12="$RUNNER_TEMP/openwork-certificate.p12"
-          printf '%s' "$APPLE_CODESIGN_CERT_P12_BASE64" | base64 --decode > "$CERT_P12"
-
-          security import "$CERT_P12" \
-            -k "$KEYCHAIN_PATH" \
-            -P "$APPLE_CODESIGN_CERT_PASSWORD" \
-            -A \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
-
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          targets: ${{ matrix.target }}
 
       - name: Write notary API key
         env:
@@ -78,70 +79,50 @@ jobs:
         run: |
           set -euo pipefail
 
-          NOTARY_KEY="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY"
-          chmod 600 "$NOTARY_KEY"
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
 
-          echo "NOTARY_KEY=$NOTARY_KEY" >> "$GITHUB_ENV"
+          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build Tauri DMG (Apple Silicon)
+      - name: Build + upload (tauri-action)
+        uses: tauri-apps/tauri-action@v0.5.17
         env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+          # macOS signing (maps from existing repo secrets)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
 
-          pnpm exec tauri build --bundles dmg
+          # macOS notarization (App Store Connect API key)
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: OpenWork ${{ env.RELEASE_TAG }}
+          releaseBody: See the assets to download this version and install.
+          releaseDraft: false
+          prerelease: false
+          projectPath: .
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
 
-          DMG_PATH="$(ls -1 "$GITHUB_WORKSPACE/src-tauri/target/release/bundle/dmg/"*.dmg | head -n 1)"
-          echo "DMG_PATH=$DMG_PATH" >> "$GITHUB_ENV"
-          echo "Built DMG: $DMG_PATH"
-
-      - name: Sign DMG (Developer ID)
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          set -euo pipefail
-
-          codesign --force --timestamp --sign "$APPLE_SIGNING_IDENTITY" "$DMG_PATH"
-
-      - name: Notarize DMG
-        env:
-          APPLE_NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          APPLE_NOTARY_API_ISSUER_ID: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
-        run: |
-          set -euo pipefail
-
-          xcrun notarytool submit "$DMG_PATH" \
-            --key "$NOTARY_KEY" \
-            --key-id "$APPLE_NOTARY_API_KEY_ID" \
-            --issuer "$APPLE_NOTARY_API_ISSUER_ID" \
-            --wait --timeout 5h
-
-      - name: Staple notarization ticket
-        run: |
-          set -euo pipefail
-
-          xcrun stapler staple "$DMG_PATH"
-          spctl -a -vv --type open "$DMG_PATH"
-
-      - name: Create or update GitHub Release
+      - name: Upload updater artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          TAG_INPUT="${{ inputs.tag }}"
-          if [ -n "$TAG_INPUT" ]; then
-            TAG="$TAG_INPUT"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
+          UPDATER_DIR="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
 
-          LABEL="OpenWork macOS (Apple Silicon)"
-          ASSET="${DMG_PATH}#${LABEL}"
+          UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
+          UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$ASSET" --clobber
-          else
-            gh release create "$TAG" "$ASSET" --title "OpenWork $TAG" --generate-notes --verify-tag
-          fi
+          gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber

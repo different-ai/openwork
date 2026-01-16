@@ -1,6 +1,7 @@
 use std::{
   collections::hash_map::DefaultHasher,
   env,
+  ffi::OsStr,
   fs,
   hash::{Hash, Hasher},
   net::TcpListener,
@@ -40,6 +41,17 @@ pub struct EngineInfo {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct EngineDoctorResult {
+  pub found: bool,
+  pub in_path: bool,
+  pub resolved_path: Option<String>,
+  pub version: Option<String>,
+  pub supports_serve: bool,
+  pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ExecResult {
   pub ok: bool,
   pub status: i32,
@@ -55,6 +67,15 @@ pub struct OpencodeConfigFile {
   pub content: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdaterEnvironment {
+  pub supported: bool,
+  pub reason: Option<String>,
+  pub executable_path: Option<String>,
+  pub app_bundle_path: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfo {
@@ -63,6 +84,98 @@ pub struct WorkspaceInfo {
   pub path: String,
   pub preset: String,
 }
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceList {
+  pub active_id: String,
+  pub workspaces: Vec<WorkspaceInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceStateV1 {
+  active_id: String,
+  workspaces: Vec<WorkspaceInfo>,
+}
+
+impl Default for WorkspaceStateV1 {
+  fn default() -> Self {
+    Self {
+      active_id: "starter".to_string(),
+      workspaces: Vec::new(),
+    }
+  }
+}
+
+fn now_ms() -> u64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map(|d| d.as_millis() as u64)
+    .unwrap_or(0)
+}
+
+fn stable_workspace_id(path: &str) -> String {
+  let mut hasher = DefaultHasher::new();
+  path.hash(&mut hasher);
+  format!("ws_{:x}", hasher.finish())
+}
+
+fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
+  let app_dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+
+  let state_dir = app_dir.join("state");
+  let file_path = state_dir.join("workspaces.json");
+
+  Ok((state_dir, file_path))
+}
+
+fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceStateV1, String> {
+  let (_dir, path) = openwork_state_paths(app)?;
+
+  if !path.exists() {
+    return Ok(WorkspaceStateV1::default());
+  }
+
+  let raw = fs::read_to_string(&path)
+    .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+  serde_json::from_str::<WorkspaceStateV1>(&raw)
+    .map_err(|e| format!("Failed to parse {}: {e}", path.display()))
+}
+
+fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceStateV1) -> Result<(), String> {
+  let (dir, path) = openwork_state_paths(app)?;
+  fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
+
+  let json = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+  fs::write(&path, json).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+  Ok(())
+}
+
+fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {
+  let app_dir = app
+    .path()
+    .app_data_dir()
+    .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+
+  let starter_path = app_dir.join("workspaces").join("starter");
+
+  fs::create_dir_all(&starter_path)
+    .map_err(|e| format!("Failed to create starter workspace: {e}"))?;
+
+  let id = "starter".to_string();
+
+  Ok(WorkspaceInfo {
+    id,
+    name: "Starter Workspace".to_string(),
+    path: starter_path.to_string_lossy().to_string(),
+    preset: "starter".to_string(),
+  })
+}
+
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -421,6 +534,127 @@ fn find_free_port() -> Result<u16, String> {
   Ok(port)
 }
 
+#[cfg(windows)]
+const OPENCODE_EXECUTABLE: &str = "opencode.exe";
+
+#[cfg(not(windows))]
+const OPENCODE_EXECUTABLE: &str = "opencode";
+
+fn home_dir() -> Option<PathBuf> {
+  if let Ok(home) = env::var("HOME") {
+    if !home.trim().is_empty() {
+      return Some(PathBuf::from(home));
+    }
+  }
+
+  if let Ok(profile) = env::var("USERPROFILE") {
+    if !profile.trim().is_empty() {
+      return Some(PathBuf::from(profile));
+    }
+  }
+
+  None
+}
+
+fn path_entries() -> Vec<PathBuf> {
+  let mut entries = Vec::new();
+  let Some(path) = env::var_os("PATH") else {
+    return entries;
+  };
+
+  entries.extend(env::split_paths(&path));
+  entries
+}
+
+fn resolve_in_path(name: &str) -> Option<PathBuf> {
+  for dir in path_entries() {
+    let candidate = dir.join(name);
+    if candidate.is_file() {
+      return Some(candidate);
+    }
+  }
+  None
+}
+
+fn candidate_opencode_paths() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+
+  if let Some(home) = home_dir() {
+    candidates.push(home.join(".opencode").join("bin").join(OPENCODE_EXECUTABLE));
+  }
+
+  // Homebrew default paths.
+  candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
+  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+
+  // Common Linux paths.
+  candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
+  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+
+  candidates
+}
+
+fn opencode_version(program: &OsStr) -> Option<String> {
+  let output = Command::new(program).arg("--version").output().ok()?;
+  let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+  let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+
+  if !stdout.is_empty() {
+    return Some(stdout);
+  }
+  if !stderr.is_empty() {
+    return Some(stderr);
+  }
+
+  None
+}
+
+fn opencode_supports_serve(program: &OsStr) -> bool {
+  Command::new(program)
+    .arg("serve")
+    .arg("--help")
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .status()
+    .map(|s| s.success())
+    .unwrap_or(false)
+}
+
+fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
+  let mut notes = Vec::new();
+
+  // Prefer explicit override.
+  if let Ok(custom) = env::var("OPENCODE_BIN_PATH") {
+    let custom = custom.trim();
+    if !custom.is_empty() {
+      let candidate = PathBuf::from(custom);
+      if candidate.is_file() {
+        notes.push(format!("Using OPENCODE_BIN_PATH: {}", candidate.display()));
+        return (Some(candidate), false, notes);
+      }
+      notes.push(format!("OPENCODE_BIN_PATH set but missing: {}", candidate.display()));
+    }
+  }
+
+  if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
+    notes.push(format!("Found in PATH: {}", path.display()));
+    return (Some(path), true, notes);
+  }
+
+  notes.push("Not found on PATH".to_string());
+
+  for candidate in candidate_opencode_paths() {
+    if candidate.is_file() {
+      notes.push(format!("Found at {}", candidate.display()));
+      return (Some(candidate), false, notes);
+    }
+
+    notes.push(format!("Missing: {}", candidate.display()));
+  }
+
+  (None, false, notes)
+}
+
 fn run_capture_optional(command: &mut Command) -> Result<Option<ExecResult>, String> {
   match command.output() {
     Ok(output) => {
@@ -469,6 +703,55 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<(), String> {
   }
 
   Ok(())
+}
+
+fn is_mac_dmg_or_translocated(path: &Path) -> bool {
+  let path_str = path.to_string_lossy();
+  path_str.contains("/Volumes/") || path_str.contains("AppTranslocation")
+}
+
+#[tauri::command]
+fn updater_environment(_app: tauri::AppHandle) -> UpdaterEnvironment {
+  let executable_path = std::env::current_exe().ok();
+
+  let app_bundle_path = executable_path
+    .as_ref()
+    .and_then(|exe| exe.parent())
+    .and_then(|p| p.parent())
+    .and_then(|p| p.parent())
+    .map(|p| p.to_path_buf());
+
+  let mut supported = true;
+  let mut reason: Option<String> = None;
+
+  if let Some(exe) = executable_path.as_ref() {
+    if is_mac_dmg_or_translocated(exe) {
+      supported = false;
+      reason = Some(
+        "OpenWork is running from a mounted disk image. Install it to Applications to enable updates."
+          .to_string(),
+      );
+    }
+  }
+
+  if supported {
+    if let Some(bundle) = app_bundle_path.as_ref() {
+      if is_mac_dmg_or_translocated(bundle) {
+        supported = false;
+        reason = Some(
+          "OpenWork is running from a mounted disk image. Install it to Applications to enable updates."
+            .to_string(),
+        );
+      }
+    }
+  }
+
+  UpdaterEnvironment {
+    supported,
+    reason,
+    executable_path: executable_path.map(|p| p.to_string_lossy().to_string()),
+    app_bundle_path: app_bundle_path.map(|p| p.to_string_lossy().to_string()),
+  }
 }
 
 fn resolve_opencode_config_path(scope: &str, project_dir: &str) -> Result<PathBuf, String> {
@@ -545,7 +828,69 @@ fn engine_stop(manager: State<EngineManager>) -> EngineInfo {
 }
 
 #[tauri::command]
-fn engine_start(manager: State<EngineManager>, project_dir: String) -> Result<EngineInfo, String> {
+fn engine_doctor() -> EngineDoctorResult {
+  let (resolved, in_path, notes) = resolve_opencode_executable();
+
+  let (version, supports_serve) = match resolved.as_ref() {
+    Some(path) => (
+      opencode_version(path.as_os_str()),
+      opencode_supports_serve(path.as_os_str()),
+    ),
+    None => (None, false),
+  };
+
+  EngineDoctorResult {
+    found: resolved.is_some(),
+    in_path,
+    resolved_path: resolved.map(|path| path.to_string_lossy().to_string()),
+    version,
+    supports_serve,
+    notes,
+  }
+}
+
+#[tauri::command]
+fn engine_install() -> Result<ExecResult, String> {
+  #[cfg(windows)]
+  {
+    return Ok(ExecResult {
+      ok: false,
+      status: -1,
+      stdout: String::new(),
+      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart OpenWork.".to_string(),
+    });
+  }
+
+  #[cfg(not(windows))]
+  {
+    let install_dir = home_dir()
+      .unwrap_or_else(|| PathBuf::from("."))
+      .join(".opencode")
+      .join("bin");
+
+    let output = Command::new("bash")
+      .arg("-lc")
+      .arg("curl -fsSL https://opencode.ai/install | bash")
+      .env("OPENCODE_INSTALL_DIR", install_dir)
+      .output()
+      .map_err(|e| format!("Failed to run installer: {e}"))?;
+
+    let status = output.status.code().unwrap_or(-1);
+    Ok(ExecResult {
+      ok: output.status.success(),
+      status,
+      stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+      stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+    })
+  }
+}
+
+#[tauri::command]
+fn engine_start(
+  manager: State<EngineManager>,
+  project_dir: String,
+  prefer_sidecar: Option<bool>,
+) -> Result<EngineInfo, String> {
   let project_dir = project_dir.trim().to_string();
   if project_dir.is_empty() {
     return Err("projectDir is required".to_string());
@@ -559,7 +904,47 @@ fn engine_start(manager: State<EngineManager>, project_dir: String) -> Result<En
   // Stop any existing engine first.
   EngineManager::stop_locked(&mut state);
 
-  let mut command = Command::new("opencode");
+  let mut notes = Vec::new();
+
+  let resolved_sidecar = if prefer_sidecar.unwrap_or(false) {
+    #[cfg(not(windows))]
+    {
+      // Best-effort: if we eventually bundle a binary, it will likely live here.
+      let candidate = PathBuf::from("src-tauri/sidecars").join(OPENCODE_EXECUTABLE);
+      if candidate.is_file() {
+        notes.push(format!("Using bundled sidecar: {}", candidate.display()));
+        Some(candidate)
+      } else {
+        notes.push(format!(
+          "Sidecar requested but missing: {}",
+          candidate.display()
+        ));
+        None
+      }
+    }
+    #[cfg(windows)]
+    {
+      notes.push("Sidecar requested but unsupported on Windows".to_string());
+      None
+    }
+  } else {
+    None
+  };
+
+  let (program, _in_path, more_notes) = match resolved_sidecar {
+    Some(path) => (Some(path), false, Vec::new()),
+    None => resolve_opencode_executable(),
+  };
+
+  notes.extend(more_notes);
+  let Some(program) = program else {
+    let notes_text = notes.join("\n");
+    return Err(format!(
+      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+    ));
+  };
+
+  let mut command = Command::new(&program);
   command
     .arg("serve")
     .arg("--hostname")
@@ -753,20 +1138,27 @@ fn write_opencode_config(
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_dialog::init())
+    #[cfg(desktop)]
+    .plugin(tauri_plugin_process::init())
+    #[cfg(desktop)]
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .manage(EngineManager::default())
-     .invoke_handler(tauri::generate_handler![
-       engine_start,
-       engine_stop,
-       engine_info,
-       workspace_bootstrap,
-       workspace_set_active,
-       workspace_create,
-       workspace_add_authorized_root,
-       opkg_install,
-       import_skill,
-       read_opencode_config,
-       write_opencode_config
-     ])
+    .invoke_handler(tauri::generate_handler![
+      engine_start,
+      engine_stop,
+      engine_info,
+      engine_doctor,
+      engine_install,
+      workspace_bootstrap,
+      workspace_set_active,
+      workspace_create,
+      workspace_add_authorized_root,
+      opkg_install,
+      import_skill,
+      read_opencode_config,
+      write_opencode_config,
+      updater_environment
+    ])
     .run(tauri::generate_context!())
     .expect("error while running OpenWork");
 }

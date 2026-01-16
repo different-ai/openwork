@@ -9,6 +9,15 @@ export type EngineInfo = {
   pid: number | null;
 };
 
+export type EngineDoctorResult = {
+  found: boolean;
+  inPath: boolean;
+  resolvedPath: string | null;
+  version: string | null;
+  supportsServe: boolean;
+  notes: string[];
+};
+
 export type WorkspaceInfo = {
   id: string;
   name: string;
@@ -21,8 +30,14 @@ export type WorkspaceList = {
   workspaces: WorkspaceInfo[];
 };
 
-export async function engineStart(projectDir: string): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_start", { projectDir });
+export async function engineStart(
+  projectDir: string,
+  options?: { preferSidecar?: boolean },
+): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_start", {
+    projectDir,
+    preferSidecar: options?.preferSidecar ?? false,
+  });
 }
 
 export async function workspaceBootstrap(): Promise<WorkspaceList> {
@@ -63,6 +78,10 @@ export async function engineInfo(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_info");
 }
 
+export async function engineDoctor(): Promise<EngineDoctorResult> {
+  return invoke<EngineDoctorResult>("engine_doctor");
+}
+
 export async function pickDirectory(options?: {
   title?: string;
   defaultPath?: string;
@@ -83,6 +102,10 @@ export type ExecResult = {
   stdout: string;
   stderr: string;
 };
+
+export async function engineInstall(): Promise<ExecResult> {
+  return invoke<ExecResult>("engine_install");
+}
 
 export async function opkgInstall(projectDir: string, pkg: string): Promise<ExecResult> {
   return invoke<ExecResult>("opkg_install", { projectDir, package: pkg });
@@ -105,6 +128,17 @@ export type OpencodeConfigFile = {
   exists: boolean;
   content: string | null;
 };
+
+export type UpdaterEnvironment = {
+  supported: boolean;
+  reason: string | null;
+  executablePath: string | null;
+  appBundlePath: string | null;
+};
+
+export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
+  return invoke<UpdaterEnvironment>("updater_environment");
+}
 
 export async function readOpencodeConfig(
   scope: "project" | "global",

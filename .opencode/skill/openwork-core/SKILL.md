@@ -58,7 +58,7 @@ opencode -p "your prompt" -f json -q
 
 ### Clone the OpenCode mirror
 ```bash
-git clone https://github.com/opencode-ai/opencode vendor/opencode
+git clone https://github.com/anomalyco/opencode vendor/opencode
 ```
 
 ### Initialize Tauri project
@@ -81,5 +81,5 @@ pnpm tauri android init
 
 ### Clone the OpenCode mirror
 ```bash
-git clone https://github.com/opencode-ai/opencode vendor/opencode
+git clone https://github.com/anomalyco/opencode vendor/opencode
 ```

@@ -16,6 +16,7 @@ import type {
   Message,
   Part,
   PermissionRequest as ApiPermissionRequest,
+  Provider,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 
@@ -44,6 +45,10 @@ import {
   Zap,
 } from "lucide-solid";
 
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
+
 import Button from "./components/Button";
 import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OpenWorkLogo from "./components/OpenWorkLogo";
@@ -53,27 +58,63 @@ import WorkspaceChip from "./components/WorkspaceChip";
 import WorkspacePicker from "./components/WorkspacePicker";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
+  engineDoctor,
   engineInfo,
+  engineInstall,
   engineStart,
   engineStop,
   importSkill,
   opkgInstall,
   pickDirectory,
   readOpencodeConfig,
+  updaterEnvironment,
   workspaceAddAuthorizedRoot,
   workspaceBootstrap,
   workspaceCreate,
   workspaceSetActive,
   writeOpencodeConfig,
+  type EngineDoctorResult,
   type EngineInfo,
   type OpencodeConfigFile,
+  type UpdaterEnvironment,
   type WorkspaceInfo,
 } from "./lib/tauri";
 
 type Client = ReturnType<typeof createClient>;
 
+type PlaceholderAssistantMessage = {
+  id: string;
+  sessionID: string;
+  role: "assistant";
+  time: {
+    created: number;
+    completed?: number;
+  };
+  parentID: string;
+  modelID: string;
+  providerID: string;
+  mode: string;
+  agent: string;
+  path: {
+    cwd: string;
+    root: string;
+  };
+  cost: number;
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+};
+
+type MessageInfo = Message | PlaceholderAssistantMessage;
+
 type MessageWithParts = {
-  info: Message;
+  info: MessageInfo;
   parts: Part[];
 };
 
@@ -142,6 +183,56 @@ type PluginScope = "project" | "global";
 type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
 };
+
+type ModelRef = {
+  providerID: string;
+  modelID: string;
+};
+
+type ModelOption = {
+  providerID: string;
+  modelID: string;
+  title: string;
+  description?: string;
+  footer?: string;
+  disabled?: boolean;
+};
+
+const MODEL_PREF_KEY = "openwork.defaultModel";
+const THINKING_PREF_KEY = "openwork.showThinking";
+const VARIANT_PREF_KEY = "openwork.modelVariant";
+
+const DEFAULT_MODEL: ModelRef = {
+  providerID: "opencode",
+  modelID: "gpt-5-nano",
+};
+
+function formatModelRef(model: ModelRef) {
+  return `${model.providerID}/${model.modelID}`;
+}
+
+function parseModelRef(raw: string | null): ModelRef | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const [providerID, ...rest] = trimmed.split("/");
+  if (!providerID || rest.length === 0) return null;
+  return { providerID, modelID: rest.join("/") };
+}
+
+function modelEquals(a: ModelRef, b: ModelRef) {
+  return a.providerID === b.providerID && a.modelID === b.modelID;
+}
+
+function formatModelLabel(model: ModelRef, providers: Provider[] = []) {
+  const provider = providers.find((p) => p.id === model.providerID);
+  const modelInfo = provider?.models?.[model.modelID];
+
+  const providerLabel = provider?.name ?? model.providerID;
+  const modelLabel = modelInfo?.name ?? model.modelID;
+
+  return `${providerLabel} · ${modelLabel}`;
+}
 
 const CURATED_PACKAGES: CuratedPackage[] = [
   {
@@ -311,6 +402,15 @@ function safeStringify(value: unknown) {
   }
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"] as const;
+  const idx = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / Math.pow(1024, idx);
+  const rounded = idx === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded} ${units[idx]}`;
+}
+
 function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -383,7 +483,25 @@ function upsertMessage(list: MessageWithParts[], nextInfo: Message) {
 function upsertPart(list: MessageWithParts[], nextPart: Part) {
   const msgIdx = list.findIndex((m) => m.info.id === nextPart.messageID);
   if (msgIdx === -1) {
-    return list;
+    // Streaming events can arrive before we receive `message.updated`.
+    // Create a placeholder assistant message so the UI renders the part
+    // immediately, then `message.updated` will fill in the rest.
+    const placeholder: PlaceholderAssistantMessage = {
+      id: nextPart.messageID,
+      sessionID: nextPart.sessionID,
+      role: "assistant",
+      time: { created: Date.now() },
+      parentID: "",
+      modelID: "",
+      providerID: "",
+      mode: "",
+      agent: "",
+      path: { cwd: "", root: "" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    };
+
+    return list.concat({ info: placeholder, parts: [nextPart] });
   }
 
   const copy = list.slice();
@@ -420,6 +538,29 @@ function normalizeSessionStatus(status: unknown) {
   return "idle";
 }
 
+function modelFromUserMessage(info: MessageInfo): ModelRef | null {
+  if (!info || typeof info !== "object") return null;
+  if ((info as any).role !== "user") return null;
+
+  const model = (info as any).model as unknown;
+  if (!model || typeof model !== "object") return null;
+
+  const providerID = (model as any).providerID;
+  const modelID = (model as any).modelID;
+
+  if (typeof providerID !== "string" || typeof modelID !== "string") return null;
+  return { providerID, modelID };
+}
+
+function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const model = modelFromUserMessage(list[i]?.info);
+    if (model) return model;
+  }
+
+  return null;
+}
+
 export default function App() {
   const [view, setView] = createSignal<View>("onboarding");
   const [mode, setMode] = createSignal<Mode | null>(null);
@@ -428,6 +569,10 @@ export default function App() {
   const [tab, setTab] = createSignal<DashboardTab>("home");
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
+  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
+  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
+  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+  const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">("path");
 
   const [projectDir, setProjectDir] = createSignal("");
 
@@ -453,6 +598,7 @@ export default function App() {
     Array<{ id: string; content: string; status: string; priority: string }>
   >([]);
   const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
+  const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -630,10 +776,55 @@ export default function App() {
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
 
+  const [providers, setProviders] = createSignal<Provider[]>([]);
+  const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
+
+  const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
+  const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
+  const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
+  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
+  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
+
+  const [showThinking, setShowThinking] = createSignal(true);
+  const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+
+  const [appVersion, setAppVersion] = createSignal<string | null>(null);
+
+  const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);
+
+  const [updateEnv, setUpdateEnv] = createSignal<UpdaterEnvironment | null>(null);
+
+  type UpdateHandle = {
+    available: boolean;
+    currentVersion: string;
+    version: string;
+    date?: string;
+    body?: string;
+    rawJson: Record<string, unknown>;
+    close: () => Promise<void>;
+    download: (onEvent?: (event: any) => void) => Promise<void>;
+    install: () => Promise<void>;
+    downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
+  };
+
+  const [updateStatus, setUpdateStatus] = createSignal<
+    | { state: "idle"; lastCheckedAt: number | null }
+    | { state: "checking"; startedAt: number }
+    | { state: "available"; lastCheckedAt: number; version: string; date?: string; notes?: string }
+    | { state: "downloading"; lastCheckedAt: number; version: string; totalBytes: number | null; downloadedBytes: number; notes?: string }
+    | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
+    | { state: "error"; lastCheckedAt: number | null; message: string }
+  >({ state: "idle", lastCheckedAt: null });
+
+  const [pendingUpdate, setPendingUpdate] = createSignal<
+    | null
+    | { update: UpdateHandle; version: string; notes?: string }
+  >(null);
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -748,6 +939,110 @@ export default function App() {
     return sessionStatusById()[id] ?? "idle";
   });
 
+  const selectedSessionModel = createMemo<ModelRef>(() => {
+    const id = selectedSessionId();
+    if (!id) return defaultModel();
+
+    const override = sessionModelOverrideById()[id];
+    if (override) return override;
+
+    const known = sessionModelById()[id];
+    if (known) return known;
+
+    const fromMessages = lastUserModelFromMessages(messages());
+    if (fromMessages) return fromMessages;
+
+    return defaultModel();
+  });
+
+  const selectedSessionModelLabel = createMemo(() => formatModelLabel(selectedSessionModel(), providers()));
+
+  const modelPickerCurrent = createMemo(() =>
+    modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel(),
+  );
+
+  const modelOptions = createMemo<ModelOption[]>(() => {
+    const allProviders = providers();
+    const defaults = providerDefaults();
+
+    if (!allProviders.length) {
+      return [
+        {
+          providerID: DEFAULT_MODEL.providerID,
+          modelID: DEFAULT_MODEL.modelID,
+          title: DEFAULT_MODEL.modelID,
+          description: DEFAULT_MODEL.providerID,
+          footer: "Fallback",
+        },
+      ];
+    }
+
+    const sortedProviders = allProviders.slice().sort((a, b) => {
+      const aIsOpencode = a.id === "opencode";
+      const bIsOpencode = b.id === "opencode";
+      if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const next: ModelOption[] = [];
+
+    for (const provider of sortedProviders) {
+      const defaultModelID = defaults[provider.id];
+      const models = Object.values(provider.models ?? {}).filter((m) => m.status !== "deprecated");
+
+      models.sort((a, b) => {
+        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
+        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
+        if (aFree !== bFree) return aFree ? -1 : 1;
+        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+      });
+
+      for (const model of models) {
+        const footerBits: string[] = [];
+        if (defaultModelID === model.id) footerBits.push("Default");
+        if (model.cost?.input === 0 && model.cost?.output === 0) footerBits.push("Free");
+        if (model.capabilities?.reasoning) footerBits.push("Reasoning");
+
+        next.push({
+          providerID: provider.id,
+          modelID: model.id,
+          title: model.name ?? model.id,
+          description: provider.name,
+          footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
+        });
+      }
+    }
+
+    return next;
+  });
+
+  function openSessionModelPicker() {
+    setModelPickerTarget("session");
+    setModelPickerOpen(true);
+  }
+
+  function openDefaultModelPicker() {
+    setModelPickerTarget("default");
+    setModelPickerOpen(true);
+  }
+
+  function applyModelSelection(next: ModelRef) {
+    if (modelPickerTarget() === "default") {
+      setDefaultModel(next);
+      setModelPickerOpen(false);
+      return;
+    }
+
+    const id = selectedSessionId();
+    if (!id) {
+      setModelPickerOpen(false);
+      return;
+    }
+
+    setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
+    setModelPickerOpen(false);
+  }
+
   const activePermission = createMemo(() => {
     const id = selectedSessionId();
     const list = pendingPermissions();
@@ -774,6 +1069,154 @@ export default function App() {
       }
     } catch {
       // ignore
+    }
+  }
+
+  function anyActiveRuns() {
+    const statuses = sessionStatusById();
+    return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+  }
+
+  async function checkForUpdates(options?: { quiet?: boolean }) {
+    if (!isTauriRuntime()) return;
+
+    const env = updateEnv();
+    if (env && !env.supported) {
+      if (!options?.quiet) {
+        setUpdateStatus({
+          state: "error",
+          lastCheckedAt:
+            updateStatus().state === "idle"
+              ? (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+              : null,
+          message: env.reason ?? "Updates are not supported in this environment.",
+        });
+      }
+      return;
+    }
+
+    const prev = updateStatus();
+    setUpdateStatus({ state: "checking", startedAt: Date.now() });
+
+    try {
+      const update = (await check({
+        timeout: 8_000,
+      })) as unknown as UpdateHandle | null;
+      const checkedAt = Date.now();
+
+      if (!update) {
+        setPendingUpdate(null);
+        setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
+        return;
+      }
+
+      const notes = typeof update.body === "string" ? update.body : undefined;
+      setPendingUpdate({ update, version: update.version, notes });
+      setUpdateStatus({
+        state: "available",
+        lastCheckedAt: checkedAt,
+        version: update.version,
+        date: update.date,
+        notes,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+
+      if (options?.quiet) {
+        setUpdateStatus(prev);
+        return;
+      }
+
+      setPendingUpdate(null);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
+  async function downloadUpdate() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    setError(null);
+
+    const state = updateStatus();
+    const lastCheckedAt = state.state === "available" ? state.lastCheckedAt : Date.now();
+
+    setUpdateStatus({
+      state: "downloading",
+      lastCheckedAt,
+      version: pending.version,
+      totalBytes: null,
+      downloadedBytes: 0,
+      notes: pending.notes,
+    });
+
+    try {
+      await pending.update.download((event: any) => {
+        if (!event || typeof event !== "object") return;
+        const record = event as Record<string, any>;
+
+        setUpdateStatus((current) => {
+          if (current.state !== "downloading") return current;
+
+          if (record.event === "Started") {
+            const total =
+              record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
+            return { ...current, totalBytes: total };
+          }
+
+          if (record.event === "Progress") {
+            const chunk =
+              record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
+            return { ...current, downloadedBytes: current.downloadedBytes + chunk };
+          }
+
+          return current;
+        });
+      });
+
+      setUpdateStatus({
+        state: "ready",
+        lastCheckedAt,
+        version: pending.version,
+        notes: pending.notes,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt, message });
+    }
+  }
+
+  async function installUpdateAndRestart() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before installing an update.");
+      return;
+    }
+
+    setError(null);
+    try {
+      await pending.update.install();
+      await pending.update.close();
+      await relaunch();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
+  async function refreshEngineDoctor() {
+    if (!isTauriRuntime()) return;
+
+    try {
+      const result = await engineDoctor();
+      setEngineDoctorResult(result);
+      setEngineDoctorCheckedAt(Date.now());
+    } catch (e) {
+      setEngineDoctorResult(null);
+      setEngineDoctorCheckedAt(Date.now());
+      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
     }
   }
 
@@ -810,6 +1253,15 @@ export default function App() {
       await loadSessions(nextClient);
       await refreshPendingPermissions(nextClient);
 
+      try {
+        const cfg = unwrap(await nextClient.config.providers());
+        setProviders(cfg.providers);
+        setProviderDefaults(cfg.default);
+      } catch {
+        setProviders([]);
+        setProviderDefaults({});
+      }
+
       setSelectedSessionId(null);
       setMessages([]);
       setTodos([]);
@@ -842,6 +1294,26 @@ export default function App() {
       return false;
     }
 
+    try {
+      const result = await engineDoctor();
+      setEngineDoctorResult(result);
+      setEngineDoctorCheckedAt(Date.now());
+
+      if (!result.found) {
+        setError(
+          "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+        );
+        return false;
+      }
+
+      if (!result.supportsServe) {
+        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
+        return false;
+      }
+    } catch (e) {
+      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
+    }
+
     setError(null);
     setBusy(true);
     setBusyLabel("Starting engine");
@@ -854,7 +1326,7 @@ export default function App() {
         setAuthorizedDirs([dir]);
       }
 
-      const info = await engineStart(dir);
+      const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
       setEngine(info);
 
       if (info.baseUrl) {
@@ -917,6 +1389,21 @@ export default function App() {
     const msgs = unwrap(await c.session.messages({ sessionID }));
     setMessages(msgs);
 
+    const model = lastUserModelFromMessages(msgs);
+    if (model) {
+      setSessionModelById((current) => ({
+        ...current,
+        [sessionID]: model,
+      }));
+
+      setSessionModelOverrideById((current) => {
+        if (!current[sessionID]) return current;
+        const copy = { ...current };
+        delete copy[sessionID];
+        return copy;
+      });
+    }
+
     try {
       setTodos(unwrap(await c.session.todo({ sessionID })));
     } catch {
@@ -969,23 +1456,31 @@ export default function App() {
     try {
       setLastPromptSent(content);
       setPrompt("");
-      unwrap(
-        await c.session.prompt({
-          sessionID,
-          parts: [{ type: "text", text: content }],
-        }),
-      );
 
-      const msgs = unwrap(await c.session.messages({ sessionID }));
-      setMessages(msgs);
+      const model = selectedSessionModel();
 
-      try {
-        setTodos(unwrap(await c.session.todo({ sessionID })));
-      } catch {
-        setTodos([]);
-      }
+       await c.session.promptAsync({
+         sessionID,
+         model,
+         variant: modelVariant() ?? undefined,
+         parts: [{ type: "text", text: content }],
+       });
 
-      await loadSessions(c);
+       setSessionModelById((current) => ({
+         ...current,
+         [sessionID]: model,
+       }));
+
+       setSessionModelOverrideById((current) => {
+         if (!current[sessionID]) return current;
+         const copy = { ...current };
+         delete copy[sessionID];
+         return copy;
+       });
+
+       // Streaming UI is driven by SSE; do not block on fetching the full
+       // message list here.
+       await loadSessions(c).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
@@ -1046,12 +1541,19 @@ export default function App() {
       await selectSession(session.id);
       setView("session");
 
-      unwrap(
-        await c.session.prompt({
-          sessionID: session.id,
-          parts: [{ type: "text", text: template.prompt }],
-        }),
-      );
+      const model = defaultModel();
+
+       await c.session.promptAsync({
+         sessionID: session.id,
+         model,
+         variant: modelVariant() ?? undefined,
+         parts: [{ type: "text", text: template.prompt }],
+       });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [session.id]: model,
+      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -1302,9 +1804,9 @@ export default function App() {
 
   async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
     const c = client();
-    if (!c) return;
+    if (!c || permissionReplyBusy()) return;
 
-    setBusy(true);
+    setPermissionReplyBusy(true);
     setError(null);
 
     try {
@@ -1313,7 +1815,7 @@ export default function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
-      setBusy(false);
+      setPermissionReplyBusy(false);
     }
   }
 
@@ -1400,6 +1902,11 @@ export default function App() {
           setProjectDir(storedProjectDir);
         }
 
+        const storedEngineSource = window.localStorage.getItem("openwork.engineSource");
+        if (storedEngineSource === "path" || storedEngineSource === "sidecar") {
+          setEngineSource(storedEngineSource);
+        }
+
         const storedAuthorized = window.localStorage.getItem("openwork.authorizedDirs");
         if (storedAuthorized) {
           const parsed = JSON.parse(storedAuthorized) as unknown;
@@ -1449,12 +1956,78 @@ export default function App() {
             // ignore
           }
         }
+
+        const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
+        const parsedDefaultModel = parseModelRef(storedDefaultModel);
+        if (parsedDefaultModel) {
+          setDefaultModel(parsedDefaultModel);
+        } else {
+          setDefaultModel(DEFAULT_MODEL);
+          try {
+            window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(DEFAULT_MODEL));
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
+        if (storedThinking != null) {
+          try {
+            const parsed = JSON.parse(storedThinking);
+            if (typeof parsed === "boolean") {
+              setShowThinking(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
+        if (storedVariant && storedVariant.trim()) {
+          setModelVariant(storedVariant.trim());
+        }
+
+        const storedUpdateAutoCheck = window.localStorage.getItem("openwork.updateAutoCheck");
+        if (storedUpdateAutoCheck === "0" || storedUpdateAutoCheck === "1") {
+          setUpdateAutoCheck(storedUpdateAutoCheck === "1");
+        }
+
+        const storedUpdateCheckedAt = window.localStorage.getItem("openwork.updateLastCheckedAt");
+        if (storedUpdateCheckedAt) {
+          const parsed = Number(storedUpdateCheckedAt);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            setUpdateStatus({ state: "idle", lastCheckedAt: parsed });
+          }
+        }
       } catch {
         // ignore
       }
     }
 
-     await refreshEngine();
+    if (isTauriRuntime()) {
+      try {
+        setAppVersion(await getVersion());
+      } catch {
+        // ignore
+      }
+
+      try {
+        setUpdateEnv(await updaterEnvironment());
+      } catch {
+        // ignore
+      }
+
+      if (updateAutoCheck()) {
+        const state = updateStatus();
+        const lastCheckedAt = state.state === "idle" ? state.lastCheckedAt : null;
+        if (!lastCheckedAt || Date.now() - lastCheckedAt > 24 * 60 * 60_000) {
+          checkForUpdates({ quiet: true }).catch(() => undefined);
+        }
+      }
+    }
+
+    await refreshEngine();
+    await refreshEngineDoctor();
 
      // Bootstrap workspaces (Host mode only).
      if (isTauriRuntime()) {
@@ -1533,6 +2106,12 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (onboardingStep() !== "host") return;
+    void refreshEngineDoctor();
+  });
+
+  createEffect(() => {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem("openwork.baseUrl", baseUrl());
@@ -1563,6 +2142,15 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      window.localStorage.setItem("openwork.engineSource", engineSource());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
       window.localStorage.setItem("openwork.authorizedDirs", JSON.stringify(authorizedDirs()));
     } catch {
       // ignore
@@ -1585,6 +2173,74 @@ export default function App() {
            })),
          ),
        );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(defaultModel()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("openwork.updateAutoCheck", updateAutoCheck() ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(THINKING_PREF_KEY, JSON.stringify(showThinking()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = modelVariant();
+      if (value) {
+        window.localStorage.setItem(VARIANT_PREF_KEY, value);
+      } else {
+        window.localStorage.removeItem(VARIANT_PREF_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    const state = updateStatus();
+    if (typeof window === "undefined") return;
+    if (state.state === "idle" && state.lastCheckedAt) {
+      try {
+        window.localStorage.setItem("openwork.updateLastCheckedAt", String(state.lastCheckedAt));
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = modelVariant();
+      if (value) {
+        window.localStorage.setItem(VARIANT_PREF_KEY, value);
+      } else {
+        window.localStorage.removeItem(VARIANT_PREF_KEY);
+      }
     } catch {
       // ignore
     }
@@ -1668,6 +2324,22 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               if (record.info && typeof record.info === "object") {
                 const info = record.info as Message;
+
+                const model = modelFromUserMessage(info);
+                if (model) {
+                  setSessionModelById((current) => ({
+                    ...current,
+                    [info.sessionID]: model,
+                  }));
+
+                  setSessionModelOverrideById((current) => {
+                    if (!current[info.sessionID]) return current;
+                    const copy = { ...current };
+                    delete copy[info.sessionID];
+                    return copy;
+                  });
+                }
+
                 if (selectedSessionId() && info.sessionID === selectedSessionId()) {
                   setMessages((current) => upsertMessage(current, info));
                 }
@@ -1693,9 +2365,35 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               if (record.part && typeof record.part === "object") {
                 const part = record.part as Part;
-                if (selectedSessionId() && part.sessionID === selectedSessionId()) {
-                  setMessages((current) => upsertPart(current, part));
-                }
+                 if (selectedSessionId() && part.sessionID === selectedSessionId()) {
+                   setMessages((current) => {
+                     const next = upsertPart(current, part);
+
+                     // Some streaming servers only send `delta` updates and keep
+                     // `part.text` as the full aggregation; others send the
+                     // full part each time. If we have a delta, apply it to the
+                     // latest text part to ensure visible streaming.
+                     if (typeof record.delta === "string" && record.delta && part.type === "text") {
+                       const msgIdx = next.findIndex((m) => m.info.id === part.messageID);
+                       if (msgIdx !== -1) {
+                         const msg = next[msgIdx];
+                         const parts = msg.parts.slice();
+                         const pIdx = parts.findIndex((p) => p.id === part.id);
+                         if (pIdx !== -1) {
+                           const currentPart = parts[pIdx] as any;
+                           if (typeof currentPart.text === "string" && currentPart.text.endsWith(record.delta) === false) {
+                             parts[pIdx] = { ...(parts[pIdx] as any), text: `${currentPart.text}${record.delta}` };
+                             const copy = next.slice();
+                             copy[msgIdx] = { ...msg, parts };
+                             return copy;
+                           }
+                         }
+                       }
+                     }
+
+                     return next;
+                   });
+                 }
               }
             }
           }
@@ -1860,8 +2558,190 @@ export default function App() {
                   Start Engine
                 </Button>
 
-                <div class="flex justify-center">
-                  <button
+                <Show when={!authorizedDirs().length}>
+                  <div class="text-xs text-zinc-600">
+                    No authorized folders yet. Add at least your project folder.
+                  </div>
+                </Show>
+
+                <div class="flex gap-2">
+                  <input
+                    class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
+                    placeholder="Add folder path…"
+                    value={newAuthorizedDir()}
+                    onInput={(e) => setNewAuthorizedDir(e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        addAuthorizedDir();
+                      }
+                    }}
+                  />
+                  <Show when={isTauriRuntime()}>
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const selection = await pickDirectory({ title: "Add authorized folder" });
+                          const path =
+                            typeof selection === "string"
+                              ? selection
+                              : Array.isArray(selection)
+                                ? selection[0]
+                                : null;
+                          if (path) {
+                            setAuthorizedDirs((current) =>
+                              current.includes(path) ? current : [...current, path],
+                            );
+                          }
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : safeStringify(e));
+                        }
+                      }}
+                      disabled={busy()}
+                    >
+                      Pick
+                    </Button>
+                  </Show>
+                  <Button
+                    variant="secondary"
+                    onClick={addAuthorizedDir}
+                    disabled={!newAuthorizedDir().trim()}
+                  >
+                    <Plus size={16} />
+                    Add
+                  </Button>
+                </div>
+
+                <Show when={isTauriRuntime()}>
+                  <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                        <div class="mt-1 text-xs text-zinc-500">
+                          <Show when={engineDoctorResult()} fallback={<span>Checking install…</span>}>
+                            <Show
+                              when={engineDoctorResult()?.found}
+                              fallback={<span>Not found. Install to run Host mode.</span>}
+                            >
+                              <span class="font-mono">
+                                {engineDoctorResult()?.version ?? "Installed"}
+                              </span>
+                              <Show when={engineDoctorResult()?.resolvedPath}>
+                                <span class="text-zinc-600"> · </span>
+                                <span class="font-mono text-zinc-600 truncate">
+                                  {engineDoctorResult()?.resolvedPath}
+                                </span>
+                              </Show>
+                            </Show>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="secondary"
+                        onClick={async () => {
+                          setEngineInstallLogs(null);
+                          await refreshEngineDoctor();
+                        }}
+                        disabled={busy()}
+                      >
+                        Re-check
+                      </Button>
+                    </div>
+
+                    <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
+                      <div class="mt-4 space-y-2">
+                        <div class="text-xs text-zinc-500">Install one of these:</div>
+                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                          brew install anomalyco/tap/opencode
+                        </div>
+                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                          curl -fsSL https://opencode.ai/install | bash
+                        </div>
+
+                        <div class="flex gap-2 pt-2">
+                          <Button
+                            onClick={async () => {
+                              setError(null);
+                              setEngineInstallLogs(null);
+                              setBusy(true);
+                              setBusyLabel("Installing OpenCode");
+                              setBusyStartedAt(Date.now());
+
+                              try {
+                                const result = await engineInstall();
+                                const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
+                                setEngineInstallLogs(combined || null);
+
+                                if (!result.ok) {
+                                  setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
+                                }
+
+                                await refreshEngineDoctor();
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : safeStringify(e));
+                              } finally {
+                                setBusy(false);
+                                setBusyLabel(null);
+                                setBusyStartedAt(null);
+                              }
+                            }}
+                            disabled={busy()}
+                          >
+                            Install OpenCode
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
+                              setEngineInstallLogs(notes || null);
+                            }}
+                            disabled={busy()}
+                          >
+                            Show search notes
+                          </Button>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={engineInstallLogs()}>
+                      <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{engineInstallLogs()}</pre>
+                    </Show>
+
+                    <Show when={engineDoctorCheckedAt()}>
+                      <div class="mt-3 text-[11px] text-zinc-600">
+                        Last checked {new Date(engineDoctorCheckedAt()!).toLocaleTimeString()}
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
+                <Button
+                  onClick={async () => {
+                    if (!authorizedDirs().length && projectDir().trim()) {
+                      setAuthorizedDirs([projectDir().trim()]);
+                    }
+
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost();
+                    if (!ok) {
+                      setOnboardingStep("host");
+                    }
+                  }}
+                  disabled={
+                    busy() ||
+                    (isTauriRuntime() &&
+                      (engineDoctorResult()?.found === false ||
+                        engineDoctorResult()?.supportsServe === false))
+                  }
+                  class="w-full py-3 text-base"
+                >
+                  Confirm & Start Engine
+                </Button>
+
+                <Button
+                  variant="ghost"
                     onClick={() => {
                       setMode(null);
                       setOnboardingStep("mode");
@@ -2701,6 +3581,223 @@ export default function App() {
                   </Button>
                 </Show>
               </div>
+
+              <Show when={isTauriRuntime() && mode() === "host"}>
+                <div class="pt-4 border-t border-zinc-800/60 space-y-3">
+                  <div class="text-xs text-zinc-500">Engine source</div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <Button
+                      variant={engineSource() === "path" ? "secondary" : "outline"}
+                      onClick={() => setEngineSource("path")}
+                      disabled={busy()}
+                    >
+                      PATH
+                    </Button>
+                    <Button
+                      variant={engineSource() === "sidecar" ? "secondary" : "outline"}
+                      onClick={() => setEngineSource("sidecar")}
+                      disabled={busy()}
+                    >
+                      Sidecar
+                    </Button>
+                  </div>
+                  <div class="text-[11px] text-zinc-600">
+                    PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.
+                  </div>
+                </div>
+              </Show>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-white">Model</div>
+                <div class="text-xs text-zinc-500">Defaults + thinking controls for runs.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200 truncate">{formatModelLabel(defaultModel(), providers())}</div>
+                  <div class="text-xs text-zinc-600 font-mono truncate">{formatModelRef(defaultModel())}</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={openDefaultModelPicker}
+                  disabled={busy()}
+                >
+                  Change
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Thinking</div>
+                  <div class="text-xs text-zinc-600">Show thinking parts (Developer mode only).</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => setShowThinking((v) => !v)}
+                  disabled={busy()}
+                >
+                  {showThinking() ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Model variant</div>
+                  <div class="text-xs text-zinc-600 font-mono truncate">
+                    {modelVariant() ? modelVariant() : "(default)"}
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => {
+                    const next = window.prompt(
+                      "Model variant (provider-specific, e.g. high/max/minimal). Leave blank to clear.",
+                      modelVariant() ?? "",
+                    );
+                    if (next == null) return;
+                    const trimmed = next.trim();
+                    setModelVariant(trimmed ? trimmed : null);
+                  }}
+                  disabled={busy()}
+                >
+                  Edit
+                </Button>
+              </div>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-medium text-white">Updates</div>
+                  <div class="text-xs text-zinc-500">Keep OpenWork up to date.</div>
+                </div>
+                <div class="text-xs text-zinc-600 font-mono">{appVersion() ? `v${appVersion()}` : ""}</div>
+              </div>
+
+              <Show
+                when={!isTauriRuntime()}
+                fallback={
+                  <Show
+                    when={updateEnv() && !updateEnv()!.supported}
+                    fallback={
+                      <>
+                        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                          <div class="space-y-0.5">
+                            <div class="text-sm text-white">Automatic checks</div>
+                            <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                          </div>
+                          <button
+                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                              updateAutoCheck()
+                                ? "bg-white/10 text-white border-white/20"
+                                : "text-zinc-500 border-zinc-800 hover:text-white"
+                            }`}
+                            onClick={() => setUpdateAutoCheck((v) => !v)}
+                          >
+                            {updateAutoCheck() ? "On" : "Off"}
+                          </button>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                          <div class="space-y-0.5">
+                            <div class="text-sm text-white">
+                              <Switch>
+                                <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                <Match when={updateStatus().state === "available"}>
+                                  Update available: v{(updateStatus() as any).version}
+                                </Match>
+                                <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                <Match when={updateStatus().state === "ready"}>
+                                  Ready to install: v{(updateStatus() as any).version}
+                                </Match>
+                                <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                <Match when={true}>Up to date</Match>
+                              </Switch>
+                            </div>
+                            <Show
+                              when={
+                                updateStatus().state === "idle" &&
+                                (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+                              }
+                            >
+                              <div class="text-xs text-zinc-600">
+                                Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                              </div>
+                            </Show>
+                            <Show when={updateStatus().state === "available" && (updateStatus() as any).date}>
+                              <div class="text-xs text-zinc-600">Published {(updateStatus() as any).date}</div>
+                            </Show>
+                            <Show when={updateStatus().state === "downloading"}>
+                              <div class="text-xs text-zinc-600">
+                                {formatBytes((updateStatus() as any).downloadedBytes)}
+                                <Show when={(updateStatus() as any).totalBytes != null}>
+                                  {` / ${formatBytes((updateStatus() as any).totalBytes)}`}
+                                </Show>
+                              </div>
+                            </Show>
+                            <Show when={updateStatus().state === "error"}>
+                              <div class="text-xs text-red-300">{(updateStatus() as any).message}</div>
+                            </Show>
+                          </div>
+
+                          <div class="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              class="text-xs h-8 py-0 px-3"
+                              onClick={() => checkForUpdates()}
+                              disabled={busy() || updateStatus().state === "checking" || updateStatus().state === "downloading"}
+                            >
+                              Check
+                            </Button>
+
+                            <Show when={updateStatus().state === "available"}>
+                              <Button
+                                variant="secondary"
+                                class="text-xs h-8 py-0 px-3"
+                                onClick={() => downloadUpdate()}
+                                disabled={busy() || updateStatus().state === "downloading"}
+                              >
+                                Download
+                              </Button>
+                            </Show>
+
+                            <Show when={updateStatus().state === "ready"}>
+                              <Button
+                                variant="secondary"
+                                class="text-xs h-8 py-0 px-3"
+                                onClick={() => installUpdateAndRestart()}
+                                disabled={busy() || anyActiveRuns()}
+                                title={anyActiveRuns() ? "Stop active runs to update" : ""}
+                              >
+                                Install & Restart
+                              </Button>
+                            </Show>
+                          </div>
+                        </div>
+
+                        <Show when={updateStatus().state === "available" && (updateStatus() as any).notes}>
+                          <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
+                            {(updateStatus() as any).notes}
+                          </div>
+                        </Show>
+                      </>
+                    }
+                  >
+                    <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                      {updateEnv()?.reason ?? "Updates are not supported in this environment."}
+                    </div>
+                  </Show>
+                }
+              >
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                  Updates are only available in the desktop app.
+                </div>
+              </Show>
             </div>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
@@ -3020,7 +4117,16 @@ export default function App() {
               </div>
             </div>
 
-            <div class="flex gap-2">
+            <div class="flex gap-2 items-center">
+              <button
+                class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/60 border border-zinc-800 text-xs text-zinc-200 hover:bg-zinc-900/80 transition-colors max-w-[220px]"
+                onClick={openSessionModelPicker}
+                title="Change model"
+              >
+                <span class="truncate">{selectedSessionModelLabel()}</span>
+                <ChevronRight size={14} class="text-zinc-500" />
+              </button>
+
               <Button variant="ghost" class="text-xs" onClick={openTemplateModal} disabled={busy()}>
                 <FileText size={14} />
               </Button>
@@ -3067,22 +4173,23 @@ export default function App() {
 
                     return (
                       <Show when={renderableParts().length > 0}>
-                        <div class={`flex ${msg.info.role === "user" ? "justify-end" : "justify-start"}`}>
+                         <div class={`flex ${(msg.info as any).role === "user" ? "justify-end" : "justify-start"}`}>
                           <div
                             class={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
-                              msg.info.role === "user"
-                                ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
-                                : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
+                               (msg.info as any).role === "user"
+                                 ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
+                                 : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
                             }`}
                           >
                             <For each={renderableParts()}>
                               {(p, idx) => (
                                 <div class={idx() === renderableParts().length - 1 ? "" : "mb-2"}>
-                                  <PartView
-                                    part={p}
-                                    developerMode={developerMode()}
-                                    tone={msg.info.role === "user" ? "dark" : "light"}
-                                  />
+                                    <PartView
+                                      part={p}
+                                      developerMode={developerMode()}
+                                      showThinking={showThinking()}
+                                      tone={(msg.info as any).role === "user" ? "dark" : "light"}
+                                    />
                                 </div>
                               )}
                             </For>
@@ -3247,7 +4354,7 @@ export default function App() {
                       variant="outline"
                       class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
                       onClick={() => respondPermission(activePermission()!.id, "reject")}
-                      disabled={busy()}
+                      disabled={permissionReplyBusy()}
                     >
                       Deny
                     </Button>
@@ -3256,7 +4363,7 @@ export default function App() {
                         variant="secondary"
                         class="text-xs"
                         onClick={() => respondPermission(activePermission()!.id, "once")}
-                        disabled={busy()}
+                        disabled={permissionReplyBusy()}
                       >
                         Once
                       </Button>
@@ -3264,7 +4371,7 @@ export default function App() {
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
                         onClick={() => respondPermissionAndRemember(activePermission()!.id, "always")}
-                        disabled={busy()}
+                        disabled={permissionReplyBusy()}
                       >
                         Add to workspace
                       </Button>
@@ -3293,6 +4400,91 @@ export default function App() {
             <DashboardView />
           </Match>
         </Switch>
+      </Show>
+
+      <Show when={modelPickerOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-white">
+                    {modelPickerTarget() === "default" ? "Default model" : "Model"}
+                  </h3>
+                  <p class="text-sm text-zinc-400 mt-1">
+                    Choose from your configured providers. This selection {modelPickerTarget() === "default"
+                      ? "will be used for new sessions"
+                      : "applies to your next message"}.
+                  </p>
+                </div>
+                <Button
+                  variant="ghost"
+                  class="!p-2 rounded-full"
+                  onClick={() => setModelPickerOpen(false)}
+                >
+                  <X size={16} />
+                </Button>
+              </div>
+
+              <div class="mt-6 space-y-2">
+                 <For each={modelOptions()}>
+                   {(opt) => {
+                     const active = () =>
+                       modelEquals(modelPickerCurrent(), {
+                         providerID: opt.providerID,
+                         modelID: opt.modelID,
+                       });
+
+                     return (
+                       <button
+                         class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+                           active()
+                             ? "border-white/20 bg-white/5"
+                             : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                         }`}
+                         onClick={() =>
+                           applyModelSelection({
+                             providerID: opt.providerID,
+                             modelID: opt.modelID,
+                           })
+                         }
+                       >
+                         <div class="flex items-start justify-between gap-3">
+                           <div class="min-w-0">
+                             <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
+                               <span class="truncate">{opt.title}</span>
+                             </div>
+                             <Show when={opt.description}>
+                               <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
+                             </Show>
+                             <Show when={opt.footer}>
+                               <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
+                             </Show>
+                             <div class="text-[11px] text-zinc-600 font-mono mt-2">
+                               {opt.providerID}/{opt.modelID}
+                             </div>
+                           </div>
+
+                           <div class="pt-0.5 text-zinc-500">
+                             <Show when={active()} fallback={<Circle size={14} />}>
+                               <CheckCircle2 size={14} class="text-emerald-400" />
+                             </Show>
+                           </div>
+                         </div>
+                       </button>
+                     );
+                   }}
+                 </For>
+              </div>
+
+              <div class="mt-6 flex justify-end">
+                <Button variant="outline" onClick={() => setModelPickerOpen(false)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
       </Show>
 
       <Show when={templateModalOpen()}>

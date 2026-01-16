@@ -132,8 +132,8 @@ Add a Tauri command to check engine availability and return structured info:
 
 Candidate URLs:
 
-- `https://opencode.ai/install` (if this is the canonical stable redirect)
-- `https://raw.githubusercontent.com/opencode-ai/opencode/refs/heads/main/install` (as documented upstream)
+- `https://opencode.ai/install` (canonical stable installer URL)
+- `https://raw.githubusercontent.com/anomalyco/opencode/dev/install` (direct script fallback; matches upstream `dev` branch)
 
 Execution strategy (conceptual):
 
@@ -183,9 +183,9 @@ OpenWork should show OS-specific instructions with copy buttons.
 
 Example:
 
-- macOS (Homebrew): `brew install opencode-ai/tap/opencode`
+- macOS/Linux (Homebrew, recommended): `brew install anomalyco/tap/opencode`
 - macOS/Linux (script): `curl -fsSL https://opencode.ai/install | bash`
-- Linux (script fallback): `curl -fsSL https://raw.githubusercontent.com/opencode-ai/opencode/refs/heads/main/install | bash`
+- macOS/Linux (script fallback): `curl -fsSL https://raw.githubusercontent.com/anomalyco/opencode/dev/install | bash`
 
 ## Acceptance Criteria
 

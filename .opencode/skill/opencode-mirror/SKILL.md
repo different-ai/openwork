@@ -19,5 +19,5 @@ git -C vendor/opencode pull --ff-only
 
 ### Clone mirror
 ```bash
-git clone https://github.com/opencode-ai/opencode vendor/opencode
+git clone https://github.com/anomalyco/opencode vendor/opencode
 ```
