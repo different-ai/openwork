@@ -10,6 +10,24 @@ on:
         description: "Tag to release (e.g., v0.1.2). Leave empty to use current ref."
         required: false
         type: string
+      release_name:
+        description: "Release title (defaults to OpenWork <tag>)"
+        required: false
+        type: string
+      release_body:
+        description: "Release notes body in Markdown (defaults to a short placeholder)"
+        required: false
+        type: string
+      draft:
+        description: "Create the GitHub Release as a draft"
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -34,15 +52,16 @@ jobs:
             args: "--target x86_64-apple-darwin --bundles dmg"
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set release tag
+      - name: Set release metadata
         shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name }}
+          INPUT_RELEASE_BODY: ${{ github.event.inputs.release_body }}
         run: |
           set -euo pipefail
 
-          TAG_INPUT="${{ inputs.tag }}"
+          TAG_INPUT="${INPUT_TAG:-}"
           if [ -n "$TAG_INPUT" ]; then
             if [[ "$TAG_INPUT" == v* ]]; then
               TAG="$TAG_INPUT"
@@ -53,7 +72,39 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
           fi
 
+          RELEASE_NAME_INPUT="${INPUT_RELEASE_NAME:-}"
+          if [ -n "$RELEASE_NAME_INPUT" ]; then
+            RELEASE_NAME="$RELEASE_NAME_INPUT"
+          else
+            RELEASE_NAME="OpenWork $TAG"
+          fi
+
+          RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
+          if [ -n "$RELEASE_BODY_INPUT" ]; then
+            RELEASE_BODY="$RELEASE_BODY_INPUT"
+          else
+            RELEASE_BODY="See the assets to download this version and install."
+          fi
+
+          # Guard against multiline env var injection
+          TAG="${TAG//$'\n'/}"
+          TAG="${TAG//$'\r'/}"
+          RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
+          RELEASE_NAME="${RELEASE_NAME//$'\r'/ }"
+
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_ENV"
+
+          {
+            echo "RELEASE_BODY<<__OPENWORK_RELEASE_BODY_EOF__"
+            printf '%s\n' "$RELEASE_BODY"
+            echo "__OPENWORK_RELEASE_BODY_EOF__"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -105,10 +156,10 @@ jobs:
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         with:
           tagName: ${{ env.RELEASE_TAG }}
-          releaseName: OpenWork ${{ env.RELEASE_TAG }}
-          releaseBody: See the assets to download this version and install.
-          releaseDraft: false
-          prerelease: false
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
           projectPath: .
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
