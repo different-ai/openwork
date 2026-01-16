@@ -544,6 +544,7 @@ export default function App() {
     Array<{ id: string; content: string; status: string; priority: string }>
   >([]);
   const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
+  const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -1361,9 +1362,9 @@ export default function App() {
 
   async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
     const c = client();
-    if (!c) return;
+    if (!c || permissionReplyBusy()) return;
 
-    setBusy(true);
+    setPermissionReplyBusy(true);
     setError(null);
 
     try {
@@ -1372,7 +1373,7 @@ export default function App() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
-      setBusy(false);
+      setPermissionReplyBusy(false);
     }
   }
 
@@ -3453,7 +3454,7 @@ export default function App() {
                       variant="outline"
                       class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
                       onClick={() => respondPermission(activePermission()!.id, "reject")}
-                      disabled={busy()}
+                      disabled={permissionReplyBusy()}
                     >
                       Deny
                     </Button>
@@ -3462,7 +3463,7 @@ export default function App() {
                         variant="secondary"
                         class="text-xs"
                         onClick={() => respondPermission(activePermission()!.id, "once")}
-                        disabled={busy()}
+                        disabled={permissionReplyBusy()}
                       >
                         Once
                       </Button>
@@ -3470,7 +3471,7 @@ export default function App() {
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
                         onClick={() => respondPermission(activePermission()!.id, "always")}
-                        disabled={busy()}
+                        disabled={permissionReplyBusy()}
                       >
                         Allow
                       </Button>

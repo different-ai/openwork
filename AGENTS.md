@@ -86,6 +86,14 @@ Key primitives to expose:
 | Interaction latency | <100ms |
 | Bundle size (JS) | <200KB gzipped |
 
+## Skill: SolidJS Patterns
+
+When editing SolidJS UI (`src/**/*.tsx`), consult:
+
+- `.opencode/skill/solidjs-patterns/SKILL.md`
+
+This captures OpenWork’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
+
 ## Skill: Trigger a Release
 
 OpenWork releases are built by GitHub Actions (`Release App`) and publish signed + notarized macOS DMGs to the GitHub Release for a tag.
