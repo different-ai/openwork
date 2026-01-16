@@ -8,6 +8,56 @@ use std::{
   sync::Mutex,
 };
 
+#[cfg(target_os = "macos")]
+const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
+
+fn candidate_xdg_data_dirs() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+  let Some(home) = home_dir() else {
+    return candidates;
+  };
+
+  candidates.push(home.join(".local").join("share"));
+  candidates.push(home.join(".config"));
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(home.join(MACOS_APP_SUPPORT_DIR));
+  }
+
+  candidates
+}
+
+fn candidate_xdg_config_dirs() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+  let Some(home) = home_dir() else {
+    return candidates;
+  };
+
+  candidates.push(home.join(".config"));
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(home.join(MACOS_APP_SUPPORT_DIR));
+  }
+
+  candidates
+}
+
+fn maybe_infer_xdg_home(var_name: &str, candidates: Vec<PathBuf>, relative_marker: &Path) -> Option<String> {
+  if env::var_os(var_name).is_some() {
+    return None;
+  }
+
+  for base in candidates {
+    if base.join(relative_marker).is_file() {
+      return Some(base.to_string_lossy().to_string());
+    }
+  }
+
+  None
+}
+
 use serde::Serialize;
 use tauri::State;
 
@@ -507,6 +557,29 @@ fn engine_start(
     .stdin(Stdio::null())
     .stdout(Stdio::null())
     .stderr(Stdio::null());
+
+  // Best-effort: restore env parity with terminal installs.
+  // If the GUI process doesn't have XDG_* vars but the user's OpenCode auth/config lives under
+  // a common XDG location, infer and set them for the engine process.
+  if let Some(xdg_data_home) = maybe_infer_xdg_home(
+    "XDG_DATA_HOME",
+    candidate_xdg_data_dirs(),
+    Path::new("opencode/auth.json"),
+  ) {
+    command.env("XDG_DATA_HOME", xdg_data_home);
+  }
+
+  // Help OpenCode find global config/plugins in GUI contexts.
+  if let Some(xdg_config_home) = maybe_infer_xdg_home(
+    "XDG_CONFIG_HOME",
+    candidate_xdg_config_dirs(),
+    Path::new("opencode/opencode.json"),
+  ) {
+    command.env("XDG_CONFIG_HOME", xdg_config_home);
+  }
+
+  // Tag requests and logs to make debugging easier.
+  command.env("OPENCODE_CLIENT", "openwork");
 
   let child = command
     .spawn()

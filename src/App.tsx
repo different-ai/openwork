@@ -608,6 +608,7 @@ export default function App() {
 
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
+  const [providerConnectedIds, setProviderConnectedIds] = createSignal<string[]>([]);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
@@ -839,6 +840,7 @@ export default function App() {
           title: model.name ?? model.id,
           description: provider.name,
           footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
+          disabled: !providerConnectedIds().includes(provider.id),
         });
       }
     }
@@ -1084,12 +1086,22 @@ export default function App() {
       await refreshPendingPermissions(nextClient);
 
       try {
-        const cfg = unwrap(await nextClient.config.providers());
-        setProviders(cfg.providers);
-        setProviderDefaults(cfg.default);
+        const providerList = unwrap(await nextClient.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
       } catch {
-        setProviders([]);
-        setProviderDefaults({});
+        // Backwards compatibility: older servers may not support provider.list
+        try {
+          const cfg = unwrap(await nextClient.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
       }
 
       setSelectedSessionId(null);
@@ -4148,20 +4160,24 @@ export default function App() {
                          modelID: opt.modelID,
                        });
 
-                     return (
-                       <button
-                         class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                           active()
-                             ? "border-white/20 bg-white/5"
-                             : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
-                         }`}
-                         onClick={() =>
-                           applyModelSelection({
-                             providerID: opt.providerID,
-                             modelID: opt.modelID,
-                           })
-                         }
-                       >
+                      return (
+                        <button
+                          class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+                            active()
+                              ? "border-white/20 bg-white/5"
+                              : opt.disabled
+                                ? "border-zinc-800/70 bg-zinc-950/30 opacity-60 cursor-not-allowed"
+                                : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                          }`}
+                          disabled={opt.disabled}
+                          onClick={() => {
+                            if (opt.disabled) return;
+                            applyModelSelection({
+                              providerID: opt.providerID,
+                              modelID: opt.modelID,
+                            });
+                          }}
+                        >
                          <div class="flex items-start justify-between gap-3">
                            <div class="min-w-0">
                              <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
@@ -4170,9 +4186,12 @@ export default function App() {
                              <Show when={opt.description}>
                                <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
                              </Show>
-                             <Show when={opt.footer}>
-                               <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
-                             </Show>
+                              <Show when={opt.footer}>
+                                <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
+                              </Show>
+                              <Show when={opt.disabled}>
+                                <div class="text-[11px] text-amber-300/80 mt-2">Not connected</div>
+                              </Show>
                              <div class="text-[11px] text-zinc-600 font-mono mt-2">
                                {opt.providerID}/{opt.modelID}
                              </div>
