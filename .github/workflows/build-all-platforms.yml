@@ -1,0 +1,111 @@
+name: Build All Platforms
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g., v0.1.2). Leave empty to use current ref."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+
+          # macOS Intel
+          - platform: macos-13
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+
+          # macOS Apple Silicon
+          - platform: macos-14
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+
+          # Linux
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG_INPUT="${{ inputs.tag }}"
+          if [ -n "$TAG_INPUT" ]; then
+            if [[ "$TAG_INPUT" == v* ]]; then
+              TAG="$TAG_INPUT"
+            else
+              TAG="v$TAG_INPUT"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      # Linux dependencies
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0.5.17
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: OpenWork ${{ env.RELEASE_TAG }}
+          releaseBody: |
+            ## Downloads
+            - **Windows**: `.exe` or `.msi` installer
+            - **macOS**: `.dmg` disk image
+            - **Linux**: `.AppImage` or `.deb` package
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
