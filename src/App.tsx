@@ -40,6 +40,7 @@ import {
   Shield,
   Smartphone,
   Trash2,
+  Search,
   Upload,
   X,
   Zap,
@@ -53,6 +54,7 @@ import Button from "./components/Button";
 import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OpenWorkLogo from "./components/OpenWorkLogo";
 import PartView from "./components/PartView";
+import ThinkingBlock, { type ThinkingStep } from "./components/ThinkingBlock";
 import TextInput from "./components/TextInput";
 import WorkspaceChip from "./components/WorkspaceChip";
 import WorkspacePicker from "./components/WorkspacePicker";
@@ -194,6 +196,8 @@ type SuggestedPlugin = {
 
 type PluginScope = "project" | "global";
 
+type ReloadReason = "plugins" | "skills";
+
 type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
 };
@@ -210,6 +214,8 @@ type ModelOption = {
   description?: string;
   footer?: string;
   disabled?: boolean;
+  isFree: boolean;
+  isConnected: boolean;
 };
 
 const MODEL_PREF_KEY = "openwork.defaultModel";
@@ -662,7 +668,7 @@ export default function App() {
     return workspaces().find((w) => w.id === id) ?? null;
   });
 
-   const activeWorkspacePath = createMemo(() => activeWorkspace()?.path ?? "");
+  const activeWorkspacePath = createMemo(() => activeWorkspace()?.path ?? "");
 
   const activeWorkspaceRoot = createMemo(() => {
     const ws = activeWorkspace();
@@ -893,15 +899,26 @@ export default function App() {
     }
   }
 
+  const [sidebarPluginList, setSidebarPluginList] = createSignal<string[]>([]);
+  const [sidebarPluginStatus, setSidebarPluginStatus] = createSignal<string | null>(null);
+
+  const [reloadRequired, setReloadRequired] = createSignal(false);
+  const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
+  const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
+  const [reloadBusy, setReloadBusy] = createSignal(false);
+  const [reloadError, setReloadError] = createSignal<string | null>(null);
+
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
 
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
+  const [providerConnectedIds, setProviderConnectedIds] = createSignal<string[]>([]);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
+  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
   const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
   const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
 
@@ -1085,17 +1102,19 @@ export default function App() {
     const allProviders = providers();
     const defaults = providerDefaults();
 
-    if (!allProviders.length) {
-      return [
-        {
-          providerID: DEFAULT_MODEL.providerID,
-          modelID: DEFAULT_MODEL.modelID,
-          title: DEFAULT_MODEL.modelID,
-          description: DEFAULT_MODEL.providerID,
-          footer: "Fallback",
-        },
-      ];
-    }
+     if (!allProviders.length) {
+       return [
+         {
+           providerID: DEFAULT_MODEL.providerID,
+           modelID: DEFAULT_MODEL.modelID,
+           title: DEFAULT_MODEL.modelID,
+           description: DEFAULT_MODEL.providerID,
+           footer: "Fallback",
+           isFree: false,
+           isConnected: true,
+         },
+       ];
+     }
 
     const sortedProviders = allProviders.slice().sort((a, b) => {
       const aIsOpencode = a.id === "opencode";
@@ -1106,43 +1125,76 @@ export default function App() {
 
     const next: ModelOption[] = [];
 
-    for (const provider of sortedProviders) {
-      const defaultModelID = defaults[provider.id];
-      const models = Object.values(provider.models ?? {}).filter((m) => m.status !== "deprecated");
+     for (const provider of sortedProviders) {
+       const defaultModelID = defaults[provider.id];
+       const isConnected = providerConnectedIds().includes(provider.id);
+       const models = Object.values(provider.models ?? {}).filter((m) => m.status !== "deprecated");
+ 
+       models.sort((a, b) => {
+         const aFree = a.cost?.input === 0 && a.cost?.output === 0;
+         const bFree = b.cost?.input === 0 && b.cost?.output === 0;
+         if (aFree !== bFree) return aFree ? -1 : 1;
+         return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+       });
+ 
+       for (const model of models) {
+         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
+         const footerBits: string[] = [];
+         if (defaultModelID === model.id) footerBits.push("Default");
+         if (isFree) footerBits.push("Free");
+         if (model.capabilities?.reasoning) footerBits.push("Reasoning");
+ 
+         next.push({
+           providerID: provider.id,
+           modelID: model.id,
+           title: model.name ?? model.id,
+           description: provider.name,
+           footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
+           disabled: !isConnected,
+           isFree,
+           isConnected,
+         });
+       }
+     }
+ 
+     next.sort((a, b) => {
+       if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
+       if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
+       return a.title.localeCompare(b.title);
+     });
+ 
+     return next;
+  });
 
-      models.sort((a, b) => {
-        const aFree = a.cost?.input === 0 && a.cost?.output === 0;
-        const bFree = b.cost?.input === 0 && b.cost?.output === 0;
-        if (aFree !== bFree) return aFree ? -1 : 1;
-        return (a.name ?? a.id).localeCompare(b.name ?? b.id);
-      });
+  const filteredModelOptions = createMemo(() => {
+    const q = modelPickerQuery().trim().toLowerCase();
+    const options = modelOptions();
+    if (!q) return options;
 
-      for (const model of models) {
-        const footerBits: string[] = [];
-        if (defaultModelID === model.id) footerBits.push("Default");
-        if (model.cost?.input === 0 && model.cost?.output === 0) footerBits.push("Free");
-        if (model.capabilities?.reasoning) footerBits.push("Reasoning");
-
-        next.push({
-          providerID: provider.id,
-          modelID: model.id,
-          title: model.name ?? model.id,
-          description: provider.name,
-          footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
-        });
-      }
-    }
-
-    return next;
+    return options.filter((opt) => {
+      const haystack = [
+        opt.title,
+        opt.description ?? "",
+        opt.footer ?? "",
+        `${opt.providerID}/${opt.modelID}`,
+        opt.isConnected ? "connected" : "disconnected",
+        opt.isFree ? "free" : "paid",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
   });
 
   function openSessionModelPicker() {
     setModelPickerTarget("session");
+    setModelPickerQuery("");
     setModelPickerOpen(true);
   }
 
   function openDefaultModelPicker() {
     setModelPickerTarget("default");
+    setModelPickerQuery("");
     setModelPickerOpen(true);
   }
 
@@ -1195,6 +1247,111 @@ export default function App() {
   function anyActiveRuns() {
     const statuses = sessionStatusById();
     return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+  }
+
+  function markReloadRequired(reason: ReloadReason) {
+    setReloadRequired(true);
+    setReloadLastTriggeredAt(Date.now());
+    setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
+  }
+
+  function clearReloadRequired() {
+    setReloadRequired(false);
+    setReloadReasons([]);
+    setReloadError(null);
+  }
+
+  const reloadCopy = createMemo(() => {
+    const reasons = reloadReasons();
+    if (!reasons.length) {
+      return {
+        title: "Reload required",
+        body: "OpenWork detected changes that require reloading the OpenCode instance.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "plugins") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "skills") {
+      return {
+        title: "Reload required",
+        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
+      };
+    }
+
+    return {
+      title: "Reload required",
+      body: "OpenWork detected plugin/skill changes. Reload the engine to apply them.",
+    };
+  });
+
+  const canReloadEngine = createMemo(() => {
+    if (!reloadRequired()) return false;
+    if (!client()) return false;
+    if (reloadBusy()) return false;
+    if (anyActiveRuns()) return false;
+    if (mode() !== "host") return false;
+    return true;
+  });
+
+  // Keep this mounted so the reload banner UX remains in the app.
+  createEffect(() => {
+    reloadRequired();
+  });
+
+  async function reloadEngineInstance() {
+    const c = client();
+    if (!c) return;
+
+    if (mode() !== "host") {
+      setReloadError("Reload is only available in Host mode.");
+      return;
+    }
+
+    if (anyActiveRuns()) {
+      setReloadError("A run is in progress. Stop it before reloading the engine.");
+      return;
+    }
+
+    setReloadBusy(true);
+    setReloadError(null);
+
+    try {
+      unwrap(await c.instance.dispose());
+      await waitForHealthy(c, { timeoutMs: 12_000 });
+
+      try {
+        const providerList = unwrap(await c.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
+      } catch {
+        try {
+          const cfg = unwrap(await c.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
+      }
+
+      await refreshPlugins().catch(() => undefined);
+      await refreshSkills().catch(() => undefined);
+
+      clearReloadRequired();
+    } catch (e) {
+      setReloadError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setReloadBusy(false);
+    }
   }
 
   async function checkForUpdates(options?: { quiet?: boolean }) {
@@ -1374,12 +1531,22 @@ export default function App() {
       await refreshPendingPermissions(nextClient);
 
       try {
-        const cfg = unwrap(await nextClient.config.providers());
-        setProviders(cfg.providers);
-        setProviderDefaults(cfg.default);
+        const providerList = unwrap(await nextClient.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
       } catch {
-        setProviders([]);
-        setProviderDefaults({});
+        // Backwards compatibility: older servers may not support provider.list
+        try {
+          const cfg = unwrap(await nextClient.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
       }
 
       setSelectedSessionId(null);
@@ -1837,6 +2004,8 @@ export default function App() {
     if (!isTauriRuntime()) {
       setPluginStatus("Plugin management is only available in Host mode.");
       setPluginList([]);
+      setSidebarPluginStatus("Plugins are only available in Host mode.");
+      setSidebarPluginList([]);
       return;
     }
 
@@ -1846,18 +2015,32 @@ export default function App() {
     if (scope === "project" && !targetDir) {
       setPluginStatus("Pick a project folder to manage project plugins.");
       setPluginList([]);
+      setSidebarPluginStatus("Pick a project folder to load active plugins.");
+      setSidebarPluginList([]);
       return;
     }
 
     try {
       setPluginStatus(null);
+      setSidebarPluginStatus(null);
       const config = await readOpencodeConfig(scope, targetDir);
       setPluginConfig(config);
 
       if (!config.exists) {
         setPluginList([]);
         setPluginStatus("No opencode.json found yet. Add a plugin to create one.");
+        setSidebarPluginList([]);
+        setSidebarPluginStatus("No opencode.json in this workspace yet.");
         return;
+      }
+
+      try {
+        const parsed = parse(config.content ?? "") as Record<string, unknown> | undefined;
+        const next = normalizePluginList(parsed?.plugin);
+        setSidebarPluginList(next);
+      } catch {
+        setSidebarPluginList([]);
+        setSidebarPluginStatus("Failed to parse opencode.json");
       }
 
       loadPluginsFromConfig(config);
@@ -1865,6 +2048,8 @@ export default function App() {
       setPluginConfig(null);
       setPluginList([]);
       setPluginStatus(e instanceof Error ? e.message : "Failed to load opencode.json");
+      setSidebarPluginStatus("Failed to load active plugins.");
+      setSidebarPluginList([]);
     }
   }
 
@@ -1903,6 +2088,7 @@ export default function App() {
           plugin: [pluginName],
         };
         await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+        markReloadRequired("plugins");
         if (isManualInput) {
           setPluginInput("");
         }
@@ -1926,6 +2112,7 @@ export default function App() {
       const updated = applyEdits(raw, edits);
 
       await writeOpencodeConfig(scope, targetDir, updated);
+      markReloadRequired("plugins");
       if (isManualInput) {
         setPluginInput("");
       }
@@ -1965,6 +2152,7 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Installed.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -2017,6 +2205,7 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Imported.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -3234,6 +3423,12 @@ export default function App() {
       if (tab() === "plugins") {
         refreshPlugins().catch(() => undefined);
       }
+
+      // Keep session sidebar context fresh.
+      if (tab() === "sessions" || view() === "session") {
+        refreshSkills().catch(() => undefined);
+        refreshPlugins("project").catch(() => undefined);
+      }
     });
 
     const navItem = (t: DashboardTab, label: string, icon: any) => {
@@ -4430,7 +4625,7 @@ export default function App() {
 
           <div class="flex-1 flex overflow-hidden">
             <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-              <div class="max-w-2xl mx-auto space-y-6 pb-32">
+               <div class="max-w-2xl mx-auto space-y-6 pb-32">
                 <Show when={messages().length === 0}>
                   <div class="text-center py-20 space-y-4">
                     <div class="w-16 h-16 bg-zinc-900 rounded-3xl mx-auto flex items-center justify-center border border-zinc-800">
@@ -4441,6 +4636,10 @@ export default function App() {
                       Describe a task. I’ll show progress and ask for permissions when needed.
                     </p>
                   </div>
+                </Show>
+
+                <Show when={busyLabel() === "Running"}>
+                  <ThinkingBlock steps={[{ status: "running", text: "Working…" } satisfies ThinkingStep]} />
                 </Show>
 
                 <For each={messages()}>
@@ -4498,79 +4697,130 @@ export default function App() {
 
             <div class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
               <div class="p-4 border-b border-zinc-800 font-medium text-sm text-zinc-400 flex items-center justify-between">
-                <span>Execution Plan</span>
-                <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
-                  {todos().filter((t) => t.status === "completed").length}/{todos().length}
-                </span>
+                <span>Workspace</span>
               </div>
-              <div class="p-4 space-y-4 overflow-y-auto flex-1">
-                <Show
-                  when={todos().length}
-                  fallback={
-                    <div class="text-zinc-600 text-sm text-center py-10 italic">
-                      Plan will appear here...
-                    </div>
-                  }
-                >
-                  <For each={todos()}>
-                    {(t, idx) => (
-                      <div class="relative pl-6 pb-6 last:pb-0">
-                        <Show when={idx() !== todos().length - 1}>
-                          <div
-                            class={`absolute left-[9px] top-6 bottom-0 w-px ${
-                              t.status === "completed" ? "bg-emerald-500/20" : "bg-zinc-800"
-                            }`}
-                          />
-                        </Show>
+              <div class="p-4 space-y-5 overflow-y-auto flex-1">
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Skills</span>
+                    <span class="text-[11px] text-zinc-600">{skills().length}</span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show when={skills().length} fallback={<div class="text-xs text-zinc-600 italic">No skills found</div>}>
+                      <For each={skills().slice(0, 12)}>
+                        {(s) => (
+                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
+                            <div class="text-sm text-zinc-200 truncate">{s.name}</div>
+                            <Show when={s.description}>
+                              <div class="mt-1 text-xs text-zinc-500 line-clamp-2">{s.description}</div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                      <Show when={skills().length > 12}>
+                        <div class="text-xs text-zinc-600">+{skills().length - 12} more</div>
+                      </Show>
+                    </Show>
+                  </div>
+                </div>
 
-                        <div
-                          class={`absolute left-0 top-1 w-5 h-5 rounded-full border flex items-center justify-center bg-zinc-950 z-10 ${
-                            t.status === "completed"
-                              ? "border-emerald-500 text-emerald-500"
-                              : t.status === "in_progress"
-                                ? "border-blue-500 text-blue-500"
-                                : t.status === "cancelled"
-                                  ? "border-zinc-600 text-zinc-600"
-                                  : "border-zinc-700 text-zinc-700"
-                          }`}
-                        >
-                          <Show
-                            when={t.status === "completed"}
-                            fallback={
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Plugins</span>
+                    <span class="text-[11px] text-zinc-600">{sidebarPluginList().length}</span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show
+                      when={sidebarPluginList().length}
+                      fallback={<div class="text-xs text-zinc-600 italic">{sidebarPluginStatus() ?? "No plugins configured"}</div>}
+                    >
+                      <For each={sidebarPluginList().slice(0, 16)}>
+                        {(p) => (
+                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
+                            <div class="text-sm text-zinc-200 font-mono truncate">{p}</div>
+                          </div>
+                        )}
+                      </For>
+                      <Show when={sidebarPluginList().length > 16}>
+                        <div class="text-xs text-zinc-600">+{sidebarPluginList().length - 16} more</div>
+                      </Show>
+                    </Show>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Execution Plan</span>
+                    <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
+                      {todos().filter((t) => t.status === "completed").length}/{todos().length}
+                    </span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show
+                      when={todos().length}
+                      fallback={<div class="text-xs text-zinc-600 italic">Plan will appear here…</div>}
+                    >
+                      <For each={todos()}>
+                        {(t, idx) => (
+                          <div class="relative pl-6 pb-6 last:pb-0">
+                            <Show when={idx() !== todos().length - 1}>
+                              <div
+                                class={`absolute left-[9px] top-6 bottom-0 w-px ${
+                                  t.status === "completed" ? "bg-emerald-500/20" : "bg-zinc-800"
+                                }`}
+                              />
+                            </Show>
+
+                            <div
+                              class={`absolute left-0 top-1 w-5 h-5 rounded-full border flex items-center justify-center bg-zinc-950 z-10 ${
+                                t.status === "completed"
+                                  ? "border-emerald-500 text-emerald-500"
+                                  : t.status === "in_progress"
+                                    ? "border-blue-500 text-blue-500"
+                                    : t.status === "cancelled"
+                                      ? "border-zinc-600 text-zinc-600"
+                                      : "border-zinc-700 text-zinc-700"
+                              }`}
+                            >
                               <Show
-                                when={t.status === "in_progress"}
+                                when={t.status === "completed"}
                                 fallback={
                                   <Show
-                                    when={t.status === "cancelled"}
-                                    fallback={<Circle size={10} />}
+                                    when={t.status === "in_progress"}
+                                    fallback={
+                                      <Show
+                                        when={t.status === "cancelled"}
+                                        fallback={<Circle size={10} />}
+                                      >
+                                        <X size={12} />
+                                      </Show>
+                                    }
                                   >
-                                    <X size={12} />
+                                    <div class="w-2 h-2 rounded-full bg-current animate-pulse" />
                                   </Show>
                                 }
                               >
-                                <div class="w-2 h-2 rounded-full bg-current animate-pulse" />
+                                <CheckCircle2 size={12} />
                               </Show>
-                            }
-                          >
-                            <CheckCircle2 size={12} />
-                          </Show>
-                        </div>
+                            </div>
 
-                        <div
-                          class={`text-sm ${
-                            t.status === "completed"
-                              ? "text-zinc-400"
-                              : t.status === "in_progress"
-                                ? "text-blue-100"
-                                : "text-zinc-500"
-                          }`}
-                        >
-                          {t.content}
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
+                            <div
+                              class={`text-sm ${
+                                t.status === "completed"
+                                  ? "text-zinc-400"
+                                  : t.status === "in_progress"
+                                    ? "text-blue-100"
+                                    : "text-zinc-500"
+                              }`}
+                            >
+                              {t.content}
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -4695,9 +4945,9 @@ export default function App() {
       </Show>
 
       <Show when={modelPickerOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6">
+        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+            <div class="p-6 flex flex-col min-h-0">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-white">
@@ -4718,8 +4968,26 @@ export default function App() {
                 </Button>
               </div>
 
-              <div class="mt-6 space-y-2">
-                 <For each={modelOptions()}>
+              <div class="mt-5">
+                <div class="relative">
+                  <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <input
+                    type="text"
+                    value={modelPickerQuery()}
+                    onInput={(e) => setModelPickerQuery(e.currentTarget.value)}
+                    placeholder="Search models…"
+                    class="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600"
+                  />
+                </div>
+                <Show when={modelPickerQuery().trim()}>
+                  <div class="mt-2 text-xs text-zinc-500">
+                    Showing {filteredModelOptions().length} of {modelOptions().length}
+                  </div>
+                </Show>
+              </div>
+
+              <div class="mt-4 space-y-2 overflow-y-auto pr-1 -mr-1 min-h-0">
+                 <For each={filteredModelOptions()}>
                    {(opt) => {
                      const active = () =>
                        modelEquals(modelPickerCurrent(), {
@@ -4769,7 +5037,7 @@ export default function App() {
                  </For>
               </div>
 
-              <div class="mt-6 flex justify-end">
+              <div class="mt-5 flex justify-end shrink-0">
                 <Button variant="outline" onClick={() => setModelPickerOpen(false)}>
                   Done
                 </Button>
@@ -4780,10 +5048,10 @@ export default function App() {
       </Show>
 
       <Show when={templateModalOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6">
-              <div class="flex items-start justify-between gap-4">
+         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+           <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+             <div class="p-6">
+               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-white">Save Template</h3>
                   <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
