@@ -47,9 +47,9 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin --bundles dmg"
+            args: "--target aarch64-apple-darwin --bundles dmg,app"
           - target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin --bundles dmg"
+            args: "--target x86_64-apple-darwin --bundles dmg,app"
 
     steps:
       - name: Set release metadata
@@ -144,6 +144,7 @@ jobs:
 
           # Tauri updater signing
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
           # macOS signing (maps from existing repo secrets)
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
@@ -173,7 +174,10 @@ jobs:
 
           UPDATER_DIR="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
 
-          UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
-          UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
-
-          gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber
+          if ls -1 "$UPDATER_DIR/"*.app.tar.gz >/dev/null 2>&1; then
+            UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
+            UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
+            gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber
+          else
+            echo "No updater artifacts found in $UPDATER_DIR; skipping."
+          fi

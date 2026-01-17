@@ -14,6 +14,60 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
+#[cfg(target_os = "macos")]
+const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
+
+fn candidate_xdg_data_dirs() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+  let Some(home) = home_dir() else {
+    return candidates;
+  };
+
+  candidates.push(home.join(".local").join("share"));
+  candidates.push(home.join(".config"));
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(home.join(MACOS_APP_SUPPORT_DIR));
+  }
+
+  candidates
+}
+
+fn candidate_xdg_config_dirs() -> Vec<PathBuf> {
+  let mut candidates = Vec::new();
+  let Some(home) = home_dir() else {
+    return candidates;
+  };
+
+  candidates.push(home.join(".config"));
+
+  #[cfg(target_os = "macos")]
+  {
+    candidates.push(home.join(MACOS_APP_SUPPORT_DIR));
+  }
+
+  candidates
+}
+
+fn maybe_infer_xdg_home(
+  var_name: &str,
+  candidates: Vec<PathBuf>,
+  relative_marker: &Path,
+) -> Option<String> {
+  if env::var_os(var_name).is_some() {
+    return None;
+  }
+
+  for base in candidates {
+    if base.join(relative_marker).is_file() {
+      return Some(base.to_string_lossy().to_string());
+    }
+  }
+
+  None
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceOpenworkConfig {
@@ -76,6 +130,8 @@ struct EngineState {
   hostname: Option<String>,
   port: Option<u16>,
   base_url: Option<String>,
+  last_stdout: Option<String>,
+  last_stderr: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -87,6 +143,8 @@ pub struct EngineInfo {
   pub hostname: Option<String>,
   pub port: Option<u16>,
   pub pid: Option<u32>,
+  pub last_stdout: Option<String>,
+  pub last_stderr: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -98,6 +156,9 @@ pub struct EngineDoctorResult {
   pub version: Option<String>,
   pub supports_serve: bool,
   pub notes: Vec<String>,
+  pub serve_help_status: Option<i32>,
+  pub serve_help_stdout: Option<String>,
+  pub serve_help_stderr: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -798,15 +859,38 @@ fn opencode_version(program: &OsStr) -> Option<String> {
   None
 }
 
-fn opencode_supports_serve(program: &OsStr) -> bool {
-  Command::new(program)
-    .arg("serve")
-    .arg("--help")
-    .stdout(Stdio::null())
-    .stderr(Stdio::null())
-    .status()
-    .map(|s| s.success())
-    .unwrap_or(false)
+fn truncate_output(input: &str, max_chars: usize) -> String {
+  if input.len() <= max_chars {
+    return input.to_string();
+  }
+
+  // Keep tail to preserve error context.
+  input.chars().skip(input.chars().count() - max_chars).collect()
+}
+
+fn opencode_serve_help(program: &OsStr) -> (bool, Option<i32>, Option<String>, Option<String>) {
+  match Command::new(program).arg("serve").arg("--help").output() {
+    Ok(output) => {
+      let status = output.status.code();
+      let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+      let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+      let ok = output.status.success();
+
+      let stdout = if stdout.is_empty() {
+        None
+      } else {
+        Some(truncate_output(&stdout, 4000))
+      };
+      let stderr = if stderr.is_empty() {
+        None
+      } else {
+        Some(truncate_output(&stderr, 4000))
+      };
+
+      (ok, status, stdout, stderr)
+    }
+    Err(_) => (false, None, None, None),
+  }
 }
 
 fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
@@ -988,6 +1072,8 @@ impl EngineManager {
       hostname: state.hostname.clone(),
       port: state.port,
       pid,
+      last_stdout: state.last_stdout.clone(),
+      last_stderr: state.last_stderr.clone(),
     }
   }
 
@@ -1000,6 +1086,8 @@ impl EngineManager {
     state.project_dir = None;
     state.hostname = None;
     state.port = None;
+    state.last_stdout = None;
+    state.last_stderr = None;
   }
 }
 
@@ -1016,17 +1104,60 @@ fn engine_stop(manager: State<EngineManager>) -> EngineInfo {
   EngineManager::snapshot_locked(&mut state)
 }
 
-#[tauri::command]
-fn engine_doctor() -> EngineDoctorResult {
-  let (resolved, in_path, notes) = resolve_opencode_executable();
+fn resolve_sidecar_candidate(prefer_sidecar: bool) -> (Option<PathBuf>, Vec<String>) {
+  if !prefer_sidecar {
+    return (None, Vec::new());
+  }
 
-  let (version, supports_serve) = match resolved.as_ref() {
-    Some(path) => (
-      opencode_version(path.as_os_str()),
-      opencode_supports_serve(path.as_os_str()),
-    ),
-    None => (None, false),
+  let mut notes = Vec::new();
+
+  #[cfg(not(windows))]
+  {
+    // Best-effort: if we eventually bundle a binary, it will likely live here (dev) or be
+    // injected during bundling.
+    let candidate = PathBuf::from("src-tauri/sidecars").join(OPENCODE_EXECUTABLE);
+    if candidate.is_file() {
+      notes.push(format!("Using bundled sidecar: {}", candidate.display()));
+      return (Some(candidate), notes);
+    }
+
+    notes.push(format!("Sidecar requested but missing: {}", candidate.display()));
+    return (None, notes);
+  }
+
+  #[cfg(windows)]
+  {
+    notes.push("Sidecar requested but unsupported on Windows".to_string());
+    (None, notes)
+  }
+}
+
+#[tauri::command]
+fn engine_doctor(prefer_sidecar: Option<bool>) -> EngineDoctorResult {
+  let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+
+  let (sidecar, mut notes) = resolve_sidecar_candidate(prefer_sidecar);
+  let (resolved, in_path, more_notes) = match sidecar {
+    Some(path) => (Some(path), false, Vec::new()),
+    None => resolve_opencode_executable(),
   };
+
+  notes.extend(more_notes);
+
+  let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
+    match resolved.as_ref() {
+      Some(path) => {
+        let (ok, status, stdout, stderr) = opencode_serve_help(path.as_os_str());
+        (
+          opencode_version(path.as_os_str()),
+          ok,
+          status,
+          stdout,
+          stderr,
+        )
+      }
+      None => (None, false, None, None, None),
+    };
 
   EngineDoctorResult {
     found: resolved.is_some(),
@@ -1035,6 +1166,9 @@ fn engine_doctor() -> EngineDoctorResult {
     version,
     supports_serve,
     notes,
+    serve_help_status,
+    serve_help_stdout,
+    serve_help_stderr,
   }
 }
 
@@ -1095,30 +1229,10 @@ fn engine_start(
 
   let mut notes = Vec::new();
 
-  let resolved_sidecar = if prefer_sidecar.unwrap_or(false) {
-    #[cfg(not(windows))]
-    {
-      // Best-effort: if we eventually bundle a binary, it will likely live here.
-      let candidate = PathBuf::from("src-tauri/sidecars").join(OPENCODE_EXECUTABLE);
-      if candidate.is_file() {
-        notes.push(format!("Using bundled sidecar: {}", candidate.display()));
-        Some(candidate)
-      } else {
-        notes.push(format!(
-          "Sidecar requested but missing: {}",
-          candidate.display()
-        ));
-        None
-      }
-    }
-    #[cfg(windows)]
-    {
-      notes.push("Sidecar requested but unsupported on Windows".to_string());
-      None
-    }
-  } else {
-    None
-  };
+  let (resolved_sidecar, mut sidecar_notes) =
+    resolve_sidecar_candidate(prefer_sidecar.unwrap_or(false));
+
+  notes.append(&mut sidecar_notes);
 
   let (program, _in_path, more_notes) = match resolved_sidecar {
     Some(path) => (Some(path), false, Vec::new()),
@@ -1149,12 +1263,42 @@ fn engine_start(
     .arg("http://tauri.localhost")
     .current_dir(&project_dir)
     .stdin(Stdio::null())
-    .stdout(Stdio::null())
-    .stderr(Stdio::null());
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
+
+  // Best-effort: restore env parity with terminal installs.
+  // If the GUI process doesn't have XDG_* vars but the user's OpenCode auth/config lives under
+  // a common XDG location, infer and set them for the engine process.
+  if let Some(xdg_data_home) = maybe_infer_xdg_home(
+    "XDG_DATA_HOME",
+    candidate_xdg_data_dirs(),
+    Path::new("opencode/auth.json"),
+  ) {
+    command.env("XDG_DATA_HOME", xdg_data_home);
+  }
+
+  // Help OpenCode find global config/plugins in GUI contexts.
+  if let Some(xdg_config_home) = maybe_infer_xdg_home(
+    "XDG_CONFIG_HOME",
+    candidate_xdg_config_dirs(),
+    Path::new("opencode/opencode.json"),
+  ) {
+    command.env("XDG_CONFIG_HOME", xdg_config_home);
+  }
+
+  // Tag requests and logs to make debugging easier.
+  command.env("OPENCODE_CLIENT", "openwork");
+
+  // Inherit the current environment (Command already does) but also pass through an explicit
+  // marker for UI-driven launches so we can key off it in engine logs.
+  command.env("OPENWORK", "1");
 
   let child = command
     .spawn()
     .map_err(|e| format!("Failed to start opencode: {e}"))?;
+
+  state.last_stdout = None;
+  state.last_stderr = None;
 
   state.child = Some(child);
   state.project_dir = Some(project_dir);
