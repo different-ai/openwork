@@ -7,6 +7,8 @@ export type EngineInfo = {
   hostname: string | null;
   port: number | null;
   pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
 };
 
 export type EngineDoctorResult = {
@@ -16,10 +18,118 @@ export type EngineDoctorResult = {
   version: string | null;
   supportsServe: boolean;
   notes: string[];
+  serveHelpStatus: number | null;
+  serveHelpStdout: string | null;
+  serveHelpStderr: string | null;
 };
 
-export async function engineStart(projectDir: string): Promise<EngineInfo> {
-  return invoke<EngineInfo>("engine_start", { projectDir });
+export type WorkspaceInfo = {
+  id: string;
+  name: string;
+  path: string;
+  preset: string;
+};
+
+export type WorkspaceList = {
+  activeId: string;
+  workspaces: WorkspaceInfo[];
+};
+
+export async function engineStart(
+  projectDir: string,
+  options?: { preferSidecar?: boolean },
+): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_start", {
+    projectDir,
+    preferSidecar: options?.preferSidecar ?? false,
+  });
+}
+
+export async function workspaceBootstrap(): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_bootstrap");
+}
+
+export async function workspaceSetActive(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_set_active", { workspaceId });
+}
+
+export async function workspaceCreate(input: {
+  folderPath: string;
+  name: string;
+  preset: string;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_create", {
+    folderPath: input.folderPath,
+    name: input.name,
+    preset: input.preset,
+  });
+}
+
+export async function workspaceAddAuthorizedRoot(input: {
+  workspacePath: string;
+  folderPath: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_add_authorized_root", {
+    workspacePath: input.workspacePath,
+    folderPath: input.folderPath,
+  });
+}
+
+export type WorkspaceTemplate = {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  createdAt: number;
+  scope?: "workspace" | "global";
+};
+
+export type WorkspaceOpenworkConfig = {
+  version: number;
+  workspace?: {
+    name?: string | null;
+    createdAt?: number | null;
+    preset?: string | null;
+  } | null;
+  authorizedRoots: string[];
+};
+
+export async function workspaceOpenworkRead(input: {
+  workspacePath: string;
+}): Promise<WorkspaceOpenworkConfig> {
+  return invoke<WorkspaceOpenworkConfig>("workspace_openwork_read", {
+    workspacePath: input.workspacePath,
+  });
+}
+
+export async function workspaceOpenworkWrite(input: {
+  workspacePath: string;
+  config: WorkspaceOpenworkConfig;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_openwork_write", {
+    workspacePath: input.workspacePath,
+    config: input.config,
+  });
+}
+
+export async function workspaceTemplateWrite(input: {
+  workspacePath: string;
+  template: WorkspaceTemplate;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_template_write", {
+    workspacePath: input.workspacePath,
+    template: input.template,
+  });
+}
+
+export async function workspaceTemplateDelete(input: {
+  workspacePath: string;
+  templateId: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("workspace_template_delete", {
+    workspacePath: input.workspacePath,
+    templateId: input.templateId,
+  });
 }
 
 export async function engineStop(): Promise<EngineInfo> {
@@ -30,8 +140,12 @@ export async function engineInfo(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_info");
 }
 
-export async function engineDoctor(): Promise<EngineDoctorResult> {
-  return invoke<EngineDoctorResult>("engine_doctor");
+export async function engineDoctor(options?: {
+  preferSidecar?: boolean;
+}): Promise<EngineDoctorResult> {
+  return invoke<EngineDoctorResult>("engine_doctor", {
+    preferSidecar: options?.preferSidecar ?? false,
+  });
 }
 
 export async function pickDirectory(options?: {
@@ -81,6 +195,17 @@ export type OpencodeConfigFile = {
   content: string | null;
 };
 
+export type UpdaterEnvironment = {
+  supported: boolean;
+  reason: string | null;
+  executablePath: string | null;
+  appBundlePath: string | null;
+};
+
+export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
+  return invoke<UpdaterEnvironment>("updater_environment");
+}
+
 export async function readOpencodeConfig(
   scope: "project" | "global",
   projectDir: string,
@@ -94,4 +219,8 @@ export async function writeOpencodeConfig(
   content: string,
 ): Promise<ExecResult> {
   return invoke<ExecResult>("write_opencode_config", { scope, projectDir, content });
+}
+
+export async function resetOpenworkState(mode: "onboarding" | "all"): Promise<void> {
+  return invoke<void>("reset_openwork_state", { mode });
 }

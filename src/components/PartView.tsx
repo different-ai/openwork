@@ -5,6 +5,7 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 type Props = {
   part: Part;
   developerMode?: boolean;
+  showThinking?: boolean;
   tone?: "light" | "dark";
 };
 
@@ -55,6 +56,7 @@ export default function PartView(props: Props) {
   const p = () => props.part;
   const developerMode = () => props.developerMode ?? false;
   const tone = () => props.tone ?? "light";
+  const showThinking = () => props.showThinking ?? true;
 
   const textClass = () => (tone() === "dark" ? "text-black" : "text-neutral-100");
   const subtleTextClass = () => (tone() === "dark" ? "text-black/70" : "text-neutral-400");
@@ -67,9 +69,16 @@ export default function PartView(props: Props) {
       </Match>
 
       <Match when={p().type === "reasoning"}>
-        <Show when={developerMode() && typeof (p() as any).text === "string" && (p() as any).text.trim()}>
+        <Show
+          when={
+            showThinking() &&
+            developerMode() &&
+            typeof (p() as any).text === "string" &&
+            (p() as any).text.trim()
+          }
+        >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Reasoning</summary>
+            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Thinking</summary>
             <pre
               class={`mt-2 whitespace-pre-wrap break-words text-xs ${
                 tone() === "dark" ? "text-black" : "text-neutral-200"

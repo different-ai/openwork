@@ -1,9 +1,12 @@
 {
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "openwork-default",
   "description": "Default OpenWork capability (UI permissions)",
   "windows": ["*"],
   "permissions": [
     "core:default",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "updater:default",
+    "process:default"
   ]
 }

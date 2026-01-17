@@ -33,6 +33,7 @@ OpenWork exists to bring OpenCode's agentic power to non-technical people throug
 ## Repository Guidance
 
 - Always read `design-prd.md` at session start for product intent and user flows.
+- Write new PRDs under `pr/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
 - Keep `design-prd.md` and `.opencode/skill/*/SKILL.md` updated when behavior changes.
 - Use `.opencode/skill/` for repeatable workflows and domain vocabulary.
 

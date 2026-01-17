@@ -22,16 +22,17 @@ Download the dmg here https://github.com/different-ai/openwork/releases (or inst
 
 ## Why
 
-Knowledge workers don’t want to learn a CLI, fight config sprawl, or rebuild the same workflows in every repo.
+Current CLI and GUIs for opencode are anchored around developers. That means a focus on file diffs, tool names, and hard to extend capabilities without relying on exposing some form of cli.
+
 OpenWork is designed to be:
 - **Extensible**: skill and opencode plugins are installable modules.
 - **Auditable**: show what happened, when, and why.
 - **Permissioned**: access to privileged flows.
 - **Local/Remote**: OpenWork works locally as well as can connect to remote servers.
 
-## What’s Included (v0.1)
+## What’s Included 
 
-- **Host mode**: start `opencode serve` locally in a chosen folder.
+- **Host mode**: runs opencode locally on your computer
 - **Client mode**: connect to an existing OpenCode server by URL.
 - **Sessions**: create/select sessions and send prompts.
 - **Live streaming**: SSE `/event` subscription for realtime updates.

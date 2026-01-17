@@ -16,6 +16,7 @@ import type {
   Message,
   Part,
   PermissionRequest as ApiPermissionRequest,
+  Provider,
   Session,
 } from "@opencode-ai/sdk/v2/client";
 
@@ -39,15 +40,24 @@ import {
   Shield,
   Smartphone,
   Trash2,
+  Search,
   Upload,
   X,
   Zap,
 } from "lucide-solid";
 
+import { check } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { getVersion } from "@tauri-apps/api/app";
+
 import Button from "./components/Button";
+import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OpenWorkLogo from "./components/OpenWorkLogo";
 import PartView from "./components/PartView";
+import ThinkingBlock, { type ThinkingStep } from "./components/ThinkingBlock";
 import TextInput from "./components/TextInput";
+import WorkspaceChip from "./components/WorkspaceChip";
+import WorkspacePicker from "./components/WorkspacePicker";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   engineDoctor,
@@ -59,16 +69,59 @@ import {
   opkgInstall,
   pickDirectory,
   readOpencodeConfig,
+  updaterEnvironment,
+
+  workspaceBootstrap,
+  workspaceCreate,
+  workspaceSetActive,
+  workspaceOpenworkRead,
+  workspaceOpenworkWrite,
+  workspaceTemplateDelete,
+  workspaceTemplateWrite,
   writeOpencodeConfig,
+  resetOpenworkState,
   type EngineDoctorResult,
   type EngineInfo,
   type OpencodeConfigFile,
+  type UpdaterEnvironment,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 
 type Client = ReturnType<typeof createClient>;
 
+type PlaceholderAssistantMessage = {
+  id: string;
+  sessionID: string;
+  role: "assistant";
+  time: {
+    created: number;
+    completed?: number;
+  };
+  parentID: string;
+  modelID: string;
+  providerID: string;
+  mode: string;
+  agent: string;
+  path: {
+    cwd: string;
+    root: string;
+  };
+  cost: number;
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: {
+      read: number;
+      write: number;
+    };
+  };
+};
+
+type MessageInfo = Message | PlaceholderAssistantMessage;
+
 type MessageWithParts = {
-  info: Message;
+  info: MessageInfo;
   parts: Part[];
 };
 
@@ -83,13 +136,25 @@ type Mode = "host" | "client";
 
 type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
-type DashboardTab =
-  | "home"
-  | "sessions"
-  | "templates"
-  | "skills"
-  | "plugins"
-  | "settings";
+type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
+
+type WorkspacePreset = "starter" | "automation" | "minimal";
+
+type ResetOpenworkMode = "onboarding" | "all";
+
+type WorkspaceTemplate = Template & {
+  scope: "workspace" | "global";
+};
+
+type WorkspaceOpenworkConfig = {
+  version: number;
+  workspace?: {
+    name?: string | null;
+    createdAt?: number | null;
+    preset?: string | null;
+  } | null;
+  authorizedRoots: string[];
+};
 
 type Template = {
   id: string;
@@ -134,6 +199,8 @@ type SuggestedPlugin = {
 
 type PluginScope = "project" | "global";
 
+type ReloadReason = "plugins" | "skills";
+
 type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
 };
@@ -143,54 +210,25 @@ type ModelRef = {
   modelID: string;
 };
 
-type ModelOption = ModelRef & {
-  label: string;
-  description: string;
-  recommended?: boolean;
+type ModelOption = {
+  providerID: string;
+  modelID: string;
+  title: string;
+  description?: string;
+  footer?: string;
+  disabled?: boolean;
+  isFree: boolean;
+  isConnected: boolean;
 };
 
 const MODEL_PREF_KEY = "openwork.defaultModel";
-const ZEN_PROVIDER_ID = "opencode";
-const ZEN_PROVIDER_LABEL = "Zen";
+const THINKING_PREF_KEY = "openwork.showThinking";
+const VARIANT_PREF_KEY = "openwork.modelVariant";
 
 const DEFAULT_MODEL: ModelRef = {
-  providerID: ZEN_PROVIDER_ID,
+  providerID: "opencode",
   modelID: "gpt-5-nano",
 };
-
-const ZEN_MODEL_OPTIONS: ModelOption[] = [
-  {
-    providerID: ZEN_PROVIDER_ID,
-    modelID: "gpt-5-nano",
-    label: "Zen · GPT-5 Nano",
-    description: "Fast, free, and works out of the box.",
-    recommended: true,
-  },
-  {
-    providerID: ZEN_PROVIDER_ID,
-    modelID: "big-pickle",
-    label: "Zen · Big Pickle",
-    description: "Free Zen model.",
-  },
-  {
-    providerID: ZEN_PROVIDER_ID,
-    modelID: "glm-4.7-free",
-    label: "Zen · GLM 4.7 Free",
-    description: "Free Zen model.",
-  },
-  {
-    providerID: ZEN_PROVIDER_ID,
-    modelID: "grok-code",
-    label: "Zen · Grok Code",
-    description: "Free Zen model.",
-  },
-  {
-    providerID: ZEN_PROVIDER_ID,
-    modelID: "minimax-m2.1-free",
-    label: "Zen · MiniMax M2.1 Free",
-    description: "Free Zen model.",
-  },
-];
 
 function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -209,23 +247,21 @@ function modelEquals(a: ModelRef, b: ModelRef) {
   return a.providerID === b.providerID && a.modelID === b.modelID;
 }
 
-function formatModelLabel(model: ModelRef) {
-  if (model.providerID === ZEN_PROVIDER_ID) {
-    const match = ZEN_MODEL_OPTIONS.find(
-      (opt) => opt.modelID === model.modelID,
-    );
-    return match?.label ?? `${ZEN_PROVIDER_LABEL} · ${model.modelID}`;
-  }
+function formatModelLabel(model: ModelRef, providers: Provider[] = []) {
+  const provider = providers.find((p) => p.id === model.providerID);
+  const modelInfo = provider?.models?.[model.modelID];
 
-  return `${model.providerID} · ${model.modelID}`;
+  const providerLabel = provider?.name ?? model.providerID;
+  const modelLabel = modelInfo?.name ?? model.modelID;
+
+  return `${providerLabel} · ${modelLabel}`;
 }
 
 const CURATED_PACKAGES: CuratedPackage[] = [
   {
     name: "OpenPackage Essentials",
     source: "essentials",
-    description:
-      "Starter rules, commands, and skills from the OpenPackage registry.",
+    description: "Starter rules, commands, and skills from the OpenPackage registry.",
     tags: ["registry", "starter"],
     installable: true,
   },
@@ -238,8 +274,7 @@ const CURATED_PACKAGES: CuratedPackage[] = [
   },
   {
     name: "Claude Code Commit Commands",
-    source:
-      "github:anthropics/claude-code#subdirectory=plugins/commit-commands",
+    source: "github:anthropics/claude-code#subdirectory=plugins/commit-commands",
     description: "Commit message helper commands (Claude Code plugin).",
     tags: ["github", "workflow"],
     installable: true,
@@ -254,8 +289,7 @@ const CURATED_PACKAGES: CuratedPackage[] = [
   {
     name: "Awesome Claude Skills",
     source: "https://github.com/ComposioHQ/awesome-claude-skills",
-    description:
-      "Curated list of Claude skills and prompts (not an OpenPackage yet).",
+    description: "Curated list of Claude skills and prompts (not an OpenPackage yet).",
     tags: ["community", "list"],
     installable: false,
   },
@@ -279,8 +313,7 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
     steps: [
       {
         title: "Run the installer",
-        description:
-          "Installs the extension + native host and prepares the local broker.",
+        description: "Installs the extension + native host and prepares the local broker.",
         command: "bunx @different-ai/opencode-browser@latest install",
         note: "Use npx @different-ai/opencode-browser@latest install if you do not have bunx.",
       },
@@ -289,9 +322,7 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
         description:
           "Open chrome://extensions, enable Developer mode, click Load unpacked, and select the extension folder.",
         url: "chrome://extensions",
-        path: navigator.platform.includes("Win")
-          ? "%USERPROFILE%\\.opencode-browser\\extension"
-          : "~/.opencode-browser/extension",
+        path: "~/.opencode-browser/extension",
       },
       {
         title: "Pin the extension",
@@ -299,17 +330,28 @@ const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
       },
       {
         title: "Add plugin to config",
-        description:
-          "Click Add to write @different-ai/opencode-browser into opencode.json.",
+        description: "Click Add to write @different-ai/opencode-browser into opencode.json.",
       },
     ],
   },
 ];
 
 function isTauriRuntime() {
-  return (
-    typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null
-  );
+  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
+}
+
+function isWindowsPlatform() {
+  if (typeof navigator === "undefined") return false;
+
+  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const platform =
+    typeof (navigator as any).userAgentData?.platform === "string"
+      ? (navigator as any).userAgentData.platform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+
+  return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
 function readModePreference(): Mode | null {
@@ -397,6 +439,15 @@ function safeStringify(value: unknown) {
   }
 }
 
+function formatBytes(bytes: number) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"] as const;
+  const idx = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / Math.pow(1024, idx);
+  const rounded = idx === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  return `${rounded} ${units[idx]}`;
+}
+
 function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -446,6 +497,21 @@ function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
+function templatePathFromWorkspaceRoot(workspaceRoot: string, templateId: string) {
+  const root = workspaceRoot.trim().replace(/\/+$/, "");
+  const id = templateId.trim();
+  if (!root || !id) return null;
+  return `${root}/.openwork/templates/${id}.json`;
+}
+
+function safeParseJson<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
 function upsertSession(list: Session[], next: Session) {
   const idx = list.findIndex((s) => s.id === next.id);
   if (idx === -1) return [...list, next];
@@ -469,7 +535,25 @@ function upsertMessage(list: MessageWithParts[], nextInfo: Message) {
 function upsertPart(list: MessageWithParts[], nextPart: Part) {
   const msgIdx = list.findIndex((m) => m.info.id === nextPart.messageID);
   if (msgIdx === -1) {
-    return list;
+    // Streaming events can arrive before we receive `message.updated`.
+    // Create a placeholder assistant message so the UI renders the part
+    // immediately, then `message.updated` will fill in the rest.
+    const placeholder: PlaceholderAssistantMessage = {
+      id: nextPart.messageID,
+      sessionID: nextPart.sessionID,
+      role: "assistant",
+      time: { created: Date.now() },
+      parentID: "",
+      modelID: "",
+      providerID: "",
+      mode: "",
+      agent: "",
+      path: { cwd: "", root: "" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    };
+
+    return list.concat({ info: placeholder, parts: [nextPart] });
   }
 
   const copy = list.slice();
@@ -487,11 +571,7 @@ function upsertPart(list: MessageWithParts[], nextPart: Part) {
   return copy;
 }
 
-function removePart(
-  list: MessageWithParts[],
-  messageID: string,
-  partID: string,
-) {
+function removePart(list: MessageWithParts[], messageID: string, partID: string) {
   const msgIdx = list.findIndex((m) => m.info.id === messageID);
   if (msgIdx === -1) return list;
 
@@ -510,7 +590,7 @@ function normalizeSessionStatus(status: unknown) {
   return "idle";
 }
 
-function modelFromUserMessage(info: Message): ModelRef | null {
+function modelFromUserMessage(info: MessageInfo): ModelRef | null {
   if (!info || typeof info !== "object") return null;
   if ((info as any).role !== "user") return null;
 
@@ -520,8 +600,7 @@ function modelFromUserMessage(info: Message): ModelRef | null {
   const providerID = (model as any).providerID;
   const modelID = (model as any).modelID;
 
-  if (typeof providerID !== "string" || typeof modelID !== "string")
-    return null;
+  if (typeof providerID !== "string" || typeof modelID !== "string") return null;
   return { providerID, modelID };
 }
 
@@ -537,60 +616,57 @@ function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
 export default function App() {
   const [view, setView] = createSignal<View>("onboarding");
   const [mode, setMode] = createSignal<Mode | null>(null);
-  const [onboardingStep, setOnboardingStep] =
-    createSignal<OnboardingStep>("mode");
+  const [onboardingStep, setOnboardingStep] = createSignal<OnboardingStep>("mode");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [tab, setTab] = createSignal<DashboardTab>("home");
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
-  const [engineDoctorResult, setEngineDoctorResult] =
-    createSignal<EngineDoctorResult | null>(null);
-  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<
-    number | null
-  >(null);
-  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(
-    null,
-  );
+  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
+  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
+  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+  const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">("path");
 
   const [projectDir, setProjectDir] = createSignal("");
+
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
+
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
   const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
+
+  const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceOpenworkConfig | null>(null);
+  const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
 
   const [client, setClient] = createSignal<Client | null>(null);
-  const [connectedVersion, setConnectedVersion] = createSignal<string | null>(
-    null,
-  );
+  const [connectedVersion, setConnectedVersion] = createSignal<string | null>(null);
   const [sseConnected, setSseConnected] = createSignal(false);
 
   const [sessions, setSessions] = createSignal<Session[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
-    null,
-  );
-  const [sessionStatusById, setSessionStatusById] = createSignal<
-    Record<string, string>
-  >({});
+  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+  const [sessionStatusById, setSessionStatusById] = createSignal<Record<string, string>>({});
 
   const [messages, setMessages] = createSignal<MessageWithParts[]>([]);
   const [todos, setTodos] = createSignal<
     Array<{ id: string; content: string; status: string; priority: string }>
   >([]);
-  const [pendingPermissions, setPendingPermissions] = createSignal<
-    PendingPermission[]
-  >([]);
+  const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
-  const [templates, setTemplates] = createSignal<Template[]>([]);
+  const [templates, setTemplates] = createSignal<WorkspaceTemplate[]>([]);
+  const [workspaceTemplatesLoaded, setWorkspaceTemplatesLoaded] = createSignal(false);
+  const [globalTemplatesLoaded, setGlobalTemplatesLoaded] = createSignal(false);
+
   const [templateModalOpen, setTemplateModalOpen] = createSignal(false);
   const [templateDraftTitle, setTemplateDraftTitle] = createSignal("");
-  const [templateDraftDescription, setTemplateDraftDescription] =
-    createSignal("");
+  const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
+  const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
@@ -598,34 +674,316 @@ export default function App() {
   const [packageSearch, setPackageSearch] = createSignal("");
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
-  const [pluginConfig, setPluginConfig] =
-    createSignal<OpencodeConfigFile | null>(null);
+  const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
-  const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(
-    null,
-  );
+  const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
+
+  const activeWorkspace = createMemo(() => {
+    const id = activeWorkspaceId();
+    return workspaces().find((w) => w.id === id) ?? null;
+  });
+
+  const activeWorkspacePath = createMemo(() => activeWorkspace()?.path ?? "");
+
+  const activeWorkspaceRoot = createMemo(() => {
+    const ws = activeWorkspace();
+    if (!ws) return "";
+    const path = ws.path.trim();
+    if (!path) return "";
+    return path.replace(/\/+$/, "");
+  });
+
+  const defaultWorkspaceTemplates = createMemo<WorkspaceTemplate[]>(() => [
+    {
+      id: "tmpl_understand_workspace",
+      title: "Understand this workspace",
+      description: "Explains local vs global tools",
+      prompt:
+        "Explain how this workspace is configured and what tools are available locally. Be concise and actionable.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_create_skill",
+      title: "Create a new skill",
+      description: "Guide to adding capabilities",
+      prompt: "I want to create a new skill for this workspace. Guide me through it.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_run_scheduled_task",
+      title: "Run a scheduled task",
+      description: "Demo of the scheduler plugin",
+      prompt: "Show me how to schedule a task to run every morning.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_task_to_template",
+      title: "Turn task into template",
+      description: "Save workflow for later",
+      prompt: "Help me turn the last task into a reusable template.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+  ]);
+
+  const workspaceTemplates = createMemo(() => {
+    const explicit = templates().filter((t) => t.scope === "workspace");
+    if (explicit.length) return explicit;
+    return workspaceTemplatesLoaded() ? [] : defaultWorkspaceTemplates();
+  });
+
+  const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
+
+  const activeWorkspaceDisplay = createMemo(() => {
+    const ws = activeWorkspace();
+    if (!ws) {
+      return {
+        id: "starter",
+        name: "Workspace",
+        path: "",
+        preset: "starter",
+      } satisfies WorkspaceInfo;
+    }
+    return ws;
+  });
+
+  const showWorkspacePicker = createSignal(false);
+  const showCreateWorkspaceModal = createSignal(false);
+
+  const [workspacePickerOpen, setWorkspacePickerOpen] = showWorkspacePicker;
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = showCreateWorkspaceModal;
+
+  const [workspaceSearch, setWorkspaceSearch] = createSignal("");
+
+  const filteredWorkspaces = createMemo(() => {
+    const query = workspaceSearch().trim().toLowerCase();
+    if (!query) return workspaces();
+
+    return workspaces().filter((w) => {
+      const haystack = `${w.name} ${w.path}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  });
+
+  async function activateWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const next = workspaces().find((w) => w.id === id) ?? null;
+    if (!next) return;
+
+    setActiveWorkspaceId(id);
+    setProjectDir(next.path);
+
+    // Load workspace-scoped OpenWork config (authorized roots, metadata).
+    if (isTauriRuntime()) {
+      setWorkspaceConfigLoaded(false);
+      try {
+        const cfg = await workspaceOpenworkRead({ workspacePath: next.path });
+        setWorkspaceConfig(cfg);
+        setWorkspaceConfigLoaded(true);
+
+        const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+        if (roots.length) {
+          setAuthorizedDirs(roots);
+        } else {
+          setAuthorizedDirs([next.path]);
+        }
+      } catch {
+        setWorkspaceConfig(null);
+        setWorkspaceConfigLoaded(true);
+        setAuthorizedDirs([next.path]);
+      }
+
+      try {
+        await workspaceSetActive(id);
+      } catch {
+        // ignore
+      }
+    } else {
+      // Web runtime: at least keep the current workspace root in memory.
+      if (!authorizedDirs().includes(next.path)) {
+        setAuthorizedDirs((current) => {
+          const merged = current.length ? current.slice() : [];
+          if (!merged.includes(next.path)) merged.push(next.path);
+          return merged;
+        });
+      }
+    }
+
+    await loadWorkspaceTemplates({ workspaceRoot: next.path }).catch(() => undefined);
+
+    if (mode() === "host" && engine()?.running && engine()?.baseUrl) {
+      // Already connected to an engine; keep current connection for now.
+      // Future: support multi-workspace host connections.
+      return;
+    }
+  }
+
+  async function loadWorkspaceTemplates(options?: { workspaceRoot?: string; quiet?: boolean }) {
+    const c = client();
+    const root = (options?.workspaceRoot ?? activeWorkspaceRoot()).trim();
+    if (!c || !root) return;
+
+    try {
+      const templatesPath = ".openwork/templates";
+      const nodes = unwrap(await c.file.list({ directory: root, path: templatesPath }));
+      const jsonFiles = nodes
+        .filter((n) => n.type === "file" && !n.ignored)
+        .filter((n) => n.name.toLowerCase().endsWith(".json"));
+
+      const loaded: WorkspaceTemplate[] = [];
+
+      for (const node of jsonFiles) {
+        const content = unwrap(await c.file.read({ directory: root, path: node.path }));
+        if (content.type !== "text") continue;
+
+        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(content.content);
+        if (!parsed) continue;
+
+        const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
+        const prompt = typeof parsed.prompt === "string" ? parsed.prompt : "";
+        if (!prompt.trim()) continue;
+
+        loaded.push({
+          id: typeof parsed.id === "string" ? parsed.id : node.name.replace(/\.json$/i, ""),
+          title,
+          description: typeof parsed.description === "string" ? parsed.description : "",
+          prompt,
+          createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+          scope: "workspace",
+        });
+      }
+
+      const stable = loaded.slice().sort((a, b) => b.createdAt - a.createdAt);
+
+      setTemplates((current) => {
+        const globals = current.filter((t) => t.scope === "global");
+        return [...stable, ...globals];
+      });
+      setWorkspaceTemplatesLoaded(true);
+    } catch (e) {
+      setWorkspaceTemplatesLoaded(true);
+      if (!options?.quiet) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      }
+    }
+  }
+
+  async function createWorkspaceFlow(preset: WorkspacePreset) {
+    if (!isTauriRuntime()) {
+      setError("Workspace creation requires the Tauri app runtime.");
+      return;
+    }
+
+    try {
+      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const folder =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!folder) return;
+
+      setBusy(true);
+      setBusyLabel("Creating workspace");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      const name = folder.split("/").filter(Boolean).pop() ?? "Workspace";
+      const ws = await workspaceCreate({ folderPath: folder, name, preset });
+      setWorkspaces(ws.workspaces);
+      setActiveWorkspaceId(ws.activeId);
+
+      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+      if (active) {
+        setProjectDir(active.path);
+        setAuthorizedDirs([active.path]);
+        await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+      }
+
+      setWorkspacePickerOpen(false);
+      setCreateWorkspaceOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  const [sidebarPluginList, setSidebarPluginList] = createSignal<string[]>([]);
+  const [sidebarPluginStatus, setSidebarPluginStatus] = createSignal<string | null>(null);
+
+  const [reloadRequired, setReloadRequired] = createSignal(false);
+  const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
+  const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
+  const [reloadBusy, setReloadBusy] = createSignal(false);
+  const [reloadError, setReloadError] = createSignal<string | null>(null);
 
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
 
+  const [providers, setProviders] = createSignal<Provider[]>([]);
+  const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
+  const [providerConnectedIds, setProviderConnectedIds] = createSignal<string[]>([]);
+
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
-  const [modelPickerTarget, setModelPickerTarget] = createSignal<
-    "session" | "default"
-  >("session");
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<
-    Record<string, ModelRef>
-  >({});
-  const [sessionModelById, setSessionModelById] = createSignal<
-    Record<string, ModelRef>
-  >({});
+  const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
+  const [modelPickerQuery, setModelPickerQuery] = createSignal("");
+  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
+  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
+
+  const [showThinking, setShowThinking] = createSignal(true);
+  const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+
+  const [appVersion, setAppVersion] = createSignal<string | null>(null);
+
+  const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);
+
+  const [updateEnv, setUpdateEnv] = createSignal<UpdaterEnvironment | null>(null);
+
+  const [resetModalOpen, setResetModalOpen] = createSignal(false);
+  const [resetModalMode, setResetModalMode] = createSignal<ResetOpenworkMode>("onboarding");
+  const [resetModalText, setResetModalText] = createSignal("");
+  const [resetModalBusy, setResetModalBusy] = createSignal(false);
+
+  type UpdateHandle = {
+    available: boolean;
+    currentVersion: string;
+    version: string;
+    date?: string;
+    body?: string;
+    rawJson: Record<string, unknown>;
+    close: () => Promise<void>;
+    download: (onEvent?: (event: any) => void) => Promise<void>;
+    install: () => Promise<void>;
+    downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
+  };
+
+  const [updateStatus, setUpdateStatus] = createSignal<
+    | { state: "idle"; lastCheckedAt: number | null }
+    | { state: "checking"; startedAt: number }
+    | { state: "available"; lastCheckedAt: number; version: string; date?: string; notes?: string }
+    | { state: "downloading"; lastCheckedAt: number; version: string; totalBytes: number | null; downloadedBytes: number; notes?: string }
+    | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
+    | { state: "error"; lastCheckedAt: number | null; message: string }
+  >({ state: "idle", lastCheckedAt: null });
+
+  const [pendingUpdate, setPendingUpdate] = createSignal<
+    | null
+    | { update: UpdateHandle; version: string; notes?: string }
+  >(null);
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -639,12 +997,7 @@ export default function App() {
     if (busy() && label === "Running") return false;
 
     // Otherwise, block during engine / connection transitions.
-    if (
-      busy() &&
-      (label === "Connecting" ||
-        label === "Starting engine" ||
-        label === "Disconnecting")
-    ) {
+    if (busy() && (label === "Connecting" || label === "Starting engine" || label === "Disconnecting")) {
       return true;
     }
 
@@ -656,12 +1009,7 @@ export default function App() {
     if (!query) return CURATED_PACKAGES;
 
     return CURATED_PACKAGES.filter((pkg) => {
-      const haystack = [
-        pkg.name,
-        pkg.source,
-        pkg.description,
-        pkg.tags.join(" "),
-      ]
+      const haystack = [pkg.name, pkg.source, pkg.description, pkg.tags.join(" ")]
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
@@ -719,9 +1067,7 @@ export default function App() {
 
   const isPluginInstalled = (pluginName: string, aliases: string[] = []) => {
     const list = pluginNamesLower();
-    return [pluginName, ...aliases].some((entry) =>
-      list.has(entry.toLowerCase()),
-    );
+    return [pluginName, ...aliases].some((entry) => list.has(entry.toLowerCase()));
   };
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
@@ -731,16 +1077,12 @@ export default function App() {
     }
 
     try {
-      const parsed = parse(config.content) as
-        | Record<string, unknown>
-        | undefined;
+      const parsed = parse(config.content) as Record<string, unknown> | undefined;
       const next = normalizePluginList(parsed?.plugin);
       setPluginList(next);
     } catch (e) {
       setPluginList([]);
-      setPluginStatus(
-        e instanceof Error ? e.message : "Failed to parse opencode.json",
-      );
+      setPluginStatus(e instanceof Error ? e.message : "Failed to parse opencode.json");
     }
   };
 
@@ -772,21 +1114,109 @@ export default function App() {
     return defaultModel();
   });
 
-  const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel()),
-  );
+  const selectedSessionModelLabel = createMemo(() => formatModelLabel(selectedSessionModel(), providers()));
 
   const modelPickerCurrent = createMemo(() =>
     modelPickerTarget() === "default" ? defaultModel() : selectedSessionModel(),
   );
 
+  const modelOptions = createMemo<ModelOption[]>(() => {
+    const allProviders = providers();
+    const defaults = providerDefaults();
+
+     if (!allProviders.length) {
+       return [
+         {
+           providerID: DEFAULT_MODEL.providerID,
+           modelID: DEFAULT_MODEL.modelID,
+           title: DEFAULT_MODEL.modelID,
+           description: DEFAULT_MODEL.providerID,
+           footer: "Fallback",
+           isFree: false,
+           isConnected: true,
+         },
+       ];
+     }
+
+    const sortedProviders = allProviders.slice().sort((a, b) => {
+      const aIsOpencode = a.id === "opencode";
+      const bIsOpencode = b.id === "opencode";
+      if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+    const next: ModelOption[] = [];
+
+     for (const provider of sortedProviders) {
+       const defaultModelID = defaults[provider.id];
+       const isConnected = providerConnectedIds().includes(provider.id);
+       const models = Object.values(provider.models ?? {}).filter((m) => m.status !== "deprecated");
+ 
+       models.sort((a, b) => {
+         const aFree = a.cost?.input === 0 && a.cost?.output === 0;
+         const bFree = b.cost?.input === 0 && b.cost?.output === 0;
+         if (aFree !== bFree) return aFree ? -1 : 1;
+         return (a.name ?? a.id).localeCompare(b.name ?? b.id);
+       });
+ 
+       for (const model of models) {
+         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
+         const footerBits: string[] = [];
+         if (defaultModelID === model.id) footerBits.push("Default");
+         if (isFree) footerBits.push("Free");
+         if (model.capabilities?.reasoning) footerBits.push("Reasoning");
+ 
+         next.push({
+           providerID: provider.id,
+           modelID: model.id,
+           title: model.name ?? model.id,
+           description: provider.name,
+           footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
+           disabled: !isConnected,
+           isFree,
+           isConnected,
+         });
+       }
+     }
+ 
+     next.sort((a, b) => {
+       if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
+       if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
+       return a.title.localeCompare(b.title);
+     });
+ 
+     return next;
+  });
+
+  const filteredModelOptions = createMemo(() => {
+    const q = modelPickerQuery().trim().toLowerCase();
+    const options = modelOptions();
+    if (!q) return options;
+
+    return options.filter((opt) => {
+      const haystack = [
+        opt.title,
+        opt.description ?? "",
+        opt.footer ?? "",
+        `${opt.providerID}/${opt.modelID}`,
+        opt.isConnected ? "connected" : "disconnected",
+        opt.isFree ? "free" : "paid",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  });
+
   function openSessionModelPicker() {
     setModelPickerTarget("session");
+    setModelPickerQuery("");
     setModelPickerOpen(true);
   }
 
   function openDefaultModelPicker() {
     setModelPickerTarget("default");
+    setModelPickerQuery("");
     setModelPickerOpen(true);
   }
 
@@ -836,6 +1266,305 @@ export default function App() {
     }
   }
 
+  function anyActiveRuns() {
+    const statuses = sessionStatusById();
+    return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+  }
+
+  function clearOpenworkLocalStorage() {
+    if (typeof window === "undefined") return;
+
+    try {
+      const keys = Object.keys(window.localStorage);
+      for (const key of keys) {
+        if (key.startsWith("openwork.")) {
+          window.localStorage.removeItem(key);
+        }
+      }
+      // Legacy compatibility key
+      window.localStorage.removeItem("openwork_mode_pref");
+    } catch {
+      // ignore
+    }
+  }
+
+  function openResetModal(mode: ResetOpenworkMode) {
+    if (anyActiveRuns()) {
+      setError("Stop active runs before resetting.");
+      return;
+    }
+
+    setError(null);
+    setResetModalMode(mode);
+    setResetModalText("");
+    setResetModalOpen(true);
+  }
+
+  async function confirmReset() {
+    if (resetModalBusy()) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before resetting.");
+      return;
+    }
+
+    if (resetModalText().trim().toUpperCase() !== "RESET") return;
+
+    setResetModalBusy(true);
+    setError(null);
+
+    try {
+      if (isTauriRuntime()) {
+        await resetOpenworkState(resetModalMode());
+      }
+
+      clearOpenworkLocalStorage();
+
+      if (isTauriRuntime()) {
+        await relaunch();
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+      setResetModalBusy(false);
+    }
+  }
+
+  function markReloadRequired(reason: ReloadReason) {
+    setReloadRequired(true);
+    setReloadLastTriggeredAt(Date.now());
+    setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
+  }
+
+  function clearReloadRequired() {
+    setReloadRequired(false);
+    setReloadReasons([]);
+    setReloadError(null);
+  }
+
+  const reloadCopy = createMemo(() => {
+    const reasons = reloadReasons();
+    if (!reasons.length) {
+      return {
+        title: "Reload required",
+        body: "OpenWork detected changes that require reloading the OpenCode instance.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "plugins") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "skills") {
+      return {
+        title: "Reload required",
+        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
+      };
+    }
+
+    return {
+      title: "Reload required",
+      body: "OpenWork detected plugin/skill changes. Reload the engine to apply them.",
+    };
+  });
+
+  const canReloadEngine = createMemo(() => {
+    if (!reloadRequired()) return false;
+    if (!client()) return false;
+    if (reloadBusy()) return false;
+    if (anyActiveRuns()) return false;
+    if (mode() !== "host") return false;
+    return true;
+  });
+
+  // Keep this mounted so the reload banner UX remains in the app.
+  createEffect(() => {
+    reloadRequired();
+  });
+
+  async function reloadEngineInstance() {
+    const c = client();
+    if (!c) return;
+
+    if (mode() !== "host") {
+      setReloadError("Reload is only available in Host mode.");
+      return;
+    }
+
+    if (anyActiveRuns()) {
+      setReloadError("A run is in progress. Stop it before reloading the engine.");
+      return;
+    }
+
+    setReloadBusy(true);
+    setReloadError(null);
+
+    try {
+      unwrap(await c.instance.dispose());
+      await waitForHealthy(c, { timeoutMs: 12_000 });
+
+      try {
+        const providerList = unwrap(await c.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
+      } catch {
+        try {
+          const cfg = unwrap(await c.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
+      }
+
+      await refreshPlugins().catch(() => undefined);
+      await refreshSkills().catch(() => undefined);
+
+      clearReloadRequired();
+    } catch (e) {
+      setReloadError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setReloadBusy(false);
+    }
+  }
+
+  async function checkForUpdates(options?: { quiet?: boolean }) {
+    if (!isTauriRuntime()) return;
+
+    const env = updateEnv();
+    if (env && !env.supported) {
+      if (!options?.quiet) {
+        setUpdateStatus({
+          state: "error",
+          lastCheckedAt:
+            updateStatus().state === "idle"
+              ? (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+              : null,
+          message: env.reason ?? "Updates are not supported in this environment.",
+        });
+      }
+      return;
+    }
+
+    const prev = updateStatus();
+    setUpdateStatus({ state: "checking", startedAt: Date.now() });
+
+    try {
+      const update = (await check({
+        timeout: 8_000,
+      })) as unknown as UpdateHandle | null;
+      const checkedAt = Date.now();
+
+      if (!update) {
+        setPendingUpdate(null);
+        setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
+        return;
+      }
+
+      const notes = typeof update.body === "string" ? update.body : undefined;
+      setPendingUpdate({ update, version: update.version, notes });
+      setUpdateStatus({
+        state: "available",
+        lastCheckedAt: checkedAt,
+        version: update.version,
+        date: update.date,
+        notes,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+
+      if (options?.quiet) {
+        setUpdateStatus(prev);
+        return;
+      }
+
+      setPendingUpdate(null);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
+  async function downloadUpdate() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    setError(null);
+
+    const state = updateStatus();
+    const lastCheckedAt = state.state === "available" ? state.lastCheckedAt : Date.now();
+
+    setUpdateStatus({
+      state: "downloading",
+      lastCheckedAt,
+      version: pending.version,
+      totalBytes: null,
+      downloadedBytes: 0,
+      notes: pending.notes,
+    });
+
+    try {
+      await pending.update.download((event: any) => {
+        if (!event || typeof event !== "object") return;
+        const record = event as Record<string, any>;
+
+        setUpdateStatus((current) => {
+          if (current.state !== "downloading") return current;
+
+          if (record.event === "Started") {
+            const total =
+              record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
+            return { ...current, totalBytes: total };
+          }
+
+          if (record.event === "Progress") {
+            const chunk =
+              record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
+            return { ...current, downloadedBytes: current.downloadedBytes + chunk };
+          }
+
+          return current;
+        });
+      });
+
+      setUpdateStatus({
+        state: "ready",
+        lastCheckedAt,
+        version: pending.version,
+        notes: pending.notes,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt, message });
+    }
+  }
+
+  async function installUpdateAndRestart() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before installing an update.");
+      return;
+    }
+
+    setError(null);
+    try {
+      await pending.update.install();
+      await pending.update.close();
+      await relaunch();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
   async function refreshEngineDoctor() {
     if (!isTauriRuntime()) return;
 
@@ -861,10 +1590,7 @@ export default function App() {
     setPendingPermissions((current) => {
       const now = Date.now();
       const byId = new Map(current.map((p) => [p.id, p] as const));
-      return list.map((p) => ({
-        ...p,
-        receivedAt: byId.get(p.id)?.receivedAt ?? now,
-      }));
+      return list.map((p) => ({ ...p, receivedAt: byId.get(p.id)?.receivedAt ?? now }));
     });
   }
 
@@ -886,9 +1612,70 @@ export default function App() {
       await loadSessions(nextClient);
       await refreshPendingPermissions(nextClient);
 
+      try {
+        const providerList = unwrap(await nextClient.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
+      } catch {
+        // Backwards compatibility: older servers may not support provider.list
+        try {
+          const cfg = unwrap(await nextClient.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
+      }
+
       setSelectedSessionId(null);
       setMessages([]);
       setTodos([]);
+
+      // Auto-create a first-run onboarding session in the active workspace.
+      try {
+        if (isTauriRuntime() && activeWorkspaceRoot().trim()) {
+          const wsRoot = activeWorkspaceRoot().trim();
+          const storedKey = `openwork.welcomeSessionCreated:${wsRoot}`;
+
+          let already = false;
+          try {
+            already = window.localStorage.getItem(storedKey) === "1";
+          } catch {
+            // ignore
+          }
+
+          if (!already) {
+            const session = unwrap(await nextClient.session.create({ directory: wsRoot, title: "Welcome to OpenWork" }));
+            await nextClient.session.promptAsync({
+              directory: wsRoot,
+              sessionID: session.id,
+              model: defaultModel(),
+              variant: modelVariant() ?? undefined,
+              parts: [
+                {
+                  type: "text",
+                  text:
+                    "Load the `workspace_guide` skill from this workspace and explain, in plain language, what lives in this folder (skills/plugins/templates) and what’s global. Then suggest 2 quick next actions the user can do in OpenWork.",
+                },
+              ],
+            });
+
+            try {
+              window.localStorage.setItem(storedKey, "1");
+            } catch {
+              // ignore
+            }
+
+            await loadSessions(nextClient).catch(() => undefined);
+          }
+        }
+      } catch {
+        // ignore onboarding session failures
+      }
 
       setView("dashboard");
       setTab("home");
@@ -906,15 +1693,15 @@ export default function App() {
     }
   }
 
-  async function startHost() {
+  async function startHost(options?: { workspacePath?: string }) {
     if (!isTauriRuntime()) {
       setError("Host mode requires the Tauri app runtime. Use `pnpm dev`.");
       return false;
     }
 
-    const dir = projectDir().trim();
+    const dir = (options?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
     if (!dir) {
-      setError("Pick a folder path to start OpenCode in.");
+      setError("Pick a workspace folder to start OpenCode in.");
       return false;
     }
 
@@ -924,19 +1711,16 @@ export default function App() {
       setEngineDoctorCheckedAt(Date.now());
 
       if (!result.found) {
-        const isWindows = navigator.platform.includes("Win");
         setError(
-          isWindows
-            ? "OpenCode CLI not found. Install with `npm install -g opencode-ai` or download from https://opencode.ai/install, then retry."
+          isWindowsPlatform()
+            ? "OpenCode CLI not found. Install OpenCode for Windows, then restart OpenWork. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
             : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;
       }
 
       if (!result.supportsServe) {
-        setError(
-          "OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.",
-        );
+        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
         return false;
       }
     } catch (e) {
@@ -949,14 +1733,23 @@ export default function App() {
     setBusyStartedAt(Date.now());
 
     try {
-      const info = await engineStart(dir);
+      // Keep legacy state in sync for now.
+      setProjectDir(dir);
+      if (!authorizedDirs().length) {
+        setAuthorizedDirs([dir]);
+      }
+
+      if (isWindowsPlatform() && engineSource() === "sidecar") {
+        setEngineSource("path");
+        setError("Sidecar OpenCode is not supported on Windows yet. Using PATH instead.");
+      }
+
+      const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
+
       setEngine(info);
 
       if (info.baseUrl) {
-        const ok = await connectToServer(
-          info.baseUrl,
-          info.projectDir ?? undefined,
-        );
+        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
         if (!ok) return false;
       }
 
@@ -1085,36 +1878,28 @@ export default function App() {
 
       const model = selectedSessionModel();
 
-      unwrap(
-        await c.session.prompt({
-          sessionID,
-          model,
-          parts: [{ type: "text", text: content }],
-        }),
-      );
+       await c.session.promptAsync({
+         sessionID,
+         model,
+         variant: modelVariant() ?? undefined,
+         parts: [{ type: "text", text: content }],
+       });
 
-      setSessionModelById((current) => ({
-        ...current,
-        [sessionID]: model,
-      }));
+       setSessionModelById((current) => ({
+         ...current,
+         [sessionID]: model,
+       }));
 
-      setSessionModelOverrideById((current) => {
-        if (!current[sessionID]) return current;
-        const copy = { ...current };
-        delete copy[sessionID];
-        return copy;
-      });
+       setSessionModelOverrideById((current) => {
+         if (!current[sessionID]) return current;
+         const copy = { ...current };
+         delete copy[sessionID];
+         return copy;
+       });
 
-      const msgs = unwrap(await c.session.messages({ sessionID }));
-      setMessages(msgs);
-
-      try {
-        setTodos(unwrap(await c.session.todo({ sessionID })));
-      } catch {
-        setTodos([]);
-      }
-
-      await loadSessions(c);
+       // Streaming UI is driven by SSE; do not block on fetching the full
+       // message list here.
+       await loadSessions(c).catch(() => undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
@@ -1131,36 +1916,98 @@ export default function App() {
     setTemplateDraftTitle(seedTitle);
     setTemplateDraftDescription("");
     setTemplateDraftPrompt(seedPrompt);
+    setTemplateDraftScope("workspace");
     setTemplateModalOpen(true);
   }
 
-  function saveTemplate() {
+  async function saveTemplate() {
     const title = templateDraftTitle().trim();
     const promptText = templateDraftPrompt().trim();
     const description = templateDraftDescription().trim();
+    const scope = templateDraftScope();
 
     if (!title || !promptText) {
       setError("Template title and prompt are required.");
       return;
     }
 
-    const template: Template = {
-      id: `tmpl_${Date.now()}`,
-      title,
-      description,
-      prompt: promptText,
-      createdAt: Date.now(),
-    };
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) {
+        setError("Workspace templates require the desktop app.");
+        return;
+      }
+      if (!activeWorkspacePath().trim()) {
+        setError("Pick a workspace folder first.");
+        return;
+      }
+    }
 
-    setTemplates((current) => [template, ...current]);
-    setTemplateModalOpen(false);
+    setBusy(true);
+    setBusyLabel(scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const template: WorkspaceTemplate = {
+        id: `tmpl_${Date.now()}`,
+        title,
+        description,
+        prompt: promptText,
+        createdAt: Date.now(),
+        scope,
+      };
+
+      if (scope === "workspace") {
+        const workspaceRoot = activeWorkspacePath().trim();
+        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } else {
+        setTemplates((current) => [template, ...current]);
+        setGlobalTemplatesLoaded(true);
+      }
+
+      setTemplateModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
   }
 
-  function deleteTemplate(templateId: string) {
+  async function deleteTemplate(templateId: string) {
+    const scope = templates().find((t) => t.id === templateId)?.scope;
+
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) return;
+      const workspaceRoot = activeWorkspacePath().trim();
+      if (!workspaceRoot) return;
+
+      setBusy(true);
+      setBusyLabel("Deleting template");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      try {
+        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+      }
+
+      return;
+    }
+
     setTemplates((current) => current.filter((t) => t.id !== templateId));
+    setGlobalTemplatesLoaded(true);
   }
 
-  async function runTemplate(template: Template) {
+  async function runTemplate(template: WorkspaceTemplate) {
     const c = client();
     if (!c) return;
 
@@ -1175,13 +2022,12 @@ export default function App() {
 
       const model = defaultModel();
 
-      unwrap(
-        await c.session.prompt({
-          sessionID: session.id,
-          model,
-          parts: [{ type: "text", text: template.prompt }],
-        }),
-      );
+       await c.session.promptAsync({
+         sessionID: session.id,
+         model,
+         variant: modelVariant() ?? undefined,
+         parts: [{ type: "text", text: template.prompt }],
+       });
 
       setSessionModelById((current) => ({
         ...current,
@@ -1200,7 +2046,7 @@ export default function App() {
 
     try {
       setSkillsStatus(null);
-      const nodes = unwrap(await c.file.list({ path: ".opencode/skill" }));
+      const nodes = unwrap(await c.file.list({ directory: activeWorkspaceRoot().trim(), path: ".opencode/skill" }));
       const dirs = nodes.filter((n) => n.type === "directory" && !n.ignored);
 
       const next: SkillCard[] = [];
@@ -1209,9 +2055,12 @@ export default function App() {
         let description: string | undefined;
 
         try {
-          const skillDoc = unwrap(
-            await c.file.read({ path: `.opencode/skill/${dir.name}/SKILL.md` }),
-          );
+            const skillDoc = unwrap(
+              await c.file.read({
+                directory: activeWorkspaceRoot().trim(),
+                path: `.opencode/skill/${dir.name}/SKILL.md`,
+              }),
+            );
 
           if (skillDoc.type === "text") {
             const lines = skillDoc.content.split("\n");
@@ -1245,6 +2094,8 @@ export default function App() {
     if (!isTauriRuntime()) {
       setPluginStatus("Plugin management is only available in Host mode.");
       setPluginList([]);
+      setSidebarPluginStatus("Plugins are only available in Host mode.");
+      setSidebarPluginList([]);
       return;
     }
 
@@ -1254,29 +2105,41 @@ export default function App() {
     if (scope === "project" && !targetDir) {
       setPluginStatus("Pick a project folder to manage project plugins.");
       setPluginList([]);
+      setSidebarPluginStatus("Pick a project folder to load active plugins.");
+      setSidebarPluginList([]);
       return;
     }
 
     try {
       setPluginStatus(null);
+      setSidebarPluginStatus(null);
       const config = await readOpencodeConfig(scope, targetDir);
       setPluginConfig(config);
 
       if (!config.exists) {
         setPluginList([]);
-        setPluginStatus(
-          "No opencode.json found yet. Add a plugin to create one.",
-        );
+        setPluginStatus("No opencode.json found yet. Add a plugin to create one.");
+        setSidebarPluginList([]);
+        setSidebarPluginStatus("No opencode.json in this workspace yet.");
         return;
+      }
+
+      try {
+        const parsed = parse(config.content ?? "") as Record<string, unknown> | undefined;
+        const next = normalizePluginList(parsed?.plugin);
+        setSidebarPluginList(next);
+      } catch {
+        setSidebarPluginList([]);
+        setSidebarPluginStatus("Failed to parse opencode.json");
       }
 
       loadPluginsFromConfig(config);
     } catch (e) {
       setPluginConfig(null);
       setPluginList([]);
-      setPluginStatus(
-        e instanceof Error ? e.message : "Failed to load opencode.json",
-      );
+      setPluginStatus(e instanceof Error ? e.message : "Failed to load opencode.json");
+      setSidebarPluginStatus("Failed to load active plugins.");
+      setSidebarPluginList([]);
     }
   }
 
@@ -1314,11 +2177,8 @@ export default function App() {
           $schema: "https://opencode.ai/config.json",
           plugin: [pluginName],
         };
-        await writeOpencodeConfig(
-          scope,
-          targetDir,
-          `${JSON.stringify(payload, null, 2)}\n`,
-        );
+        await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+        markReloadRequired("plugins");
         if (isManualInput) {
           setPluginInput("");
         }
@@ -1330,11 +2190,7 @@ export default function App() {
       const plugins = normalizePluginList(parsed?.plugin);
 
       const desired = stripPluginVersion(pluginName).toLowerCase();
-      if (
-        plugins.some(
-          (entry) => stripPluginVersion(entry).toLowerCase() === desired,
-        )
-      ) {
+      if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
         setPluginStatus("Plugin already listed in opencode.json.");
         return;
       }
@@ -1346,14 +2202,13 @@ export default function App() {
       const updated = applyEdits(raw, edits);
 
       await writeOpencodeConfig(scope, targetDir, updated);
+      markReloadRequired("plugins");
       if (isManualInput) {
         setPluginInput("");
       }
       await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(
-        e instanceof Error ? e.message : "Failed to update opencode.json",
-      );
+      setPluginStatus(e instanceof Error ? e.message : "Failed to update opencode.json");
     }
   }
 
@@ -1372,9 +2227,7 @@ export default function App() {
     }
 
     if (!pkg) {
-      setError(
-        "Enter an OpenPackage source (e.g. github:anthropics/claude-code).",
-      );
+      setError("Enter an OpenPackage source (e.g. github:anthropics/claude-code).");
       return;
     }
 
@@ -1386,11 +2239,10 @@ export default function App() {
     try {
       const result = await opkgInstall(targetDir, pkg);
       if (!result.ok) {
-        setSkillsStatus(
-          result.stderr || result.stdout || `opkg failed (${result.status})`,
-        );
+        setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Installed.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -1432,25 +2284,18 @@ export default function App() {
     try {
       const selection = await pickDirectory({ title: "Select skill folder" });
       const sourceDir =
-        typeof selection === "string"
-          ? selection
-          : Array.isArray(selection)
-            ? selection[0]
-            : null;
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
       if (!sourceDir) {
         return;
       }
 
-      const result = await importSkill(targetDir, sourceDir, {
-        overwrite: false,
-      });
+      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
       if (!result.ok) {
-        setSkillsStatus(
-          result.stderr || result.stdout || `Import failed (${result.status})`,
-        );
+        setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Imported.");
+        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -1461,10 +2306,7 @@ export default function App() {
     }
   }
 
-  async function respondPermission(
-    requestID: string,
-    reply: "once" | "always" | "reject",
-  ) {
+  async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
     const c = client();
     if (!c || permissionReplyBusy()) return;
 
@@ -1481,19 +2323,83 @@ export default function App() {
     }
   }
 
-  function addAuthorizedDir() {
+  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
+    // Intentional no-op: permission prompts grant session-scoped access only.
+    // Persistent workspace roots must be managed explicitly via workspace settings.
+    await respondPermission(requestID, reply);
+  }
+
+  async function persistAuthorizedRoots(nextRoots: string[]) {
+    if (!isTauriRuntime()) return;
+    const root = activeWorkspacePath().trim();
+    if (!root) return;
+
+    const existing = workspaceConfig();
+    const cfg: WorkspaceOpenworkConfig = {
+      version: existing?.version ?? 1,
+      workspace: existing?.workspace ?? null,
+      authorizedRoots: nextRoots,
+    };
+
+    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    setWorkspaceConfig(cfg);
+  }
+
+  function normalizeRoots(list: string[]) {
+    const out: string[] = [];
+    for (const entry of list) {
+      const trimmed = entry.trim().replace(/\/+$/, "");
+      if (!trimmed) continue;
+      if (!out.includes(trimmed)) out.push(trimmed);
+    }
+    return out;
+  }
+
+  async function addAuthorizedDir() {
     const next = newAuthorizedDir().trim();
     if (!next) return;
 
-    setAuthorizedDirs((current) => {
-      if (current.includes(next)) return current;
-      return [...current, next];
-    });
+    const roots = normalizeRoots([...authorizedDirs(), next]);
+    setAuthorizedDirs(roots);
     setNewAuthorizedDir("");
+
+    try {
+      await persistAuthorizedRoots(roots);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
   }
 
-  function removeAuthorizedDir(index: number) {
-    setAuthorizedDirs((current) => current.filter((_, i) => i !== index));
+  async function addAuthorizedDirFromPicker(options?: { persistToWorkspace?: boolean }) {
+    if (!isTauriRuntime()) return;
+
+    try {
+      const selection = await pickDirectory({ title: "Add folder" });
+      const path =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!path) return;
+
+      const roots = normalizeRoots([...authorizedDirs(), path]);
+      setAuthorizedDirs(roots);
+
+      if (options?.persistToWorkspace) {
+        await persistAuthorizedRoots(roots);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
+  }
+
+  async function removeAuthorizedDir(index: number) {
+    const roots = authorizedDirs().filter((_, i) => i !== index);
+    setAuthorizedDirs(roots);
+
+    try {
+      await persistAuthorizedRoots(roots);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
   }
 
   onMount(async () => {
@@ -1509,41 +2415,55 @@ export default function App() {
           setBaseUrl(storedBaseUrl);
         }
 
-        const storedClientDir = window.localStorage.getItem(
-          "openwork.clientDirectory",
-        );
+        const storedClientDir = window.localStorage.getItem("openwork.clientDirectory");
         if (storedClientDir) {
           setClientDirectory(storedClientDir);
         }
 
-        const storedProjectDir = window.localStorage.getItem(
-          "openwork.projectDir",
-        );
-        if (storedProjectDir) {
+        // Legacy: projectDir is now derived from the active workspace.
+        const storedProjectDir = window.localStorage.getItem("openwork.projectDir");
+        if (storedProjectDir && !projectDir().trim()) {
           setProjectDir(storedProjectDir);
         }
 
-        const storedAuthorized = window.localStorage.getItem(
-          "openwork.authorizedDirs",
-        );
+        const storedEngineSource = window.localStorage.getItem("openwork.engineSource");
+        if (storedEngineSource === "path" || storedEngineSource === "sidecar") {
+          setEngineSource(storedEngineSource);
+        }
+
+        const storedAuthorized = window.localStorage.getItem("openwork.authorizedDirs");
         if (storedAuthorized) {
           const parsed = JSON.parse(storedAuthorized) as unknown;
-          if (
-            Array.isArray(parsed) &&
-            parsed.every((v) => typeof v === "string")
-          ) {
+          if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
             setAuthorizedDirs(parsed);
           }
         }
 
-        const storedTemplates =
-          window.localStorage.getItem("openwork.templates");
-        if (storedTemplates) {
-          const parsed = JSON.parse(storedTemplates) as unknown;
-          if (Array.isArray(parsed)) {
-            setTemplates(parsed as Template[]);
-          }
-        }
+        // Legacy (pre-workspace templates): normalize any stored templates into global templates.
+        const storedTemplates = window.localStorage.getItem("openwork.templates");
+         if (storedTemplates) {
+           const parsed = JSON.parse(storedTemplates) as unknown;
+           if (Array.isArray(parsed)) {
+             const normalized = (parsed as unknown[])
+               .filter((v) => v && typeof v === "object")
+               .map((entry) => {
+                 const record = entry as Record<string, unknown>;
+                 return {
+                   id: typeof record.id === "string" ? record.id : `tmpl_${Date.now()}`,
+                   title: typeof record.title === "string" ? record.title : "Untitled",
+                   description: typeof record.description === "string" ? record.description : "",
+                   prompt: typeof record.prompt === "string" ? record.prompt : "",
+                   createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+                   scope: "global" as const,
+                 } satisfies WorkspaceTemplate;
+               })
+               .filter((t) => t.prompt.trim().length > 0);
+
+             setTemplates(normalized);
+           }
+         }
+
+         setGlobalTemplatesLoaded(true);
 
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
@@ -1552,12 +2472,39 @@ export default function App() {
         } else {
           setDefaultModel(DEFAULT_MODEL);
           try {
-            window.localStorage.setItem(
-              MODEL_PREF_KEY,
-              formatModelRef(DEFAULT_MODEL),
-            );
+            window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(DEFAULT_MODEL));
           } catch {
             // ignore
+          }
+        }
+
+        const storedThinking = window.localStorage.getItem(THINKING_PREF_KEY);
+        if (storedThinking != null) {
+          try {
+            const parsed = JSON.parse(storedThinking);
+            if (typeof parsed === "boolean") {
+              setShowThinking(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
+        if (storedVariant && storedVariant.trim()) {
+          setModelVariant(storedVariant.trim());
+        }
+
+        const storedUpdateAutoCheck = window.localStorage.getItem("openwork.updateAutoCheck");
+        if (storedUpdateAutoCheck === "0" || storedUpdateAutoCheck === "1") {
+          setUpdateAutoCheck(storedUpdateAutoCheck === "1");
+        }
+
+        const storedUpdateCheckedAt = window.localStorage.getItem("openwork.updateLastCheckedAt");
+        if (storedUpdateCheckedAt) {
+          const parsed = Number(storedUpdateCheckedAt);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            setUpdateStatus({ state: "idle", lastCheckedAt: parsed });
           }
         }
       } catch {
@@ -1565,26 +2512,81 @@ export default function App() {
       }
     }
 
+    if (isTauriRuntime()) {
+      try {
+        setAppVersion(await getVersion());
+      } catch {
+        // ignore
+      }
+
+      // Mark global templates as loaded even if nothing was stored.
+      setGlobalTemplatesLoaded(true);
+
+      try {
+        setUpdateEnv(await updaterEnvironment());
+      } catch {
+        // ignore
+      }
+
+      if (updateAutoCheck()) {
+        const state = updateStatus();
+        const lastCheckedAt = state.state === "idle" ? state.lastCheckedAt : null;
+        if (!lastCheckedAt || Date.now() - lastCheckedAt > 24 * 60 * 60_000) {
+          checkForUpdates({ quiet: true }).catch(() => undefined);
+        }
+      }
+    }
+
     await refreshEngine();
     await refreshEngineDoctor();
 
-    const info = engine();
-    if (info?.baseUrl) {
-      setBaseUrl(info.baseUrl);
-    }
+     // Bootstrap workspaces (Host mode only).
+     if (isTauriRuntime()) {
+       try {
+          const ws = await workspaceBootstrap();
+          setWorkspaces(ws.workspaces);
+          setActiveWorkspaceId(ws.activeId);
+          const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+          if (active) {
+            setProjectDir(active.path);
+            if (isTauriRuntime()) {
+              try {
+                const cfg = await workspaceOpenworkRead({ workspacePath: active.path });
+                setWorkspaceConfig(cfg);
+                setWorkspaceConfigLoaded(true);
+                const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+                setAuthorizedDirs(roots.length ? roots : [active.path]);
+              } catch {
+                setWorkspaceConfig(null);
+                setWorkspaceConfigLoaded(true);
+                setAuthorizedDirs([active.path]);
+              }
+            } else if (!authorizedDirs().length) {
+              setAuthorizedDirs([active.path]);
+            }
 
-    // Auto-continue based on saved preference.
-    if (!modePref) return;
+            await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+          }
+       } catch {
+         // ignore
+       }
+     }
+
+     const info = engine();
+     if (info?.baseUrl) {
+       setBaseUrl(info.baseUrl);
+     }
+
+     // Auto-continue based on saved preference.
+     if (!modePref) return;
+
 
     if (modePref === "host") {
       setMode("host");
 
       if (info?.running && info.baseUrl) {
         setOnboardingStep("connecting");
-        const ok = await connectToServer(
-          info.baseUrl,
-          info.projectDir ?? undefined,
-        );
+        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
         if (!ok) {
           setMode(null);
           setOnboardingStep("mode");
@@ -1592,23 +2594,23 @@ export default function App() {
         return;
       }
 
-      if (isTauriRuntime() && projectDir().trim()) {
-        if (!authorizedDirs().length && projectDir().trim()) {
-          setAuthorizedDirs([projectDir().trim()]);
-        }
+       if (isTauriRuntime() && activeWorkspacePath().trim()) {
+         if (!authorizedDirs().length && activeWorkspacePath().trim()) {
+           setAuthorizedDirs([activeWorkspacePath().trim()]);
+         }
 
-        setOnboardingStep("connecting");
-        const ok = await startHost();
-        if (!ok) {
-          setOnboardingStep("host");
-        }
-        return;
-      }
+         setOnboardingStep("connecting");
+         const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+         if (!ok) {
+           setOnboardingStep("host");
+         }
+         return;
+       }
 
-      // Missing required info; take them directly to Host setup.
-      setOnboardingStep("host");
-      return;
-    }
+       // Missing required info; take them directly to Host setup.
+       setOnboardingStep("host");
+       return;
+     }
 
     // Client preference.
     setMode("client");
@@ -1646,10 +2648,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        "openwork.clientDirectory",
-        clientDirectory(),
-      );
+      window.localStorage.setItem("openwork.clientDirectory", clientDirectory());
     } catch {
       // ignore
     }
@@ -1657,6 +2656,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // Legacy key: keep for backwards compatibility.
     try {
       window.localStorage.setItem("openwork.projectDir", projectDir());
     } catch {
@@ -1667,10 +2667,39 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        "openwork.authorizedDirs",
-        JSON.stringify(authorizedDirs()),
-      );
+      window.localStorage.setItem("openwork.engineSource", engineSource());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    // Legacy persistence; workspace config is authoritative in the desktop app.
+    try {
+      window.localStorage.setItem("openwork.authorizedDirs", JSON.stringify(authorizedDirs()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!globalTemplatesLoaded()) return;
+
+    try {
+      const payload = templates()
+        .filter((t) => t.scope === "global")
+        .map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          prompt: t.prompt,
+          createdAt: t.createdAt,
+          scope: t.scope,
+        }));
+
+      window.localStorage.setItem("openwork.templates", JSON.stringify(payload));
     } catch {
       // ignore
     }
@@ -1679,10 +2708,7 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        "openwork.templates",
-        JSON.stringify(templates()),
-      );
+      window.localStorage.setItem(MODEL_PREF_KEY, formatModelRef(defaultModel()));
     } catch {
       // ignore
     }
@@ -1691,10 +2717,57 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(
-        MODEL_PREF_KEY,
-        formatModelRef(defaultModel()),
-      );
+      window.localStorage.setItem("openwork.updateAutoCheck", updateAutoCheck() ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(THINKING_PREF_KEY, JSON.stringify(showThinking()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = modelVariant();
+      if (value) {
+        window.localStorage.setItem(VARIANT_PREF_KEY, value);
+      } else {
+        window.localStorage.removeItem(VARIANT_PREF_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    const state = updateStatus();
+    if (typeof window === "undefined") return;
+    if (state.state === "idle" && state.lastCheckedAt) {
+      try {
+        window.localStorage.setItem("openwork.updateLastCheckedAt", String(state.lastCheckedAt));
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = modelVariant();
+      if (value) {
+        window.localStorage.setItem(VARIANT_PREF_KEY, value);
+      } else {
+        window.localStorage.removeItem(VARIANT_PREF_KEY);
+      }
     } catch {
       // ignore
     }
@@ -1709,9 +2782,7 @@ export default function App() {
 
     (async () => {
       try {
-        const sub = await c.event.subscribe(undefined, {
-          signal: controller.signal,
-        });
+        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
 
         for await (const raw of sub.stream) {
           if (cancelled) break;
@@ -1725,24 +2796,16 @@ export default function App() {
 
           if (developerMode()) {
             setEvents((current) => {
-              const next = [
-                { type: event.type, properties: event.properties },
-                ...current,
-              ];
+              const next = [{ type: event.type, properties: event.properties }, ...current];
               return next.slice(0, 150);
             });
           }
 
-          if (
-            event.type === "session.updated" ||
-            event.type === "session.created"
-          ) {
+          if (event.type === "session.updated" || event.type === "session.created") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
               if (record.info && typeof record.info === "object") {
-                setSessions((current) =>
-                  upsertSession(current, record.info as Session),
-                );
+                setSessions((current) => upsertSession(current, record.info as Session));
               }
             }
           }
@@ -1752,9 +2815,7 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               const info = record.info as Session | undefined;
               if (info?.id) {
-                setSessions((current) =>
-                  current.filter((s) => s.id !== info.id),
-                );
+                setSessions((current) => current.filter((s) => s.id !== info.id));
               }
             }
           }
@@ -1762,8 +2823,7 @@ export default function App() {
           if (event.type === "session.status") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID =
-                typeof record.sessionID === "string" ? record.sessionID : null;
+              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
               if (sessionID) {
                 setSessionStatusById((current) => ({
                   ...current,
@@ -1776,8 +2836,7 @@ export default function App() {
           if (event.type === "session.idle") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID =
-                typeof record.sessionID === "string" ? record.sessionID : null;
+              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
               if (sessionID) {
                 setSessionStatusById((current) => ({
                   ...current,
@@ -1808,10 +2867,7 @@ export default function App() {
                   });
                 }
 
-                if (
-                  selectedSessionId() &&
-                  info.sessionID === selectedSessionId()
-                ) {
+                if (selectedSessionId() && info.sessionID === selectedSessionId()) {
                   setMessages((current) => upsertMessage(current, info));
                 }
               }
@@ -1826,9 +2882,7 @@ export default function App() {
                 record.sessionID === selectedSessionId() &&
                 typeof record.messageID === "string"
               ) {
-                setMessages((current) =>
-                  current.filter((m) => m.info.id !== record.messageID),
-                );
+                setMessages((current) => current.filter((m) => m.info.id !== record.messageID));
               }
             }
           }
@@ -1838,12 +2892,35 @@ export default function App() {
               const record = event.properties as Record<string, unknown>;
               if (record.part && typeof record.part === "object") {
                 const part = record.part as Part;
-                if (
-                  selectedSessionId() &&
-                  part.sessionID === selectedSessionId()
-                ) {
-                  setMessages((current) => upsertPart(current, part));
-                }
+                 if (selectedSessionId() && part.sessionID === selectedSessionId()) {
+                   setMessages((current) => {
+                     const next = upsertPart(current, part);
+
+                     // Some streaming servers only send `delta` updates and keep
+                     // `part.text` as the full aggregation; others send the
+                     // full part each time. If we have a delta, apply it to the
+                     // latest text part to ensure visible streaming.
+                     if (typeof record.delta === "string" && record.delta && part.type === "text") {
+                       const msgIdx = next.findIndex((m) => m.info.id === part.messageID);
+                       if (msgIdx !== -1) {
+                         const msg = next[msgIdx];
+                         const parts = msg.parts.slice();
+                         const pIdx = parts.findIndex((p) => p.id === part.id);
+                         if (pIdx !== -1) {
+                           const currentPart = parts[pIdx] as any;
+                           if (typeof currentPart.text === "string" && currentPart.text.endsWith(record.delta) === false) {
+                             parts[pIdx] = { ...(parts[pIdx] as any), text: `${currentPart.text}${record.delta}` };
+                             const copy = next.slice();
+                             copy[msgIdx] = { ...msg, parts };
+                             return copy;
+                           }
+                         }
+                       }
+                     }
+
+                     return next;
+                   });
+                 }
               }
             }
           }
@@ -1851,34 +2928,19 @@ export default function App() {
           if (event.type === "message.part.removed") {
             if (event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
-              const sessionID =
-                typeof record.sessionID === "string" ? record.sessionID : null;
-              const messageID =
-                typeof record.messageID === "string" ? record.messageID : null;
-              const partID =
-                typeof record.partID === "string" ? record.partID : null;
+              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+              const messageID = typeof record.messageID === "string" ? record.messageID : null;
+              const partID = typeof record.partID === "string" ? record.partID : null;
 
-              if (
-                sessionID &&
-                selectedSessionId() &&
-                sessionID === selectedSessionId() &&
-                messageID &&
-                partID
-              ) {
-                setMessages((current) =>
-                  removePart(current, messageID, partID),
-                );
+              if (sessionID && selectedSessionId() && sessionID === selectedSessionId() && messageID && partID) {
+                setMessages((current) => removePart(current, messageID, partID));
               }
             }
           }
 
           if (event.type === "todo.updated") {
             const id = selectedSessionId();
-            if (
-              id &&
-              event.properties &&
-              typeof event.properties === "object"
-            ) {
+            if (id && event.properties && typeof event.properties === "object") {
               const record = event.properties as Record<string, unknown>;
               if (record.sessionID === id && Array.isArray(record.todos)) {
                 setTodos(record.todos as any);
@@ -1886,10 +2948,7 @@ export default function App() {
             }
           }
 
-          if (
-            event.type === "permission.asked" ||
-            event.type === "permission.replied"
-          ) {
+          if (event.type === "permission.asked" || event.type === "permission.replied") {
             try {
               await refreshPendingPermissions(c);
             } catch {
@@ -1955,14 +3014,10 @@ export default function App() {
               </div>
               <div class="text-center">
                 <h2 class="text-xl font-medium mb-2">
-                  {mode() === "host"
-                    ? "Starting OpenCode Engine..."
-                    : "Searching for Host..."}
+                  {mode() === "host" ? "Starting OpenCode Engine..." : "Searching for Host..."}
                 </h2>
                 <p class="text-zinc-500 text-sm">
-                  {mode() === "host"
-                    ? `Initializing ${localHostLabel()}`
-                    : "Verifying secure handshake"}
+                  {mode() === "host" ? `Initializing ${localHostLabel()}` : "Verifying secure handshake"}
                 </p>
               </div>
             </div>
@@ -1975,104 +3030,72 @@ export default function App() {
 
             <div class="max-w-md w-full z-10 space-y-8">
               <div class="text-center space-y-2">
-                <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
-                  <Shield class="text-zinc-400" />
+                <div class="w-12 h-12 bg-white rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-white/10 mb-6">
+                  <Folder size={22} class="text-black" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">
-                  Authorized Workspaces
-                </h2>
+                <h2 class="text-2xl font-bold tracking-tight">Create your first workspace</h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
-                  OpenWork runs locally. Select which folders it is allowed to
-                  access.
+                  A workspace is a <span class="font-semibold text-white">folder</span> with its own skills, plugins, and templates.
                 </p>
               </div>
 
               <div class="space-y-4">
-                <div>
-                  <div class="mb-1 flex items-center justify-between gap-3">
-                    <div class="text-xs font-medium text-zinc-300">
-                      Project folder
+                <div class="bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-5 space-y-3">
+                  <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+
+                  <div class="space-y-2">
+                    <div class="text-sm font-medium text-white">Starter Workspace</div>
+                    <div class="text-xs text-zinc-500">
+                      OpenWork will create a ready-to-run folder and start OpenCode inside it.
                     </div>
+                    <div class="text-xs text-zinc-600 font-mono break-all">{activeWorkspacePath() || "(initializing...)"}</div>
                   </div>
-                  <div class="flex gap-2">
-                    <input
-                      class="w-full bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20 rounded-xl"
-                      placeholder="/path/to/project"
-                      value={projectDir()}
-                      onInput={(e) => setProjectDir(e.currentTarget.value)}
-                    />
-                    <Show when={isTauriRuntime()}>
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({
-                              title: "Select project folder",
-                            });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setProjectDir(path);
-                            }
-                          } catch (e) {
-                            setError(
-                              e instanceof Error ? e.message : "Unknown error",
-                            );
-                          }
-                        }}
-                        disabled={busy()}
-                      >
-                        Browse
-                      </Button>
-                    </Show>
-                  </div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {isTauriRuntime()
-                      ? "Engine will start in this folder."
-                      : "Host mode requires the Tauri app runtime."}
+
+                  <div class="pt-3 border-t border-zinc-800/60 space-y-2">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Scheduler plugin (workspace-scoped)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Starter templates ("Understand this workspace", etc.)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        You can add more folders when prompted
+                      </div>
+                    </div>
                   </div>
                 </div>
 
+                <Button
+                  onClick={async () => {
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+                    if (!ok) {
+                      setOnboardingStep("host");
+                    }
+                  }}
+                  disabled={busy() || !activeWorkspacePath().trim()}
+                  class="w-full py-3 text-base"
+                >
+                  Start Engine
+                </Button>
+
+                <div class="text-xs text-zinc-600">
+                  Authorized folders live in <span class="font-mono">.opencode/openwork.json</span> and can be updated here anytime.
+                </div>
+
                 <div class="space-y-3">
-                  <For each={authorizedDirs()}>
-                    {(folder, idx) => (
-                      <div class="group flex items-center justify-between p-4 bg-zinc-900/50 rounded-xl border border-zinc-800/80 hover:border-zinc-700 transition-colors">
-                        <div class="flex items-center gap-3 overflow-hidden">
-                          <Folder size={18} class="text-indigo-400 shrink-0" />
-                          <span class="font-mono text-sm text-zinc-300 truncate">
-                            {folder}
-                          </span>
-                        </div>
-                        <button
-                          onClick={() => removeAuthorizedDir(idx())}
-                          class="text-zinc-600 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-all"
-                          title="Remove"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
-
-                  <Show when={!authorizedDirs().length}>
-                    <div class="text-xs text-zinc-600">
-                      No authorized folders yet. Add at least your project
-                      folder.
-                    </div>
-                  </Show>
-
                   <div class="flex gap-2">
                     <input
                       class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
                       placeholder="Add folder path…"
                       value={newAuthorizedDir()}
-                      onInput={(e) =>
-                        setNewAuthorizedDir(e.currentTarget.value)
-                      }
+                      onInput={(e) => setNewAuthorizedDir(e.currentTarget.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           addAuthorizedDir();
@@ -2082,30 +3105,7 @@ export default function App() {
                     <Show when={isTauriRuntime()}>
                       <Button
                         variant="outline"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({
-                              title: "Add authorized folder",
-                            });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setAuthorizedDirs((current) =>
-                                current.includes(path)
-                                  ? current
-                                  : [...current, path],
-                              );
-                            }
-                          } catch (e) {
-                            setError(
-                              e instanceof Error ? e.message : safeStringify(e),
-                            );
-                          }
-                        }}
+                        onClick={() => addAuthorizedDirFromPicker({ persistToWorkspace: true })}
                         disabled={busy()}
                       >
                         Pick
@@ -2121,76 +3121,109 @@ export default function App() {
                     </Button>
                   </div>
 
-                  <Show when={isTauriRuntime()}>
-                    <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
-                      <div class="flex items-start justify-between gap-4">
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-white">
-                            OpenCode CLI
-                          </div>
-                          <div class="mt-1 text-xs text-zinc-500">
-                            <Show
-                              when={engineDoctorResult()}
-                              fallback={<span>Checking install…</span>}
+                  <Show when={authorizedDirs().length}>
+                    <div class="space-y-2">
+                      <For each={authorizedDirs()}>
+                        {(dir, idx) => (
+                          <div class="flex items-center justify-between gap-3 rounded-xl bg-black/20 border border-zinc-800 px-3 py-2">
+                            <div class="min-w-0 text-xs font-mono text-zinc-300 truncate">{dir}</div>
+                            <Button
+                              variant="ghost"
+                              class="!p-2 rounded-lg"
+                              onClick={() => removeAuthorizedDir(idx())}
+                              disabled={busy()}
+                              title="Remove"
                             >
-                              <Show
-                                when={engineDoctorResult()?.found}
-                                fallback={
-                                  <span>
-                                    Not found. Install to run Host mode.
-                                  </span>
-                                }
-                              >
-                                <span class="font-mono">
-                                  {engineDoctorResult()?.version ?? "Installed"}
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </div>
+
+                <Show when={isTauriRuntime()}>
+                  <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                        <div class="mt-1 text-xs text-zinc-500">
+                          <Show when={engineDoctorResult()} fallback={<span>Checking install…</span>}>
+                            <Show
+                              when={engineDoctorResult()?.found}
+                              fallback={<span>Not found. Install to run Host mode.</span>}
+                            >
+                              <span class="font-mono">
+                                {engineDoctorResult()?.version ?? "Installed"}
+                              </span>
+                              <Show when={engineDoctorResult()?.resolvedPath}>
+                                <span class="text-zinc-600"> · </span>
+                                <span class="font-mono text-zinc-600 truncate">
+                                  {engineDoctorResult()?.resolvedPath}
                                 </span>
-                                <Show when={engineDoctorResult()?.resolvedPath}>
-                                  <span class="text-zinc-600"> · </span>
-                                  <span class="font-mono text-zinc-600 truncate">
-                                    {engineDoctorResult()?.resolvedPath}
-                                  </span>
-                                </Show>
                               </Show>
                             </Show>
-                          </div>
+                          </Show>
                         </div>
-
-                        <Button
-                          variant="secondary"
-                          onClick={async () => {
-                            setEngineInstallLogs(null);
-                            await refreshEngineDoctor();
-                          }}
-                          disabled={busy()}
-                        >
-                          Re-check
-                        </Button>
                       </div>
 
-                      <Show
-                        when={
-                          engineDoctorResult() && !engineDoctorResult()!.found
-                        }
+                      <Button
+                        variant="secondary"
+                        onClick={async () => {
+                          setEngineInstallLogs(null);
+                          await refreshEngineDoctor();
+                        }}
+                        disabled={busy()}
                       >
-                        <div class="mt-4 space-y-2">
-                          <div class="text-xs text-zinc-500">
-                            Install one of these:
-                          </div>
-                          <Show when={navigator.platform.includes("Win")}>
-                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                              npm install -g opencode-ai
-                            </div>
-                          </Show>
-                          <Show when={!navigator.platform.includes("Win")}>
-                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                              brew install anomalyco/tap/opencode
-                            </div>
-                          </Show>
-                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                            curl -fsSL https://opencode.ai/install | bash
-                          </div>
+                        Re-check
+                      </Button>
+                    </div>
 
-                          <div class="flex gap-2 pt-2">
+                    <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
+                      <div class="mt-4 space-y-2">
+                        <Show
+                          when={isWindowsPlatform()}
+                          fallback={
+                            <>
+                              <div class="text-xs text-zinc-500">Install one of these:</div>
+                              <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                                brew install anomalyco/tap/opencode
+                              </div>
+                              <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                                curl -fsSL https://opencode.ai/install | bash
+                              </div>
+                            </>
+                          }
+                        >
+                          <>
+                            <div class="text-xs text-zinc-500">Install OpenCode for Windows:</div>
+                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                              https://opencode.ai/install
+                            </div>
+                            <div class="text-[11px] text-zinc-600">
+                              After installing, make sure `opencode.exe` is available on PATH (try `opencode --version`).
+                            </div>
+                          </>
+                        </Show>
+
+                        <div class="flex gap-2 pt-2">
+                          <Show
+                            when={!isWindowsPlatform()}
+                            fallback={
+                              <Button
+                                variant="outline"
+                                onClick={() => {
+                                  setEngineInstallLogs(
+                                    "Windows install is currently manual. Visit https://opencode.ai/install then restart OpenWork. If OpenCode is installed but not detected, ensure opencode.exe is on PATH.",
+                                  );
+                                }}
+                                disabled={busy()}
+                              >
+                                Show Windows install notes
+                              </Button>
+                            }
+                          >
                             <Button
                               onClick={async () => {
                                 setError(null);
@@ -2201,24 +3234,16 @@ export default function App() {
 
                                 try {
                                   const result = await engineInstall();
-                                  const combined =
-                                    `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
+                                  const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
                                   setEngineInstallLogs(combined || null);
 
                                   if (!result.ok) {
-                                    setError(
-                                      result.stderr.trim() ||
-                                        "OpenCode install failed. See logs above.",
-                                    );
+                                    setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
                                   }
 
                                   await refreshEngineDoctor();
                                 } catch (e) {
-                                  setError(
-                                    e instanceof Error
-                                      ? e.message
-                                      : safeStringify(e),
-                                  );
+                                  setError(e instanceof Error ? e.message : safeStringify(e));
                                 } finally {
                                   setBusy(false);
                                   setBusyLabel(null);
@@ -2229,78 +3254,65 @@ export default function App() {
                             >
                               Install OpenCode
                             </Button>
-                            <Button
-                              variant="outline"
-                              onClick={() => {
-                                const notes =
-                                  engineDoctorResult()?.notes?.join("\n") ?? "";
-                                setEngineInstallLogs(notes || null);
-                              }}
-                              disabled={busy()}
-                            >
-                              Show search notes
-                            </Button>
-                          </div>
+                          </Show>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
+                              setEngineInstallLogs(notes || null);
+                            }}
+                            disabled={busy()}
+                          >
+                            Show search notes
+                          </Button>
                         </div>
-                      </Show>
+                      </div>
+                    </Show>
 
-                      <Show when={engineInstallLogs()}>
-                        <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">
-                          {engineInstallLogs()}
-                        </pre>
-                      </Show>
+                    <Show when={engineInstallLogs()}>
+                      <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{engineInstallLogs()}</pre>
+                    </Show>
 
-                      <Show when={engineDoctorCheckedAt()}>
-                        <div class="mt-3 text-[11px] text-zinc-600">
-                          Last checked{" "}
-                          {new Date(
-                            engineDoctorCheckedAt()!,
-                          ).toLocaleTimeString()}
-                        </div>
-                      </Show>
-                    </div>
-                  </Show>
+                    <Show when={engineDoctorCheckedAt()}>
+                      <div class="mt-3 text-[11px] text-zinc-600">
+                        Last checked {new Date(engineDoctorCheckedAt()!).toLocaleTimeString()}
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
 
-                  <Button
-                    onClick={async () => {
-                      if (!authorizedDirs().length && projectDir().trim()) {
-                        setAuthorizedDirs([projectDir().trim()]);
-                      }
+                <Button
+                  onClick={async () => {
 
-                      setMode("host");
-                      setOnboardingStep("connecting");
-                      const ok = await startHost();
-                      if (!ok) {
-                        setOnboardingStep("host");
-                      }
-                    }}
-                    disabled={
-                      busy() ||
-                      (isTauriRuntime() &&
-                        (engineDoctorResult()?.found === false ||
-                          engineDoctorResult()?.supportsServe === false))
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost();
+                    if (!ok) {
+                      setOnboardingStep("host");
                     }
-                    class="w-full py-3 text-base"
-                  >
-                    Confirm & Start Engine
-                  </Button>
+                  }}
+                  disabled={
+                    busy() ||
+                    (isTauriRuntime() &&
+                      (engineDoctorResult()?.found === false ||
+                        engineDoctorResult()?.supportsServe === false))
+                  }
+                  class="w-full py-3 text-base"
+                >
+                  Confirm & Start Engine
+                </Button>
 
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setMode(null);
-                      setOnboardingStep("mode");
-                    }}
-                    disabled={busy()}
-                    class="w-full"
-                  >
-                    Back
-                  </Button>
-
-                  <p class="text-center text-xs text-zinc-600">
-                    You can change these later in Settings.
-                  </p>
-                </div>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setMode(null);
+                    setOnboardingStep("mode");
+                  }}
+                  disabled={busy()}
+                  class="text-zinc-600 hover:text-zinc-400 text-sm font-medium transition-colors flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-zinc-900/50"
+                >
+                  Back
+                </Button>
               </div>
 
               <Show when={error()}>
@@ -2321,9 +3333,7 @@ export default function App() {
                 <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
                   <Smartphone class="text-zinc-400" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">
-                  Connect to Host
-                </h2>
+                <h2 class="text-2xl font-bold tracking-tight">Connect to Host</h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
                   Pair with an existing OpenCode server (LAN or tunnel).
                 </p>
@@ -2351,9 +3361,7 @@ export default function App() {
 
                     const ok = await connectToServer(
                       baseUrl().trim(),
-                      clientDirectory().trim()
-                        ? clientDirectory().trim()
-                        : undefined,
+                      clientDirectory().trim() ? clientDirectory().trim() : undefined,
                     );
 
                     if (!ok) {
@@ -2400,9 +3408,7 @@ export default function App() {
                   </div>
                   <h1 class="text-3xl font-bold tracking-tight">OpenWork</h1>
                 </div>
-                <h2 class="text-xl text-zinc-400 font-light">
-                  How would you like to run OpenWork today?
-                </h2>
+                <h2 class="text-xl text-zinc-400 font-light">How would you like to run OpenWork today?</h2>
               </div>
 
               <div class="space-y-4">
@@ -2420,9 +3426,7 @@ export default function App() {
                     <HardDrive class="text-indigo-400 w-7 h-7" />
                   </div>
                   <div>
-                    <h3 class="text-xl font-medium text-white mb-2">
-                      Start Host Engine
-                    </h3>
+                    <h3 class="text-xl font-medium text-white mb-2">Start Host Engine</h3>
                     <p class="text-zinc-500 text-sm leading-relaxed mb-4">
                       Run OpenCode locally. Best for your primary computer.
                     </p>
@@ -2439,9 +3443,7 @@ export default function App() {
                 <Show when={engine()?.running && engine()?.baseUrl}>
                   <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-5 flex items-center justify-between">
                     <div>
-                      <div class="text-sm text-white font-medium">
-                        Engine already running
-                      </div>
+                      <div class="text-sm text-white font-medium">Engine already running</div>
                       <div class="text-xs text-zinc-500 font-mono truncate max-w-[14rem] md:max-w-[22rem]">
                         {engine()?.baseUrl}
                       </div>
@@ -2509,9 +3511,7 @@ export default function App() {
                   </div>
                 </Show>
 
-                <div class="text-center text-xs text-zinc-700">
-                  {headerStatus()}
-                </div>
+                <div class="text-center text-xs text-zinc-700">{headerStatus()}</div>
               </div>
             </div>
           </div>
@@ -2538,7 +3538,7 @@ export default function App() {
       }
     });
 
-    const quickTemplates = createMemo(() => templates().slice(0, 3));
+    const quickTemplates = createMemo(() => workspaceTemplates().slice(0, 3));
 
     createEffect(() => {
       if (tab() === "skills") {
@@ -2547,6 +3547,12 @@ export default function App() {
       if (tab() === "plugins") {
         refreshPlugins().catch(() => undefined);
       }
+
+      // Keep session sidebar context fresh.
+      if (tab() === "sessions" || view() === "session") {
+        refreshSkills().catch(() => undefined);
+        refreshPlugins("project").catch(() => undefined);
+      }
     });
 
     const navItem = (t: DashboardTab, label: string, icon: any) => {
@@ -2554,9 +3560,7 @@ export default function App() {
       return (
         <button
           class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
-            active()
-              ? "bg-zinc-900 text-white"
-              : "text-zinc-500 hover:text-white hover:bg-zinc-900/50"
+            active() ? "bg-zinc-900 text-white" : "text-zinc-500 hover:text-white hover:bg-zinc-900/50"
           }`}
           onClick={() => setTab(t)}
         >
@@ -2566,6 +3570,7 @@ export default function App() {
       );
     };
 
+
     const content = () => (
       <Switch>
         <Match when={tab() === "home"}>
@@ -2573,18 +3578,15 @@ export default function App() {
             <div class="bg-gradient-to-r from-zinc-900 to-zinc-800 rounded-3xl p-1 border border-zinc-800 shadow-2xl">
               <div class="bg-zinc-950 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
                 <div class="space-y-2 text-center md:text-left">
-                  <h2 class="text-2xl font-semibold text-white">
-                    What should we do today?
-                  </h2>
+                  <h2 class="text-2xl font-semibold text-white">What should we do today?</h2>
                   <p class="text-zinc-400">
-                    Describe an outcome. OpenWork will run it and keep an audit
-                    trail.
+                    Describe an outcome. OpenWork will run it and keep an audit trail.
                   </p>
                 </div>
                 <Button
                   onClick={createSessionAndOpen}
                   disabled={newTaskDisabled()}
-                  title={newTaskDisabled() ? (busyHint() ?? "Busy") : ""}
+                  title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}
                   class="w-full md:w-auto py-3 px-6 text-base"
                 >
                   <Play size={18} />
@@ -2596,9 +3598,7 @@ export default function App() {
 
           <section>
             <div class="flex items-center justify-between mb-4">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
-                Quick Start Templates
-              </h3>
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Quick Start Templates</h3>
               <button
                 class="text-sm text-zinc-500 hover:text-white"
                 onClick={() => setTab("templates")}
@@ -2610,9 +3610,9 @@ export default function App() {
             <Show
               when={quickTemplates().length}
               fallback={
-                <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session.
-                </div>
+                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
+                   No templates yet. Starter templates will appear here.
+                 </div>
               }
             >
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -2626,9 +3626,7 @@ export default function App() {
                         <FileText size={20} class="text-indigo-400" />
                       </div>
                       <h4 class="font-medium text-white mb-1">{t.title}</h4>
-                      <p class="text-sm text-zinc-500">
-                        {t.description || "Run a saved workflow"}
-                      </p>
+                      <p class="text-sm text-zinc-500">{t.description || "Run a saved workflow"}</p>
                     </button>
                   )}
                 </For>
@@ -2637,18 +3635,14 @@ export default function App() {
           </section>
 
           <section>
-            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
-              Recent Sessions
-            </h3>
+            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Recent Sessions</h3>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
               <For each={sessions().slice(0, 12)}>
                 {(s, idx) => (
                   <button
                     class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
-                      idx() !== Math.min(sessions().length, 12) - 1
-                        ? "border-b border-zinc-800/50"
-                        : ""
+                      idx() !== Math.min(sessions().length, 12) - 1 ? "border-b border-zinc-800/50" : ""
                     }`}
                     onClick={async () => {
                       await selectSession(s.id);
@@ -2661,12 +3655,14 @@ export default function App() {
                         #{s.slug?.slice(0, 2) ?? ".."}
                       </div>
                       <div>
-                        <div class="font-medium text-sm text-zinc-200">
-                          {s.title}
-                        </div>
+                        <div class="font-medium text-sm text-zinc-200">{s.title}</div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
-                          <Clock size={10} />{" "}
-                          {formatRelativeTime(s.time.updated)}
+                          <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Show when={activeWorkspaceRoot().trim() && s.directory === activeWorkspaceRoot().trim()}>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                              this workspace
+                            </span>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -2690,18 +3686,14 @@ export default function App() {
 
         <Match when={tab() === "sessions"}>
           <section>
-            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
-              All Sessions
-            </h3>
+            <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">All Sessions</h3>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
               <For each={sessions()}>
                 {(s, idx) => (
                   <button
                     class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
-                      idx() !== sessions().length - 1
-                        ? "border-b border-zinc-800/50"
-                        : ""
+                      idx() !== sessions().length - 1 ? "border-b border-zinc-800/50" : ""
                     }`}
                     onClick={async () => {
                       await selectSession(s.id);
@@ -2713,12 +3705,14 @@ export default function App() {
                         #{s.slug?.slice(0, 2) ?? ".."}
                       </div>
                       <div>
-                        <div class="font-medium text-sm text-zinc-200">
-                          {s.title}
-                        </div>
+                        <div class="font-medium text-sm text-zinc-200">{s.title}</div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
-                          <Clock size={10} />{" "}
-                          {formatRelativeTime(s.time.updated)}
+                          <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Show when={activeWorkspaceRoot().trim() && s.directory === activeWorkspaceRoot().trim()}>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                              this workspace
+                            </span>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -2743,9 +3737,7 @@ export default function App() {
         <Match when={tab() === "templates"}>
           <section class="space-y-4">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
-                Templates
-              </h3>
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Templates</h3>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -2762,51 +3754,71 @@ export default function App() {
             </div>
 
             <Show
-              when={templates().length}
+              when={workspaceTemplates().length || globalTemplates().length}
               fallback={
                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session, or create one here.
+                  Starter templates will appear here. Create one or save from a session.
                 </div>
               }
             >
-              <div class="space-y-3">
-                <For each={templates()}>
-                  {(t) => (
-                    <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                          <FileText size={16} class="text-indigo-400" />
-                          <div class="font-medium text-white truncate">
-                            {t.title}
+              <div class="space-y-6">
+                <Show when={workspaceTemplates().length}>
+                  <div class="space-y-3">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+                    <For each={workspaceTemplates()}>
+                      {(t) => (
+                        <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <FileText size={16} class="text-indigo-400" />
+                              <div class="font-medium text-white truncate">{t.title}</div>
+                            </div>
+                            <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
+                            <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                          </div>
+                          <div class="shrink-0 flex gap-2">
+                            <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
+                              <Play size={16} />
+                              Run
+                            </Button>
+                            <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
+                              <Trash2 size={16} />
+                            </Button>
                           </div>
                         </div>
-                        <div class="mt-1 text-sm text-zinc-500">
-                          {t.description || ""}
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={globalTemplates().length}>
+                  <div class="space-y-3">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Global</div>
+                    <For each={globalTemplates()}>
+                      {(t) => (
+                        <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <FileText size={16} class="text-emerald-400" />
+                              <div class="font-medium text-white truncate">{t.title}</div>
+                            </div>
+                            <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
+                            <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                          </div>
+                          <div class="shrink-0 flex gap-2">
+                            <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
+                              <Play size={16} />
+                              Run
+                            </Button>
+                            <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
                         </div>
-                        <div class="mt-2 text-xs text-zinc-600 font-mono">
-                          {formatRelativeTime(t.createdAt)}
-                        </div>
-                      </div>
-                      <div class="shrink-0 flex gap-2">
-                        <Button
-                          variant="secondary"
-                          onClick={() => runTemplate(t)}
-                          disabled={busy()}
-                        >
-                          <Play size={16} />
-                          Run
-                        </Button>
-                        <Button
-                          variant="danger"
-                          onClick={() => deleteTemplate(t.id)}
-                          disabled={busy()}
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </For>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
             </Show>
           </section>
@@ -2815,23 +3827,15 @@ export default function App() {
         <Match when={tab() === "skills"}>
           <section class="space-y-6">
             <div class="flex items-center justify-between">
-              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
-                Skills
-              </h3>
-              <Button
-                variant="secondary"
-                onClick={() => refreshSkills()}
-                disabled={busy()}
-              >
+              <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Skills</h3>
+              <Button variant="secondary" onClick={() => refreshSkills()} disabled={busy()}>
                 Refresh
               </Button>
             </div>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between gap-3">
-                <div class="text-sm font-medium text-white">
-                  Install from OpenPackage
-                </div>
+                <div class="text-sm font-medium text-white">Install from OpenPackage</div>
                 <Show when={mode() !== "host"}>
                   <div class="text-xs text-zinc-500">Host mode only</div>
                 </Show>
@@ -2853,14 +3857,11 @@ export default function App() {
                 </Button>
               </div>
               <div class="text-xs text-zinc-500">
-                Installs OpenPackage packages into the current workspace. Skills
-                should land in `.opencode/skill`.
+                Installs OpenPackage packages into the current workspace. Skills should land in `.opencode/skill`.
               </div>
 
               <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-                <div class="text-sm font-medium text-white">
-                  Import local skill
-                </div>
+                <div class="text-sm font-medium text-white">Import local skill</div>
                 <Button
                   variant="secondary"
                   onClick={importLocalSkill}
@@ -2880,12 +3881,8 @@ export default function App() {
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between">
-                <div class="text-sm font-medium text-white">
-                  Curated packages
-                </div>
-                <div class="text-xs text-zinc-500">
-                  {filteredPackages().length}
-                </div>
+                <div class="text-sm font-medium text-white">Curated packages</div>
+                <div class="text-xs text-zinc-500">{filteredPackages().length}</div>
               </div>
 
               <input
@@ -2909,15 +3906,9 @@ export default function App() {
                       <div class="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-4">
                         <div class="flex items-start justify-between gap-4">
                           <div class="space-y-2">
-                            <div class="text-sm font-medium text-white">
-                              {pkg.name}
-                            </div>
-                            <div class="text-xs text-zinc-500 font-mono break-all">
-                              {pkg.source}
-                            </div>
-                            <div class="text-sm text-zinc-500">
-                              {pkg.description}
-                            </div>
+                            <div class="text-sm font-medium text-white">{pkg.name}</div>
+                            <div class="text-xs text-zinc-500 font-mono break-all">{pkg.source}</div>
+                            <div class="text-sm text-zinc-500">{pkg.description}</div>
                             <div class="flex flex-wrap gap-2">
                               <For each={pkg.tags}>
                                 {(tag) => (
@@ -2933,8 +3924,7 @@ export default function App() {
                             onClick={() => useCuratedPackage(pkg)}
                             disabled={
                               busy() ||
-                              (pkg.installable &&
-                                (mode() !== "host" || !isTauriRuntime()))
+                              (pkg.installable && (mode() !== "host" || !isTauriRuntime()))
                             }
                           >
                             {pkg.installable ? "Install" : "View"}
@@ -2947,17 +3937,14 @@ export default function App() {
               </Show>
 
               <div class="text-xs text-zinc-500">
-                Publishing to the OpenPackage registry (`opkg push`) requires
-                authentication today. A registry search + curated list sync is
-                planned.
+                Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.
               </div>
             </div>
 
+
             <div>
               <div class="flex items-center justify-between mb-3">
-                <div class="text-sm font-medium text-white">
-                  Installed skills
-                </div>
+                <div class="text-sm font-medium text-white">Installed skills</div>
                 <div class="text-xs text-zinc-500">{skills().length}</div>
               </div>
 
@@ -2978,13 +3965,9 @@ export default function App() {
                           <div class="font-medium text-white">{s.name}</div>
                         </div>
                         <Show when={s.description}>
-                          <div class="mt-1 text-sm text-zinc-500">
-                            {s.description}
-                          </div>
+                          <div class="mt-1 text-sm text-zinc-500">{s.description}</div>
                         </Show>
-                        <div class="mt-2 text-xs text-zinc-600 font-mono">
-                          {s.path}
-                        </div>
+                        <div class="mt-2 text-xs text-zinc-600 font-mono">{s.path}</div>
                       </div>
                     )}
                   </For>
@@ -2999,12 +3982,9 @@ export default function App() {
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-1">
-                  <div class="text-sm font-medium text-white">
-                    OpenCode plugins
-                  </div>
+                  <div class="text-sm font-medium text-white">OpenCode plugins</div>
                   <div class="text-xs text-zinc-500">
-                    Manage `opencode.json` for your project or global OpenCode
-                    plugins.
+                    Manage `opencode.json` for your project or global OpenCode plugins.
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
@@ -3034,10 +4014,7 @@ export default function App() {
                   >
                     Global
                   </button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => refreshPlugins().catch(() => undefined)}
-                  >
+                  <Button variant="ghost" onClick={() => refreshPlugins().catch(() => undefined)}>
                     Refresh
                   </Button>
                 </div>
@@ -3051,31 +4028,21 @@ export default function App() {
               </div>
 
               <div class="space-y-3">
-                <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">
-                  Suggested plugins
-                </div>
+                <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Suggested plugins</div>
                 <div class="grid gap-3">
                   <For each={SUGGESTED_PLUGINS}>
                     {(plugin) => {
                       const isGuided = () => plugin.installMode === "guided";
                       const isInstalled = () =>
-                        isPluginInstalled(
-                          plugin.packageName,
-                          plugin.aliases ?? [],
-                        );
-                      const isGuideOpen = () =>
-                        activePluginGuide() === plugin.packageName;
+                        isPluginInstalled(plugin.packageName, plugin.aliases ?? []);
+                      const isGuideOpen = () => activePluginGuide() === plugin.packageName;
 
                       return (
                         <div class="rounded-2xl border border-zinc-800/60 bg-zinc-950/40 p-4 space-y-3">
                           <div class="flex items-start justify-between gap-4">
                             <div>
-                              <div class="text-sm font-medium text-white font-mono">
-                                {plugin.name}
-                              </div>
-                              <div class="text-xs text-zinc-500 mt-1">
-                                {plugin.description}
-                              </div>
+                              <div class="text-sm font-medium text-white font-mono">{plugin.name}</div>
+                              <div class="text-xs text-zinc-500 mt-1">{plugin.description}</div>
                               <Show when={plugin.packageName !== plugin.name}>
                                 <div class="text-xs text-zinc-600 font-mono mt-1">
                                   {plugin.packageName}
@@ -3087,25 +4054,20 @@ export default function App() {
                                 <Button
                                   variant="ghost"
                                   onClick={() =>
-                                    setActivePluginGuide(
-                                      isGuideOpen() ? null : plugin.packageName,
-                                    )
+                                    setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)
                                   }
                                 >
                                   {isGuideOpen() ? "Hide setup" : "Setup"}
                                 </Button>
                               </Show>
                               <Button
-                                variant={
-                                  isInstalled() ? "outline" : "secondary"
-                                }
+                                variant={isInstalled() ? "outline" : "secondary"}
                                 onClick={() => addPlugin(plugin.packageName)}
                                 disabled={
                                   busy() ||
                                   isInstalled() ||
                                   !isTauriRuntime() ||
-                                  (pluginScope() === "project" &&
-                                    !projectDir().trim())
+                                  (pluginScope() === "project" && !projectDir().trim())
                                 }
                               >
                                 {isInstalled() ? "Added" : "Add"}
@@ -3129,33 +4091,23 @@ export default function App() {
                                     <div class="text-xs font-medium text-zinc-300">
                                       {idx() + 1}. {step.title}
                                     </div>
-                                    <div class="text-xs text-zinc-500">
-                                      {step.description}
-                                    </div>
+                                    <div class="text-xs text-zinc-500">{step.description}</div>
                                     <Show when={step.command}>
                                       <div class="text-xs font-mono text-zinc-200 bg-zinc-900/60 border border-zinc-800/70 rounded-lg px-3 py-2">
                                         {step.command}
                                       </div>
                                     </Show>
                                     <Show when={step.note}>
-                                      <div class="text-xs text-zinc-500">
-                                        {step.note}
-                                      </div>
+                                      <div class="text-xs text-zinc-500">{step.note}</div>
                                     </Show>
                                     <Show when={step.url}>
                                       <div class="text-xs text-zinc-500">
-                                        Open:{" "}
-                                        <span class="font-mono text-zinc-400">
-                                          {step.url}
-                                        </span>
+                                        Open: <span class="font-mono text-zinc-400">{step.url}</span>
                                       </div>
                                     </Show>
                                     <Show when={step.path}>
                                       <div class="text-xs text-zinc-500">
-                                        Path:{" "}
-                                        <span class="font-mono text-zinc-400">
-                                          {step.path}
-                                        </span>
+                                        Path: <span class="font-mono text-zinc-400">{step.path}</span>
                                       </div>
                                     </Show>
                                   </div>
@@ -3182,12 +4134,8 @@ export default function App() {
                   <For each={pluginList()}>
                     {(pluginName) => (
                       <div class="flex items-center justify-between rounded-xl border border-zinc-800/60 bg-zinc-950/40 px-4 py-2.5">
-                        <div class="text-sm text-zinc-200 font-mono">
-                          {pluginName}
-                        </div>
-                        <div class="text-[10px] uppercase tracking-wide text-zinc-500">
-                          Enabled
-                        </div>
+                        <div class="text-sm text-zinc-200 font-mono">{pluginName}</div>
+                        <div class="text-[10px] uppercase tracking-wide text-zinc-500">Enabled</div>
                       </div>
                     )}
                   </For>
@@ -3229,10 +4177,7 @@ export default function App() {
               <div class="text-xs text-zinc-500">{headerStatus()}</div>
               <div class="text-xs text-zinc-600 font-mono">{baseUrl()}</div>
               <div class="pt-2 flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => setDeveloperMode((v) => !v)}
-                >
+                <Button variant="secondary" onClick={() => setDeveloperMode((v) => !v)}>
                   <Shield size={16} />
                   {developerMode() ? "Developer On" : "Developer Off"}
                 </Button>
@@ -3242,31 +4187,52 @@ export default function App() {
                   </Button>
                 </Show>
                 <Show when={mode() === "client"}>
-                  <Button
-                    variant="outline"
-                    onClick={stopHost}
-                    disabled={busy()}
-                  >
+                  <Button variant="outline" onClick={stopHost} disabled={busy()}>
                     Disconnect
                   </Button>
                 </Show>
               </div>
+
+              <Show when={isTauriRuntime() && mode() === "host"}>
+                <div class="pt-4 border-t border-zinc-800/60 space-y-3">
+                  <div class="text-xs text-zinc-500">Engine source</div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <Button
+                      variant={engineSource() === "path" ? "secondary" : "outline"}
+                      onClick={() => setEngineSource("path")}
+                      disabled={busy()}
+                    >
+                      PATH
+                    </Button>
+                    <Button
+                      variant={engineSource() === "sidecar" ? "secondary" : "outline"}
+                      onClick={() => setEngineSource("sidecar")}
+                      disabled={busy() || isWindowsPlatform()}
+                      title={isWindowsPlatform() ? "Sidecar is not supported on Windows yet" : ""}
+                    >
+                      Sidecar
+                    </Button>
+                  </div>
+                  <div class="text-[11px] text-zinc-600">
+                    PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.
+                    <Show when={isWindowsPlatform()}>
+                      <span class="text-zinc-500"> Sidecar is currently unavailable on Windows.</span>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
             </div>
 
-            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
-              <div class="text-sm font-medium text-white">Model</div>
-              <div class="text-xs text-zinc-500">
-                Default model for new sessions.
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-white">Model</div>
+                <div class="text-xs text-zinc-500">Defaults + thinking controls for runs.</div>
               </div>
 
               <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
                 <div class="min-w-0">
-                  <div class="text-sm text-zinc-200 truncate">
-                    {formatModelLabel(defaultModel())}
-                  </div>
-                  <div class="text-xs text-zinc-600 font-mono truncate">
-                    {formatModelRef(defaultModel())}
-                  </div>
+                  <div class="text-sm text-zinc-200 truncate">{formatModelLabel(defaultModel(), providers())}</div>
+                  <div class="text-xs text-zinc-600 font-mono truncate">{formatModelRef(defaultModel())}</div>
                 </div>
                 <Button
                   variant="outline"
@@ -3277,6 +4243,176 @@ export default function App() {
                   Change
                 </Button>
               </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Thinking</div>
+                  <div class="text-xs text-zinc-600">Show thinking parts (Developer mode only).</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => setShowThinking((v) => !v)}
+                  disabled={busy()}
+                >
+                  {showThinking() ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Model variant</div>
+                  <div class="text-xs text-zinc-600 font-mono truncate">
+                    {modelVariant() ? modelVariant() : "(default)"}
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => {
+                    const next = window.prompt(
+                      "Model variant (provider-specific, e.g. high/max/minimal). Leave blank to clear.",
+                      modelVariant() ?? "",
+                    );
+                    if (next == null) return;
+                    const trimmed = next.trim();
+                    setModelVariant(trimmed ? trimmed : null);
+                  }}
+                  disabled={busy()}
+                >
+                  Edit
+                </Button>
+              </div>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-medium text-white">Updates</div>
+                  <div class="text-xs text-zinc-500">Keep OpenWork up to date.</div>
+                </div>
+                <div class="text-xs text-zinc-600 font-mono">{appVersion() ? `v${appVersion()}` : ""}</div>
+              </div>
+
+              <Show
+                when={!isTauriRuntime()}
+                fallback={
+                  <Show
+                    when={updateEnv() && !updateEnv()!.supported}
+                    fallback={
+                      <>
+                        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                          <div class="space-y-0.5">
+                            <div class="text-sm text-white">Automatic checks</div>
+                            <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                          </div>
+                          <button
+                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                              updateAutoCheck()
+                                ? "bg-white/10 text-white border-white/20"
+                                : "text-zinc-500 border-zinc-800 hover:text-white"
+                            }`}
+                            onClick={() => setUpdateAutoCheck((v) => !v)}
+                          >
+                            {updateAutoCheck() ? "On" : "Off"}
+                          </button>
+                        </div>
+
+                        <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                          <div class="space-y-0.5">
+                            <div class="text-sm text-white">
+                              <Switch>
+                                <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                <Match when={updateStatus().state === "available"}>
+                                  Update available: v{(updateStatus() as any).version}
+                                </Match>
+                                <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                <Match when={updateStatus().state === "ready"}>
+                                  Ready to install: v{(updateStatus() as any).version}
+                                </Match>
+                                <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                <Match when={true}>Up to date</Match>
+                              </Switch>
+                            </div>
+                            <Show
+                              when={
+                                updateStatus().state === "idle" &&
+                                (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+                              }
+                            >
+                              <div class="text-xs text-zinc-600">
+                                Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                              </div>
+                            </Show>
+                            <Show when={updateStatus().state === "available" && (updateStatus() as any).date}>
+                              <div class="text-xs text-zinc-600">Published {(updateStatus() as any).date}</div>
+                            </Show>
+                            <Show when={updateStatus().state === "downloading"}>
+                              <div class="text-xs text-zinc-600">
+                                {formatBytes((updateStatus() as any).downloadedBytes)}
+                                <Show when={(updateStatus() as any).totalBytes != null}>
+                                  {` / ${formatBytes((updateStatus() as any).totalBytes)}`}
+                                </Show>
+                              </div>
+                            </Show>
+                            <Show when={updateStatus().state === "error"}>
+                              <div class="text-xs text-red-300">{(updateStatus() as any).message}</div>
+                            </Show>
+                          </div>
+
+                          <div class="flex items-center gap-2">
+                            <Button
+                              variant="outline"
+                              class="text-xs h-8 py-0 px-3"
+                              onClick={() => checkForUpdates()}
+                              disabled={busy() || updateStatus().state === "checking" || updateStatus().state === "downloading"}
+                            >
+                              Check
+                            </Button>
+
+                            <Show when={updateStatus().state === "available"}>
+                              <Button
+                                variant="secondary"
+                                class="text-xs h-8 py-0 px-3"
+                                onClick={() => downloadUpdate()}
+                                disabled={busy() || updateStatus().state === "downloading"}
+                              >
+                                Download
+                              </Button>
+                            </Show>
+
+                            <Show when={updateStatus().state === "ready"}>
+                              <Button
+                                variant="secondary"
+                                class="text-xs h-8 py-0 px-3"
+                                onClick={() => installUpdateAndRestart()}
+                                disabled={busy() || anyActiveRuns()}
+                                title={anyActiveRuns() ? "Stop active runs to update" : ""}
+                              >
+                                Install & Restart
+                              </Button>
+                            </Show>
+                          </div>
+                        </div>
+
+                        <Show when={updateStatus().state === "available" && (updateStatus() as any).notes}>
+                          <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
+                            {(updateStatus() as any).notes}
+                          </div>
+                        </Show>
+                      </>
+                    }
+                  >
+                    <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                      {updateEnv()?.reason ?? "Updates are not supported in this environment."}
+                    </div>
+                  </Show>
+                }
+              >
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                  Updates are only available in the desktop app.
+                </div>
+              </Show>
             </div>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
@@ -3291,23 +4427,13 @@ export default function App() {
                         : "bg-emerald-500/10 text-emerald-400"
                     }`}
                   >
-                    <Show
-                      when={mode() === "host"}
-                      fallback={<Smartphone size={18} />}
-                    >
+                    <Show when={mode() === "host"} fallback={<Smartphone size={18} />}>
                       <HardDrive size={18} />
                     </Show>
                   </div>
-                  <span class="capitalize text-sm font-medium text-white">
-                    {mode()} mode
-                  </span>
+                  <span class="capitalize text-sm font-medium text-white">{mode()} mode</span>
                 </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={stopHost}
-                  disabled={busy()}
-                >
+                <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={stopHost} disabled={busy()}>
                   Switch
                 </Button>
               </div>
@@ -3320,29 +4446,64 @@ export default function App() {
                 }}
               >
                 <span class="text-zinc-300">Reset default startup mode</span>
-                <RefreshCcw
-                  size={14}
-                  class="text-zinc-500 group-hover:rotate-180 transition-transform"
-                />
+                <RefreshCcw size={14} class="text-zinc-500 group-hover:rotate-180 transition-transform" />
               </Button>
 
               <p class="text-xs text-zinc-600">
-                This clears your saved preference and shows mode selection on
-                next launch.
+                This clears your saved preference and shows mode selection on next launch.
               </p>
+            </div>
+
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-white">Advanced</div>
+                <div class="text-xs text-zinc-500">Reset OpenWork local state to retest onboarding.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Reset onboarding</div>
+                  <div class="text-xs text-zinc-600">Clears OpenWork preferences and restarts the app.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => openResetModal("onboarding")}
+                  disabled={busy() || resetModalBusy() || anyActiveRuns()}
+                  title={anyActiveRuns() ? "Stop active runs to reset" : ""}
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Reset app data</div>
+                  <div class="text-xs text-zinc-600">More aggressive. Clears OpenWork cache + app data.</div>
+                </div>
+                <Button
+                  variant="danger"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => openResetModal("all")}
+                  disabled={busy() || resetModalBusy() || anyActiveRuns()}
+                  title={anyActiveRuns() ? "Stop active runs to reset" : ""}
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <div class="text-xs text-zinc-600">
+                Requires typing <span class="font-mono text-zinc-400">RESET</span> and will restart the app.
+              </div>
             </div>
 
             <Show when={developerMode()}>
               <section>
-                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
-                  Developer
-                </h3>
+                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
 
                 <div class="grid md:grid-cols-2 gap-4">
                   <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                    <div class="text-xs text-zinc-500 mb-2">
-                      Pending permissions
-                    </div>
+                    <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
                     <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                       {safeStringify(pendingPermissions())}
                     </pre>
@@ -3385,11 +4546,7 @@ export default function App() {
           <div class="space-y-4">
             <div class="px-3 py-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
               <div class="flex items-center gap-2 text-xs font-medium text-zinc-400 mb-2">
-                {mode() === "host" ? (
-                  <Cpu size={12} />
-                ) : (
-                  <Smartphone size={12} />
-                )}
+                {mode() === "host" ? <Cpu size={12} /> : <Smartphone size={12} />}
                 {mode() === "host" ? "Local Engine" : "Client Mode"}
               </div>
               <div class="flex items-center gap-2">
@@ -3404,29 +4561,17 @@ export default function App() {
                   {client() ? "Connected" : "Disconnected"}
                 </span>
               </div>
-              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">
-                {baseUrl()}
-              </div>
+              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">{baseUrl()}</div>
             </div>
 
             <Show when={mode() === "host"}>
-              <Button
-                variant="danger"
-                onClick={stopHost}
-                disabled={busy()}
-                class="w-full"
-              >
+              <Button variant="danger" onClick={stopHost} disabled={busy()} class="w-full">
                 Stop & Disconnect
               </Button>
             </Show>
 
             <Show when={mode() === "client"}>
-              <Button
-                variant="outline"
-                onClick={stopHost}
-                disabled={busy()}
-                class="w-full"
-              >
+              <Button variant="outline" onClick={stopHost} disabled={busy()} class="w-full">
                 Disconnect
               </Button>
             </Show>
@@ -3439,6 +4584,13 @@ export default function App() {
               <div class="md:hidden">
                 <Menu class="text-zinc-400" />
               </div>
+              <WorkspaceChip
+                workspace={activeWorkspaceDisplay()}
+                onClick={() => {
+                  setWorkspaceSearch("");
+                  setWorkspacePickerOpen(true);
+                }}
+              />
               <h1 class="text-lg font-medium">{title()}</h1>
               <span class="text-xs text-zinc-600">{headerStatus()}</span>
               <Show when={busyHint()}>
@@ -3447,11 +4599,7 @@ export default function App() {
             </div>
             <div class="flex items-center gap-2">
               <Show when={tab() === "home" || tab() === "sessions"}>
-                <Button
-                  onClick={createSessionAndOpen}
-                  disabled={newTaskDisabled()}
-                  title={newTaskDisabled() ? (busyHint() ?? "Busy") : ""}
-                >
+                <Button onClick={createSessionAndOpen} disabled={newTaskDisabled()} title={newTaskDisabled() ? busyHint() ?? "Busy" : ""}>
                   <Play size={16} />
                   New Task
                 </Button>
@@ -3471,18 +4619,13 @@ export default function App() {
                   New
                 </Button>
               </Show>
-              <Button
-                variant="ghost"
-                onClick={() => setDeveloperMode((v) => !v)}
-              >
+              <Button variant="ghost" onClick={() => setDeveloperMode((v) => !v)}>
                 <Shield size={16} />
               </Button>
             </div>
           </header>
 
-          <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
-            {content()}
-          </div>
+          <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">{content()}</div>
 
           <Show when={error()}>
             <div class="mx-auto max-w-5xl px-6 md:px-10 pb-24 md:pb-10">
@@ -3491,6 +4634,23 @@ export default function App() {
               </div>
             </div>
           </Show>
+
+          <WorkspacePicker
+            open={workspacePickerOpen()}
+            workspaces={filteredWorkspaces()}
+            activeWorkspaceId={activeWorkspaceId()}
+            search={workspaceSearch()}
+            onSearch={setWorkspaceSearch}
+            onClose={() => setWorkspacePickerOpen(false)}
+            onSelect={activateWorkspace}
+            onCreateNew={() => setCreateWorkspaceOpen(true)}
+          />
+
+          <CreateWorkspaceModal
+            open={createWorkspaceOpen()}
+            onClose={() => setCreateWorkspaceOpen(false)}
+            onConfirm={(preset) => createWorkspaceFlow(preset)}
+          />
 
           <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
             <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
@@ -3597,9 +4757,7 @@ export default function App() {
                 <ArrowRight class="rotate-180 w-5 h-5" />
               </Button>
               <div>
-                <h2 class="font-semibold text-sm">
-                  {selectedSession()?.title ?? "Session"}
-                </h2>
+                <h2 class="font-semibold text-sm">{selectedSession()?.title ?? "Session"}</h2>
                 <div class="flex items-center gap-2 text-xs text-zinc-400">
                   <span
                     class={`w-2 h-2 rounded-full ${
@@ -3627,19 +4785,10 @@ export default function App() {
                 <ChevronRight size={14} class="text-zinc-500" />
               </button>
 
-              <Button
-                variant="ghost"
-                class="text-xs"
-                onClick={openTemplateModal}
-                disabled={busy()}
-              >
+              <Button variant="ghost" class="text-xs" onClick={openTemplateModal} disabled={busy()}>
                 <FileText size={14} />
               </Button>
-              <Button
-                variant="ghost"
-                class="text-xs"
-                onClick={() => setDeveloperMode((v) => !v)}
-              >
+              <Button variant="ghost" class="text-xs" onClick={() => setDeveloperMode((v) => !v)}>
                 <Shield size={14} />
               </Button>
             </div>
@@ -3647,7 +4796,7 @@ export default function App() {
 
           <div class="flex-1 flex overflow-hidden">
             <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-              <div class="max-w-2xl mx-auto space-y-6 pb-32">
+               <div class="max-w-2xl mx-auto space-y-6 pb-32">
                 <Show when={messages().length === 0}>
                   <div class="text-center py-20 space-y-4">
                     <div class="w-16 h-16 bg-zinc-900 rounded-3xl mx-auto flex items-center justify-center border border-zinc-800">
@@ -3655,10 +4804,13 @@ export default function App() {
                     </div>
                     <h3 class="text-xl font-medium">Ready to work</h3>
                     <p class="text-zinc-500 text-sm max-w-xs mx-auto">
-                      Describe a task. I’ll show progress and ask for
-                      permissions when needed.
+                      Describe a task. I’ll show progress and ask for permissions when needed.
                     </p>
                   </div>
+                </Show>
+
+                <Show when={busyLabel() === "Running"}>
+                  <ThinkingBlock steps={[{ status: "running", text: "Working…" } satisfies ThinkingStep]} />
                 </Show>
 
                 <For each={messages()}>
@@ -3669,10 +4821,7 @@ export default function App() {
                           return developerMode();
                         }
 
-                        if (
-                          p.type === "step-start" ||
-                          p.type === "step-finish"
-                        ) {
+                        if (p.type === "step-start" || p.type === "step-finish") {
                           // Too noisy for normal users.
                           return developerMode();
                         }
@@ -3686,34 +4835,23 @@ export default function App() {
 
                     return (
                       <Show when={renderableParts().length > 0}>
-                        <div
-                          class={`flex ${msg.info.role === "user" ? "justify-end" : "justify-start"}`}
-                        >
+                         <div class={`flex ${(msg.info as any).role === "user" ? "justify-end" : "justify-start"}`}>
                           <div
                             class={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
-                              msg.info.role === "user"
-                                ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
-                                : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
+                               (msg.info as any).role === "user"
+                                 ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
+                                 : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
                             }`}
                           >
                             <For each={renderableParts()}>
                               {(p, idx) => (
-                                <div
-                                  class={
-                                    idx() === renderableParts().length - 1
-                                      ? ""
-                                      : "mb-2"
-                                  }
-                                >
-                                  <PartView
-                                    part={p}
-                                    developerMode={developerMode()}
-                                    tone={
-                                      msg.info.role === "user"
-                                        ? "dark"
-                                        : "light"
-                                    }
-                                  />
+                                <div class={idx() === renderableParts().length - 1 ? "" : "mb-2"}>
+                                    <PartView
+                                      part={p}
+                                      developerMode={developerMode()}
+                                      showThinking={showThinking()}
+                                      tone={(msg.info as any).role === "user" ? "dark" : "light"}
+                                    />
                                 </div>
                               )}
                             </For>
@@ -3730,82 +4868,130 @@ export default function App() {
 
             <div class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
               <div class="p-4 border-b border-zinc-800 font-medium text-sm text-zinc-400 flex items-center justify-between">
-                <span>Execution Plan</span>
-                <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
-                  {todos().filter((t) => t.status === "completed").length}/
-                  {todos().length}
-                </span>
+                <span>Workspace</span>
               </div>
-              <div class="p-4 space-y-4 overflow-y-auto flex-1">
-                <Show
-                  when={todos().length}
-                  fallback={
-                    <div class="text-zinc-600 text-sm text-center py-10 italic">
-                      Plan will appear here...
-                    </div>
-                  }
-                >
-                  <For each={todos()}>
-                    {(t, idx) => (
-                      <div class="relative pl-6 pb-6 last:pb-0">
-                        <Show when={idx() !== todos().length - 1}>
-                          <div
-                            class={`absolute left-[9px] top-6 bottom-0 w-px ${
-                              t.status === "completed"
-                                ? "bg-emerald-500/20"
-                                : "bg-zinc-800"
-                            }`}
-                          />
-                        </Show>
+              <div class="p-4 space-y-5 overflow-y-auto flex-1">
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Skills</span>
+                    <span class="text-[11px] text-zinc-600">{skills().length}</span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show when={skills().length} fallback={<div class="text-xs text-zinc-600 italic">No skills found</div>}>
+                      <For each={skills().slice(0, 12)}>
+                        {(s) => (
+                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
+                            <div class="text-sm text-zinc-200 truncate">{s.name}</div>
+                            <Show when={s.description}>
+                              <div class="mt-1 text-xs text-zinc-500 line-clamp-2">{s.description}</div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                      <Show when={skills().length > 12}>
+                        <div class="text-xs text-zinc-600">+{skills().length - 12} more</div>
+                      </Show>
+                    </Show>
+                  </div>
+                </div>
 
-                        <div
-                          class={`absolute left-0 top-1 w-5 h-5 rounded-full border flex items-center justify-center bg-zinc-950 z-10 ${
-                            t.status === "completed"
-                              ? "border-emerald-500 text-emerald-500"
-                              : t.status === "in_progress"
-                                ? "border-blue-500 text-blue-500"
-                                : t.status === "cancelled"
-                                  ? "border-zinc-600 text-zinc-600"
-                                  : "border-zinc-700 text-zinc-700"
-                          }`}
-                        >
-                          <Show
-                            when={t.status === "completed"}
-                            fallback={
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Plugins</span>
+                    <span class="text-[11px] text-zinc-600">{sidebarPluginList().length}</span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show
+                      when={sidebarPluginList().length}
+                      fallback={<div class="text-xs text-zinc-600 italic">{sidebarPluginStatus() ?? "No plugins configured"}</div>}
+                    >
+                      <For each={sidebarPluginList().slice(0, 16)}>
+                        {(p) => (
+                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
+                            <div class="text-sm text-zinc-200 font-mono truncate">{p}</div>
+                          </div>
+                        )}
+                      </For>
+                      <Show when={sidebarPluginList().length > 16}>
+                        <div class="text-xs text-zinc-600">+{sidebarPluginList().length - 16} more</div>
+                      </Show>
+                    </Show>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
+                    <span>Execution Plan</span>
+                    <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
+                      {todos().filter((t) => t.status === "completed").length}/{todos().length}
+                    </span>
+                  </div>
+                  <div class="mt-3 space-y-2">
+                    <Show
+                      when={todos().length}
+                      fallback={<div class="text-xs text-zinc-600 italic">Plan will appear here…</div>}
+                    >
+                      <For each={todos()}>
+                        {(t, idx) => (
+                          <div class="relative pl-6 pb-6 last:pb-0">
+                            <Show when={idx() !== todos().length - 1}>
+                              <div
+                                class={`absolute left-[9px] top-6 bottom-0 w-px ${
+                                  t.status === "completed" ? "bg-emerald-500/20" : "bg-zinc-800"
+                                }`}
+                              />
+                            </Show>
+
+                            <div
+                              class={`absolute left-0 top-1 w-5 h-5 rounded-full border flex items-center justify-center bg-zinc-950 z-10 ${
+                                t.status === "completed"
+                                  ? "border-emerald-500 text-emerald-500"
+                                  : t.status === "in_progress"
+                                    ? "border-blue-500 text-blue-500"
+                                    : t.status === "cancelled"
+                                      ? "border-zinc-600 text-zinc-600"
+                                      : "border-zinc-700 text-zinc-700"
+                              }`}
+                            >
                               <Show
-                                when={t.status === "in_progress"}
+                                when={t.status === "completed"}
                                 fallback={
                                   <Show
-                                    when={t.status === "cancelled"}
-                                    fallback={<Circle size={10} />}
+                                    when={t.status === "in_progress"}
+                                    fallback={
+                                      <Show
+                                        when={t.status === "cancelled"}
+                                        fallback={<Circle size={10} />}
+                                      >
+                                        <X size={12} />
+                                      </Show>
+                                    }
                                   >
-                                    <X size={12} />
+                                    <div class="w-2 h-2 rounded-full bg-current animate-pulse" />
                                   </Show>
                                 }
                               >
-                                <div class="w-2 h-2 rounded-full bg-current animate-pulse" />
+                                <CheckCircle2 size={12} />
                               </Show>
-                            }
-                          >
-                            <CheckCircle2 size={12} />
-                          </Show>
-                        </div>
+                            </div>
 
-                        <div
-                          class={`text-sm ${
-                            t.status === "completed"
-                              ? "text-zinc-400"
-                              : t.status === "in_progress"
-                                ? "text-blue-100"
-                                : "text-zinc-500"
-                          }`}
-                        >
-                          {t.content}
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
+                            <div
+                              class={`text-sm ${
+                                t.status === "completed"
+                                  ? "text-zinc-400"
+                                  : t.status === "in_progress"
+                                    ? "text-blue-100"
+                                    : "text-zinc-500"
+                              }`}
+                            >
+                              {t.content}
+                            </div>
+                          </div>
+                        )}
+                      </For>
+                    </Show>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -3822,9 +5008,7 @@ export default function App() {
                     sendPrompt().catch(() => undefined);
                   }
                 }}
-                placeholder={
-                  busy() ? "Working..." : "Ask OpenWork to do something..."
-                }
+                placeholder={busy() ? "Working..." : "Ask OpenWork to do something..."}
                 class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-5 pr-14 text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all disabled:opacity-50"
               />
               <button
@@ -3847,9 +5031,7 @@ export default function App() {
                       <Shield size={24} />
                     </div>
                     <div>
-                      <h3 class="text-lg font-semibold text-white">
-                        Permission Required
-                      </h3>
+                      <h3 class="text-lg font-semibold text-white">Permission Required</h3>
                       <p class="text-sm text-zinc-400 mt-1">
                         OpenCode is requesting permission to continue.
                       </p>
@@ -3860,9 +5042,7 @@ export default function App() {
                     <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">
                       Permission
                     </div>
-                    <div class="text-sm text-zinc-200 font-mono">
-                      {activePermission()!.permission}
-                    </div>
+                    <div class="text-sm text-zinc-200 font-mono">{activePermission()!.permission}</div>
 
                     <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">
                       Scope
@@ -3872,16 +5052,9 @@ export default function App() {
                       {activePermission()!.patterns.join(", ")}
                     </div>
 
-                    <Show
-                      when={
-                        Object.keys(activePermission()!.metadata ?? {}).length >
-                        0
-                      }
-                    >
+                    <Show when={Object.keys(activePermission()!.metadata ?? {}).length > 0}>
                       <details class="mt-4 rounded-lg bg-black/20 p-2">
-                        <summary class="cursor-pointer text-xs text-zinc-400">
-                          Details
-                        </summary>
+                        <summary class="cursor-pointer text-xs text-zinc-400">Details</summary>
                         <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-200">
                           {safeStringify(activePermission()!.metadata)}
                         </pre>
@@ -3893,9 +5066,7 @@ export default function App() {
                     <Button
                       variant="outline"
                       class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
-                      onClick={() =>
-                        respondPermission(activePermission()!.id, "reject")
-                      }
+                      onClick={() => respondPermission(activePermission()!.id, "reject")}
                       disabled={permissionReplyBusy()}
                     >
                       Deny
@@ -3904,9 +5075,7 @@ export default function App() {
                       <Button
                         variant="secondary"
                         class="text-xs"
-                        onClick={() =>
-                          respondPermission(activePermission()!.id, "once")
-                        }
+                        onClick={() => respondPermission(activePermission()!.id, "once")}
                         disabled={permissionReplyBusy()}
                       >
                         Once
@@ -3914,12 +5083,10 @@ export default function App() {
                       <Button
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
-                        onClick={() =>
-                          respondPermission(activePermission()!.id, "always")
-                        }
-                        disabled={permissionReplyBusy()}
-                      >
-                        Allow
+                         onClick={() => respondPermissionAndRemember(activePermission()!.id, "always")}
+                         disabled={permissionReplyBusy()}
+                       >
+                         Allow for session
                       </Button>
                     </div>
                   </div>
@@ -3949,22 +5116,18 @@ export default function App() {
       </Show>
 
       <Show when={modelPickerOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6">
+        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+            <div class="p-6 flex flex-col min-h-0">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-white">
-                    {modelPickerTarget() === "default"
-                      ? "Default model"
-                      : "Model"}
+                    {modelPickerTarget() === "default" ? "Default model" : "Model"}
                   </h3>
                   <p class="text-sm text-zinc-400 mt-1">
-                    Zen models work without setup. This selection{" "}
-                    {modelPickerTarget() === "default"
+                    Choose from your configured providers. This selection {modelPickerTarget() === "default"
                       ? "will be used for new sessions"
-                      : "applies to your next message"}
-                    .
+                      : "applies to your next message"}.
                   </p>
                 </div>
                 <Button
@@ -3976,61 +5139,77 @@ export default function App() {
                 </Button>
               </div>
 
-              <div class="mt-6 space-y-2">
-                <For each={ZEN_MODEL_OPTIONS}>
-                  {(opt) => {
-                    const active = () => modelEquals(modelPickerCurrent(), opt);
-
-                    return (
-                      <button
-                        class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                          active()
-                            ? "border-white/20 bg-white/5"
-                            : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
-                        }`}
-                        onClick={() => applyModelSelection(opt)}
-                      >
-                        <div class="flex items-start justify-between gap-3">
-                          <div>
-                            <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
-                              {opt.label}
-                              <Show when={opt.recommended}>
-                                <span class="text-[10px] uppercase tracking-wide text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
-                                  Recommended
-                                </span>
-                              </Show>
-                            </div>
-                            <div class="text-xs text-zinc-500 mt-1">
-                              {opt.description}
-                            </div>
-                            <div class="text-[11px] text-zinc-600 font-mono mt-2">
-                              {formatModelRef(opt)}
-                            </div>
-                          </div>
-
-                          <div class="pt-0.5 text-zinc-500">
-                            <Show
-                              when={active()}
-                              fallback={<Circle size={14} />}
-                            >
-                              <CheckCircle2
-                                size={14}
-                                class="text-emerald-400"
-                              />
-                            </Show>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  }}
-                </For>
+              <div class="mt-5">
+                <div class="relative">
+                  <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                  <input
+                    type="text"
+                    value={modelPickerQuery()}
+                    onInput={(e) => setModelPickerQuery(e.currentTarget.value)}
+                    placeholder="Search models…"
+                    class="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600"
+                  />
+                </div>
+                <Show when={modelPickerQuery().trim()}>
+                  <div class="mt-2 text-xs text-zinc-500">
+                    Showing {filteredModelOptions().length} of {modelOptions().length}
+                  </div>
+                </Show>
               </div>
 
-              <div class="mt-6 flex justify-end">
-                <Button
-                  variant="outline"
-                  onClick={() => setModelPickerOpen(false)}
-                >
+              <div class="mt-4 space-y-2 overflow-y-auto pr-1 -mr-1 min-h-0">
+                 <For each={filteredModelOptions()}>
+                   {(opt) => {
+                     const active = () =>
+                       modelEquals(modelPickerCurrent(), {
+                         providerID: opt.providerID,
+                         modelID: opt.modelID,
+                       });
+
+                     return (
+                       <button
+                         class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+                           active()
+                             ? "border-white/20 bg-white/5"
+                             : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                         }`}
+                         onClick={() =>
+                           applyModelSelection({
+                             providerID: opt.providerID,
+                             modelID: opt.modelID,
+                           })
+                         }
+                       >
+                         <div class="flex items-start justify-between gap-3">
+                           <div class="min-w-0">
+                             <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
+                               <span class="truncate">{opt.title}</span>
+                             </div>
+                             <Show when={opt.description}>
+                               <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
+                             </Show>
+                             <Show when={opt.footer}>
+                               <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
+                             </Show>
+                             <div class="text-[11px] text-zinc-600 font-mono mt-2">
+                               {opt.providerID}/{opt.modelID}
+                             </div>
+                           </div>
+
+                           <div class="pt-0.5 text-zinc-500">
+                             <Show when={active()} fallback={<Circle size={14} />}>
+                               <CheckCircle2 size={14} class="text-emerald-400" />
+                             </Show>
+                           </div>
+                         </div>
+                       </button>
+                     );
+                   }}
+                 </For>
+              </div>
+
+              <div class="mt-5 flex justify-end shrink-0">
+                <Button variant="outline" onClick={() => setModelPickerOpen(false)}>
                   Done
                 </Button>
               </div>
@@ -4039,27 +5218,92 @@ export default function App() {
         </div>
       </Show>
 
-      <Show when={templateModalOpen()}>
+      <Show when={resetModalOpen()}>
         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <h3 class="text-lg font-semibold text-white">
-                    Save Template
+                    <Switch>
+                      <Match when={resetModalMode() === "onboarding"}>Reset onboarding</Match>
+                      <Match when={true}>Reset app data</Match>
+                    </Switch>
                   </h3>
                   <p class="text-sm text-zinc-400 mt-1">
-                    Reuse a workflow with one tap.
+                    Type <span class="font-mono">RESET</span> to confirm. OpenWork will restart.
                   </p>
                 </div>
                 <Button
                   variant="ghost"
                   class="!p-2 rounded-full"
-                  onClick={() => setTemplateModalOpen(false)}
+                  onClick={() => setResetModalOpen(false)}
+                  disabled={resetModalBusy()}
                 >
                   <X size={16} />
                 </Button>
               </div>
+
+              <div class="mt-6 space-y-4">
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400">
+                  <Switch>
+                    <Match when={resetModalMode() === "onboarding"}>
+                      Clears OpenWork local preferences and workspace onboarding markers.
+                    </Match>
+                    <Match when={true}>
+                      Clears OpenWork cache and app data on this device.
+                    </Match>
+                  </Switch>
+                </div>
+
+                <Show when={anyActiveRuns()}>
+                  <div class="text-xs text-red-300">Stop active runs before resetting.</div>
+                </Show>
+
+                <TextInput
+                  label="Confirmation"
+                  placeholder="Type RESET"
+                  value={resetModalText()}
+                  onInput={(e) => setResetModalText(e.currentTarget.value)}
+                  disabled={resetModalBusy()}
+                />
+              </div>
+
+              <div class="mt-6 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setResetModalOpen(false)} disabled={resetModalBusy()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={confirmReset}
+                  disabled={resetModalBusy() || anyActiveRuns() || resetModalText().trim().toUpperCase() !== "RESET"}
+                >
+                  Reset & Restart
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={templateModalOpen()}>
+         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+              <div class="p-6">
+                <div class="flex items-start justify-between gap-4">
+                 <div>
+                   <h3 class="text-lg font-semibold text-white">Save Template</h3>
+                   <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
+                 </div>
+                 <Button
+                   variant="ghost"
+                   class="!p-2 rounded-full"
+                   onClick={() => setTemplateModalOpen(false)}
+                 >
+                   <X size={16} />
+                 </Button>
+               </div>
+
 
               <div class="mt-6 space-y-4">
                 <TextInput
@@ -4072,35 +5316,49 @@ export default function App() {
                 <TextInput
                   label="Description (optional)"
                   value={templateDraftDescription()}
-                  onInput={(e) =>
-                    setTemplateDraftDescription(e.currentTarget.value)
-                  }
+                  onInput={(e) => setTemplateDraftDescription(e.currentTarget.value)}
                   placeholder="What does this template do?"
                 />
 
+                <div class="grid grid-cols-2 gap-2">
+                  <button
+                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
+                      templateDraftScope() === "workspace"
+                        ? "bg-white/10 text-white border-white/20"
+                        : "text-zinc-400 border-zinc-800 hover:text-white"
+                    }`}
+                    onClick={() => setTemplateDraftScope("workspace")}
+                    type="button"
+                  >
+                    Workspace
+                  </button>
+                  <button
+                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
+                      templateDraftScope() === "global"
+                        ? "bg-white/10 text-white border-white/20"
+                        : "text-zinc-400 border-zinc-800 hover:text-white"
+                    }`}
+                    onClick={() => setTemplateDraftScope("global")}
+                    type="button"
+                  >
+                    Global
+                  </button>
+                </div>
+
                 <label class="block">
-                  <div class="mb-1 text-xs font-medium text-neutral-300">
-                    Prompt
-                  </div>
+                  <div class="mb-1 text-xs font-medium text-neutral-300">Prompt</div>
                   <textarea
                     class="w-full min-h-40 rounded-xl bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20"
                     value={templateDraftPrompt()}
-                    onInput={(e) =>
-                      setTemplateDraftPrompt(e.currentTarget.value)
-                    }
+                    onInput={(e) => setTemplateDraftPrompt(e.currentTarget.value)}
                     placeholder="Write the instructions you want to reuse…"
                   />
-                  <div class="mt-1 text-xs text-neutral-500">
-                    This becomes the first user message.
-                  </div>
+                  <div class="mt-1 text-xs text-neutral-500">This becomes the first user message.</div>
                 </label>
               </div>
 
               <div class="mt-6 flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => setTemplateModalOpen(false)}
-                >
+                <Button variant="outline" onClick={() => setTemplateModalOpen(false)}>
                   Cancel
                 </Button>
                 <Button onClick={saveTemplate}>Save</Button>
