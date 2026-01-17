@@ -143,8 +143,27 @@ fn candidate_opencode_paths() -> Vec<PathBuf> {
     candidates
 }
 
+/// Creates a Command for running opencode.
+/// On Windows, .cmd and .bat files must be invoked via cmd.exe /C.
+fn create_opencode_command(program: &OsStr) -> Command {
+    #[cfg(windows)]
+    {
+        let program_str = program.to_string_lossy();
+        if program_str.ends_with(".cmd") || program_str.ends_with(".bat") {
+            let mut cmd = Command::new("cmd.exe");
+            cmd.arg("/C").arg(program);
+            return cmd;
+        }
+    }
+
+    Command::new(program)
+}
+
 fn opencode_version(program: &OsStr) -> Option<String> {
-    let output = Command::new(program).arg("--version").output().ok()?;
+    let mut command = create_opencode_command(program);
+    command.arg("--version");
+
+    let output = command.output().ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -159,7 +178,8 @@ fn opencode_version(program: &OsStr) -> Option<String> {
 }
 
 fn opencode_supports_serve(program: &OsStr) -> bool {
-    Command::new(program)
+    let mut command = create_opencode_command(program);
+    command
         .arg("serve")
         .arg("--help")
         .stdout(Stdio::null())
@@ -407,7 +427,7 @@ fn engine_start(manager: State<EngineManager>, project_dir: String) -> Result<En
         return Err(format!("{install_msg}\n\nNotes:\n{notes_text}"));
     };
 
-    let mut command = Command::new(&program);
+    let mut command = create_opencode_command(program.as_os_str());
     command
         .arg("serve")
         .arg("--hostname")
