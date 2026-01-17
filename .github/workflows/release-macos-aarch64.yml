@@ -303,6 +303,16 @@ jobs:
             echo "No updater artifacts found in $UPDATER_DIR; skipping."
           fi
 
+          LATEST_JSON="$UPDATER_DIR/latest.json"
+          FALLBACK_JSON="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/latest.json"
+          if [ -f "$LATEST_JSON" ]; then
+            gh release upload "$RELEASE_TAG" "$LATEST_JSON" --clobber
+          elif [ -f "$FALLBACK_JSON" ]; then
+            gh release upload "$RELEASE_TAG" "$FALLBACK_JSON" --clobber
+          else
+            echo "No latest.json found in updater bundle; skipping."
+          fi
+
       - name: Upload updater artifacts (Windows)
         if: matrix.os_type == 'windows'
         shell: pwsh
@@ -334,3 +344,10 @@ jobs:
           }
 
           gh release upload $env:RELEASE_TAG $zip.FullName $sigPath --clobber
+
+          $latestJson = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "latest.json" | Select-Object -First 1
+          if ($latestJson) {
+            gh release upload $env:RELEASE_TAG $latestJson.FullName --clobber
+          } else {
+            Write-Host "No latest.json found in bundle; skipping."
+          }
