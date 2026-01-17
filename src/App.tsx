@@ -4179,7 +4179,7 @@ export default function App() {
               <div class="pt-2 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => setDeveloperMode((v) => !v)}>
                   <Shield size={16} />
-                  {developerMode() ? "Developer On" : "Developer Off"}
+                  {developerMode() ? "Disable Developer Mode" : "Enable Developer Mode"}
                 </Button>
                 <Show when={mode() === "host"}>
                   <Button variant="danger" onClick={stopHost} disabled={busy()}>
