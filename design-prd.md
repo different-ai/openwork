@@ -507,3 +507,97 @@ Every run provides an exportable audit log:
 - multi-device pairing
 - audit/export
 - docs + examples
+
+---
+
+## UI/UX Cleaning PRD (Cowork-inspired Session View)
+
+### Summary
+
+Align the session experience with the Cowork-style reference so OpenWork feels calm, friendly, and non-technical by default, while preserving transparency through opt-in details.
+
+### Target Users
+
+- Non-technical operators who want outcomes rather than logs
+- Knowledge workers who prefer simple status cues over verbose diagnostics
+
+### Goals
+
+- Replace multi-block technical chatter with a single, collapsible "View steps" per assistant response batch
+- Provide a clear, minimal progress indicator that communicates task state at a glance
+- Surface artifacts and context in a structured, approachable sidebar
+- Preserve an approachable, consumer-grade visual tone
+
+### Non-Goals
+
+- Changing engine behavior or SDK event formats
+- Adding new backend data sources beyond existing session/todo/context signals
+
+### Experience Requirements
+
+#### Left Sidebar (Persistent)
+
+- Show tabs (Chat / Cowork / Code)
+- Primary action: New task
+- Recents list (session titles)
+- User profile + plan/footer area
+
+#### Center Feed (Primary Narrative)
+
+- User text appears in short, clean bubbles
+- Assistant text appears as narrative with clear spacing
+- Non-text parts (reasoning/tool/output) are grouped into a single collapsible "View steps" section
+- Collapsed by default; expanded reveals step items
+
+#### Right Sidebar (Context)
+
+- Section 1: Progress (horizontal step dots with checkmarks)
+- Section 2: Artifacts (file list with action affordance)
+- Section 3: Context (selected folders + working files)
+- Each section is collapsible with a small caret
+
+### Information Hierarchy
+
+- Default view emphasizes human-readable outcomes
+- Technical detail is opt-in via "View steps"
+- Artifacts are promoted above raw tool output
+
+### Functional Requirements
+
+1) Steps grouping
+- Group consecutive non-text parts into a single "steps" block
+- Render a single toggle: "View steps"
+- Expanded content uses a tidy list style (icon + short label)
+
+2) Progress indicator
+- Convert todos into a horizontal sequence
+- Completed = checkmark, pending = empty circle
+- Add helper text: "Steps will show as the task unfolds."
+
+3) Artifacts
+- Render created files as cards in the feed
+- Mirror artifacts in sidebar list with Open/Reveal action
+
+4) Context surface
+- Show selected folders (authorized roots)
+- Show working files (from active run context)
+
+### Visual/Interaction Guidelines
+
+- Reduce density; increase whitespace and line height
+- Avoid raw JSON or log blocks in default view
+- Use soft borders and subtle separators
+- Keep typography calm and legible; avoid aggressive contrast blocks
+
+### Data + State Requirements
+
+- Derived grouping of message parts into text vs steps
+- Artifact list state, synced to session events
+- Context list state (authorized folders + working files)
+
+### Acceptance Criteria
+
+- A single assistant response shows at most one "View steps" block
+- No raw tool output appears unless expanded
+- Progress, artifacts, and context appear in the right sidebar
+- Session view matches the three-column layout and calm tone
