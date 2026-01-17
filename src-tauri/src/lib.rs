@@ -14,6 +14,56 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceOpenworkConfig {
+  pub version: u32,
+  pub workspace: Option<WorkspaceOpenworkWorkspace>,
+  #[serde(default, alias = "authorizedRoots")]
+  pub authorized_roots: Vec<String>,
+}
+
+impl Default for WorkspaceOpenworkConfig {
+  fn default() -> Self {
+    Self {
+      version: 1,
+      workspace: None,
+      authorized_roots: Vec::new(),
+    }
+  }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceOpenworkWorkspace {
+  pub name: Option<String>,
+  #[serde(default, alias = "createdAt")]
+  pub created_at: Option<u64>,
+  #[serde(default, alias = "preset")]
+  pub preset: Option<String>,
+}
+
+impl WorkspaceOpenworkConfig {
+  fn new(workspace_path: &str, preset: &str) -> Self {
+    let root = PathBuf::from(workspace_path);
+    let inferred_name = root
+      .file_name()
+      .and_then(|s| s.to_str())
+      .unwrap_or("Workspace")
+      .to_string();
+
+    Self {
+      version: 1,
+      workspace: Some(WorkspaceOpenworkWorkspace {
+        name: Some(inferred_name),
+        created_at: Some(now_ms()),
+        preset: Some(preset.to_string()),
+      }),
+      authorized_roots: vec![workspace_path.to_string()],
+    }
+  }
+}
+
 #[derive(Default)]
 struct EngineManager {
   inner: Mutex<EngineState>,
@@ -177,100 +227,6 @@ fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, Str
 }
 
 
-#[derive(Debug, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceList {
-  pub active_id: String,
-  pub workspaces: Vec<WorkspaceInfo>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct WorkspaceStateV1 {
-  active_id: String,
-  workspaces: Vec<WorkspaceInfo>,
-}
-
-impl Default for WorkspaceStateV1 {
-  fn default() -> Self {
-    Self {
-      active_id: "starter".to_string(),
-      workspaces: Vec::new(),
-    }
-  }
-}
-
-fn now_ms() -> u64 {
-  SystemTime::now()
-    .duration_since(UNIX_EPOCH)
-    .map(|d| d.as_millis() as u64)
-    .unwrap_or(0)
-}
-
-fn stable_workspace_id(path: &str) -> String {
-  let mut hasher = DefaultHasher::new();
-  path.hash(&mut hasher);
-  format!("ws_{:x}", hasher.finish())
-}
-
-fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf), String> {
-  let app_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-
-  let state_dir = app_dir.join("state");
-  let file_path = state_dir.join("workspaces.json");
-
-  Ok((state_dir, file_path))
-}
-
-fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceStateV1, String> {
-  let (_dir, path) = openwork_state_paths(app)?;
-
-  if !path.exists() {
-    return Ok(WorkspaceStateV1::default());
-  }
-
-  let raw = fs::read_to_string(&path)
-    .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
-  serde_json::from_str::<WorkspaceStateV1>(&raw)
-    .map_err(|e| format!("Failed to parse {}: {e}", path.display()))
-}
-
-fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceStateV1) -> Result<(), String> {
-  let (dir, path) = openwork_state_paths(app)?;
-  fs::create_dir_all(&dir)
-    .map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
-
-  let json = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-  fs::write(&path, json).map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
-  Ok(())
-}
-
-fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {
-  let app_dir = app
-    .path()
-    .app_data_dir()
-    .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
-
-  let starter_path = app_dir
-    .join("workspaces")
-    .join("starter");
-
-  fs::create_dir_all(&starter_path)
-    .map_err(|e| format!("Failed to create starter workspace: {e}"))?;
-
-  let id = "starter".to_string();
-
-  Ok(WorkspaceInfo {
-    id,
-    name: "Starter Workspace".to_string(),
-    path: starter_path.to_string_lossy().to_string(),
-    preset: "starter".to_string(),
-  })
-}
-
 fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
   let mut next = existing;
   for plugin in required {
@@ -281,11 +237,112 @@ fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
   next
 }
 
+fn sanitize_template_id(raw: &str) -> Option<String> {
+  let trimmed = raw.trim();
+  if trimmed.is_empty() {
+    return None;
+  }
+
+  let mut out = String::new();
+  for ch in trimmed.chars() {
+    if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+      out.push(ch);
+    }
+  }
+
+  if out.is_empty() {
+    return None;
+  }
+
+  Some(out)
+}
+
 fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), String> {
   let root = PathBuf::from(workspace_path);
 
-  fs::create_dir_all(root.join(".opencode").join("skill"))
+  let skill_root = root.join(".opencode").join("skill");
+  fs::create_dir_all(&skill_root)
     .map_err(|e| format!("Failed to create .opencode/skill: {e}"))?;
+
+  // Seed workspace onboarding skill (required by onboarding PRD).
+  let guide_dir = skill_root.join("workspace_guide");
+  if !guide_dir.exists() {
+    fs::create_dir_all(&guide_dir)
+      .map_err(|e| format!("Failed to create {}: {e}", guide_dir.display()))?;
+
+    let doc = r#"# Workspace Guide
+
+This workspace is a real folder with local configuration.
+
+## What lives where
+
+- Workspace plugins: `opencode.json`
+- Workspace skills: `.opencode/skill/*`
+- Workspace templates: `.openwork/templates/*.json`
+- OpenWork workspace metadata: `.opencode/openwork.json`
+
+## What to try
+
+- Run the template **Understand this workspace**
+- Install a skill from the Skills tab
+- Add a plugin in the Plugins tab
+
+Be concise and practical."#;
+
+    fs::write(guide_dir.join("SKILL.md"), doc)
+      .map_err(|e| format!("Failed to write SKILL.md: {e}"))?;
+  }
+
+  let templates_dir = root.join(".openwork").join("templates");
+  fs::create_dir_all(&templates_dir)
+    .map_err(|e| format!("Failed to create .openwork/templates: {e}"))?;
+
+  // Seed starter templates if the workspace is empty.
+  if fs::read_dir(&templates_dir)
+    .map_err(|e| format!("Failed to read {}: {e}", templates_dir.display()))?
+    .next()
+    .is_none()
+  {
+    let defaults = vec![
+      WorkspaceTemplate {
+        id: "tmpl_understand_workspace".to_string(),
+        title: "Understand this workspace".to_string(),
+        description: "Explains local vs global tools".to_string(),
+        prompt: "Explain how this workspace is configured and what tools are available locally. Be concise and actionable.".to_string(),
+        created_at: now_ms(),
+      },
+      WorkspaceTemplate {
+        id: "tmpl_create_skill".to_string(),
+        title: "Create a new skill".to_string(),
+        description: "Guide to adding capabilities".to_string(),
+        prompt: "I want to create a new skill for this workspace. Guide me through it.".to_string(),
+        created_at: now_ms(),
+      },
+      WorkspaceTemplate {
+        id: "tmpl_run_scheduled_task".to_string(),
+        title: "Run a scheduled task".to_string(),
+        description: "Demo of the scheduler plugin".to_string(),
+        prompt: "Show me how to schedule a task to run every morning.".to_string(),
+        created_at: now_ms(),
+      },
+      WorkspaceTemplate {
+        id: "tmpl_task_to_template".to_string(),
+        title: "Turn task into template".to_string(),
+        description: "Save workflow for later".to_string(),
+        prompt: "Help me turn the last task into a reusable template.".to_string(),
+        created_at: now_ms(),
+      },
+    ];
+
+    for template in defaults {
+      let file_path = templates_dir.join(format!("{}.json", template.id));
+      fs::write(
+        &file_path,
+        serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?,
+      )
+      .map_err(|e| format!("Failed to write {}: {e}", file_path.display()))?;
+    }
+  }
 
   let config_path = root.join("opencode.json");
   let mut config: serde_json::Value = if config_path.exists() {
@@ -339,21 +396,7 @@ fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), Stri
 
   let openwork_path = root.join(".opencode").join("openwork.json");
   if !openwork_path.exists() {
-    let openwork = serde_json::json!({
-      "version": 1,
-      "workspace": {
-        "name": root
-          .file_name()
-          .and_then(|s| s.to_str())
-          .unwrap_or("Workspace"),
-        "createdAt": now_ms(),
-        "preset": preset
-      },
-      "authorizedRoots": [workspace_path],
-      "templates": {
-        "workspace": []
-      }
-    });
+    let openwork = WorkspaceOpenworkConfig::new(workspace_path, preset);
 
     fs::create_dir_all(openwork_path.parent().unwrap())
       .map_err(|e| format!("Failed to create {}: {e}", openwork_path.display()))?;
@@ -485,45 +528,191 @@ fn workspace_add_authorized_root(
     .join(".opencode")
     .join("openwork.json");
 
-  let raw = fs::read_to_string(&openwork_path)
-    .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
-
-  let mut doc: serde_json::Value = serde_json::from_str(&raw)
-    .map_err(|e| format!("Failed to parse {}: {e}", openwork_path.display()))?;
-
-  if !doc.is_object() {
-    doc = serde_json::json!({});
+  if let Some(parent) = openwork_path.parent() {
+    fs::create_dir_all(parent)
+      .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
   }
 
-  let roots = doc
-    .get("authorizedRoots")
-    .and_then(|v| v.as_array())
-    .cloned()
-    .unwrap_or_default();
+  let mut config: WorkspaceOpenworkConfig = if openwork_path.exists() {
+    let raw = fs::read_to_string(&openwork_path)
+      .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+    serde_json::from_str(&raw).unwrap_or_default()
+  } else {
+    let mut cfg = WorkspaceOpenworkConfig::default();
+    if !cfg.authorized_roots.iter().any(|p| p == &workspace_path) {
+      cfg.authorized_roots.push(workspace_path.clone());
+    }
+    cfg
+  };
 
-  let mut next: Vec<String> = roots
-    .into_iter()
-    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-    .collect();
-
-  if !next.iter().any(|p| p == &folder_path) {
-    next.push(folder_path);
+  if !config.authorized_roots.iter().any(|p| p == &folder_path) {
+    config.authorized_roots.push(folder_path);
   }
 
-  if let Some(obj) = doc.as_object_mut() {
-    obj.insert(
-      "authorizedRoots".to_string(),
-      serde_json::Value::Array(next.into_iter().map(serde_json::Value::String).collect()),
-    );
-  }
-
-  fs::write(&openwork_path, serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?)
-    .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+  fs::write(
+    &openwork_path,
+    serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
+  )
+  .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
 
   Ok(ExecResult {
     ok: true,
     status: 0,
     stdout: "Updated authorizedRoots".to_string(),
+    stderr: String::new(),
+  })
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTemplate {
+  pub id: String,
+  pub title: String,
+  pub description: String,
+  pub prompt: String,
+  #[serde(default)]
+  pub created_at: u64,
+}
+
+#[tauri::command]
+fn workspace_template_write(
+  _app: tauri::AppHandle,
+  workspace_path: String,
+  template: WorkspaceTemplate,
+) -> Result<ExecResult, String> {
+  let workspace_path = workspace_path.trim().to_string();
+  if workspace_path.is_empty() {
+    return Err("workspacePath is required".to_string());
+  }
+
+  let Some(template_id) = sanitize_template_id(&template.id) else {
+    return Err("template.id is required".to_string());
+  };
+
+  let templates_dir = PathBuf::from(&workspace_path)
+    .join(".openwork")
+    .join("templates");
+
+  fs::create_dir_all(&templates_dir)
+    .map_err(|e| format!("Failed to create {}: {e}", templates_dir.display()))?;
+
+  let payload = WorkspaceTemplate {
+    id: template_id.clone(),
+    title: template.title,
+    description: template.description,
+    prompt: template.prompt,
+    created_at: if template.created_at > 0 { template.created_at } else { now_ms() },
+  };
+
+  let file_path = templates_dir.join(format!("{}.json", template_id));
+  fs::write(
+    &file_path,
+    serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?,
+  )
+  .map_err(|e| format!("Failed to write {}: {e}", file_path.display()))?;
+
+  Ok(ExecResult {
+    ok: true,
+    status: 0,
+    stdout: format!("Wrote {}", file_path.display()),
+    stderr: String::new(),
+  })
+}
+
+#[tauri::command]
+fn workspace_openwork_read(
+  _app: tauri::AppHandle,
+  workspace_path: String,
+) -> Result<WorkspaceOpenworkConfig, String> {
+  let workspace_path = workspace_path.trim().to_string();
+  if workspace_path.is_empty() {
+    return Err("workspacePath is required".to_string());
+  }
+
+  let openwork_path = PathBuf::from(&workspace_path)
+    .join(".opencode")
+    .join("openwork.json");
+
+  if !openwork_path.exists() {
+    let mut cfg = WorkspaceOpenworkConfig::default();
+    cfg.authorized_roots.push(workspace_path);
+    return Ok(cfg);
+  }
+
+  let raw = fs::read_to_string(&openwork_path)
+    .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
+
+  serde_json::from_str::<WorkspaceOpenworkConfig>(&raw).map_err(|e| {
+    format!(
+      "Failed to parse {}: {e}",
+      openwork_path.display()
+    )
+  })
+}
+
+#[tauri::command]
+fn workspace_openwork_write(
+  _app: tauri::AppHandle,
+  workspace_path: String,
+  config: WorkspaceOpenworkConfig,
+) -> Result<ExecResult, String> {
+  let workspace_path = workspace_path.trim().to_string();
+  if workspace_path.is_empty() {
+    return Err("workspacePath is required".to_string());
+  }
+
+  let openwork_path = PathBuf::from(&workspace_path)
+    .join(".opencode")
+    .join("openwork.json");
+
+  if let Some(parent) = openwork_path.parent() {
+    fs::create_dir_all(parent)
+      .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+  }
+
+  fs::write(
+    &openwork_path,
+    serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?,
+  )
+  .map_err(|e| format!("Failed to write {}: {e}", openwork_path.display()))?;
+
+  Ok(ExecResult {
+    ok: true,
+    status: 0,
+    stdout: format!("Wrote {}", openwork_path.display()),
+    stderr: String::new(),
+  })
+}
+
+#[tauri::command]
+fn workspace_template_delete(
+  _app: tauri::AppHandle,
+  workspace_path: String,
+  template_id: String,
+) -> Result<ExecResult, String> {
+  let workspace_path = workspace_path.trim().to_string();
+  if workspace_path.is_empty() {
+    return Err("workspacePath is required".to_string());
+  }
+
+  let Some(template_id) = sanitize_template_id(&template_id) else {
+    return Err("templateId is required".to_string());
+  };
+
+  let file_path = PathBuf::from(&workspace_path)
+    .join(".openwork")
+    .join("templates")
+    .join(format!("{}.json", template_id));
+
+  if file_path.exists() {
+    fs::remove_file(&file_path)
+      .map_err(|e| format!("Failed to delete {}: {e}", file_path.display()))?;
+  }
+
+  Ok(ExecResult {
+    ok: true,
+    status: 0,
+    stdout: format!("Deleted {}", file_path.display()),
     stderr: String::new(),
   })
 }
@@ -1136,12 +1325,14 @@ fn write_opencode_config(
 }
 
 pub fn run() {
-  tauri::Builder::default()
-    .plugin(tauri_plugin_dialog::init())
-    #[cfg(desktop)]
+  let builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+
+  #[cfg(desktop)]
+  let builder = builder
     .plugin(tauri_plugin_process::init())
-    #[cfg(desktop)]
-    .plugin(tauri_plugin_updater::Builder::new().build())
+    .plugin(tauri_plugin_updater::Builder::new().build());
+
+  builder
     .manage(EngineManager::default())
     .invoke_handler(tauri::generate_handler![
       engine_start,
@@ -1153,6 +1344,10 @@ pub fn run() {
       workspace_set_active,
       workspace_create,
       workspace_add_authorized_root,
+      workspace_template_write,
+      workspace_template_delete,
+      workspace_openwork_read,
+      workspace_openwork_write,
       opkg_install,
       import_skill,
       read_opencode_config,

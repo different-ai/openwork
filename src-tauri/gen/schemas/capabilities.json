@@ -1,1 +1,1 @@
-{"openwork-default":{"identifier":"openwork-default","description":"Default OpenWork capability (UI permissions)","local":true,"windows":["*"],"permissions":["core:default","dialog:allow-open"]}}
+{"openwork-default":{"identifier":"openwork-default","description":"Default OpenWork capability (UI permissions)","local":true,"windows":["*"],"permissions":["core:default","dialog:allow-open","updater:default","process:default"]}}

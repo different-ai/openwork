@@ -56,7 +56,7 @@ Finally, it makes a key UX decision explicit:
 ### Safety
 
 - Keep least-privilege behavior.
-- Move permission decisions to the moment of intent (JIT), without weakening safety.
+- Keep folder authorization explicit and workspace-scoped.
 
 ---
 
@@ -133,8 +133,8 @@ Extensions can exist in either scope:
 2. **Progressive disclosure**
    - The UI should “just work” without requiring users to understand skills/plugins/templates.
    - When users are ready, the UI makes the LEGO blocks visible and learnable.
-3. **Least privilege, just-in-time**
-   - Ask for access only when the user’s task implies it.
+3. **Least privilege**
+   - Ask for access explicitly and keep scope minimal.
 4. **Sessions are global; workspaces are labels**
    - Humans remember tasks, not folder paths.
    - Global Sessions is mandatory; workspace views are filters.
@@ -210,7 +210,7 @@ We define “Extensions” as a single mental bucket with two scopes.
 |---|---|---|---|
 | Plugins | `<workspace>/opencode.json` | `$XDG_CONFIG_HOME/opencode/opencode.json` (or `~/.config/opencode/opencode.json`) | Always show which config file is being edited |
 | Skills | `<workspace>/.opencode/skill/*` | (future) `~/.config/opencode/skill/*` (or other OpenCode-native global location) | Default installs go to workspace; global is explicit |
-| Templates | `<workspace>/.opencode/openwork.json` (workspace templates) | App-managed storage (global templates) | Templates must show their scope and where they live |
+| Templates | `<workspace>/.openwork/templates/*` (workspace templates) | App-managed storage (global templates) | Templates must show their scope and where they live |
 
 Notes:
 
@@ -280,6 +280,7 @@ Starter Workspace is real and inspectable:
 - contains `opencode.json`
 - contains `.opencode/skill/*` (optional)
 - contains `.opencode/openwork.json`
+- contains `.openwork/templates/*`
 
 ---
 
@@ -425,7 +426,7 @@ Wizard steps:
 1. Choose folder (existing or create new)
 2. Name workspace (default from folder)
 3. Select workspace preset (Starter / Minimal / Automation)
-4. Review: “This will write `opencode.json` and `.opencode/openwork.json`”
+4. Review: “This will write `opencode.json`, `.opencode/openwork.json`, and `.openwork/templates/*`”
 
 ### D) Workspace settings
 
@@ -442,28 +443,22 @@ Per workspace:
 
 ---
 
-## JIT Folder Expansion (Add to workspace)
+## Folder Authorization (Workspace-Scoped)
 
 ### Why
 
-Multi-folder workflows are normal.
+Multi-folder workflows are normal, but OpenWork must stay least-privilege.
 
-We want least-privilege without making users pre-authorize everything.
+### Model
 
-### Trigger moments
-
-- A permission request arrives for a path outside authorized roots
-- User clicks “Add folder…” near prompt input
-
-### Prompt choices
-
-- Allow once (session-only)
-- Add to workspace (persist)
-- Deny
+- A workspace has a set of authorized roots.
+- Anything outside those roots is denied by default unless explicitly approved by the user.
+- Permission prompts can grant session-scoped access (allow once / allow for session), but those do not expand the workspace roots.
+- Persistent folder access is managed explicitly via workspace settings (“Authorized folders”).
 
 ### Storage
 
-- Persist authorized roots inside the workspace:
+- Authorized roots are persisted inside the workspace:
   - `<workspace>/.opencode/openwork.json`
 
 ---
@@ -486,19 +481,8 @@ Proposed minimal schema:
   },
   "authorizedRoots": [
     "/path/to/workspace",
-    "/path/added/jit"
-  ],
-  "templates": {
-    "workspace": [
-      {
-        "id": "tmpl_understand",
-        "title": "Understand this workspace",
-        "description": "Explains what lives locally vs globally.",
-        "prompt": "...",
-        "createdAt": 1730000000000
-      }
-    ]
-  }
+    "/path/added/with-user-consent"
+  ]
 }
 ```
 
@@ -527,7 +511,8 @@ For existing users with:
 
 - `projectDir`
 - `authorizedDirs`
-- `openwork.templates` in local storage
+- workspace templates stored in `.openwork/templates/*`
+- global templates in app-managed storage (optional)
 
 Migration rules:
 
@@ -551,12 +536,13 @@ Migration rules:
 - User can create 2+ folder workspaces and switch between them.
 - Plugins and skills reflect active workspace scope.
 
-### Permissions
+### Folder authorization
 
-- When a task needs a new folder, user can:
-  - allow once
-  - add to workspace
-  - deny
+- When a task needs access to a folder outside the workspace roots:
+  - the UI blocks by default and explains why
+  - the user can grant session-scoped access (allow once / allow for session)
+  - the user can deny
+  - if they want persistent access, they explicitly add it as a workspace root via workspace settings
 
 ### Sessions
 
