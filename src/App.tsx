@@ -79,6 +79,7 @@ import {
   workspaceTemplateDelete,
   workspaceTemplateWrite,
   writeOpencodeConfig,
+  resetOpenworkState,
   type EngineDoctorResult,
   type EngineInfo,
   type OpencodeConfigFile,
@@ -138,6 +139,8 @@ type OnboardingStep = "mode" | "host" | "client" | "connecting";
 type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
 
 type WorkspacePreset = "starter" | "automation" | "minimal";
+
+type ResetOpenworkMode = "onboarding" | "all";
 
 type WorkspaceTemplate = Template & {
   scope: "workspace" | "global";
@@ -936,6 +939,11 @@ export default function App() {
 
   const [updateEnv, setUpdateEnv] = createSignal<UpdaterEnvironment | null>(null);
 
+  const [resetModalOpen, setResetModalOpen] = createSignal(false);
+  const [resetModalMode, setResetModalMode] = createSignal<ResetOpenworkMode>("onboarding");
+  const [resetModalText, setResetModalText] = createSignal("");
+  const [resetModalBusy, setResetModalBusy] = createSignal(false);
+
   type UpdateHandle = {
     available: boolean;
     currentVersion: string;
@@ -1247,6 +1255,66 @@ export default function App() {
   function anyActiveRuns() {
     const statuses = sessionStatusById();
     return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+  }
+
+  function clearOpenworkLocalStorage() {
+    if (typeof window === "undefined") return;
+
+    try {
+      const keys = Object.keys(window.localStorage);
+      for (const key of keys) {
+        if (key.startsWith("openwork.")) {
+          window.localStorage.removeItem(key);
+        }
+      }
+      // Legacy compatibility key
+      window.localStorage.removeItem("openwork_mode_pref");
+    } catch {
+      // ignore
+    }
+  }
+
+  function openResetModal(mode: ResetOpenworkMode) {
+    if (anyActiveRuns()) {
+      setError("Stop active runs before resetting.");
+      return;
+    }
+
+    setError(null);
+    setResetModalMode(mode);
+    setResetModalText("");
+    setResetModalOpen(true);
+  }
+
+  async function confirmReset() {
+    if (resetModalBusy()) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before resetting.");
+      return;
+    }
+
+    if (resetModalText().trim().toUpperCase() !== "RESET") return;
+
+    setResetModalBusy(true);
+    setError(null);
+
+    try {
+      if (isTauriRuntime()) {
+        await resetOpenworkState(resetModalMode());
+      }
+
+      clearOpenworkLocalStorage();
+
+      if (isTauriRuntime()) {
+        await relaunch();
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+      setResetModalBusy(false);
+    }
   }
 
   function markReloadRequired(reason: ReloadReason) {
@@ -4326,6 +4394,49 @@ export default function App() {
               </p>
             </div>
 
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-white">Advanced</div>
+                <div class="text-xs text-zinc-500">Reset OpenWork local state to retest onboarding.</div>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Reset onboarding</div>
+                  <div class="text-xs text-zinc-600">Clears OpenWork preferences and restarts the app.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => openResetModal("onboarding")}
+                  disabled={busy() || resetModalBusy() || anyActiveRuns()}
+                  title={anyActiveRuns() ? "Stop active runs to reset" : ""}
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-zinc-200">Reset app data</div>
+                  <div class="text-xs text-zinc-600">More aggressive. Clears OpenWork cache + app data.</div>
+                </div>
+                <Button
+                  variant="danger"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={() => openResetModal("all")}
+                  disabled={busy() || resetModalBusy() || anyActiveRuns()}
+                  title={anyActiveRuns() ? "Stop active runs to reset" : ""}
+                >
+                  Reset
+                </Button>
+              </div>
+
+              <div class="text-xs text-zinc-600">
+                Requires typing <span class="font-mono text-zinc-400">RESET</span> and will restart the app.
+              </div>
+            </div>
+
             <Show when={developerMode()}>
               <section>
                 <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
@@ -5047,23 +5158,92 @@ export default function App() {
         </div>
       </Show>
 
-      <Show when={templateModalOpen()}>
-         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-           <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-             <div class="p-6">
-               <div class="flex items-start justify-between gap-4">
+      <Show when={resetModalOpen()}>
+        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6">
+              <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-white">Save Template</h3>
-                  <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
+                  <h3 class="text-lg font-semibold text-white">
+                    <Switch>
+                      <Match when={resetModalMode() === "onboarding"}>Reset onboarding</Match>
+                      <Match when={true}>Reset app data</Match>
+                    </Switch>
+                  </h3>
+                  <p class="text-sm text-zinc-400 mt-1">
+                    Type <span class="font-mono">RESET</span> to confirm. OpenWork will restart.
+                  </p>
                 </div>
                 <Button
                   variant="ghost"
                   class="!p-2 rounded-full"
-                  onClick={() => setTemplateModalOpen(false)}
+                  onClick={() => setResetModalOpen(false)}
+                  disabled={resetModalBusy()}
                 >
                   <X size={16} />
                 </Button>
               </div>
+
+              <div class="mt-6 space-y-4">
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400">
+                  <Switch>
+                    <Match when={resetModalMode() === "onboarding"}>
+                      Clears OpenWork local preferences and workspace onboarding markers.
+                    </Match>
+                    <Match when={true}>
+                      Clears OpenWork cache and app data on this device.
+                    </Match>
+                  </Switch>
+                </div>
+
+                <Show when={anyActiveRuns()}>
+                  <div class="text-xs text-red-300">Stop active runs before resetting.</div>
+                </Show>
+
+                <TextInput
+                  label="Confirmation"
+                  placeholder="Type RESET"
+                  value={resetModalText()}
+                  onInput={(e) => setResetModalText(e.currentTarget.value)}
+                  disabled={resetModalBusy()}
+                />
+              </div>
+
+              <div class="mt-6 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setResetModalOpen(false)} disabled={resetModalBusy()}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={confirmReset}
+                  disabled={resetModalBusy() || anyActiveRuns() || resetModalText().trim().toUpperCase() !== "RESET"}
+                >
+                  Reset & Restart
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
+      <Show when={templateModalOpen()}>
+         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+              <div class="p-6">
+                <div class="flex items-start justify-between gap-4">
+                 <div>
+                   <h3 class="text-lg font-semibold text-white">Save Template</h3>
+                   <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
+                 </div>
+                 <Button
+                   variant="ghost"
+                   class="!p-2 rounded-full"
+                   onClick={() => setTemplateModalOpen(false)}
+                 >
+                   <X size={16} />
+                 </Button>
+               </div>
+
 
               <div class="mt-6 space-y-4">
                 <TextInput

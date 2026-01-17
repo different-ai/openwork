@@ -220,3 +220,7 @@ export async function writeOpencodeConfig(
 ): Promise<ExecResult> {
   return invoke<ExecResult>("write_opencode_config", { scope, projectDir, content });
 }
+
+export async function resetOpenworkState(mode: "onboarding" | "all"): Promise<void> {
+  return invoke<void>("reset_openwork_state", { mode });
+}

@@ -1027,6 +1027,38 @@ fn updater_environment(_app: tauri::AppHandle) -> UpdaterEnvironment {
   }
 }
 
+#[tauri::command]
+fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+  let mode = mode.trim();
+  if mode != "onboarding" && mode != "all" {
+    return Err("mode must be 'onboarding' or 'all'".to_string());
+  }
+
+  let cache_dir = app
+    .path()
+    .app_cache_dir()
+    .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?;
+
+  if cache_dir.exists() {
+    fs::remove_dir_all(&cache_dir)
+      .map_err(|e| format!("Failed to remove cache dir {}: {e}", cache_dir.display()))?;
+  }
+
+  if mode == "all" {
+    let data_dir = app
+      .path()
+      .app_data_dir()
+      .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+
+    if data_dir.exists() {
+      fs::remove_dir_all(&data_dir)
+        .map_err(|e| format!("Failed to remove data dir {}: {e}", data_dir.display()))?;
+    }
+  }
+
+  Ok(())
+}
+
 fn resolve_opencode_config_path(scope: &str, project_dir: &str) -> Result<PathBuf, String> {
   match scope {
     "project" => {
@@ -1496,7 +1528,8 @@ pub fn run() {
       import_skill,
       read_opencode_config,
       write_opencode_config,
-      updater_environment
+      updater_environment,
+      reset_openwork_state
     ])
     .run(tauri::generate_context!())
     .expect("error while running OpenWork");
