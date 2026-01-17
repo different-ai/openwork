@@ -50,9 +50,12 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 
 import Button from "./components/Button";
+import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OpenWorkLogo from "./components/OpenWorkLogo";
 import PartView from "./components/PartView";
 import TextInput from "./components/TextInput";
+import WorkspaceChip from "./components/WorkspaceChip";
+import WorkspacePicker from "./components/WorkspacePicker";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   engineDoctor,
@@ -65,11 +68,20 @@ import {
   pickDirectory,
   readOpencodeConfig,
   updaterEnvironment,
+
+  workspaceBootstrap,
+  workspaceCreate,
+  workspaceSetActive,
+  workspaceOpenworkRead,
+  workspaceOpenworkWrite,
+  workspaceTemplateDelete,
+  workspaceTemplateWrite,
   writeOpencodeConfig,
   type EngineDoctorResult,
   type EngineInfo,
   type OpencodeConfigFile,
   type UpdaterEnvironment,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 
 type Client = ReturnType<typeof createClient>;
@@ -123,6 +135,22 @@ type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
 type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
 
+type WorkspacePreset = "starter" | "automation" | "minimal";
+
+type WorkspaceTemplate = Template & {
+  scope: "workspace" | "global";
+};
+
+type WorkspaceOpenworkConfig = {
+  version: number;
+  workspace?: {
+    name?: string | null;
+    createdAt?: number | null;
+    preset?: string | null;
+  } | null;
+  authorizedRoots: string[];
+};
+
 type Template = {
   id: string;
   title: string;
@@ -165,8 +193,6 @@ type SuggestedPlugin = {
 };
 
 type PluginScope = "project" | "global";
-
-type ReloadReason = "plugins" | "skills";
 
 type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
@@ -448,6 +474,21 @@ function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
+function templatePathFromWorkspaceRoot(workspaceRoot: string, templateId: string) {
+  const root = workspaceRoot.trim().replace(/\/+$/, "");
+  const id = templateId.trim();
+  if (!root || !id) return null;
+  return `${root}/.openwork/templates/${id}.json`;
+}
+
+function safeParseJson<T>(raw: string): T | null {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
 function upsertSession(list: Session[], next: Session) {
   const idx = list.findIndex((s) => s.id === next.id);
   if (idx === -1) return [...list, next];
@@ -563,8 +604,15 @@ export default function App() {
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">("path");
 
   const [projectDir, setProjectDir] = createSignal("");
+
+  const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
+
   const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
   const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
+
+  const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceOpenworkConfig | null>(null);
+  const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -587,11 +635,15 @@ export default function App() {
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
-  const [templates, setTemplates] = createSignal<Template[]>([]);
+  const [templates, setTemplates] = createSignal<WorkspaceTemplate[]>([]);
+  const [workspaceTemplatesLoaded, setWorkspaceTemplatesLoaded] = createSignal(false);
+  const [globalTemplatesLoaded, setGlobalTemplatesLoaded] = createSignal(false);
+
   const [templateModalOpen, setTemplateModalOpen] = createSignal(false);
   const [templateDraftTitle, setTemplateDraftTitle] = createSignal("");
   const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
+  const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
@@ -605,19 +657,247 @@ export default function App() {
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
   const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
 
-  const [reloadRequired, setReloadRequired] = createSignal(false);
-  const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
-  const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
-  const [reloadBusy, setReloadBusy] = createSignal(false);
-  const [reloadError, setReloadError] = createSignal<string | null>(null);
+  const activeWorkspace = createMemo(() => {
+    const id = activeWorkspaceId();
+    return workspaces().find((w) => w.id === id) ?? null;
+  });
+
+   const activeWorkspacePath = createMemo(() => activeWorkspace()?.path ?? "");
+
+  const activeWorkspaceRoot = createMemo(() => {
+    const ws = activeWorkspace();
+    if (!ws) return "";
+    const path = ws.path.trim();
+    if (!path) return "";
+    return path.replace(/\/+$/, "");
+  });
+
+  const defaultWorkspaceTemplates = createMemo<WorkspaceTemplate[]>(() => [
+    {
+      id: "tmpl_understand_workspace",
+      title: "Understand this workspace",
+      description: "Explains local vs global tools",
+      prompt:
+        "Explain how this workspace is configured and what tools are available locally. Be concise and actionable.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_create_skill",
+      title: "Create a new skill",
+      description: "Guide to adding capabilities",
+      prompt: "I want to create a new skill for this workspace. Guide me through it.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_run_scheduled_task",
+      title: "Run a scheduled task",
+      description: "Demo of the scheduler plugin",
+      prompt: "Show me how to schedule a task to run every morning.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+    {
+      id: "tmpl_task_to_template",
+      title: "Turn task into template",
+      description: "Save workflow for later",
+      prompt: "Help me turn the last task into a reusable template.",
+      createdAt: 0,
+      scope: "workspace",
+    },
+  ]);
+
+  const workspaceTemplates = createMemo(() => {
+    const explicit = templates().filter((t) => t.scope === "workspace");
+    if (explicit.length) return explicit;
+    return workspaceTemplatesLoaded() ? [] : defaultWorkspaceTemplates();
+  });
+
+  const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
+
+  const activeWorkspaceDisplay = createMemo(() => {
+    const ws = activeWorkspace();
+    if (!ws) {
+      return {
+        id: "starter",
+        name: "Workspace",
+        path: "",
+        preset: "starter",
+      } satisfies WorkspaceInfo;
+    }
+    return ws;
+  });
+
+  const showWorkspacePicker = createSignal(false);
+  const showCreateWorkspaceModal = createSignal(false);
+
+  const [workspacePickerOpen, setWorkspacePickerOpen] = showWorkspacePicker;
+  const [createWorkspaceOpen, setCreateWorkspaceOpen] = showCreateWorkspaceModal;
+
+  const [workspaceSearch, setWorkspaceSearch] = createSignal("");
+
+  const filteredWorkspaces = createMemo(() => {
+    const query = workspaceSearch().trim().toLowerCase();
+    if (!query) return workspaces();
+
+    return workspaces().filter((w) => {
+      const haystack = `${w.name} ${w.path}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  });
+
+  async function activateWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const next = workspaces().find((w) => w.id === id) ?? null;
+    if (!next) return;
+
+    setActiveWorkspaceId(id);
+    setProjectDir(next.path);
+
+    // Load workspace-scoped OpenWork config (authorized roots, metadata).
+    if (isTauriRuntime()) {
+      setWorkspaceConfigLoaded(false);
+      try {
+        const cfg = await workspaceOpenworkRead({ workspacePath: next.path });
+        setWorkspaceConfig(cfg);
+        setWorkspaceConfigLoaded(true);
+
+        const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+        if (roots.length) {
+          setAuthorizedDirs(roots);
+        } else {
+          setAuthorizedDirs([next.path]);
+        }
+      } catch {
+        setWorkspaceConfig(null);
+        setWorkspaceConfigLoaded(true);
+        setAuthorizedDirs([next.path]);
+      }
+
+      try {
+        await workspaceSetActive(id);
+      } catch {
+        // ignore
+      }
+    } else {
+      // Web runtime: at least keep the current workspace root in memory.
+      if (!authorizedDirs().includes(next.path)) {
+        setAuthorizedDirs((current) => {
+          const merged = current.length ? current.slice() : [];
+          if (!merged.includes(next.path)) merged.push(next.path);
+          return merged;
+        });
+      }
+    }
+
+    await loadWorkspaceTemplates({ workspaceRoot: next.path }).catch(() => undefined);
+
+    if (mode() === "host" && engine()?.running && engine()?.baseUrl) {
+      // Already connected to an engine; keep current connection for now.
+      // Future: support multi-workspace host connections.
+      return;
+    }
+  }
+
+  async function loadWorkspaceTemplates(options?: { workspaceRoot?: string; quiet?: boolean }) {
+    const c = client();
+    const root = (options?.workspaceRoot ?? activeWorkspaceRoot()).trim();
+    if (!c || !root) return;
+
+    try {
+      const templatesPath = ".openwork/templates";
+      const nodes = unwrap(await c.file.list({ directory: root, path: templatesPath }));
+      const jsonFiles = nodes
+        .filter((n) => n.type === "file" && !n.ignored)
+        .filter((n) => n.name.toLowerCase().endsWith(".json"));
+
+      const loaded: WorkspaceTemplate[] = [];
+
+      for (const node of jsonFiles) {
+        const content = unwrap(await c.file.read({ directory: root, path: node.path }));
+        if (content.type !== "text") continue;
+
+        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(content.content);
+        if (!parsed) continue;
+
+        const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
+        const prompt = typeof parsed.prompt === "string" ? parsed.prompt : "";
+        if (!prompt.trim()) continue;
+
+        loaded.push({
+          id: typeof parsed.id === "string" ? parsed.id : node.name.replace(/\.json$/i, ""),
+          title,
+          description: typeof parsed.description === "string" ? parsed.description : "",
+          prompt,
+          createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+          scope: "workspace",
+        });
+      }
+
+      const stable = loaded.slice().sort((a, b) => b.createdAt - a.createdAt);
+
+      setTemplates((current) => {
+        const globals = current.filter((t) => t.scope === "global");
+        return [...stable, ...globals];
+      });
+      setWorkspaceTemplatesLoaded(true);
+    } catch (e) {
+      setWorkspaceTemplatesLoaded(true);
+      if (!options?.quiet) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      }
+    }
+  }
+
+  async function createWorkspaceFlow(preset: WorkspacePreset) {
+    if (!isTauriRuntime()) {
+      setError("Workspace creation requires the Tauri app runtime.");
+      return;
+    }
+
+    try {
+      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const folder =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!folder) return;
+
+      setBusy(true);
+      setBusyLabel("Creating workspace");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      const name = folder.split("/").filter(Boolean).pop() ?? "Workspace";
+      const ws = await workspaceCreate({ folderPath: folder, name, preset });
+      setWorkspaces(ws.workspaces);
+      setActiveWorkspaceId(ws.activeId);
+
+      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+      if (active) {
+        setProjectDir(active.path);
+        setAuthorizedDirs([active.path]);
+        await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+      }
+
+      setWorkspacePickerOpen(false);
+      setCreateWorkspaceOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
 
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
-  const [devTapCount, setDevTapCount] = createSignal(0);
 
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
-  const [providerConnectedIds, setProviderConnectedIds] = createSignal<string[]>([]);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
@@ -849,7 +1129,6 @@ export default function App() {
           title: model.name ?? model.id,
           description: provider.name,
           footer: footerBits.length ? footerBits.slice(0, 2).join(" · ") : undefined,
-          disabled: !providerConnectedIds().includes(provider.id),
         });
       }
     }
@@ -916,97 +1195,6 @@ export default function App() {
   function anyActiveRuns() {
     const statuses = sessionStatusById();
     return sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
-  }
-
-  function markReloadRequired(reason: ReloadReason) {
-    setReloadRequired(true);
-    setReloadLastTriggeredAt(Date.now());
-    setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
-  }
-
-  function clearReloadRequired() {
-    setReloadRequired(false);
-    setReloadReasons([]);
-    setReloadError(null);
-  }
-
-  const reloadCopy = createMemo(() => {
-    const reasons = reloadReasons();
-    if (!reasons.length) {
-      return {
-        title: "Reload required",
-        body: "OpenWork detected changes that require reloading the OpenCode instance.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "plugins") {
-      return {
-        title: "Reload required",
-        body: "OpenCode loads npm plugins at startup. Reload the engine to apply opencode.json changes.",
-      };
-    }
-
-    if (reasons.length === 1 && reasons[0] === "skills") {
-      return {
-        title: "Reload required",
-        body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
-      };
-    }
-
-    return {
-      title: "Reload required",
-      body: "OpenWork detected plugin/skill changes. Reload the engine to apply them.",
-    };
-  });
-
-  const canReloadEngine = createMemo(() => {
-    if (!reloadRequired()) return false;
-    if (!client()) return false;
-    if (reloadBusy()) return false;
-    if (anyActiveRuns()) return false;
-    if (mode() !== "host") return false;
-    return true;
-  });
-
-  async function reloadEngineInstance() {
-    const c = client();
-    if (!c) return;
-
-    if (mode() !== "host") {
-      setReloadError("Reload is only available in Host mode.");
-      return;
-    }
-
-    if (anyActiveRuns()) {
-      setReloadError("A run is in progress. Stop it before reloading the engine.");
-      return;
-    }
-
-    setReloadBusy(true);
-    setReloadError(null);
-
-    try {
-      unwrap(await c.instance.dispose());
-      await waitForHealthy(c, { timeoutMs: 12_000 });
-
-      try {
-        const cfg = unwrap(await c.config.providers());
-        setProviders(cfg.providers);
-        setProviderDefaults(cfg.default);
-      } catch {
-        setProviders([]);
-        setProviderDefaults({});
-      }
-
-      await refreshPlugins().catch(() => undefined);
-      await refreshSkills().catch(() => undefined);
-
-      clearReloadRequired();
-    } catch (e) {
-      setReloadError(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setReloadBusy(false);
-    }
   }
 
   async function checkForUpdates(options?: { quiet?: boolean }) {
@@ -1142,22 +1330,9 @@ export default function App() {
     if (!isTauriRuntime()) return;
 
     try {
-      const result = await engineDoctor({ preferSidecar: engineSource() === "sidecar" });
+      const result = await engineDoctor();
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
-
-      if (developerMode()) {
-        const details = [
-          `found=${result.found}`,
-          `inPath=${result.inPath}`,
-          `resolvedPath=${result.resolvedPath ?? ""}`,
-          `version=${result.version ?? ""}`,
-          `supportsServe=${result.supportsServe}`,
-          `serveHelpStatus=${result.serveHelpStatus ?? ""}`,
-        ];
-        const notes = result.notes?.length ? "\nnotes:\n" + result.notes.join("\n") : "";
-        setEngineInstallLogs(details.join("\n") + notes);
-      }
     } catch (e) {
       setEngineDoctorResult(null);
       setEngineDoctorCheckedAt(Date.now());
@@ -1199,27 +1374,59 @@ export default function App() {
       await refreshPendingPermissions(nextClient);
 
       try {
-        const providerList = unwrap(await nextClient.provider.list());
-        setProviders(providerList.all as unknown as Provider[]);
-        setProviderDefaults(providerList.default);
-        setProviderConnectedIds(providerList.connected);
+        const cfg = unwrap(await nextClient.config.providers());
+        setProviders(cfg.providers);
+        setProviderDefaults(cfg.default);
       } catch {
-        // Backwards compatibility: older servers may not support provider.list
-        try {
-          const cfg = unwrap(await nextClient.config.providers());
-          setProviders(cfg.providers);
-          setProviderDefaults(cfg.default);
-          setProviderConnectedIds([]);
-        } catch {
-          setProviders([]);
-          setProviderDefaults({});
-          setProviderConnectedIds([]);
-        }
+        setProviders([]);
+        setProviderDefaults({});
       }
 
       setSelectedSessionId(null);
       setMessages([]);
       setTodos([]);
+
+      // Auto-create a first-run onboarding session in the active workspace.
+      try {
+        if (isTauriRuntime() && activeWorkspaceRoot().trim()) {
+          const wsRoot = activeWorkspaceRoot().trim();
+          const storedKey = `openwork.welcomeSessionCreated:${wsRoot}`;
+
+          let already = false;
+          try {
+            already = window.localStorage.getItem(storedKey) === "1";
+          } catch {
+            // ignore
+          }
+
+          if (!already) {
+            const session = unwrap(await nextClient.session.create({ directory: wsRoot, title: "Welcome to OpenWork" }));
+            await nextClient.session.promptAsync({
+              directory: wsRoot,
+              sessionID: session.id,
+              model: defaultModel(),
+              variant: modelVariant() ?? undefined,
+              parts: [
+                {
+                  type: "text",
+                  text:
+                    "Load the `workspace_guide` skill from this workspace and explain, in plain language, what lives in this folder (skills/plugins/templates) and what’s global. Then suggest 2 quick next actions the user can do in OpenWork.",
+                },
+              ],
+            });
+
+            try {
+              window.localStorage.setItem(storedKey, "1");
+            } catch {
+              // ignore
+            }
+
+            await loadSessions(nextClient).catch(() => undefined);
+          }
+        }
+      } catch {
+        // ignore onboarding session failures
+      }
 
       setView("dashboard");
       setTab("home");
@@ -1237,20 +1444,20 @@ export default function App() {
     }
   }
 
-  async function startHost() {
+  async function startHost(options?: { workspacePath?: string }) {
     if (!isTauriRuntime()) {
       setError("Host mode requires the Tauri app runtime. Use `pnpm dev`.");
       return false;
     }
 
-    const dir = projectDir().trim();
+    const dir = (options?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
     if (!dir) {
-      setError("Pick a folder path to start OpenCode in.");
+      setError("Pick a workspace folder to start OpenCode in.");
       return false;
     }
 
     try {
-      const result = await engineDoctor({ preferSidecar: engineSource() === "sidecar" });
+      const result = await engineDoctor();
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
 
@@ -1262,12 +1469,7 @@ export default function App() {
       }
 
       if (!result.supportsServe) {
-        const details = developerMode()
-          ? `\n\nResolved: ${result.resolvedPath ?? "(unknown)"}\nExit: ${result.serveHelpStatus ?? "(unknown)"}\n${result.serveHelpStderr ? `\n${result.serveHelpStderr}` : ""}`
-          : "";
-        setError(
-          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${details}`,
-        );
+        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
         return false;
       }
     } catch (e) {
@@ -1280,8 +1482,14 @@ export default function App() {
     setBusyStartedAt(Date.now());
 
     try {
-       const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
-       setEngine(info);
+      // Keep legacy state in sync for now.
+      setProjectDir(dir);
+      if (!authorizedDirs().length) {
+        setAuthorizedDirs([dir]);
+      }
+
+      const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
+      setEngine(info);
 
       if (info.baseUrl) {
         const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
@@ -1451,36 +1659,98 @@ export default function App() {
     setTemplateDraftTitle(seedTitle);
     setTemplateDraftDescription("");
     setTemplateDraftPrompt(seedPrompt);
+    setTemplateDraftScope("workspace");
     setTemplateModalOpen(true);
   }
 
-  function saveTemplate() {
+  async function saveTemplate() {
     const title = templateDraftTitle().trim();
     const promptText = templateDraftPrompt().trim();
     const description = templateDraftDescription().trim();
+    const scope = templateDraftScope();
 
     if (!title || !promptText) {
       setError("Template title and prompt are required.");
       return;
     }
 
-    const template: Template = {
-      id: `tmpl_${Date.now()}`,
-      title,
-      description,
-      prompt: promptText,
-      createdAt: Date.now(),
-    };
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) {
+        setError("Workspace templates require the desktop app.");
+        return;
+      }
+      if (!activeWorkspacePath().trim()) {
+        setError("Pick a workspace folder first.");
+        return;
+      }
+    }
 
-    setTemplates((current) => [template, ...current]);
-    setTemplateModalOpen(false);
+    setBusy(true);
+    setBusyLabel(scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const template: WorkspaceTemplate = {
+        id: `tmpl_${Date.now()}`,
+        title,
+        description,
+        prompt: promptText,
+        createdAt: Date.now(),
+        scope,
+      };
+
+      if (scope === "workspace") {
+        const workspaceRoot = activeWorkspacePath().trim();
+        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } else {
+        setTemplates((current) => [template, ...current]);
+        setGlobalTemplatesLoaded(true);
+      }
+
+      setTemplateModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
   }
 
-  function deleteTemplate(templateId: string) {
+  async function deleteTemplate(templateId: string) {
+    const scope = templates().find((t) => t.id === templateId)?.scope;
+
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) return;
+      const workspaceRoot = activeWorkspacePath().trim();
+      if (!workspaceRoot) return;
+
+      setBusy(true);
+      setBusyLabel("Deleting template");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      try {
+        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+      }
+
+      return;
+    }
+
     setTemplates((current) => current.filter((t) => t.id !== templateId));
+    setGlobalTemplatesLoaded(true);
   }
 
-  async function runTemplate(template: Template) {
+  async function runTemplate(template: WorkspaceTemplate) {
     const c = client();
     if (!c) return;
 
@@ -1519,7 +1789,7 @@ export default function App() {
 
     try {
       setSkillsStatus(null);
-      const nodes = unwrap(await c.file.list({ path: ".opencode/skill" }));
+      const nodes = unwrap(await c.file.list({ directory: activeWorkspaceRoot().trim(), path: ".opencode/skill" }));
       const dirs = nodes.filter((n) => n.type === "directory" && !n.ignored);
 
       const next: SkillCard[] = [];
@@ -1528,9 +1798,12 @@ export default function App() {
         let description: string | undefined;
 
         try {
-          const skillDoc = unwrap(
-            await c.file.read({ path: `.opencode/skill/${dir.name}/SKILL.md` }),
-          );
+            const skillDoc = unwrap(
+              await c.file.read({
+                directory: activeWorkspaceRoot().trim(),
+                path: `.opencode/skill/${dir.name}/SKILL.md`,
+              }),
+            );
 
           if (skillDoc.type === "text") {
             const lines = skillDoc.content.split("\n");
@@ -1629,14 +1902,12 @@ export default function App() {
           $schema: "https://opencode.ai/config.json",
           plugin: [pluginName],
         };
-      await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
-      markReloadRequired("plugins");
-      if (isManualInput) {
-        setPluginInput("");
-      }
-      await refreshPlugins(scope);
-      return;
-
+        await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+        if (isManualInput) {
+          setPluginInput("");
+        }
+        await refreshPlugins(scope);
+        return;
       }
 
       const parsed = parse(raw) as Record<string, unknown> | undefined;
@@ -1655,7 +1926,6 @@ export default function App() {
       const updated = applyEdits(raw, edits);
 
       await writeOpencodeConfig(scope, targetDir, updated);
-      markReloadRequired("plugins");
       if (isManualInput) {
         setPluginInput("");
       }
@@ -1695,7 +1965,6 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Installed.");
-        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -1748,7 +2017,6 @@ export default function App() {
         setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
       } else {
         setSkillsStatus(result.stdout || "Imported.");
-        markReloadRequired("skills");
       }
 
       await refreshSkills();
@@ -1776,19 +2044,83 @@ export default function App() {
     }
   }
 
-  function addAuthorizedDir() {
+  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
+    // Intentional no-op: permission prompts grant session-scoped access only.
+    // Persistent workspace roots must be managed explicitly via workspace settings.
+    await respondPermission(requestID, reply);
+  }
+
+  async function persistAuthorizedRoots(nextRoots: string[]) {
+    if (!isTauriRuntime()) return;
+    const root = activeWorkspacePath().trim();
+    if (!root) return;
+
+    const existing = workspaceConfig();
+    const cfg: WorkspaceOpenworkConfig = {
+      version: existing?.version ?? 1,
+      workspace: existing?.workspace ?? null,
+      authorizedRoots: nextRoots,
+    };
+
+    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    setWorkspaceConfig(cfg);
+  }
+
+  function normalizeRoots(list: string[]) {
+    const out: string[] = [];
+    for (const entry of list) {
+      const trimmed = entry.trim().replace(/\/+$/, "");
+      if (!trimmed) continue;
+      if (!out.includes(trimmed)) out.push(trimmed);
+    }
+    return out;
+  }
+
+  async function addAuthorizedDir() {
     const next = newAuthorizedDir().trim();
     if (!next) return;
 
-    setAuthorizedDirs((current) => {
-      if (current.includes(next)) return current;
-      return [...current, next];
-    });
+    const roots = normalizeRoots([...authorizedDirs(), next]);
+    setAuthorizedDirs(roots);
     setNewAuthorizedDir("");
+
+    try {
+      await persistAuthorizedRoots(roots);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
   }
 
-  function removeAuthorizedDir(index: number) {
-    setAuthorizedDirs((current) => current.filter((_, i) => i !== index));
+  async function addAuthorizedDirFromPicker(options?: { persistToWorkspace?: boolean }) {
+    if (!isTauriRuntime()) return;
+
+    try {
+      const selection = await pickDirectory({ title: "Add folder" });
+      const path =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!path) return;
+
+      const roots = normalizeRoots([...authorizedDirs(), path]);
+      setAuthorizedDirs(roots);
+
+      if (options?.persistToWorkspace) {
+        await persistAuthorizedRoots(roots);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
+  }
+
+  async function removeAuthorizedDir(index: number) {
+    const roots = authorizedDirs().filter((_, i) => i !== index);
+    setAuthorizedDirs(roots);
+
+    try {
+      await persistAuthorizedRoots(roots);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    }
   }
 
   onMount(async () => {
@@ -1809,8 +2141,9 @@ export default function App() {
           setClientDirectory(storedClientDir);
         }
 
+        // Legacy: projectDir is now derived from the active workspace.
         const storedProjectDir = window.localStorage.getItem("openwork.projectDir");
-        if (storedProjectDir) {
+        if (storedProjectDir && !projectDir().trim()) {
           setProjectDir(storedProjectDir);
         }
 
@@ -1827,13 +2160,31 @@ export default function App() {
           }
         }
 
+        // Legacy (pre-workspace templates): normalize any stored templates into global templates.
         const storedTemplates = window.localStorage.getItem("openwork.templates");
-        if (storedTemplates) {
-          const parsed = JSON.parse(storedTemplates) as unknown;
-          if (Array.isArray(parsed)) {
-            setTemplates(parsed as Template[]);
-          }
-        }
+         if (storedTemplates) {
+           const parsed = JSON.parse(storedTemplates) as unknown;
+           if (Array.isArray(parsed)) {
+             const normalized = (parsed as unknown[])
+               .filter((v) => v && typeof v === "object")
+               .map((entry) => {
+                 const record = entry as Record<string, unknown>;
+                 return {
+                   id: typeof record.id === "string" ? record.id : `tmpl_${Date.now()}`,
+                   title: typeof record.title === "string" ? record.title : "Untitled",
+                   description: typeof record.description === "string" ? record.description : "",
+                   prompt: typeof record.prompt === "string" ? record.prompt : "",
+                   createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
+                   scope: "global" as const,
+                 } satisfies WorkspaceTemplate;
+               })
+               .filter((t) => t.prompt.trim().length > 0);
+
+             setTemplates(normalized);
+           }
+         }
+
+         setGlobalTemplatesLoaded(true);
 
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
@@ -1889,6 +2240,9 @@ export default function App() {
         // ignore
       }
 
+      // Mark global templates as loaded even if nothing was stored.
+      setGlobalTemplatesLoaded(true);
+
       try {
         setUpdateEnv(await updaterEnvironment());
       } catch {
@@ -1907,13 +2261,46 @@ export default function App() {
     await refreshEngine();
     await refreshEngineDoctor();
 
-    const info = engine();
-    if (info?.baseUrl) {
-      setBaseUrl(info.baseUrl);
-    }
+     // Bootstrap workspaces (Host mode only).
+     if (isTauriRuntime()) {
+       try {
+          const ws = await workspaceBootstrap();
+          setWorkspaces(ws.workspaces);
+          setActiveWorkspaceId(ws.activeId);
+          const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+          if (active) {
+            setProjectDir(active.path);
+            if (isTauriRuntime()) {
+              try {
+                const cfg = await workspaceOpenworkRead({ workspacePath: active.path });
+                setWorkspaceConfig(cfg);
+                setWorkspaceConfigLoaded(true);
+                const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+                setAuthorizedDirs(roots.length ? roots : [active.path]);
+              } catch {
+                setWorkspaceConfig(null);
+                setWorkspaceConfigLoaded(true);
+                setAuthorizedDirs([active.path]);
+              }
+            } else if (!authorizedDirs().length) {
+              setAuthorizedDirs([active.path]);
+            }
 
-    // Auto-continue based on saved preference.
-    if (!modePref) return;
+            await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+          }
+       } catch {
+         // ignore
+       }
+     }
+
+     const info = engine();
+     if (info?.baseUrl) {
+       setBaseUrl(info.baseUrl);
+     }
+
+     // Auto-continue based on saved preference.
+     if (!modePref) return;
+
 
     if (modePref === "host") {
       setMode("host");
@@ -1928,23 +2315,23 @@ export default function App() {
         return;
       }
 
-      if (isTauriRuntime() && projectDir().trim()) {
-        if (!authorizedDirs().length && projectDir().trim()) {
-          setAuthorizedDirs([projectDir().trim()]);
-        }
+       if (isTauriRuntime() && activeWorkspacePath().trim()) {
+         if (!authorizedDirs().length && activeWorkspacePath().trim()) {
+           setAuthorizedDirs([activeWorkspacePath().trim()]);
+         }
 
-        setOnboardingStep("connecting");
-        const ok = await startHost();
-        if (!ok) {
-          setOnboardingStep("host");
-        }
-        return;
-      }
+         setOnboardingStep("connecting");
+         const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+         if (!ok) {
+           setOnboardingStep("host");
+         }
+         return;
+       }
 
-      // Missing required info; take them directly to Host setup.
-      setOnboardingStep("host");
-      return;
-    }
+       // Missing required info; take them directly to Host setup.
+       setOnboardingStep("host");
+       return;
+     }
 
     // Client preference.
     setMode("client");
@@ -1990,6 +2377,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // Legacy key: keep for backwards compatibility.
     try {
       window.localStorage.setItem("openwork.projectDir", projectDir());
     } catch {
@@ -2004,14 +2392,11 @@ export default function App() {
     } catch {
       // ignore
     }
-
-    if (isTauriRuntime()) {
-      void refreshEngineDoctor();
-    }
   });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    // Legacy persistence; workspace config is authoritative in the desktop app.
     try {
       window.localStorage.setItem("openwork.authorizedDirs", JSON.stringify(authorizedDirs()));
     } catch {
@@ -2021,8 +2406,21 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    if (!globalTemplatesLoaded()) return;
+
     try {
-      window.localStorage.setItem("openwork.templates", JSON.stringify(templates()));
+      const payload = templates()
+        .filter((t) => t.scope === "global")
+        .map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          prompt: t.prompt,
+          createdAt: t.createdAt,
+          scope: t.scope,
+        }));
+
+      window.localStorage.setItem("openwork.templates", JSON.stringify(payload));
     } catch {
       // ignore
     }
@@ -2353,103 +2751,66 @@ export default function App() {
 
             <div class="max-w-md w-full z-10 space-y-8">
               <div class="text-center space-y-2">
-                <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
-                  <Shield class="text-zinc-400" />
+                <div class="w-12 h-12 bg-white rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-white/10 mb-6">
+                  <Folder size={22} class="text-black" />
                 </div>
-                <h2
-                  class="text-2xl font-bold tracking-tight"
-                  onClick={() => {
-                    if (developerMode()) return;
-                    setDevTapCount((n) => {
-                      const next = n + 1;
-                      if (next >= 7) {
-                        setDeveloperMode(true);
-                        setDevTapCount(0);
-                        setEngineInstallLogs(
-                          "Developer mode enabled. You can now view engine diagnostics and switch engine source.",
-                        );
-                        return 0;
-                      }
-                      return next;
-                    });
-                  }}
-                >
-                  Authorized Workspaces
-                </h2>
+                <h2 class="text-2xl font-bold tracking-tight">Create your first workspace</h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
-                  OpenWork runs locally. Select which folders it is allowed to access.
+                  A workspace is a <span class="font-semibold text-white">folder</span> with its own skills, plugins, and templates.
                 </p>
               </div>
 
               <div class="space-y-4">
-                <div>
-                  <div class="mb-1 flex items-center justify-between gap-3">
-                    <div class="text-xs font-medium text-zinc-300">Project folder</div>
+                <div class="bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-5 space-y-3">
+                  <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+
+                  <div class="space-y-2">
+                    <div class="text-sm font-medium text-white">Starter Workspace</div>
+                    <div class="text-xs text-zinc-500">
+                      OpenWork will create a ready-to-run folder and start OpenCode inside it.
+                    </div>
+                    <div class="text-xs text-zinc-600 font-mono break-all">{activeWorkspacePath() || "(initializing...)"}</div>
                   </div>
-                  <div class="flex gap-2">
-                    <input
-                      class="w-full bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20 rounded-xl"
-                      placeholder="/path/to/project"
-                      value={projectDir()}
-                      onInput={(e) => setProjectDir(e.currentTarget.value)}
-                    />
-                    <Show when={isTauriRuntime()}>
-                      <Button
-                        variant="secondary"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({ title: "Select project folder" });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setProjectDir(path);
-                            }
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : "Unknown error");
-                          }
-                        }}
-                        disabled={busy()}
-                      >
-                        Browse
-                      </Button>
-                    </Show>
-                  </div>
-                  <div class="mt-1 text-xs text-neutral-500">
-                    {isTauriRuntime()
-                      ? "Engine will start in this folder."
-                      : "Host mode requires the Tauri app runtime."}
+
+                  <div class="pt-3 border-t border-zinc-800/60 space-y-2">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Scheduler plugin (workspace-scoped)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        Starter templates ("Understand this workspace", etc.)
+                      </div>
+                      <div class="flex items-center gap-3 text-sm text-zinc-300">
+                        <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                        You can add more folders when prompted
+                      </div>
+                    </div>
                   </div>
                 </div>
 
+                <Button
+                  onClick={async () => {
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+                    if (!ok) {
+                      setOnboardingStep("host");
+                    }
+                  }}
+                  disabled={busy() || !activeWorkspacePath().trim()}
+                  class="w-full py-3 text-base"
+                >
+                  Start Engine
+                </Button>
+
+                <div class="text-xs text-zinc-600">
+                  Authorized folders live in <span class="font-mono">.opencode/openwork.json</span> and can be updated here anytime.
+                </div>
+
                 <div class="space-y-3">
-                  <For each={authorizedDirs()}>
-                    {(folder, idx) => (
-                      <div class="group flex items-center justify-between p-4 bg-zinc-900/50 rounded-xl border border-zinc-800/80 hover:border-zinc-700 transition-colors">
-                        <div class="flex items-center gap-3 overflow-hidden">
-                          <Folder size={18} class="text-indigo-400 shrink-0" />
-                          <span class="font-mono text-sm text-zinc-300 truncate">{folder}</span>
-                        </div>
-                        <button
-                          onClick={() => removeAuthorizedDir(idx())}
-                          class="text-zinc-600 hover:text-red-400 p-1 opacity-0 group-hover:opacity-100 transition-all"
-                          title="Remove"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    )}
-                  </For>
-
-                  <Show when={!authorizedDirs().length}>
-                    <div class="text-xs text-zinc-600">
-                      No authorized folders yet. Add at least your project folder.
-                    </div>
-                  </Show>
-
                   <div class="flex gap-2">
                     <input
                       class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
@@ -2465,24 +2826,7 @@ export default function App() {
                     <Show when={isTauriRuntime()}>
                       <Button
                         variant="outline"
-                        onClick={async () => {
-                          try {
-                            const selection = await pickDirectory({ title: "Add authorized folder" });
-                            const path =
-                              typeof selection === "string"
-                                ? selection
-                                : Array.isArray(selection)
-                                  ? selection[0]
-                                  : null;
-                            if (path) {
-                              setAuthorizedDirs((current) =>
-                                current.includes(path) ? current : [...current, path],
-                              );
-                            }
-                          } catch (e) {
-                            setError(e instanceof Error ? e.message : safeStringify(e));
-                          }
-                        }}
+                        onClick={() => addAuthorizedDirFromPicker({ persistToWorkspace: true })}
                         disabled={busy()}
                       >
                         Pick
@@ -2498,218 +2842,164 @@ export default function App() {
                     </Button>
                   </div>
 
-                       <Show when={isTauriRuntime()}>
-                     <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
-                       <Show when={developerMode()}>
-                         <div class="mb-4 rounded-xl border border-zinc-800/70 bg-black/30 p-3">
-                           <div class="text-xs text-zinc-500">Engine source</div>
-                           <div class="mt-2 grid grid-cols-2 gap-2">
-                             <Button
-                               variant={engineSource() === "path" ? "secondary" : "outline"}
-                               onClick={() => setEngineSource("path")}
-                               disabled={busy()}
-                             >
-                               PATH
-                             </Button>
-                             <Button
-                               variant={engineSource() === "sidecar" ? "secondary" : "outline"}
-                               onClick={() => setEngineSource("sidecar")}
-                               disabled={busy()}
-                             >
-                               Sidecar
-                             </Button>
-                           </div>
-                           <div class="mt-2 text-[11px] text-zinc-600">
-                             PATH uses your installed OpenCode. Sidecar uses a bundled binary when available.
-                           </div>
-                         </div>
-                       </Show>
-
-                       <div class="flex items-start justify-between gap-4">
-                         <div class="min-w-0">
-                           <div class="flex items-center gap-2">
-                             <div class="text-sm font-medium text-white">OpenCode CLI</div>
-                             <Show when={developerMode()}>
-                               <span class="text-[10px] uppercase tracking-wide text-amber-300/80 border border-amber-300/20 bg-amber-500/10 px-2 py-0.5 rounded-full">
-                                 Dev
-                               </span>
-                             </Show>
-                           </div>
-                           <div class="mt-1 text-xs text-zinc-500">
-
-                            <Show
-                              when={engineDoctorResult()}
-                              fallback={<span>Checking install…</span>}
-                            >
-                              <Show
-                                when={engineDoctorResult()?.found}
-                                fallback={<span>Not found. Install to run Host mode.</span>}
-                              >
-                                <span class="font-mono">
-                                  {engineDoctorResult()?.version ?? "Installed"}
-                                </span>
-                                <Show when={engineDoctorResult()?.resolvedPath}>
-                                  <span class="text-zinc-600"> · </span>
-                                  <span class="font-mono text-zinc-600 truncate">
-                                    {engineDoctorResult()?.resolvedPath}
-                                  </span>
-                                </Show>
-                              </Show>
-                            </Show>
-                          </div>
-                        </div>
-
-                        <Button
-                          variant="secondary"
-                          onClick={async () => {
-                            setEngineInstallLogs(null);
-                            await refreshEngineDoctor();
-                          }}
-                          disabled={busy()}
-                        >
-                          Re-check
-                        </Button>
-                      </div>
-
-                       <Show when={engineDoctorResult() && (engineDoctorResult()!.found === false || engineDoctorResult()!.supportsServe === false)}>
-                        <div class="mt-4 space-y-2">
-                           <div class="text-xs text-zinc-500">
-                             {engineDoctorResult()?.supportsServe === false
-                               ? "OpenCode was found, but it does not support `opencode serve`. Install/upgrade and retry, or switch to Sidecar."
-                               : "Install one of these:"}
-                           </div>
-
-                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                            brew install anomalyco/tap/opencode
-                          </div>
-                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                            curl -fsSL https://opencode.ai/install | bash
-                          </div>
-
-                          <div class="flex gap-2 pt-2">
+                  <Show when={authorizedDirs().length}>
+                    <div class="space-y-2">
+                      <For each={authorizedDirs()}>
+                        {(dir, idx) => (
+                          <div class="flex items-center justify-between gap-3 rounded-xl bg-black/20 border border-zinc-800 px-3 py-2">
+                            <div class="min-w-0 text-xs font-mono text-zinc-300 truncate">{dir}</div>
                             <Button
-                              onClick={async () => {
-                                setError(null);
-                                setEngineInstallLogs(null);
-                                setBusy(true);
-                                setBusyLabel("Installing OpenCode");
-                                setBusyStartedAt(Date.now());
-
-                                try {
-                                  const result = await engineInstall();
-                                  const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
-                                  setEngineInstallLogs(combined || null);
-
-                                  if (!result.ok) {
-                                    setError(
-                                      result.stderr.trim() || "OpenCode install failed. See logs above.",
-                                    );
-                                  }
-
-                                  await refreshEngineDoctor();
-                                } catch (e) {
-                                  setError(e instanceof Error ? e.message : safeStringify(e));
-                                } finally {
-                                  setBusy(false);
-                                  setBusyLabel(null);
-                                  setBusyStartedAt(null);
-                                }
-                              }}
+                              variant="ghost"
+                              class="!p-2 rounded-lg"
+                              onClick={() => removeAuthorizedDir(idx())}
                               disabled={busy()}
+                              title="Remove"
                             >
-                              Install OpenCode
+                              <Trash2 size={14} />
                             </Button>
-                             <Button
-                               variant="outline"
-                               onClick={() => {
-                                 if (!developerMode()) {
-                                   setEngineInstallLogs(
-                                     "Enable Developer mode in Settings to see detailed diagnostics.",
-                                   );
-                                   return;
-                                 }
-
-                                 const result = engineDoctorResult();
-                                 if (!result) return;
-
-                                 const lines = [
-                                   `found=${result.found}`,
-                                   `inPath=${result.inPath}`,
-                                   `resolvedPath=${result.resolvedPath ?? ""}`,
-                                   `version=${result.version ?? ""}`,
-                                   `supportsServe=${result.supportsServe}`,
-                                   `serveHelpStatus=${result.serveHelpStatus ?? ""}`,
-                                 ];
-
-                                 if (result.serveHelpStderr) {
-                                   lines.push("\nserve --help stderr:\n" + result.serveHelpStderr);
-                                 }
-                                 if (result.serveHelpStdout) {
-                                   lines.push("\nserve --help stdout:\n" + result.serveHelpStdout);
-                                 }
-
-                                 const notes = result.notes?.length ? "\nnotes:\n" + result.notes.join("\n") : "";
-                                 setEngineInstallLogs(lines.join("\n") + notes);
-                               }}
-                               disabled={busy()}
-                             >
-                               Show diagnostics
-                             </Button>
-
                           </div>
-                        </div>
-                      </Show>
-
-                      <Show when={engineInstallLogs()}>
-                        <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{engineInstallLogs()}</pre>
-                      </Show>
-
-                      <Show when={engineDoctorCheckedAt()}>
-                        <div class="mt-3 text-[11px] text-zinc-600">
-                          Last checked {new Date(engineDoctorCheckedAt()!).toLocaleTimeString()}
-                        </div>
-                      </Show>
+                        )}
+                      </For>
                     </div>
                   </Show>
-
-                  <Button
-                    onClick={async () => {
-                      if (!authorizedDirs().length && projectDir().trim()) {
-                        setAuthorizedDirs([projectDir().trim()]);
-                      }
-
-                      setMode("host");
-                      setOnboardingStep("connecting");
-                      const ok = await startHost();
-                      if (!ok) {
-                        setOnboardingStep("host");
-                      }
-                    }}
-                    disabled={
-                      busy() ||
-                      (isTauriRuntime() && engineDoctorResult()?.found === false)
-                    }
-                    class="w-full py-3 text-base"
-                  >
-                    Confirm & Start Engine
-                  </Button>
-
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setMode(null);
-                      setOnboardingStep("mode");
-                    }}
-                    disabled={busy()}
-                    class="w-full"
-                  >
-                    Back
-                  </Button>
-
-                  <p class="text-center text-xs text-zinc-600">
-                    You can change these later in Settings.
-                  </p>
                 </div>
+
+                <Show when={isTauriRuntime()}>
+                  <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                      <div class="min-w-0">
+                        <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                        <div class="mt-1 text-xs text-zinc-500">
+                          <Show when={engineDoctorResult()} fallback={<span>Checking install…</span>}>
+                            <Show
+                              when={engineDoctorResult()?.found}
+                              fallback={<span>Not found. Install to run Host mode.</span>}
+                            >
+                              <span class="font-mono">
+                                {engineDoctorResult()?.version ?? "Installed"}
+                              </span>
+                              <Show when={engineDoctorResult()?.resolvedPath}>
+                                <span class="text-zinc-600"> · </span>
+                                <span class="font-mono text-zinc-600 truncate">
+                                  {engineDoctorResult()?.resolvedPath}
+                                </span>
+                              </Show>
+                            </Show>
+                          </Show>
+                        </div>
+                      </div>
+
+                      <Button
+                        variant="secondary"
+                        onClick={async () => {
+                          setEngineInstallLogs(null);
+                          await refreshEngineDoctor();
+                        }}
+                        disabled={busy()}
+                      >
+                        Re-check
+                      </Button>
+                    </div>
+
+                    <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
+                      <div class="mt-4 space-y-2">
+                        <div class="text-xs text-zinc-500">Install one of these:</div>
+                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                          brew install anomalyco/tap/opencode
+                        </div>
+                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                          curl -fsSL https://opencode.ai/install | bash
+                        </div>
+
+                        <div class="flex gap-2 pt-2">
+                          <Button
+                            onClick={async () => {
+                              setError(null);
+                              setEngineInstallLogs(null);
+                              setBusy(true);
+                              setBusyLabel("Installing OpenCode");
+                              setBusyStartedAt(Date.now());
+
+                              try {
+                                const result = await engineInstall();
+                                const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
+                                setEngineInstallLogs(combined || null);
+
+                                if (!result.ok) {
+                                  setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
+                                }
+
+                                await refreshEngineDoctor();
+                              } catch (e) {
+                                setError(e instanceof Error ? e.message : safeStringify(e));
+                              } finally {
+                                setBusy(false);
+                                setBusyLabel(null);
+                                setBusyStartedAt(null);
+                              }
+                            }}
+                            disabled={busy()}
+                          >
+                            Install OpenCode
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
+                              setEngineInstallLogs(notes || null);
+                            }}
+                            disabled={busy()}
+                          >
+                            Show search notes
+                          </Button>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={engineInstallLogs()}>
+                      <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{engineInstallLogs()}</pre>
+                    </Show>
+
+                    <Show when={engineDoctorCheckedAt()}>
+                      <div class="mt-3 text-[11px] text-zinc-600">
+                        Last checked {new Date(engineDoctorCheckedAt()!).toLocaleTimeString()}
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
+                <Button
+                  onClick={async () => {
+
+                    setMode("host");
+                    setOnboardingStep("connecting");
+                    const ok = await startHost();
+                    if (!ok) {
+                      setOnboardingStep("host");
+                    }
+                  }}
+                  disabled={
+                    busy() ||
+                    (isTauriRuntime() &&
+                      (engineDoctorResult()?.found === false ||
+                        engineDoctorResult()?.supportsServe === false))
+                  }
+                  class="w-full py-3 text-base"
+                >
+                  Confirm & Start Engine
+                </Button>
+
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setMode(null);
+                    setOnboardingStep("mode");
+                  }}
+                  disabled={busy()}
+                  class="text-zinc-600 hover:text-zinc-400 text-sm font-medium transition-colors flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-zinc-900/50"
+                >
+                  Back
+                </Button>
               </div>
 
               <Show when={error()}>
@@ -2935,7 +3225,7 @@ export default function App() {
       }
     });
 
-    const quickTemplates = createMemo(() => templates().slice(0, 3));
+    const quickTemplates = createMemo(() => workspaceTemplates().slice(0, 3));
 
     createEffect(() => {
       if (tab() === "skills") {
@@ -3001,9 +3291,9 @@ export default function App() {
             <Show
               when={quickTemplates().length}
               fallback={
-                <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session.
-                </div>
+                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
+                   No templates yet. Starter templates will appear here.
+                 </div>
               }
             >
               <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -3049,6 +3339,11 @@ export default function App() {
                         <div class="font-medium text-sm text-zinc-200">{s.title}</div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
                           <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Show when={activeWorkspaceRoot().trim() && s.directory === activeWorkspaceRoot().trim()}>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                              this workspace
+                            </span>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -3094,6 +3389,11 @@ export default function App() {
                         <div class="font-medium text-sm text-zinc-200">{s.title}</div>
                         <div class="text-xs text-zinc-500 flex items-center gap-2">
                           <Clock size={10} /> {formatRelativeTime(s.time.updated)}
+                          <Show when={activeWorkspaceRoot().trim() && s.directory === activeWorkspaceRoot().trim()}>
+                            <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                              this workspace
+                            </span>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -3135,37 +3435,71 @@ export default function App() {
             </div>
 
             <Show
-              when={templates().length}
+              when={workspaceTemplates().length || globalTemplates().length}
               fallback={
                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                  No templates yet. Save one from a session, or create one here.
+                  Starter templates will appear here. Create one or save from a session.
                 </div>
               }
             >
-              <div class="space-y-3">
-                <For each={templates()}>
-                  {(t) => (
-                    <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
-                      <div class="min-w-0">
-                        <div class="flex items-center gap-2">
-                          <FileText size={16} class="text-indigo-400" />
-                          <div class="font-medium text-white truncate">{t.title}</div>
+              <div class="space-y-6">
+                <Show when={workspaceTemplates().length}>
+                  <div class="space-y-3">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+                    <For each={workspaceTemplates()}>
+                      {(t) => (
+                        <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <FileText size={16} class="text-indigo-400" />
+                              <div class="font-medium text-white truncate">{t.title}</div>
+                            </div>
+                            <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
+                            <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                          </div>
+                          <div class="shrink-0 flex gap-2">
+                            <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
+                              <Play size={16} />
+                              Run
+                            </Button>
+                            <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
                         </div>
-                        <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
-                        <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
-                      </div>
-                      <div class="shrink-0 flex gap-2">
-                        <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
-                          <Play size={16} />
-                          Run
-                        </Button>
-                        <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                </For>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+
+                <Show when={globalTemplates().length}>
+                  <div class="space-y-3">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Global</div>
+                    <For each={globalTemplates()}>
+                      {(t) => (
+                        <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                          <div class="min-w-0">
+                            <div class="flex items-center gap-2">
+                              <FileText size={16} class="text-emerald-400" />
+                              <div class="font-medium text-white truncate">{t.title}</div>
+                            </div>
+                            <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
+                            <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                          </div>
+                          <div class="shrink-0 flex gap-2">
+                            <Button variant="secondary" onClick={() => runTemplate(t)} disabled={busy()}>
+                              <Play size={16} />
+                              Run
+                            </Button>
+                            <Button variant="danger" onClick={() => deleteTemplate(t.id)} disabled={busy()}>
+                              <Trash2 size={16} />
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
             </Show>
           </section>
@@ -3179,50 +3513,6 @@ export default function App() {
                 Refresh
               </Button>
             </div>
-
-            <Show when={reloadRequired()}>
-              <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium text-amber-200">{reloadCopy().title}</div>
-                    <div class="mt-1 text-xs text-amber-100/80">{reloadCopy().body}</div>
-                    <Show when={reloadError()}>
-                      <div class="mt-2 text-xs text-red-200">{reloadError()}</div>
-                    </Show>
-                    <Show when={anyActiveRuns()}>
-                      <div class="mt-2 text-xs text-amber-100/70">
-                        A run is in progress. Stop it before reloading.
-                      </div>
-                    </Show>
-                    <Show when={mode() !== "host"}>
-                      <div class="mt-2 text-xs text-amber-100/70">
-                        Connected in Client mode. Ask the host to reload.
-                      </div>
-                    </Show>
-                  </div>
-                  <div class="shrink-0 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => clearReloadRequired()}
-                      disabled={reloadBusy()}
-                      class="text-amber-200 border-amber-500/30 hover:border-amber-500/50"
-                    >
-                      Dismiss
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => reloadEngineInstance().catch(() => undefined)}
-                      disabled={!canReloadEngine()}
-                      title={!canReloadEngine() ? "Reload is only available when Host mode is idle." : ""}
-                      class="border-amber-500/30"
-                    >
-                      <RefreshCcw size={16} />
-                      {reloadBusy() ? "Reloading…" : "Reload engine"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Show>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between gap-3">
@@ -3370,50 +3660,6 @@ export default function App() {
 
         <Match when={tab() === "plugins"}>
           <section class="space-y-6">
-            <Show when={reloadRequired()}>
-              <div class="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
-                <div class="flex items-start justify-between gap-4">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium text-amber-200">{reloadCopy().title}</div>
-                    <div class="mt-1 text-xs text-amber-100/80">{reloadCopy().body}</div>
-                    <Show when={reloadError()}>
-                      <div class="mt-2 text-xs text-red-200">{reloadError()}</div>
-                    </Show>
-                    <Show when={anyActiveRuns()}>
-                      <div class="mt-2 text-xs text-amber-100/70">
-                        A run is in progress. Stop it before reloading.
-                      </div>
-                    </Show>
-                    <Show when={mode() !== "host"}>
-                      <div class="mt-2 text-xs text-amber-100/70">
-                        Connected in Client mode. Ask the host to reload.
-                      </div>
-                    </Show>
-                  </div>
-                  <div class="shrink-0 flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      onClick={() => clearReloadRequired()}
-                      disabled={reloadBusy()}
-                      class="text-amber-200 border-amber-500/30 hover:border-amber-500/50"
-                    >
-                      Dismiss
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={() => reloadEngineInstance().catch(() => undefined)}
-                      disabled={!canReloadEngine()}
-                      title={!canReloadEngine() ? "Reload is only available when Host mode is idle." : ""}
-                      class="border-amber-500/30"
-                    >
-                      <RefreshCcw size={16} />
-                      {reloadBusy() ? "Reloading…" : "Reload engine"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Show>
-
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div class="space-y-1">
@@ -3972,6 +4218,13 @@ export default function App() {
               <div class="md:hidden">
                 <Menu class="text-zinc-400" />
               </div>
+              <WorkspaceChip
+                workspace={activeWorkspaceDisplay()}
+                onClick={() => {
+                  setWorkspaceSearch("");
+                  setWorkspacePickerOpen(true);
+                }}
+              />
               <h1 class="text-lg font-medium">{title()}</h1>
               <span class="text-xs text-zinc-600">{headerStatus()}</span>
               <Show when={busyHint()}>
@@ -4015,6 +4268,23 @@ export default function App() {
               </div>
             </div>
           </Show>
+
+          <WorkspacePicker
+            open={workspacePickerOpen()}
+            workspaces={filteredWorkspaces()}
+            activeWorkspaceId={activeWorkspaceId()}
+            search={workspaceSearch()}
+            onSearch={setWorkspaceSearch}
+            onClose={() => setWorkspacePickerOpen(false)}
+            onSelect={activateWorkspace}
+            onCreateNew={() => setCreateWorkspaceOpen(true)}
+          />
+
+          <CreateWorkspaceModal
+            open={createWorkspaceOpen()}
+            onClose={() => setCreateWorkspaceOpen(false)}
+            onConfirm={(preset) => createWorkspaceFlow(preset)}
+          />
 
           <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
             <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
@@ -4392,10 +4662,10 @@ export default function App() {
                       <Button
                         variant="primary"
                         class="text-xs font-bold bg-amber-500 hover:bg-amber-400 text-black border-none shadow-amber-500/20"
-                        onClick={() => respondPermission(activePermission()!.id, "always")}
-                        disabled={permissionReplyBusy()}
-                      >
-                        Allow
+                         onClick={() => respondPermissionAndRemember(activePermission()!.id, "always")}
+                         disabled={permissionReplyBusy()}
+                       >
+                         Allow for session
                       </Button>
                     </div>
                   </div>
@@ -4457,24 +4727,20 @@ export default function App() {
                          modelID: opt.modelID,
                        });
 
-                      return (
-                        <button
-                          class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                            active()
-                              ? "border-white/20 bg-white/5"
-                              : opt.disabled
-                                ? "border-zinc-800/70 bg-zinc-950/30 opacity-60 cursor-not-allowed"
-                                : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
-                          }`}
-                          disabled={opt.disabled}
-                          onClick={() => {
-                            if (opt.disabled) return;
-                            applyModelSelection({
-                              providerID: opt.providerID,
-                              modelID: opt.modelID,
-                            });
-                          }}
-                        >
+                     return (
+                       <button
+                         class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+                           active()
+                             ? "border-white/20 bg-white/5"
+                             : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                         }`}
+                         onClick={() =>
+                           applyModelSelection({
+                             providerID: opt.providerID,
+                             modelID: opt.modelID,
+                           })
+                         }
+                       >
                          <div class="flex items-start justify-between gap-3">
                            <div class="min-w-0">
                              <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
@@ -4483,12 +4749,9 @@ export default function App() {
                              <Show when={opt.description}>
                                <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
                              </Show>
-                              <Show when={opt.footer}>
-                                <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
-                              </Show>
-                              <Show when={opt.disabled}>
-                                <div class="text-[11px] text-amber-300/80 mt-2">Not connected</div>
-                              </Show>
+                             <Show when={opt.footer}>
+                               <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
+                             </Show>
                              <div class="text-[11px] text-zinc-600 font-mono mt-2">
                                {opt.providerID}/{opt.modelID}
                              </div>
@@ -4548,6 +4811,31 @@ export default function App() {
                   onInput={(e) => setTemplateDraftDescription(e.currentTarget.value)}
                   placeholder="What does this template do?"
                 />
+
+                <div class="grid grid-cols-2 gap-2">
+                  <button
+                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
+                      templateDraftScope() === "workspace"
+                        ? "bg-white/10 text-white border-white/20"
+                        : "text-zinc-400 border-zinc-800 hover:text-white"
+                    }`}
+                    onClick={() => setTemplateDraftScope("workspace")}
+                    type="button"
+                  >
+                    Workspace
+                  </button>
+                  <button
+                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
+                      templateDraftScope() === "global"
+                        ? "bg-white/10 text-white border-white/20"
+                        : "text-zinc-400 border-zinc-800 hover:text-white"
+                    }`}
+                    onClick={() => setTemplateDraftScope("global")}
+                    type="button"
+                  >
+                    Global
+                  </button>
+                </div>
 
                 <label class="block">
                   <div class="mb-1 text-xs font-medium text-neutral-300">Prompt</div>
