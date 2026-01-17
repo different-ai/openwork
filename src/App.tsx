@@ -44,6 +44,9 @@ import {
   Upload,
   X,
   Zap,
+  ChevronDown,
+  File,
+  Check,
 } from "lucide-solid";
 
 import { check } from "@tauri-apps/plugin-updater";
@@ -123,6 +126,18 @@ type MessageInfo = Message | PlaceholderAssistantMessage;
 type MessageWithParts = {
   info: MessageInfo;
   parts: Part[];
+};
+
+type MessageGroup =
+  | { kind: "text"; part: Part }
+  | { kind: "steps"; id: string; parts: Part[] };
+
+type ArtifactItem = {
+  id: string;
+  name: string;
+  path?: string;
+  kind: "file" | "text";
+  size?: string;
 };
 
 type OpencodeEvent = {
@@ -613,6 +628,114 @@ function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | null {
   return null;
 }
 
+function isStepPart(part: Part) {
+  return part.type === "reasoning" || part.type === "tool" || part.type === "step-start" || part.type === "step-finish";
+}
+
+function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  const steps: Part[] = [];
+
+  parts.forEach((part) => {
+    if (part.type === "text") {
+      groups.push({ kind: "text", part });
+      return;
+    }
+
+    if (isStepPart(part)) {
+      steps.push(part);
+      return;
+    }
+
+    steps.push(part);
+  });
+
+  if (steps.length) {
+    groups.push({ kind: "steps", id: `steps-${messageId}`, parts: steps });
+  }
+
+  return groups;
+}
+
+function summarizeStep(part: Part): { title: string; detail?: string } {
+  if (part.type === "tool") {
+    const record = part as any;
+    const toolName = record.tool ? String(record.tool) : "Tool";
+    const state = record.state ?? {};
+    const title = state.title ? String(state.title) : toolName;
+    const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
+    if (output) {
+      const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
+      return { title, detail: short };
+    }
+    return { title };
+  }
+
+  if (part.type === "reasoning") {
+    const record = part as any;
+    const text = typeof record.text === "string" ? record.text.trim() : "";
+    if (!text) return { title: "Planning" };
+    const short = text.length > 120 ? `${text.slice(0, 120)}…` : text;
+    return { title: "Thinking", detail: short };
+  }
+
+  if (part.type === "step-start" || part.type === "step-finish") {
+    const reason = (part as any).reason;
+    return { title: part.type === "step-start" ? "Step started" : "Step finished", detail: reason ? String(reason) : undefined };
+  }
+
+  return { title: "Step" };
+}
+
+function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
+  const results: ArtifactItem[] = [];
+  const seen = new Set<string>();
+  const filePattern = /([\w./\-]+\.(?:pdf|docx|doc|txt|md|csv|json|js|ts|tsx|xlsx|pptx|png|jpg|jpeg))/gi;
+
+  list.forEach((message) => {
+    message.parts.forEach((part) => {
+      if (part.type !== "tool") return;
+      const record = part as any;
+      const state = record.state ?? {};
+
+      const candidates: string[] = [];
+      if (typeof state.title === "string") candidates.push(state.title);
+      if (typeof state.output === "string") candidates.push(state.output);
+      if (typeof state.path === "string") candidates.push(state.path);
+      if (typeof state.file === "string") candidates.push(state.file);
+      if (Array.isArray(state.files)) {
+        state.files.filter((f: unknown) => typeof f === "string").forEach((f: string) => candidates.push(f));
+      }
+
+      const combined = candidates.join(" ");
+      if (!combined) return;
+
+      const matches = Array.from(combined.matchAll(filePattern)).map((m) => m[1]);
+      if (!matches.length) return;
+
+      matches.forEach((match) => {
+        const name = match.split("/").pop() ?? match;
+        const id = `artifact-${record.id ?? name}`;
+        if (seen.has(id)) return;
+        seen.add(id);
+
+        results.push({
+          id,
+          name,
+          kind: "file",
+          size: state.size ? String(state.size) : undefined,
+        });
+      });
+    });
+  });
+
+  return results;
+}
+
+function deriveWorkingFiles(items: ArtifactItem[]): string[] {
+  return items.map((item) => item.name).slice(0, 5);
+}
+
 export default function App() {
   const [view, setView] = createSignal<View>("onboarding");
   const [mode, setMode] = createSignal<Mode | null>(null);
@@ -654,6 +777,9 @@ export default function App() {
   >([]);
   const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+
+  const artifacts = createMemo(() => deriveArtifacts(messages()));
+  const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -939,8 +1065,18 @@ export default function App() {
   const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
   const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
 
-  const [showThinking, setShowThinking] = createSignal(true);
+  const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+
+  const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(new Set());
+  const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
+    progress: true,
+    artifacts: true,
+    context: true,
+  });
+
+  const tabs = ["Chat", "Cowork", "Code"] as const;
+  const [activeLeftTab, setActiveLeftTab] = createSignal<typeof tabs[number]>("Cowork");
 
   const [busy, setBusy] = createSignal(false);
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
@@ -4179,7 +4315,7 @@ export default function App() {
               <div class="pt-2 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => setDeveloperMode((v) => !v)}>
                   <Shield size={16} />
-                  {developerMode() ? "Developer On" : "Developer Off"}
+                  {developerMode() ? "Disable Developer Mode" : "Enable Developer Mode"}
                 </Button>
                 <Show when={mode() === "host"}>
                   <Button variant="danger" onClick={stopHost} disabled={busy()}>
@@ -4724,6 +4860,28 @@ export default function App() {
       messagesEndEl?.scrollIntoView({ behavior: "smooth" });
     });
 
+    const progressDots = createMemo(() => {
+      const total = todos().length || 3;
+      const completed = todos().filter((t) => t.status === "completed").length;
+      return Array.from({ length: total }, (_, idx) => idx < completed);
+    });
+
+    const toggleSteps = (id: string) => {
+      setExpandedStepIds((current) => {
+        const next = new Set(current);
+        if (next.has(id)) {
+          next.delete(id);
+        } else {
+          next.add(id);
+        }
+        return next;
+      });
+    };
+
+    const toggleSidebar = (key: "progress" | "artifacts" | "context") => {
+      setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
+    };
+
     return (
       <Show
         when={selectedSessionId()}
@@ -4744,34 +4902,14 @@ export default function App() {
         }
       >
         <div class="h-screen flex flex-col bg-zinc-950 text-white relative">
-          <header class="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-950/80 backdrop-blur-md z-10 sticky top-0">
-            <div class="flex items-center gap-4">
-              <Button
-                variant="ghost"
-                class="!p-2 rounded-full"
-                onClick={() => {
-                  setView("dashboard");
-                  setTab("sessions");
-                }}
-              >
-                <ArrowRight class="rotate-180 w-5 h-5" />
-              </Button>
-              <div>
-                <h2 class="font-semibold text-sm">{selectedSession()?.title ?? "Session"}</h2>
-                <div class="flex items-center gap-2 text-xs text-zinc-400">
-                  <span
-                    class={`w-2 h-2 rounded-full ${
-                      selectedSessionStatus() === "running"
-                        ? "bg-blue-500 animate-pulse"
-                        : selectedSessionStatus() === "retry"
-                          ? "bg-amber-500"
-                          : selectedSessionStatus() === "idle"
-                            ? "bg-emerald-500"
-                            : "bg-zinc-600"
-                    }`}
-                  />
-                  {selectedSessionStatus()}
-                </div>
+          <header class="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-md z-10 sticky top-0">
+            <div class="flex items-center gap-3">
+              <div class="md:hidden">
+                <Menu class="text-zinc-400" />
+              </div>
+              <div class="flex items-center gap-2">
+                <h2 class="font-medium text-sm text-zinc-200">{selectedSession()?.title ?? "Session"}</h2>
+                <ChevronDown size={14} class="text-zinc-500" />
               </div>
             </div>
 
@@ -4795,8 +4933,80 @@ export default function App() {
           </header>
 
           <div class="flex-1 flex overflow-hidden">
-            <div class="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth">
-               <div class="max-w-2xl mx-auto space-y-6 pb-32">
+            <aside class="hidden lg:flex w-72 border-r border-zinc-800 bg-zinc-950 flex-col">
+              <div class="p-4 border-b border-zinc-800">
+                <div class="flex items-center gap-2 bg-zinc-900/60 rounded-full p-1">
+                  <For each={tabs}>
+                    {(tabLabel) => (
+                      <button
+                        class={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                          activeLeftTab() === tabLabel
+                            ? "bg-zinc-50 text-zinc-900"
+                            : "text-zinc-400 hover:text-zinc-200"
+                        }`}
+                        onClick={() => setActiveLeftTab(tabLabel)}
+                      >
+                        {tabLabel}
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <button
+                  class="mt-4 w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-white text-black text-sm font-medium shadow-lg shadow-white/10"
+                  onClick={createSessionAndOpen}
+                  disabled={newTaskDisabled()}
+                >
+                  <Plus size={16} />
+                  New task
+                </button>
+              </div>
+
+              <div class="flex-1 overflow-y-auto px-4 py-4">
+                <div class="text-xs text-zinc-500 uppercase tracking-wide mb-3">Recents</div>
+                <div class="space-y-2">
+                  <For each={sessions().slice(0, 8)}>
+                    {(session) => (
+                      <button
+                        class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                          session.id === selectedSessionId()
+                            ? "bg-zinc-900 text-zinc-100"
+                            : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50"
+                        }`}
+                        onClick={async () => {
+                          await selectSession(session.id);
+                          setView("session");
+                          setTab("sessions");
+                        }}
+                      >
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="truncate">{session.title}</span>
+                          <span class="text-zinc-600">
+                            <ChevronRight size={12} />
+                          </span>
+                        </div>
+                      </button>
+                    )}
+                  </For>
+                </div>
+                <div class="mt-6 text-xs text-zinc-500">
+                  These tasks run locally and aren’t synced across devices.
+                </div>
+              </div>
+
+              <div class="border-t border-zinc-800 px-4 py-4 flex items-center gap-3">
+                <div class="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-medium">B</div>
+                <div class="flex-1">
+                  <div class="text-sm text-zinc-200">ben</div>
+                  <div class="text-xs text-zinc-500">Max plan</div>
+                </div>
+                <button class="text-zinc-500 hover:text-zinc-300">
+                  <Settings size={16} />
+                </button>
+              </div>
+            </aside>
+
+            <div class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth">
+              <div class="max-w-2xl mx-auto space-y-6 pb-32">
                 <Show when={messages().length === 0}>
                   <div class="text-center py-20 space-y-4">
                     <div class="w-16 h-16 bg-zinc-900 rounded-3xl mx-auto flex items-center justify-center border border-zinc-800">
@@ -4818,11 +5028,10 @@ export default function App() {
                     const renderableParts = () =>
                       msg.parts.filter((p) => {
                         if (p.type === "reasoning") {
-                          return developerMode();
+                          return developerMode() && showThinking();
                         }
 
                         if (p.type === "step-start" || p.type === "step-finish") {
-                          // Too noisy for normal users.
                           return developerMode();
                         }
 
@@ -4833,25 +5042,75 @@ export default function App() {
                         return developerMode();
                       });
 
+                    const groups = () => groupMessageParts(renderableParts(), String((msg.info as any).id ?? "message"));
+
                     return (
                       <Show when={renderableParts().length > 0}>
-                         <div class={`flex ${(msg.info as any).role === "user" ? "justify-end" : "justify-start"}`}>
+                        <div class={`flex ${(msg.info as any).role === "user" ? "justify-end" : "justify-start"}`}>
                           <div
-                            class={`max-w-[85%] p-4 rounded-2xl text-sm leading-relaxed ${
-                               (msg.info as any).role === "user"
-                                 ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
-                                 : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
+                            class={`max-w-[88%] p-4 rounded-2xl text-sm leading-relaxed ${
+                              (msg.info as any).role === "user"
+                                ? "bg-white text-black rounded-tr-sm shadow-xl shadow-white/5"
+                                : "bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-sm"
                             }`}
                           >
-                            <For each={renderableParts()}>
-                              {(p, idx) => (
-                                <div class={idx() === renderableParts().length - 1 ? "" : "mb-2"}>
+                            <For each={groups()}>
+                              {(group, idx) => (
+                                <div class={idx() === groups().length - 1 ? "" : "mb-3"}>
+                                  <Show when={group.kind === "text"}>
                                     <PartView
-                                      part={p}
+                                      part={(group as { kind: "text"; part: Part }).part}
                                       developerMode={developerMode()}
                                       showThinking={showThinking()}
                                       tone={(msg.info as any).role === "user" ? "dark" : "light"}
                                     />
+                                  </Show>
+                                  <Show when={group.kind === "steps"}>
+                                    <div class="mt-2">
+                                      <button
+                                        class="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300"
+                                        onClick={() => toggleSteps((group as any).id)}
+                                      >
+                                        <span>View steps</span>
+                                        <ChevronDown
+                                          size={14}
+                                          class={`transition-transform ${expandedStepIds().has((group as any).id) ? "rotate-180" : ""}`.trim()}
+                                        />
+                                      </button>
+                                      <Show when={expandedStepIds().has((group as any).id)}>
+                                        <div class="mt-3 space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                                          <For each={(group as any).parts as Part[]}>
+                                            {(part) => {
+                                              const summary = summarizeStep(part);
+                                              return (
+                                                <div class="flex items-start gap-3 text-xs text-zinc-300">
+                                                  <div class="mt-0.5 h-5 w-5 rounded-full border border-zinc-700 flex items-center justify-center text-zinc-500">
+                                                    {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+                                                  </div>
+                                                  <div>
+                                                    <div class="text-zinc-200">{summary.title}</div>
+                                                    <Show when={summary.detail}>
+                                                      <div class="mt-1 text-zinc-500">{summary.detail}</div>
+                                                    </Show>
+                                                    <Show when={developerMode() && (part.type !== "tool" || showThinking())}>
+                                                      <div class="mt-2 text-xs text-zinc-500">
+                                                        <PartView
+                                                          part={part}
+                                                          developerMode={developerMode()}
+                                                          showThinking={showThinking()}
+                                                          tone={(msg.info as any).role === "user" ? "dark" : "light"}
+                                                        />
+                                                      </div>
+                                                    </Show>
+                                                  </div>
+                                                </div>
+                                              );
+                                            }}
+                                          </For>
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  </Show>
                                 </div>
                               )}
                             </For>
@@ -4862,138 +5121,136 @@ export default function App() {
                   }}
                 </For>
 
+                <For each={artifacts()}>
+                  {(artifact) => (
+                    <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 flex items-center justify-between">
+                      <div class="flex items-center gap-3">
+                        <div class="h-10 w-10 rounded-xl bg-zinc-900 flex items-center justify-center">
+                          <FileText size={18} class="text-zinc-400" />
+                        </div>
+                        <div>
+                          <div class="text-sm text-zinc-100">{artifact.name}</div>
+                          <div class="text-xs text-zinc-500">Document</div>
+                        </div>
+                      </div>
+                      <Button variant="outline" class="text-xs" disabled>
+                        Open
+                      </Button>
+                    </div>
+                  )}
+                </For>
+
                 <div ref={(el) => (messagesEndEl = el)} />
               </div>
             </div>
 
-            <div class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
-              <div class="p-4 border-b border-zinc-800 font-medium text-sm text-zinc-400 flex items-center justify-between">
-                <span>Workspace</span>
-              </div>
-              <div class="p-4 space-y-5 overflow-y-auto flex-1">
-                <div>
-                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                    <span>Skills</span>
-                    <span class="text-[11px] text-zinc-600">{skills().length}</span>
-                  </div>
-                  <div class="mt-3 space-y-2">
-                    <Show when={skills().length} fallback={<div class="text-xs text-zinc-600 italic">No skills found</div>}>
-                      <For each={skills().slice(0, 12)}>
-                        {(s) => (
-                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
-                            <div class="text-sm text-zinc-200 truncate">{s.name}</div>
-                            <Show when={s.description}>
-                              <div class="mt-1 text-xs text-zinc-500 line-clamp-2">{s.description}</div>
-                            </Show>
-                          </div>
-                        )}
-                      </For>
-                      <Show when={skills().length > 12}>
-                        <div class="text-xs text-zinc-600">+{skills().length - 12} more</div>
-                      </Show>
-                    </Show>
-                  </div>
-                </div>
-
-                <div>
-                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                    <span>Plugins</span>
-                    <span class="text-[11px] text-zinc-600">{sidebarPluginList().length}</span>
-                  </div>
-                  <div class="mt-3 space-y-2">
-                    <Show
-                      when={sidebarPluginList().length}
-                      fallback={<div class="text-xs text-zinc-600 italic">{sidebarPluginStatus() ?? "No plugins configured"}</div>}
-                    >
-                      <For each={sidebarPluginList().slice(0, 16)}>
-                        {(p) => (
-                          <div class="rounded-xl border border-zinc-800/70 bg-zinc-900/30 px-3 py-2">
-                            <div class="text-sm text-zinc-200 font-mono truncate">{p}</div>
-                          </div>
-                        )}
-                      </For>
-                      <Show when={sidebarPluginList().length > 16}>
-                        <div class="text-xs text-zinc-600">+{sidebarPluginList().length - 16} more</div>
-                      </Show>
-                    </Show>
-                  </div>
-                </div>
-
-                <div>
-                  <div class="flex items-center justify-between text-xs font-semibold text-zinc-500 uppercase tracking-wider">
-                    <span>Execution Plan</span>
-                    <span class="text-xs bg-zinc-800 px-2 py-0.5 rounded text-zinc-500">
-                      {todos().filter((t) => t.status === "completed").length}/{todos().length}
-                    </span>
-                  </div>
-                  <div class="mt-3 space-y-2">
-                    <Show
-                      when={todos().length}
-                      fallback={<div class="text-xs text-zinc-600 italic">Plan will appear here…</div>}
-                    >
-                      <For each={todos()}>
-                        {(t, idx) => (
-                          <div class="relative pl-6 pb-6 last:pb-0">
-                            <Show when={idx() !== todos().length - 1}>
-                              <div
-                                class={`absolute left-[9px] top-6 bottom-0 w-px ${
-                                  t.status === "completed" ? "bg-emerald-500/20" : "bg-zinc-800"
-                                }`}
-                              />
-                            </Show>
-
-                            <div
-                              class={`absolute left-0 top-1 w-5 h-5 rounded-full border flex items-center justify-center bg-zinc-950 z-10 ${
-                                t.status === "completed"
-                                  ? "border-emerald-500 text-emerald-500"
-                                  : t.status === "in_progress"
-                                    ? "border-blue-500 text-blue-500"
-                                    : t.status === "cancelled"
-                                      ? "border-zinc-600 text-zinc-600"
-                                      : "border-zinc-700 text-zinc-700"
-                              }`}
-                            >
-                              <Show
-                                when={t.status === "completed"}
-                                fallback={
-                                  <Show
-                                    when={t.status === "in_progress"}
-                                    fallback={
-                                      <Show
-                                        when={t.status === "cancelled"}
-                                        fallback={<Circle size={10} />}
-                                      >
-                                        <X size={12} />
-                                      </Show>
-                                    }
-                                  >
-                                    <div class="w-2 h-2 rounded-full bg-current animate-pulse" />
-                                  </Show>
-                                }
-                              >
-                                <CheckCircle2 size={12} />
+            <aside class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
+              <div class="p-4 space-y-4 overflow-y-auto flex-1">
+                <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
+                  <button
+                    class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
+                    onClick={() => toggleSidebar("progress")}
+                  >
+                    <span>Progress</span>
+                    <ChevronDown size={16} class={`transition-transform ${expandedSidebarSections().progress ? "rotate-180" : ""}`.trim()} />
+                  </button>
+                  <Show when={expandedSidebarSections().progress}>
+                    <div class="px-4 pb-4 pt-1">
+                      <div class="flex items-center gap-2">
+                        <For each={progressDots()}>
+                          {(done) => (
+                            <div class={`h-6 w-6 rounded-full border flex items-center justify-center ${done ? "border-emerald-400 text-emerald-400" : "border-zinc-700 text-zinc-700"}`}>
+                              <Show when={done}>
+                                <Check size={14} />
                               </Show>
                             </div>
+                          )}
+                        </For>
+                      </div>
+                      <div class="mt-2 text-xs text-zinc-500">Steps will show as the task unfolds.</div>
+                    </div>
+                  </Show>
+                </div>
 
-                            <div
-                              class={`text-sm ${
-                                t.status === "completed"
-                                  ? "text-zinc-400"
-                                  : t.status === "in_progress"
-                                    ? "text-blue-100"
-                                    : "text-zinc-500"
-                              }`}
-                            >
-                              {t.content}
+                <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
+                  <button
+                    class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
+                    onClick={() => toggleSidebar("artifacts")}
+                  >
+                    <span>Artifacts</span>
+                    <ChevronDown size={16} class={`transition-transform ${expandedSidebarSections().artifacts ? "rotate-180" : ""}`.trim()} />
+                  </button>
+                  <Show when={expandedSidebarSections().artifacts}>
+                    <div class="px-4 pb-4 pt-1 space-y-3">
+                      <Show
+                        when={artifacts().length}
+                        fallback={<div class="text-xs text-zinc-600">No artifacts yet.</div>}
+                      >
+                        <For each={artifacts()}>
+                          {(artifact) => (
+                            <div class="flex items-center gap-3 text-sm text-zinc-300">
+                              <div class="h-8 w-8 rounded-lg bg-zinc-900 flex items-center justify-center">
+                                <FileText size={16} class="text-zinc-500" />
+                              </div>
+                              <div class="min-w-0">
+                                <div class="truncate text-zinc-200">{artifact.name}</div>
+                              </div>
                             </div>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </div>
+                          )}
+                        </For>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+
+                <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
+                  <button
+                    class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
+                    onClick={() => toggleSidebar("context")}
+                  >
+                    <span>Context</span>
+                    <ChevronDown size={16} class={`transition-transform ${expandedSidebarSections().context ? "rotate-180" : ""}`.trim()} />
+                  </button>
+                  <Show when={expandedSidebarSections().context}>
+                    <div class="px-4 pb-4 pt-1 space-y-4">
+                      <div>
+                        <div class="flex items-center justify-between text-xs text-zinc-500">
+                          <span>Selected folders</span>
+                          <span>{authorizedDirs().length}</span>
+                        </div>
+                        <div class="mt-2 space-y-2">
+                          <For each={authorizedDirs().slice(0, 3)}>
+                            {(folder) => (
+                              <div class="flex items-center gap-2 text-xs text-zinc-300">
+                                <Folder size={12} class="text-zinc-500" />
+                                <span class="truncate">{folder}</span>
+                              </div>
+                            )}
+                          </For>
+                        </div>
+                      </div>
+
+                      <div>
+                        <div class="text-xs text-zinc-500">Working files</div>
+                        <div class="mt-2 space-y-2">
+                          <Show when={workingFiles().length} fallback={<div class="text-xs text-zinc-600">None yet.</div>}>
+                            <For each={workingFiles()}>
+                              {(file) => (
+                                <div class="flex items-center gap-2 text-xs text-zinc-300">
+                                  <File size={12} class="text-zinc-500" />
+                                  <span class="truncate">{file}</span>
+                                </div>
+                              )}
+                            </For>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
                 </div>
               </div>
-            </div>
+            </aside>
+
           </div>
 
           <div class="p-4 border-t border-zinc-800 bg-zinc-950 sticky bottom-0 z-20">

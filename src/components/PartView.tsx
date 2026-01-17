@@ -61,6 +61,8 @@ export default function PartView(props: Props) {
   const textClass = () => (tone() === "dark" ? "text-black" : "text-neutral-100");
   const subtleTextClass = () => (tone() === "dark" ? "text-black/70" : "text-neutral-400");
   const panelBgClass = () => (tone() === "dark" ? "bg-black/10" : "bg-black/30");
+  const toolOnly = () => developerMode();
+  const showToolOutput = () => developerMode();
 
   return (
     <Switch>
@@ -91,61 +93,63 @@ export default function PartView(props: Props) {
       </Match>
 
       <Match when={p().type === "tool"}>
-        <div class="grid gap-2">
-          <div class="flex items-center justify-between gap-3">
-            <div
-              class={`text-xs font-medium ${tone() === "dark" ? "text-black" : "text-neutral-200"}`.trim()}
-            >
-              Tool · {String((p() as any).tool)}
+        <Show when={toolOnly()}>
+          <div class="grid gap-2">
+            <div class="flex items-center justify-between gap-3">
+              <div
+                class={`text-xs font-medium ${tone() === "dark" ? "text-black" : "text-neutral-200"}`.trim()}
+              >
+                Tool · {String((p() as any).tool)}
+              </div>
+              <div
+                class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                  (p() as any).state?.status === "completed"
+                    ? "bg-emerald-500/15 text-emerald-200"
+                    : (p() as any).state?.status === "running"
+                      ? "bg-blue-500/15 text-blue-200"
+                      : (p() as any).state?.status === "error"
+                        ? "bg-red-500/15 text-red-200"
+                        : "bg-white/10 text-neutral-200"
+                }`}
+              >
+                {String((p() as any).state?.status ?? "unknown")}
+              </div>
             </div>
-            <div
-              class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                (p() as any).state?.status === "completed"
-                  ? "bg-emerald-500/15 text-emerald-200"
-                  : (p() as any).state?.status === "running"
-                    ? "bg-blue-500/15 text-blue-200"
-                    : (p() as any).state?.status === "error"
-                      ? "bg-red-500/15 text-red-200"
-                      : "bg-white/10 text-neutral-200"
-              }`}
-            >
-              {String((p() as any).state?.status ?? "unknown")}
-            </div>
-          </div>
 
-          <Show when={(p() as any).state?.title}>
-            <div class={`text-xs ${subtleTextClass()}`.trim()}>{String((p() as any).state.title)}</div>
-          </Show>
+            <Show when={(p() as any).state?.title}>
+              <div class={`text-xs ${subtleTextClass()}`.trim()}>{String((p() as any).state.title)}</div>
+            </Show>
 
-          <Show when={(p() as any).state?.output && typeof (p() as any).state.output === "string"}>
-            <pre
-              class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${
-                tone() === "dark" ? "text-black" : "text-neutral-200"
-              }`.trim()}
-            >
-              {clampText(String((p() as any).state.output))}
-            </pre>
-          </Show>
-
-          <Show when={(p() as any).state?.error && typeof (p() as any).state.error === "string"}>
-            <div class="rounded-lg bg-red-950/40 p-2 text-xs text-red-200">
-              {String((p() as any).state.error)}
-            </div>
-          </Show>
-
-          <Show when={developerMode() && (p() as any).state?.input != null}>
-            <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-              <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
+            <Show when={showToolOutput() && (p() as any).state?.output && typeof (p() as any).state.output === "string"}>
               <pre
-                class={`mt-2 whitespace-pre-wrap break-words text-xs ${
+                class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${
                   tone() === "dark" ? "text-black" : "text-neutral-200"
                 }`.trim()}
               >
-                {safeStringify((p() as any).state.input)}
+                {clampText(String((p() as any).state.output))}
               </pre>
-            </details>
-          </Show>
-        </div>
+            </Show>
+
+            <Show when={showToolOutput() && (p() as any).state?.error && typeof (p() as any).state.error === "string"}>
+              <div class="rounded-lg bg-red-950/40 p-2 text-xs text-red-200">
+                {String((p() as any).state.error)}
+              </div>
+            </Show>
+
+            <Show when={showToolOutput() && (p() as any).state?.input != null}>
+              <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
+                <pre
+                  class={`mt-2 whitespace-pre-wrap break-words text-xs ${
+                    tone() === "dark" ? "text-black" : "text-neutral-200"
+                  }`.trim()}
+                >
+                  {safeStringify((p() as any).state.input)}
+                </pre>
+              </details>
+            </Show>
+          </div>
+        </Show>
       </Match>
 
       <Match when={p().type === "step-start" || p().type === "step-finish"}>
