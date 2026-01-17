@@ -37,19 +37,111 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  prepare-release:
+    name: Prepare GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set release metadata
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_RELEASE_NAME: ${{ github.event.inputs.release_name }}
+          INPUT_RELEASE_BODY: ${{ github.event.inputs.release_body }}
+        run: |
+          set -euo pipefail
+
+          TAG_INPUT="${INPUT_TAG:-}"
+          if [ -n "$TAG_INPUT" ]; then
+            if [[ "$TAG_INPUT" == v* ]]; then
+              TAG="$TAG_INPUT"
+            else
+              TAG="v$TAG_INPUT"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          RELEASE_NAME_INPUT="${INPUT_RELEASE_NAME:-}"
+          if [ -n "$RELEASE_NAME_INPUT" ]; then
+            RELEASE_NAME="$RELEASE_NAME_INPUT"
+          else
+            RELEASE_NAME="OpenWork $TAG"
+          fi
+
+          RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
+          if [ -n "$RELEASE_BODY_INPUT" ]; then
+            RELEASE_BODY="$RELEASE_BODY_INPUT"
+          else
+            RELEASE_BODY="See the assets to download this version and install."
+          fi
+
+          # Guard against multiline env var injection
+          TAG="${TAG//$'\n'/}"
+          TAG="${TAG//$'\r'/}"
+          RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
+          RELEASE_NAME="${RELEASE_NAME//$'\r'/ }"
+
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=$RELEASE_NAME" >> "$GITHUB_ENV"
+
+          {
+            echo "RELEASE_BODY<<__OPENWORK_RELEASE_BODY_EOF__"
+            printf '%s\n' "$RELEASE_BODY"
+            echo "__OPENWORK_RELEASE_BODY_EOF__"
+          } >> "$GITHUB_ENV"
+
+      - name: Create release if missing
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          BODY_FILE="$RUNNER_TEMP/release_body.md"
+          printf '%s\n' "$RELEASE_BODY" > "$BODY_FILE"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; skipping create."
+            exit 0
+          fi
+
+          DRAFT_FLAG=""
+          PRERELEASE_FLAG=""
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.draft }}" == "true" ]]; then
+            DRAFT_FLAG="--draft"
+          fi
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.prerelease }}" == "true" ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_NAME" \
+            --notes-file "$BODY_FILE" \
+            $DRAFT_FLAG $PRERELEASE_FLAG
+
   publish-tauri:
     name: Build + Publish (${{ matrix.target }})
-    runs-on: macos-14
+    needs: prepare-release
+    runs-on: ${{ matrix.platform }}
     timeout-minutes: 360
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: aarch64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            target: aarch64-apple-darwin
             args: "--target aarch64-apple-darwin --bundles dmg,app"
-          - target: x86_64-apple-darwin
+          - platform: macos-14
+            os_type: macos
+            target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin --bundles dmg,app"
+          - platform: windows-2022
+            os_type: windows
+            target: x86_64-pc-windows-msvc
+            args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
       - name: Set release metadata
@@ -101,6 +193,11 @@ jobs:
             echo "__OPENWORK_RELEASE_BODY_EOF__"
           } >> "$GITHUB_ENV"
 
+      - name: Enable git long paths (Windows)
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        run: git config --global core.longpaths true
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -125,6 +222,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Write notary API key
+        if: matrix.os_type == 'macos'
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
         run: |
@@ -136,7 +234,8 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload (tauri-action)
+      - name: Build + upload (macOS)
+        if: matrix.os_type == 'macos'
         uses: tauri-apps/tauri-action@v0.5.17
         env:
           CI: true
@@ -146,7 +245,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-          # macOS signing (maps from existing repo secrets)
+          # macOS signing
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
@@ -166,7 +265,29 @@ jobs:
           args: ${{ matrix.args }}
           retryAttempts: 3
 
-      - name: Upload updater artifacts
+      - name: Build + upload (Windows)
+        if: matrix.os_type == 'windows'
+        uses: tauri-apps/tauri-action@v0.5.17
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
+          projectPath: .
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+
+      - name: Upload updater artifacts (macOS)
+        if: matrix.os_type == 'macos'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -181,3 +302,35 @@ jobs:
           else
             echo "No updater artifacts found in $UPDATER_DIR; skipping."
           fi
+
+      - name: Upload updater artifacts (Windows)
+        if: matrix.os_type == 'windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $bundleRoot = Join-Path $env:GITHUB_WORKSPACE "src-tauri/target/${{ matrix.target }}/release/bundle"
+          if (-not (Test-Path $bundleRoot)) {
+            Write-Host "No bundle directory found at $bundleRoot; skipping."
+            exit 0
+          }
+
+          $zip = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "*.zip" | Select-Object -First 1
+          if (-not $zip) {
+            Write-Host "No updater zip found under $bundleRoot; skipping."
+            exit 0
+          }
+
+          $sigPath = "$($zip.FullName).sig"
+          if (-not (Test-Path $sigPath)) {
+            $sig = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "*.sig" | Select-Object -First 1
+            if (-not $sig) {
+              Write-Host "No updater signature found for $($zip.FullName); skipping."
+              exit 0
+            }
+            $sigPath = $sig.FullName
+          }
+
+          gh release upload $env:RELEASE_TAG $zip.FullName $sigPath --clobber
