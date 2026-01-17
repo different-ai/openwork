@@ -337,6 +337,20 @@ function isTauriRuntime() {
   return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
 }
 
+function isWindowsPlatform() {
+  if (typeof navigator === "undefined") return false;
+
+  const ua = typeof navigator.userAgent === "string" ? navigator.userAgent : "";
+  const platform =
+    typeof (navigator as any).userAgentData?.platform === "string"
+      ? (navigator as any).userAgentData.platform
+      : typeof navigator.platform === "string"
+        ? navigator.platform
+        : "";
+
+  return /windows/i.test(platform) || /windows/i.test(ua);
+}
+
 function readModePreference(): Mode | null {
   if (typeof window === "undefined") return null;
 
@@ -1630,7 +1644,9 @@ export default function App() {
 
       if (!result.found) {
         setError(
-          "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+          isWindowsPlatform()
+            ? "OpenCode CLI not found. Install OpenCode for Windows, then restart OpenWork. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;
       }
@@ -1655,7 +1671,13 @@ export default function App() {
         setAuthorizedDirs([dir]);
       }
 
+      if (isWindowsPlatform() && engineSource() === "sidecar") {
+        setEngineSource("path");
+        setError("Sidecar OpenCode is not supported on Windows yet. Using PATH instead.");
+      }
+
       const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
+
       setEngine(info);
 
       if (info.baseUrl) {
@@ -3092,45 +3114,79 @@ export default function App() {
 
                     <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
                       <div class="mt-4 space-y-2">
-                        <div class="text-xs text-zinc-500">Install one of these:</div>
-                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                          brew install anomalyco/tap/opencode
-                        </div>
-                        <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
-                          curl -fsSL https://opencode.ai/install | bash
-                        </div>
+                        <Show
+                          when={isWindowsPlatform()}
+                          fallback={
+                            <>
+                              <div class="text-xs text-zinc-500">Install one of these:</div>
+                              <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                                brew install anomalyco/tap/opencode
+                              </div>
+                              <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                                curl -fsSL https://opencode.ai/install | bash
+                              </div>
+                            </>
+                          }
+                        >
+                          <>
+                            <div class="text-xs text-zinc-500">Install OpenCode for Windows:</div>
+                            <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                              https://opencode.ai/install
+                            </div>
+                            <div class="text-[11px] text-zinc-600">
+                              After installing, make sure `opencode.exe` is available on PATH (try `opencode --version`).
+                            </div>
+                          </>
+                        </Show>
 
                         <div class="flex gap-2 pt-2">
-                          <Button
-                            onClick={async () => {
-                              setError(null);
-                              setEngineInstallLogs(null);
-                              setBusy(true);
-                              setBusyLabel("Installing OpenCode");
-                              setBusyStartedAt(Date.now());
-
-                              try {
-                                const result = await engineInstall();
-                                const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
-                                setEngineInstallLogs(combined || null);
-
-                                if (!result.ok) {
-                                  setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
-                                }
-
-                                await refreshEngineDoctor();
-                              } catch (e) {
-                                setError(e instanceof Error ? e.message : safeStringify(e));
-                              } finally {
-                                setBusy(false);
-                                setBusyLabel(null);
-                                setBusyStartedAt(null);
-                              }
-                            }}
-                            disabled={busy()}
+                          <Show
+                            when={!isWindowsPlatform()}
+                            fallback={
+                              <Button
+                                variant="outline"
+                                onClick={() => {
+                                  setEngineInstallLogs(
+                                    "Windows install is currently manual. Visit https://opencode.ai/install then restart OpenWork. If OpenCode is installed but not detected, ensure opencode.exe is on PATH.",
+                                  );
+                                }}
+                                disabled={busy()}
+                              >
+                                Show Windows install notes
+                              </Button>
+                            }
                           >
-                            Install OpenCode
-                          </Button>
+                            <Button
+                              onClick={async () => {
+                                setError(null);
+                                setEngineInstallLogs(null);
+                                setBusy(true);
+                                setBusyLabel("Installing OpenCode");
+                                setBusyStartedAt(Date.now());
+
+                                try {
+                                  const result = await engineInstall();
+                                  const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
+                                  setEngineInstallLogs(combined || null);
+
+                                  if (!result.ok) {
+                                    setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
+                                  }
+
+                                  await refreshEngineDoctor();
+                                } catch (e) {
+                                  setError(e instanceof Error ? e.message : safeStringify(e));
+                                } finally {
+                                  setBusy(false);
+                                  setBusyLabel(null);
+                                  setBusyStartedAt(null);
+                                }
+                              }}
+                              disabled={busy()}
+                            >
+                              Install OpenCode
+                            </Button>
+                          </Show>
                           <Button
                             variant="outline"
                             onClick={() => {
@@ -4083,13 +4139,17 @@ export default function App() {
                     <Button
                       variant={engineSource() === "sidecar" ? "secondary" : "outline"}
                       onClick={() => setEngineSource("sidecar")}
-                      disabled={busy()}
+                      disabled={busy() || isWindowsPlatform()}
+                      title={isWindowsPlatform() ? "Sidecar is not supported on Windows yet" : ""}
                     >
                       Sidecar
                     </Button>
                   </div>
                   <div class="text-[11px] text-zinc-600">
                     PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.
+                    <Show when={isWindowsPlatform()}>
+                      <span class="text-zinc-500"> Sidecar is currently unavailable on Windows.</span>
+                    </Show>
                   </div>
                 </div>
               </Show>
