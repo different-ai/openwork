@@ -613,6 +613,7 @@ export default function App() {
 
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
   const [developerMode, setDeveloperMode] = createSignal(false);
+  const [devTapCount, setDevTapCount] = createSignal(0);
 
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
@@ -1141,9 +1142,22 @@ export default function App() {
     if (!isTauriRuntime()) return;
 
     try {
-      const result = await engineDoctor();
+      const result = await engineDoctor({ preferSidecar: engineSource() === "sidecar" });
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
+
+      if (developerMode()) {
+        const details = [
+          `found=${result.found}`,
+          `inPath=${result.inPath}`,
+          `resolvedPath=${result.resolvedPath ?? ""}`,
+          `version=${result.version ?? ""}`,
+          `supportsServe=${result.supportsServe}`,
+          `serveHelpStatus=${result.serveHelpStatus ?? ""}`,
+        ];
+        const notes = result.notes?.length ? "\nnotes:\n" + result.notes.join("\n") : "";
+        setEngineInstallLogs(details.join("\n") + notes);
+      }
     } catch (e) {
       setEngineDoctorResult(null);
       setEngineDoctorCheckedAt(Date.now());
@@ -1236,7 +1250,7 @@ export default function App() {
     }
 
     try {
-      const result = await engineDoctor();
+      const result = await engineDoctor({ preferSidecar: engineSource() === "sidecar" });
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
 
@@ -1248,7 +1262,12 @@ export default function App() {
       }
 
       if (!result.supportsServe) {
-        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
+        const details = developerMode()
+          ? `\n\nResolved: ${result.resolvedPath ?? "(unknown)"}\nExit: ${result.serveHelpStatus ?? "(unknown)"}\n${result.serveHelpStderr ? `\n${result.serveHelpStderr}` : ""}`
+          : "";
+        setError(
+          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${details}`,
+        );
         return false;
       }
     } catch (e) {
@@ -1985,6 +2004,10 @@ export default function App() {
     } catch {
       // ignore
     }
+
+    if (isTauriRuntime()) {
+      void refreshEngineDoctor();
+    }
   });
 
   createEffect(() => {
@@ -2333,7 +2356,26 @@ export default function App() {
                 <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
                   <Shield class="text-zinc-400" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">Authorized Workspaces</h2>
+                <h2
+                  class="text-2xl font-bold tracking-tight"
+                  onClick={() => {
+                    if (developerMode()) return;
+                    setDevTapCount((n) => {
+                      const next = n + 1;
+                      if (next >= 7) {
+                        setDeveloperMode(true);
+                        setDevTapCount(0);
+                        setEngineInstallLogs(
+                          "Developer mode enabled. You can now view engine diagnostics and switch engine source.",
+                        );
+                        return 0;
+                      }
+                      return next;
+                    });
+                  }}
+                >
+                  Authorized Workspaces
+                </h2>
                 <p class="text-zinc-400 text-sm leading-relaxed">
                   OpenWork runs locally. Select which folders it is allowed to access.
                 </p>
@@ -2456,12 +2498,45 @@ export default function App() {
                     </Button>
                   </div>
 
-                  <Show when={isTauriRuntime()}>
-                    <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
-                      <div class="flex items-start justify-between gap-4">
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-white">OpenCode CLI</div>
-                          <div class="mt-1 text-xs text-zinc-500">
+                       <Show when={isTauriRuntime()}>
+                     <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
+                       <Show when={developerMode()}>
+                         <div class="mb-4 rounded-xl border border-zinc-800/70 bg-black/30 p-3">
+                           <div class="text-xs text-zinc-500">Engine source</div>
+                           <div class="mt-2 grid grid-cols-2 gap-2">
+                             <Button
+                               variant={engineSource() === "path" ? "secondary" : "outline"}
+                               onClick={() => setEngineSource("path")}
+                               disabled={busy()}
+                             >
+                               PATH
+                             </Button>
+                             <Button
+                               variant={engineSource() === "sidecar" ? "secondary" : "outline"}
+                               onClick={() => setEngineSource("sidecar")}
+                               disabled={busy()}
+                             >
+                               Sidecar
+                             </Button>
+                           </div>
+                           <div class="mt-2 text-[11px] text-zinc-600">
+                             PATH uses your installed OpenCode. Sidecar uses a bundled binary when available.
+                           </div>
+                         </div>
+                       </Show>
+
+                       <div class="flex items-start justify-between gap-4">
+                         <div class="min-w-0">
+                           <div class="flex items-center gap-2">
+                             <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                             <Show when={developerMode()}>
+                               <span class="text-[10px] uppercase tracking-wide text-amber-300/80 border border-amber-300/20 bg-amber-500/10 px-2 py-0.5 rounded-full">
+                                 Dev
+                               </span>
+                             </Show>
+                           </div>
+                           <div class="mt-1 text-xs text-zinc-500">
+
                             <Show
                               when={engineDoctorResult()}
                               fallback={<span>Checking install…</span>}
@@ -2496,9 +2571,14 @@ export default function App() {
                         </Button>
                       </div>
 
-                      <Show when={engineDoctorResult() && !engineDoctorResult()!.found}>
+                       <Show when={engineDoctorResult() && (engineDoctorResult()!.found === false || engineDoctorResult()!.supportsServe === false)}>
                         <div class="mt-4 space-y-2">
-                          <div class="text-xs text-zinc-500">Install one of these:</div>
+                           <div class="text-xs text-zinc-500">
+                             {engineDoctorResult()?.supportsServe === false
+                               ? "OpenCode was found, but it does not support `opencode serve`. Install/upgrade and retry, or switch to Sidecar."
+                               : "Install one of these:"}
+                           </div>
+
                           <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
                             brew install anomalyco/tap/opencode
                           </div>
@@ -2539,16 +2619,43 @@ export default function App() {
                             >
                               Install OpenCode
                             </Button>
-                            <Button
-                              variant="outline"
-                              onClick={() => {
-                                const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
-                                setEngineInstallLogs(notes || null);
-                              }}
-                              disabled={busy()}
-                            >
-                              Show search notes
-                            </Button>
+                             <Button
+                               variant="outline"
+                               onClick={() => {
+                                 if (!developerMode()) {
+                                   setEngineInstallLogs(
+                                     "Enable Developer mode in Settings to see detailed diagnostics.",
+                                   );
+                                   return;
+                                 }
+
+                                 const result = engineDoctorResult();
+                                 if (!result) return;
+
+                                 const lines = [
+                                   `found=${result.found}`,
+                                   `inPath=${result.inPath}`,
+                                   `resolvedPath=${result.resolvedPath ?? ""}`,
+                                   `version=${result.version ?? ""}`,
+                                   `supportsServe=${result.supportsServe}`,
+                                   `serveHelpStatus=${result.serveHelpStatus ?? ""}`,
+                                 ];
+
+                                 if (result.serveHelpStderr) {
+                                   lines.push("\nserve --help stderr:\n" + result.serveHelpStderr);
+                                 }
+                                 if (result.serveHelpStdout) {
+                                   lines.push("\nserve --help stdout:\n" + result.serveHelpStdout);
+                                 }
+
+                                 const notes = result.notes?.length ? "\nnotes:\n" + result.notes.join("\n") : "";
+                                 setEngineInstallLogs(lines.join("\n") + notes);
+                               }}
+                               disabled={busy()}
+                             >
+                               Show diagnostics
+                             </Button>
+
                           </div>
                         </div>
                       </Show>
@@ -2580,9 +2687,7 @@ export default function App() {
                     }}
                     disabled={
                       busy() ||
-                      (isTauriRuntime() &&
-                        (engineDoctorResult()?.found === false ||
-                          engineDoctorResult()?.supportsServe === false))
+                      (isTauriRuntime() && engineDoctorResult()?.found === false)
                     }
                     class="w-full py-3 text-base"
                   >

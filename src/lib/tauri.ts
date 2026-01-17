@@ -7,6 +7,8 @@ export type EngineInfo = {
   hostname: string | null;
   port: number | null;
   pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
 };
 
 export type EngineDoctorResult = {
@@ -16,6 +18,9 @@ export type EngineDoctorResult = {
   version: string | null;
   supportsServe: boolean;
   notes: string[];
+  serveHelpStatus: number | null;
+  serveHelpStdout: string | null;
+  serveHelpStderr: string | null;
 };
 
 export async function engineStart(
@@ -36,8 +41,12 @@ export async function engineInfo(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_info");
 }
 
-export async function engineDoctor(): Promise<EngineDoctorResult> {
-  return invoke<EngineDoctorResult>("engine_doctor");
+export async function engineDoctor(options?: {
+  preferSidecar?: boolean;
+}): Promise<EngineDoctorResult> {
+  return invoke<EngineDoctorResult>("engine_doctor", {
+    preferSidecar: options?.preferSidecar ?? false,
+  });
 }
 
 export async function pickDirectory(options?: {
