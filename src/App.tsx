@@ -21,8 +21,10 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 
 import {
+  AlertTriangle,
   ArrowRight,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   Circle,
   Clock,
@@ -950,6 +952,10 @@ export default function App() {
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
 
   const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);
+  const [updatesExpanded, setUpdatesExpanded] = createSignal(false);
+  const [updateRefreshStatus, setUpdateRefreshStatus] = createSignal<
+    null | "checking" | "success" | "error"
+  >(null);
 
   const [updateEnv, setUpdateEnv] = createSignal<UpdaterEnvironment | null>(null);
 
@@ -984,6 +990,11 @@ export default function App() {
     | null
     | { update: UpdateHandle; version: string; notes?: string }
   >(null);
+
+  const updateAvailable = createMemo(() => {
+    const state = updateStatus();
+    return state.state === "available" || state.state === "ready" || state.state === "downloading";
+  });
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -1489,6 +1500,22 @@ export default function App() {
       setPendingUpdate(null);
       setUpdateStatus({ state: "error", lastCheckedAt: null, message });
     }
+  }
+
+  async function refreshUpdates() {
+    if (updateRefreshStatus() === "checking") return;
+    setUpdateRefreshStatus("checking");
+    await checkForUpdates();
+    const state = updateStatus();
+    if (state.state === "error") {
+      setUpdateRefreshStatus("error");
+      return;
+    }
+    if (state.state === "available") {
+      setUpdateRefreshStatus(null);
+      return;
+    }
+    setUpdateRefreshStatus("success");
   }
 
   async function downloadUpdate() {
@@ -2758,6 +2785,14 @@ export default function App() {
     }
   });
 
+  createEffect(() => {
+    const status = updateRefreshStatus();
+    if (!status || status === "checking") return;
+    const timeout = window.setTimeout(() => {
+      setUpdateRefreshStatus(null);
+    }, 1800);
+    onCleanup(() => window.clearTimeout(timeout));
+  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -4172,6 +4207,241 @@ export default function App() {
 
         <Match when={tab() === "settings"}>
           <section class="space-y-6">
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <div class="text-sm font-medium text-white">Updates</div>
+                  <div class="text-xs text-zinc-500">Keep OpenWork up to date.</div>
+                </div>
+                <div class="text-xs text-zinc-600 font-mono">{appVersion() ? `v${appVersion()}` : ""}</div>
+              </div>
+
+              <Show
+                when={!isTauriRuntime()}
+                fallback={
+                  <Show
+                    when={updateEnv() && !updateEnv()!.supported}
+                    fallback={
+                      <>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <div class="flex-1 min-w-[220px] flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                            <div class="space-y-0.5">
+                              <div class="text-sm text-white">
+                                <Switch>
+                                  <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                  <Match when={updateStatus().state === "available"}>
+                                    Update available: v{(updateStatus() as any).version}
+                                  </Match>
+                                  <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                  <Match when={updateStatus().state === "ready"}>
+                                    Ready to install: v{(updateStatus() as any).version}
+                                  </Match>
+                                  <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                  <Match when={true}>Up to date</Match>
+                                </Switch>
+                              </div>
+                              <Show when={updateAvailable()} fallback={
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => refreshUpdates()}
+                                  disabled={updateRefreshStatus() === "checking"}
+                                >
+                                  <Show
+                                    when={updateRefreshStatus() === "success"}
+                                    fallback={
+                                      <Show
+                                        when={updateRefreshStatus() === "error"}
+                                        fallback={
+                                          <RefreshCcw
+                                            size={14}
+                                            class={updateRefreshStatus() === "checking" ? "animate-spin" : ""}
+                                          />
+                                        }
+                                      >
+                                        <AlertTriangle size={14} class="text-red-400" />
+                                      </Show>
+                                    }
+                                  >
+                                    <CheckCircle2 size={14} class="text-emerald-400" />
+                                  </Show>
+                                </Button>
+                              }>
+
+                                <div class="text-xs text-zinc-600">
+                                  Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                                </div>
+                              </Show>
+                            </div>
+                            <div class="flex items-center gap-2">
+                              <Show when={updateAvailable()} fallback={
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => refreshUpdates()}
+                                  disabled={updateRefreshStatus() === "checking"}
+                                >
+                                  <Show
+                                    when={updateRefreshStatus() === "success"}
+                                    fallback={
+                                      <Show
+                                        when={updateRefreshStatus() === "error"}
+                                        fallback={
+                                          <RefreshCcw
+                                            size={14}
+                                            class={updateRefreshStatus() === "checking" ? "animate-spin" : ""}
+                                          />
+                                        }
+                                      >
+                                        <AlertTriangle size={14} class="text-red-400" />
+                                      </Show>
+                                    }
+                                  >
+                                    <CheckCircle2 size={14} class="text-emerald-400" />
+                                  </Show>
+                                </Button>
+                              }>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => downloadUpdate()}
+                                  disabled={busy() || updateStatus().state === "downloading"}
+                                >
+                                  Update
+                                </Button>
+                              </Show>
+                              <Button
+                                variant="ghost"
+                                class="text-xs h-8 py-0 px-2"
+                                onClick={() => setUpdatesExpanded((v) => !v)}
+                              >
+                                <ChevronDown
+                                  size={16}
+                                  class={`transition-transform ${updatesExpanded() ? "rotate-180" : ""}`}
+                                />
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+
+                        <Show when={updatesExpanded()}>
+                          <div class="space-y-3">
+                            <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                              <div class="space-y-0.5">
+                                <div class="text-sm text-white">Automatic checks</div>
+                                <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                              </div>
+                              <button
+                                class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                  updateAutoCheck()
+                                    ? "bg-white/10 text-white border-white/20"
+                                    : "text-zinc-500 border-zinc-800 hover:text-white"
+                                }`}
+                                onClick={() => setUpdateAutoCheck((v) => !v)}
+                              >
+                                {updateAutoCheck() ? "On" : "Off"}
+                              </button>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                              <div class="space-y-0.5">
+                                <div class="text-sm text-white">
+                                  <Switch>
+                                    <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                    <Match when={updateStatus().state === "available"}>
+                                      Update available: v{(updateStatus() as any).version}
+                                    </Match>
+                                    <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                    <Match when={updateStatus().state === "ready"}>
+                                      Ready to install: v{(updateStatus() as any).version}
+                                    </Match>
+                                    <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                    <Match when={true}>Up to date</Match>
+                                  </Switch>
+                                </div>
+                                <Show
+                                  when={
+                                    updateStatus().state === "idle" &&
+                                    (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+                                  }
+                                >
+                                  <div class="text-xs text-zinc-600">
+                                    Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                                  </div>
+                                </Show>
+                                <Show when={updateStatus().state === "available" && (updateStatus() as any).date}>
+                                  <div class="text-xs text-zinc-600">Published {(updateStatus() as any).date}</div>
+                                </Show>
+                                <Show when={updateStatus().state === "downloading"}>
+                                  <div class="text-xs text-zinc-600">
+                                    {formatBytes((updateStatus() as any).downloadedBytes)}
+                                    <Show when={(updateStatus() as any).totalBytes != null}>
+                                      {` / ${formatBytes((updateStatus() as any).totalBytes)}`}
+                                    </Show>
+                                  </div>
+                                </Show>
+                                <Show when={updateStatus().state === "error"}>
+                                  <div class="text-xs text-red-300">{(updateStatus() as any).message}</div>
+                                </Show>
+                              </div>
+
+                              <div class="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => checkForUpdates()}
+                                  disabled={busy() || updateStatus().state === "checking" || updateStatus().state === "downloading"}
+                                >
+                                  Check
+                                </Button>
+
+                                <Show when={updateStatus().state === "available"}>
+                                  <Button
+                                    variant="secondary"
+                                    class="text-xs h-8 py-0 px-3"
+                                    onClick={() => downloadUpdate()}
+                                    disabled={busy() || updateStatus().state === "downloading"}
+                                  >
+                                    Download
+                                  </Button>
+                                </Show>
+
+                                <Show when={updateStatus().state === "ready"}>
+                                  <Button
+                                    variant="secondary"
+                                    class="text-xs h-8 py-0 px-3"
+                                    onClick={() => installUpdateAndRestart()}
+                                    disabled={busy() || anyActiveRuns()}
+                                    title={anyActiveRuns() ? "Stop active runs to update" : ""}
+                                  >
+                                    Install & Restart
+                                  </Button>
+                                </Show>
+                              </div>
+                            </div>
+
+                            <Show when={updateStatus().state === "available" && (updateStatus() as any).notes}>
+                              <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
+                                {(updateStatus() as any).notes}
+                              </div>
+                            </Show>
+                          </div>
+                        </Show>
+                      </>
+                    }
+                  >
+                    <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                      {updateEnv()?.reason ?? "Updates are not supported in this environment."}
+                    </div>
+                  </Show>
+                }
+              >
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+                  Updates are only available in the desktop app.
+                </div>
+              </Show>
+            </div>
+
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-white">Connection</div>
               <div class="text-xs text-zinc-500">{headerStatus()}</div>
@@ -4285,7 +4555,7 @@ export default function App() {
               </div>
             </div>
 
-            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-medium text-white">Updates</div>
@@ -4301,103 +4571,208 @@ export default function App() {
                     when={updateEnv() && !updateEnv()!.supported}
                     fallback={
                       <>
-                        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-white">Automatic checks</div>
-                            <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                        <div class="flex flex-wrap items-center gap-3">
+                          <div class="flex-1 min-w-[220px] flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                            <div class="space-y-0.5">
+                              <div class="text-sm text-white">
+                                <Switch>
+                                  <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                  <Match when={updateStatus().state === "available"}>
+                                    Update available: v{(updateStatus() as any).version}
+                                  </Match>
+                                  <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                  <Match when={updateStatus().state === "ready"}>
+                                    Ready to install: v{(updateStatus() as any).version}
+                                  </Match>
+                                  <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                  <Match when={true}>Up to date</Match>
+                                </Switch>
+                              </div>
+                              <Show when={updateAvailable()} fallback={
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => refreshUpdates()}
+                                  disabled={updateRefreshStatus() === "checking"}
+                                >
+                                  <Show
+                                    when={updateRefreshStatus() === "success"}
+                                    fallback={
+                                      <Show
+                                        when={updateRefreshStatus() === "error"}
+                                        fallback={
+                                          <RefreshCcw
+                                            size={14}
+                                            class={updateRefreshStatus() === "checking" ? "animate-spin" : ""}
+                                          />
+                                        }
+                                      >
+                                        <AlertTriangle size={14} class="text-red-400" />
+                                      </Show>
+                                    }
+                                  >
+                                    <CheckCircle2 size={14} class="text-emerald-400" />
+                                  </Show>
+                                </Button>
+                              }>
+
+                                <div class="text-xs text-zinc-600">
+                                  Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                                </div>
+                              </Show>
+                            </div>
+                            <div class="flex items-center gap-2">
+                              <Show when={updateAvailable()} fallback={
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => refreshUpdates()}
+                                  disabled={updateRefreshStatus() === "checking"}
+                                >
+                                  <Show
+                                    when={updateRefreshStatus() === "success"}
+                                    fallback={
+                                      <Show
+                                        when={updateRefreshStatus() === "error"}
+                                        fallback={
+                                          <RefreshCcw
+                                            size={14}
+                                            class={updateRefreshStatus() === "checking" ? "animate-spin" : ""}
+                                          />
+                                        }
+                                      >
+                                        <AlertTriangle size={14} class="text-red-400" />
+                                      </Show>
+                                    }
+                                  >
+                                    <CheckCircle2 size={14} class="text-emerald-400" />
+                                  </Show>
+                                </Button>
+                              }>
+                                <Button
+                                  variant="secondary"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => downloadUpdate()}
+                                  disabled={busy() || updateStatus().state === "downloading"}
+                                >
+                                  Update
+                                </Button>
+                              </Show>
+                              <Button
+                                variant="ghost"
+                                class="text-xs h-8 py-0 px-2"
+                                onClick={() => setUpdatesExpanded((v) => !v)}
+                              >
+                                <ChevronDown
+                                  size={16}
+                                  class={`transition-transform ${updatesExpanded() ? "rotate-180" : ""}`}
+                                />
+                              </Button>
+                            </div>
                           </div>
-                          <button
-                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                              updateAutoCheck()
-                                ? "bg-white/10 text-white border-white/20"
-                                : "text-zinc-500 border-zinc-800 hover:text-white"
-                            }`}
-                            onClick={() => setUpdateAutoCheck((v) => !v)}
-                          >
-                            {updateAutoCheck() ? "On" : "Off"}
-                          </button>
                         </div>
 
-                        <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-white">
-                              <Switch>
-                                <Match when={updateStatus().state === "checking"}>Checking…</Match>
-                                <Match when={updateStatus().state === "available"}>
-                                  Update available: v{(updateStatus() as any).version}
-                                </Match>
-                                <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
-                                <Match when={updateStatus().state === "ready"}>
-                                  Ready to install: v{(updateStatus() as any).version}
-                                </Match>
-                                <Match when={updateStatus().state === "error"}>Update check failed</Match>
-                                <Match when={true}>Up to date</Match>
-                              </Switch>
-                            </div>
-                            <Show
-                              when={
-                                updateStatus().state === "idle" &&
-                                (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
-                              }
-                            >
-                              <div class="text-xs text-zinc-600">
-                                Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                        <Show when={updatesExpanded()}>
+                          <div class="space-y-3">
+                            <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                              <div class="space-y-0.5">
+                                <div class="text-sm text-white">Automatic checks</div>
+                                <div class="text-xs text-zinc-600">Once per day (quiet)</div>
                               </div>
-                            </Show>
-                            <Show when={updateStatus().state === "available" && (updateStatus() as any).date}>
-                              <div class="text-xs text-zinc-600">Published {(updateStatus() as any).date}</div>
-                            </Show>
-                            <Show when={updateStatus().state === "downloading"}>
-                              <div class="text-xs text-zinc-600">
-                                {formatBytes((updateStatus() as any).downloadedBytes)}
-                                <Show when={(updateStatus() as any).totalBytes != null}>
-                                  {` / ${formatBytes((updateStatus() as any).totalBytes)}`}
+                              <button
+                                class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                                  updateAutoCheck()
+                                    ? "bg-white/10 text-white border-white/20"
+                                    : "text-zinc-500 border-zinc-800 hover:text-white"
+                                }`}
+                                onClick={() => setUpdateAutoCheck((v) => !v)}
+                              >
+                                {updateAutoCheck() ? "On" : "Off"}
+                              </button>
+                            </div>
+
+                            <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                              <div class="space-y-0.5">
+                                <div class="text-sm text-white">
+                                  <Switch>
+                                    <Match when={updateStatus().state === "checking"}>Checking…</Match>
+                                    <Match when={updateStatus().state === "available"}>
+                                      Update available: v{(updateStatus() as any).version}
+                                    </Match>
+                                    <Match when={updateStatus().state === "downloading"}>Downloading…</Match>
+                                    <Match when={updateStatus().state === "ready"}>
+                                      Ready to install: v{(updateStatus() as any).version}
+                                    </Match>
+                                    <Match when={updateStatus().state === "error"}>Update check failed</Match>
+                                    <Match when={true}>Up to date</Match>
+                                  </Switch>
+                                </div>
+                                <Show
+                                  when={
+                                    updateStatus().state === "idle" &&
+                                    (updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt
+                                  }
+                                >
+                                  <div class="text-xs text-zinc-600">
+                                    Last checked {formatRelativeTime((updateStatus() as { state: "idle"; lastCheckedAt: number | null }).lastCheckedAt!)}
+                                  </div>
+                                </Show>
+                                <Show when={updateStatus().state === "available" && (updateStatus() as any).date}>
+                                  <div class="text-xs text-zinc-600">Published {(updateStatus() as any).date}</div>
+                                </Show>
+                                <Show when={updateStatus().state === "downloading"}>
+                                  <div class="text-xs text-zinc-600">
+                                    {formatBytes((updateStatus() as any).downloadedBytes)}
+                                    <Show when={(updateStatus() as any).totalBytes != null}>
+                                      {` / ${formatBytes((updateStatus() as any).totalBytes)}`}
+                                    </Show>
+                                  </div>
+                                </Show>
+                                <Show when={updateStatus().state === "error"}>
+                                  <div class="text-xs text-red-300">{(updateStatus() as any).message}</div>
                                 </Show>
                               </div>
-                            </Show>
-                            <Show when={updateStatus().state === "error"}>
-                              <div class="text-xs text-red-300">{(updateStatus() as any).message}</div>
-                            </Show>
-                          </div>
 
-                          <div class="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              class="text-xs h-8 py-0 px-3"
-                              onClick={() => checkForUpdates()}
-                              disabled={busy() || updateStatus().state === "checking" || updateStatus().state === "downloading"}
-                            >
-                              Check
-                            </Button>
+                              <div class="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  class="text-xs h-8 py-0 px-3"
+                                  onClick={() => checkForUpdates()}
+                                  disabled={busy() || updateStatus().state === "checking" || updateStatus().state === "downloading"}
+                                >
+                                  Check
+                                </Button>
 
-                            <Show when={updateStatus().state === "available"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
-                                onClick={() => downloadUpdate()}
-                                disabled={busy() || updateStatus().state === "downloading"}
-                              >
-                                Download
-                              </Button>
+                                <Show when={updateStatus().state === "available"}>
+                                  <Button
+                                    variant="secondary"
+                                    class="text-xs h-8 py-0 px-3"
+                                    onClick={() => downloadUpdate()}
+                                    disabled={busy() || updateStatus().state === "downloading"}
+                                  >
+                                    Download
+                                  </Button>
+                                </Show>
+
+                                <Show when={updateStatus().state === "ready"}>
+                                  <Button
+                                    variant="secondary"
+                                    class="text-xs h-8 py-0 px-3"
+                                    onClick={() => installUpdateAndRestart()}
+                                    disabled={busy() || anyActiveRuns()}
+                                    title={anyActiveRuns() ? "Stop active runs to update" : ""}
+                                  >
+                                    Install & Restart
+                                  </Button>
+                                </Show>
+                              </div>
+                            </div>
+
+                            <Show when={updateStatus().state === "available" && (updateStatus() as any).notes}>
+                              <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
+                                {(updateStatus() as any).notes}
+                              </div>
                             </Show>
-
-                            <Show when={updateStatus().state === "ready"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
-                                onClick={() => installUpdateAndRestart()}
-                                disabled={busy() || anyActiveRuns()}
-                                title={anyActiveRuns() ? "Stop active runs to update" : ""}
-                              >
-                                Install & Restart
-                              </Button>
-                            </Show>
-                          </div>
-                        </div>
-
-                        <Show when={updateStatus().state === "available" && (updateStatus() as any).notes}>
-                          <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
-                            {(updateStatus() as any).notes}
                           </div>
                         </Show>
                       </>
@@ -4574,6 +4949,23 @@ export default function App() {
               <Button variant="outline" onClick={stopHost} disabled={busy()} class="w-full">
                 Disconnect
               </Button>
+            </Show>
+
+            <Show when={appVersion()}>
+              <div class="pt-2 text-[11px] uppercase tracking-wide text-zinc-600 flex items-center justify-between">
+                <span>Version</span>
+                <div class="flex items-center gap-2 text-zinc-500">
+                  <Show when={updateAvailable()} fallback={<span>v{appVersion()}</span>}>
+                    <div class="flex items-center gap-2 text-red-400">
+                      <span>Update Available</span>
+                      <span class="relative flex h-2 w-2">
+                        <span class="absolute inline-flex h-full w-full rounded-full bg-red-400/70 animate-ping" />
+                        <span class="relative inline-flex h-2 w-2 rounded-full bg-red-400" />
+                      </span>
+                    </div>
+                  </Show>
+                </div>
+              </div>
             </Show>
           </div>
         </aside>
