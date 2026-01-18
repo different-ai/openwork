@@ -962,6 +962,821 @@ export default function App() {
     }
   }
 
+  async function refreshEngineDoctor() {
+    if (!isTauriRuntime()) return;
+
+    try {
+      const result = await engineDoctor();
+      setEngineDoctorResult(result);
+      setEngineDoctorCheckedAt(Date.now());
+    } catch (e) {
+      setEngineDoctorResult(null);
+      setEngineDoctorCheckedAt(Date.now());
+      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
+    }
+  }
+
+  async function loadSessions(c: Client, options?: { scopeRoot?: string }) {
+    const list = unwrap(await c.session.list());
+    const root = (options?.scopeRoot ?? activeWorkspaceRoot()).trim();
+    const filtered = root ? list.filter((session) => session.directory === root) : list;
+    setSessions(filtered);
+  }
+
+  async function refreshPendingPermissions(c: Client) {
+    const list = unwrap(await c.permission.list());
+
+    setPendingPermissions((current) => {
+      const now = Date.now();
+      const byId = new Map(current.map((p) => [p.id, p] as const));
+      return list.map((p) => ({ ...p, receivedAt: byId.get(p.id)?.receivedAt ?? now }));
+    });
+  }
+
+  async function activateWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const next = workspaces().find((w) => w.id === id) ?? null;
+    if (!next) return;
+
+    setActiveWorkspaceId(id);
+    setProjectDir(next.path);
+
+    if (isTauriRuntime()) {
+      setWorkspaceConfigLoaded(false);
+      try {
+        const cfg = await workspaceOpenworkRead({ workspacePath: next.path });
+        setWorkspaceConfig(cfg);
+        setWorkspaceConfigLoaded(true);
+
+        const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
+        if (roots.length) {
+          setAuthorizedDirs(roots);
+        } else {
+          setAuthorizedDirs([next.path]);
+        }
+      } catch {
+        setWorkspaceConfig(null);
+        setWorkspaceConfigLoaded(true);
+        setAuthorizedDirs([next.path]);
+      }
+
+      try {
+        await workspaceSetActive(id);
+      } catch {
+        // ignore
+      }
+    } else {
+      if (!authorizedDirs().includes(next.path)) {
+        setAuthorizedDirs((current) => {
+          const merged = current.length ? current.slice() : [];
+          if (!merged.includes(next.path)) merged.push(next.path);
+          return merged;
+        });
+      }
+    }
+
+    await loadWorkspaceTemplates({ workspaceRoot: next.path }).catch(() => undefined);
+
+    if (mode() === "host" && engine()?.running && engine()?.baseUrl) {
+      return;
+    }
+  }
+
+  async function connectToServer(nextBaseUrl: string, directory?: string) {
+    setError(null);
+    setBusy(true);
+    setBusyLabel("Connecting");
+    setBusyStartedAt(Date.now());
+    setSseConnected(false);
+
+    try {
+      const nextClient = createClient(nextBaseUrl, directory);
+      const health = await waitForHealthy(nextClient, { timeoutMs: 12_000 });
+
+      setClient(nextClient);
+      setConnectedVersion(health.version);
+      setBaseUrl(nextBaseUrl);
+
+      await loadSessions(nextClient, { scopeRoot: activeWorkspaceRoot() });
+      await refreshPendingPermissions(nextClient);
+
+      try {
+        const providerList = unwrap(await nextClient.provider.list());
+        setProviders(providerList.all as unknown as Provider[]);
+        setProviderDefaults(providerList.default);
+        setProviderConnectedIds(providerList.connected);
+      } catch {
+        // Backwards compatibility: older servers may not support provider.list
+        try {
+          const cfg = unwrap(await nextClient.config.providers());
+          setProviders(cfg.providers);
+          setProviderDefaults(cfg.default);
+          setProviderConnectedIds([]);
+        } catch {
+          setProviders([]);
+          setProviderDefaults({});
+          setProviderConnectedIds([]);
+        }
+      }
+
+      setSelectedSessionId(null);
+      setMessages([]);
+      setTodos([]);
+
+      // Auto-create a first-run onboarding session in the active workspace.
+      try {
+        if (isTauriRuntime() && activeWorkspaceRoot().trim()) {
+          const wsRoot = activeWorkspaceRoot().trim();
+          const storedKey = `openwork.welcomeSessionCreated:${wsRoot}`;
+
+          let already = false;
+          try {
+            already = window.localStorage.getItem(storedKey) === "1";
+          } catch {
+            // ignore
+          }
+
+          if (!already) {
+            const session = unwrap(
+              await nextClient.session.create({ directory: wsRoot, title: "Welcome to OpenWork" }),
+            );
+            await nextClient.session.promptAsync({
+              directory: wsRoot,
+              sessionID: session.id,
+              model: defaultModel(),
+              variant: modelVariant() ?? undefined,
+              parts: [
+                {
+                  type: "text",
+                  text:
+                    "Load the `workspace_guide` skill from this workspace and explain, in plain language, what lives in this folder (skills/plugins/templates) and what’s global. Then suggest 2 quick next actions the user can do in OpenWork.",
+                },
+              ],
+            });
+
+            try {
+              window.localStorage.setItem(storedKey, "1");
+            } catch {
+              // ignore
+            }
+
+            await loadSessions(nextClient, { scopeRoot: activeWorkspaceRoot() }).catch(() => undefined);
+
+          }
+        }
+      } catch {
+        // ignore onboarding session failures
+      }
+
+      setView("dashboard");
+      setTab("home");
+      refreshSkills().catch(() => undefined);
+      return true;
+    } catch (e) {
+      setClient(null);
+      setConnectedVersion(null);
+      setError(e instanceof Error ? e.message : safeStringify(e));
+      return false;
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function createWorkspaceFlow(preset: WorkspacePreset) {
+    if (!isTauriRuntime()) {
+      setError("Workspace creation requires the Tauri app runtime.");
+      return;
+    }
+
+    try {
+      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const folder =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      if (!folder) return;
+
+      setBusy(true);
+      setBusyLabel("Creating workspace");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      const name = folder.split("/").filter(Boolean).pop() ?? "Workspace";
+      const ws = await workspaceCreate({ folderPath: folder, name, preset });
+      setWorkspaces(ws.workspaces);
+      setActiveWorkspaceId(ws.activeId);
+
+      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
+      if (active) {
+        setProjectDir(active.path);
+        setAuthorizedDirs([active.path]);
+        await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+      }
+
+      setWorkspacePickerOpen(false);
+      setCreateWorkspaceOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function startHost(options?: { workspacePath?: string }) {
+    if (!isTauriRuntime()) {
+      setError("Host mode requires the Tauri app runtime. Use `pnpm dev`.");
+      return false;
+    }
+
+    const dir = (options?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
+    if (!dir) {
+      setError("Pick a workspace folder to start OpenCode in.");
+      return false;
+    }
+
+    try {
+      const result = await engineDoctor();
+      setEngineDoctorResult(result);
+      setEngineDoctorCheckedAt(Date.now());
+
+      if (!result.found) {
+        setError(
+          isWindowsPlatform()
+            ? "OpenCode CLI not found. Install with one of these, then restart OpenWork: choco install opencode, scoop install extras/opencode, or npm install -g opencode-ai. If it is installed, ensure `opencode.exe` or `opencode.cmd` is on PATH (try `opencode --version` in PowerShell)."
+            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+        );
+        return false;
+      }
+
+      if (!result.supportsServe) {
+        setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
+        return false;
+      }
+    } catch (e) {
+      setEngineInstallLogs(e instanceof Error ? e.message : safeStringify(e));
+    }
+
+    setError(null);
+    setBusy(true);
+    setBusyLabel("Starting engine");
+    setBusyStartedAt(Date.now());
+
+    try {
+      // Keep legacy state in sync for now.
+      setProjectDir(dir);
+      if (!authorizedDirs().length) {
+        setAuthorizedDirs([dir]);
+      }
+
+      if (isWindowsPlatform() && engineSource() === "sidecar") {
+        setEngineSource("path");
+        setError("Sidecar OpenCode is not supported on Windows yet. Using PATH instead.");
+      }
+
+      const info = await engineStart(dir, { preferSidecar: engineSource() === "sidecar" });
+
+      setEngine(info);
+
+      if (info.baseUrl) {
+        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
+        if (!ok) return false;
+      }
+
+      return true;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+      return false;
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function stopHost() {
+    setError(null);
+    setBusy(true);
+    setBusyLabel("Disconnecting");
+    setBusyStartedAt(Date.now());
+
+    try {
+      if (isTauriRuntime()) {
+        const info = await engineStop();
+        setEngine(info);
+      }
+
+      setClient(null);
+      setConnectedVersion(null);
+      setSessions([]);
+      setSelectedSessionId(null);
+      setMessages([]);
+      setTodos([]);
+      setPendingPermissions([]);
+      setSessionStatusById({});
+      setSseConnected(false);
+
+      setMode(null);
+      setOnboardingStep("mode");
+      setView("onboarding");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function selectSession(sessionID: string) {
+    const c = client();
+    if (!c) return;
+
+    setSelectedSessionId(sessionID);
+    setError(null);
+
+    const msgs = unwrap(await c.session.messages({ sessionID }));
+    setMessages(msgs);
+
+    const model = lastUserModelFromMessages(msgs);
+    if (model) {
+      setSessionModelById((current) => ({
+        ...current,
+        [sessionID]: model,
+      }));
+
+      setSessionModelOverrideById((current) => {
+        if (!current[sessionID]) return current;
+        const copy = { ...current };
+        delete copy[sessionID];
+        return copy;
+      });
+    }
+
+    try {
+      setTodos(unwrap(await c.session.todo({ sessionID })));
+    } catch {
+      setTodos([]);
+    }
+
+    try {
+      await refreshPendingPermissions(c);
+    } catch {
+      // ignore
+    }
+  }
+
+  async function createSessionAndOpen() {
+    const c = client();
+    if (!c) return;
+
+    setBusy(true);
+    setBusyLabel("Creating session");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const session = unwrap(await c.session.create({ title: "New task", directory: activeWorkspaceRoot().trim() }));
+      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() });
+      await selectSession(session.id);
+      setView("session");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function sendPrompt() {
+    const c = client();
+    const sessionID = selectedSessionId();
+    if (!c || !sessionID) return;
+
+    const content = prompt().trim();
+    if (!content) return;
+
+    setBusy(true);
+    setBusyLabel("Running");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      setLastPromptSent(content);
+      setPrompt("");
+
+      const model = selectedSessionModel();
+
+      await c.session.promptAsync({
+        sessionID,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: content }],
+      });
+
+
+      setSessionModelById((current) => ({
+        ...current,
+        [sessionID]: model,
+      }));
+
+      setSessionModelOverrideById((current) => {
+        if (!current[sessionID]) return current;
+        const copy = { ...current };
+        delete copy[sessionID];
+        return copy;
+      });
+
+      // Streaming UI is driven by SSE; do not block on fetching the full
+      // message list here.
+      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() }).catch(() => undefined);
+
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  function openTemplateModal() {
+    const seedTitle = selectedSession()?.title ?? "";
+    const seedPrompt = lastPromptSent() || prompt();
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
+
+    resetTemplateDraft(
+      {
+        setTitle: setTemplateDraftTitle,
+        setDescription: setTemplateDraftDescription,
+        setPrompt: setTemplateDraftPrompt,
+        setScope: setTemplateDraftScope,
+      },
+      nextDraft.scope,
+    );
+
+    setTemplateDraftTitle(nextDraft.title);
+    setTemplateDraftPrompt(nextDraft.prompt);
+    setTemplateModalOpen(true);
+  }
+
+  async function saveTemplate() {
+    const draft = buildTemplateDraft({
+      scope: templateDraftScope(),
+    });
+    draft.title = templateDraftTitle().trim();
+    draft.description = templateDraftDescription().trim();
+    draft.prompt = templateDraftPrompt().trim();
+
+    if (!draft.title || !draft.prompt) {
+      setError("Template title and prompt are required.");
+      return;
+    }
+
+    if (draft.scope === "workspace") {
+      if (!isTauriRuntime()) {
+        setError("Workspace templates require the desktop app.");
+        return;
+      }
+      if (!activeWorkspacePath().trim()) {
+        setError("Pick a workspace folder first.");
+        return;
+      }
+    }
+
+    setBusy(true);
+    setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const template = createTemplateRecord(draft);
+
+      if (draft.scope === "workspace") {
+        const workspaceRoot = activeWorkspacePath().trim();
+        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } else {
+        setTemplates((current) => [template, ...current]);
+        setGlobalTemplatesLoaded(true);
+      }
+
+      setTemplateModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function deleteTemplate(templateId: string) {
+    const scope = templates().find((t) => t.id === templateId)?.scope;
+
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) return;
+      const workspaceRoot = activeWorkspacePath().trim();
+      if (!workspaceRoot) return;
+
+      setBusy(true);
+      setBusyLabel("Deleting template");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      try {
+        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+      }
+
+      return;
+    }
+
+    setTemplates((current) => current.filter((t) => t.id !== templateId));
+    setGlobalTemplatesLoaded(true);
+  }
+
+  async function runTemplate(template: WorkspaceTemplate) {
+    const c = client();
+    if (!c) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const session = unwrap(
+        await c.session.create({ title: template.title, directory: activeWorkspaceRoot().trim() }),
+      );
+      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() });
+      await selectSession(session.id);
+      setView("session");
+
+      const model = defaultModel();
+
+      await c.session.promptAsync({
+        sessionID: session.id,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: template.prompt }],
+      });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [session.id]: model,
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadWorkspaceTemplates(options?: { workspaceRoot?: string; quiet?: boolean }) {
+    const c = client();
+    const root = (options?.workspaceRoot ?? activeWorkspaceRoot()).trim();
+    if (!c || !root) return;
+
+    try {
+      const templatesPath = ".openwork/templates";
+      const nodes = unwrap(await c.file.list({ directory: root, path: templatesPath }));
+      const jsonFiles = nodes
+        .filter((n) => n.type === "file" && !n.ignored)
+        .filter((n) => n.name.toLowerCase().endsWith(".json"));
+
+      const loaded: WorkspaceTemplate[] = [];
+
+      for (const node of jsonFiles) {
+        const content = unwrap(await c.file.read({ directory: root, path: node.path }));
+        if (content.type !== "text") continue;
+
+        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(content.content);
+        if (!parsed) continue;
+
+        const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
+        const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
+        if (!promptText.trim()) continue;
+
+        loaded.push({
+          id: typeof parsed.id === "string" ? parsed.id : node.name.replace(/\.json$/i, ""),
+          title,
+          description: typeof parsed.description === "string" ? parsed.description : "",
+          prompt: promptText,
+          createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+          scope: "workspace",
+        });
+      }
+
+      const stable = loaded.slice().sort((a, b) => b.createdAt - a.createdAt);
+
+      setTemplates((current) => {
+        const globals = current.filter((t) => t.scope === "global");
+        return [...stable, ...globals];
+      });
+      setWorkspaceTemplatesLoaded(true);
+    } catch (e) {
+      setWorkspaceTemplatesLoaded(true);
+      if (!options?.quiet) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      }
+    }
+  }
+
+  async function refreshSkills() {
+    const c = client();
+    if (!c) return;
+
+    try {
+      setSkillsStatus(null);
+      const nodes = unwrap(await c.file.list({ directory: activeWorkspaceRoot().trim(), path: ".opencode/skill" }));
+
+      const dirs = nodes.filter((n) => n.type === "directory" && !n.ignored);
+
+      const next: SkillCard[] = [];
+
+      for (const dir of dirs) {
+        let description: string | undefined;
+
+        try {
+            const skillDoc = unwrap(
+              await c.file.read({
+                directory: activeWorkspaceRoot().trim(),
+                path: `.opencode/skill/${dir.name}/SKILL.md`,
+              }),
+            );
+
+          if (skillDoc.type === "text") {
+            const lines = skillDoc.content.split("\n");
+            const first = lines
+              .map((l) => l.trim())
+              .filter((l) => l && !l.startsWith("#"))
+              .slice(0, 2)
+              .join(" ");
+            if (first) {
+              description = first;
+            }
+          }
+        } catch {
+          // ignore missing SKILL.md
+        }
+
+        next.push({ name: dir.name, path: dir.path, description });
+      }
+
+      setSkills(next);
+      if (!next.length) {
+        setSkillsStatus("No skills found in .opencode/skill");
+      }
+    } catch (e) {
+      setSkills([]);
+      setSkillsStatus(e instanceof Error ? e.message : "Failed to load skills");
+    }
+  }
+
+  async function refreshPlugins(scopeOverride?: PluginScope) {
+    if (!isTauriRuntime()) {
+      setPluginStatus("Plugin management is only available in Host mode.");
+      setPluginList([]);
+      setSidebarPluginStatus("Plugins are only available in Host mode.");
+      setSidebarPluginList([]);
+      return;
+    }
+
+    const scope = scopeOverride ?? pluginScope();
+    const targetDir = projectDir().trim();
+
+    if (scope === "project" && !targetDir) {
+      setPluginStatus("Pick a project folder to manage project plugins.");
+      setPluginList([]);
+      setSidebarPluginStatus("Pick a project folder to load active plugins.");
+      setSidebarPluginList([]);
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      setSidebarPluginStatus(null);
+      const config = await readOpencodeConfig(scope, targetDir);
+      setPluginConfig(config);
+
+      if (!config.exists) {
+        setPluginList([]);
+        setPluginStatus("No opencode.json found yet. Add a plugin to create one.");
+        setSidebarPluginList([]);
+        setSidebarPluginStatus("No opencode.json in this workspace yet.");
+        return;
+      }
+
+       try {
+         const next = parsePluginListFromContent(config.content ?? "");
+         setSidebarPluginList(next);
+       } catch {
+         setSidebarPluginList([]);
+         setSidebarPluginStatus("Failed to parse opencode.json");
+       }
+
+
+      loadPluginsFromConfig(config);
+    } catch (e) {
+      setPluginConfig(null);
+      setPluginList([]);
+      setPluginStatus(e instanceof Error ? e.message : "Failed to load opencode.json");
+      setSidebarPluginStatus("Failed to load active plugins.");
+      setSidebarPluginList([]);
+    }
+  }
+
+  async function addPlugin(pluginNameOverride?: string) {
+    if (!isTauriRuntime()) {
+      setPluginStatus("Plugin management is only available in Host mode.");
+      return;
+    }
+
+    const pluginName = (pluginNameOverride ?? pluginInput()).trim();
+    const isManualInput = pluginNameOverride == null;
+
+    if (!pluginName) {
+      if (isManualInput) {
+        setPluginStatus("Enter a plugin package name.");
+      }
+      return;
+    }
+
+    const scope = pluginScope();
+    const targetDir = projectDir().trim();
+
+    if (scope === "project" && !targetDir) {
+      setPluginStatus("Pick a project folder to manage project plugins.");
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      const config = await readOpencodeConfig(scope, targetDir);
+      const raw = config.content ?? "";
+
+      if (!raw.trim()) {
+        const payload = {
+          $schema: "https://opencode.ai/config.json",
+          plugin: [pluginName],
+        };
+        await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
+        markReloadRequired("plugins");
+        if (isManualInput) {
+          setPluginInput("");
+        }
+        await refreshPlugins(scope);
+        return;
+      }
+
+      const plugins = parsePluginListFromContent(raw);
+
+      const desired = stripPluginVersion(pluginName).toLowerCase();
+      if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
+        setPluginStatus("Plugin already listed in opencode.json.");
+        return;
+      }
+
+      const next = [...plugins, pluginName];
+      const edits = modify(raw, ["plugin"], next, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt, message });
+    }
+  }
+
+  async function installUpdateAndRestart() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before installing an update.");
+      return;
+    }
+
+    setError(null);
+    try {
+      await pending.update.install();
+      await pending.update.close();
+      await relaunch();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
   async function createSessionAndOpen() {
     const c = client();
     if (!c) return;
