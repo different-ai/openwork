@@ -29,6 +29,7 @@ import Button from "../components/Button";
 import PartView from "../components/PartView";
 import ThinkingBlock, { type ThinkingStep } from "../components/ThinkingBlock";
 import WorkspaceChip from "../components/WorkspaceChip";
+import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -131,6 +132,51 @@ export default function SessionView(props: SessionViewProps) {
 
   const toggleSidebar = (key: "progress" | "artifacts" | "context") => {
     props.setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
+  };
+
+  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
+
+  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
+
+  const resolveArtifactPath = (artifact: ArtifactItem) => {
+    const rawPath = artifact.path?.trim();
+    if (!rawPath) return null;
+    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\//.test(rawPath)) {
+      return rawPath;
+    }
+
+    const root = props.activeWorkspaceDisplay.path?.trim();
+    if (!root) return rawPath;
+
+    const separator = root.includes("\\") ? "\\" : "/";
+    const trimmedRoot = root.replace(/[\\/]+$/, "");
+    const trimmedPath = rawPath.replace(/^[\\/]+/, "");
+    return `${trimmedRoot}${separator}${trimmedPath}`;
+  };
+
+  const handleOpenArtifact = async (artifact: ArtifactItem) => {
+    const resolvedPath = resolveArtifactPath(artifact);
+    if (!resolvedPath) {
+      setArtifactToast("Artifact path missing.");
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setArtifactToast("Open is only available in the desktop app.");
+      return;
+    }
+
+    try {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      if (isWindowsPlatform()) {
+        await openPath(resolvedPath);
+      } else {
+        await revealItemInDir(resolvedPath);
+      }
+      setArtifactToast(artifactActionToast());
+    } catch (error) {
+      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
+    }
   };
 
   return (
@@ -368,12 +414,8 @@ export default function SessionView(props: SessionViewProps) {
                         <div class="text-xs text-zinc-500">Document</div>
                       </div>
                     </div>
-                    <Button
-                      variant="outline"
-                      class="text-xs"
-                      onClick={() => setArtifactToast("Open isn't wired yet — I can hook this to reveal in Finder next.")}
-                    >
-                      Open
+                    <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
+                      {artifactActionLabel()}
                     </Button>
                   </div>
                 )}
