@@ -27,10 +27,9 @@ pub fn serialize_template_frontmatter(template: &WorkspaceTemplate) -> Result<St
   out.push_str("---\n");
   out.push_str(&format!("id: {}\n", escape_yaml_scalar(&template.id)));
   out.push_str(&format!("title: {}\n", escape_yaml_scalar(&template.title)));
-  out.push_str(&format!(
-    "description: {}\n",
-    escape_yaml_scalar(&template.description),
-  )));
+  out.push_str("description: ");
+  out.push_str(&escape_yaml_scalar(&template.description));
+  out.push_str("\n");
   out.push_str(&format!("createdAt: {}\n", template.created_at));
   out.push_str("---\n\n");
   out.push_str(template.prompt.trim_end());
