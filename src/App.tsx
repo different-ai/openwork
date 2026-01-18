@@ -68,6 +68,7 @@ import {
   isWindowsPlatform,
   lastUserModelFromMessages,
   parseModelRef,
+  parseTemplateFrontmatter,
   readModePreference,
   safeParseJson,
   safeStringify,
@@ -1293,31 +1294,88 @@ export default function App() {
     try {
       const templatesPath = ".openwork/templates";
       const nodes = unwrap(await c.file.list({ directory: root, path: templatesPath }));
-      const jsonFiles = nodes
-        .filter((n) => n.type === "file" && !n.ignored)
-        .filter((n) => n.name.toLowerCase().endsWith(".json"));
+      const entries = nodes.filter((n) => !n.ignored);
+      const templateFiles = entries.filter((n) => n.type === "file");
+      const templateDirs = entries.filter((n) => n.type === "directory");
 
       const loaded: WorkspaceTemplate[] = [];
+      const seenIds = new Set<string>();
 
-      for (const node of jsonFiles) {
-        const content = unwrap(await c.file.read({ directory: root, path: node.path }));
-        if (content.type !== "text") continue;
+      const pushTemplate = (template: WorkspaceTemplate) => {
+        if (seenIds.has(template.id)) return;
+        seenIds.add(template.id);
+        loaded.push(template);
+      };
 
-        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(content.content);
-        if (!parsed) continue;
+      const parseTemplateContent = (raw: string, fallbackId: string) => {
+        const parsedFrontmatter = parseTemplateFrontmatter(raw);
+        if (parsedFrontmatter) {
+          const meta = parsedFrontmatter.data;
+          const title = typeof meta.title === "string" ? meta.title : "Untitled";
+          const promptText = parsedFrontmatter.body ?? "";
+          if (!promptText.trim()) return false;
+
+          const createdAtValue = Number(meta.createdAt);
+          pushTemplate({
+            id: typeof meta.id === "string" ? meta.id : fallbackId,
+            title,
+            description: typeof meta.description === "string" ? meta.description : "",
+            prompt: promptText,
+            createdAt: Number.isFinite(createdAtValue) && createdAtValue > 0 ? createdAtValue : Date.now(),
+            scope: "workspace",
+          });
+          return true;
+        }
+
+        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(raw);
+        if (!parsed) return false;
 
         const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
         const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
-        if (!promptText.trim()) continue;
+        if (!promptText.trim()) return false;
 
-        loaded.push({
-          id: typeof parsed.id === "string" ? parsed.id : node.name.replace(/\.json$/i, ""),
+        pushTemplate({
+          id: typeof parsed.id === "string" ? parsed.id : fallbackId,
           title,
           description: typeof parsed.description === "string" ? parsed.description : "",
           prompt: promptText,
           createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
           scope: "workspace",
         });
+
+        return true;
+      };
+
+      const readTemplatePath = async (path: string, fallbackId: string) => {
+        try {
+          const content = unwrap(await c.file.read({ directory: root, path }));
+          if (content.type !== "text") return false;
+          return parseTemplateContent(content.content, fallbackId);
+        } catch {
+          return false;
+        }
+      };
+
+      for (const dir of templateDirs) {
+        const basePath = `${templatesPath}/${dir.name}`;
+        const candidates = [`${basePath}/template.yml`, `${basePath}/template.yaml`, `${basePath}/template.json`];
+        for (const candidate of candidates) {
+          const loadedTemplate = await readTemplatePath(candidate, dir.name);
+          if (loadedTemplate) break;
+        }
+      }
+
+      const frontmatterFiles = templateFiles.filter((n) => /\.(yml|yaml)$/i.test(n.name));
+      const jsonFiles = templateFiles.filter((n) => n.name.toLowerCase().endsWith(".json"));
+
+      for (const node of frontmatterFiles) {
+        const fallbackId = node.name.replace(/\.(yml|yaml)$/i, "");
+        await readTemplatePath(node.path, fallbackId);
+      }
+
+      for (const node of jsonFiles) {
+        const fallbackId = node.name.replace(/\.json$/i, "");
+        await readTemplatePath(node.path, fallbackId);
       }
 
       const stable = loaded.slice().sort((a, b) => b.createdAt - a.createdAt);

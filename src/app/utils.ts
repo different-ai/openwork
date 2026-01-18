@@ -222,7 +222,7 @@ export function templatePathFromWorkspaceRoot(workspaceRoot: string, templateId:
   const root = workspaceRoot.trim().replace(/\/+$/, "");
   const id = templateId.trim();
   if (!root || !id) return null;
-  return `${root}/.openwork/templates/${id}.json`;
+  return `${root}/.openwork/templates/${id}/template.yml`;
 }
 
 export function safeParseJson<T>(raw: string): T | null {
@@ -231,6 +231,58 @@ export function safeParseJson<T>(raw: string): T | null {
   } catch {
     return null;
   }
+}
+
+export function parseTemplateFrontmatter(raw: string) {
+  const trimmed = raw.trimStart();
+  if (!trimmed.startsWith("---")) return null;
+  const endIndex = trimmed.indexOf("\n---", 3);
+  if (endIndex === -1) return null;
+  const header = trimmed.slice(3, endIndex).trim();
+  const body = trimmed.slice(endIndex + 4).replace(/^\r?\n/, "");
+  const data: Record<string, string> = {};
+
+  const unescapeValue = (value: string) => {
+    if (value.startsWith("\"") && value.endsWith("\"")) {
+      const inner = value.slice(1, -1);
+      return inner.replace(/\\(\\|\"|n|r|t)/g, (_match, code) => {
+        switch (code) {
+          case "n":
+            return "\n";
+          case "r":
+            return "\r";
+          case "t":
+            return "\t";
+          case "\\":
+            return "\\";
+          case "\"":
+            return "\"";
+          default:
+            return code;
+        }
+      });
+    }
+
+    if (value.startsWith("'") && value.endsWith("'")) {
+      return value.slice(1, -1).replace(/''/g, "'");
+    }
+
+    return value;
+  };
+
+  for (const line of header.split(/\r?\n/)) {
+    const entry = line.trim();
+    if (!entry) continue;
+    const colonIndex = entry.indexOf(":");
+    if (colonIndex === -1) continue;
+    const key = entry.slice(0, colonIndex).trim();
+    let value = entry.slice(colonIndex + 1).trim();
+    if (!key) continue;
+    value = unescapeValue(value);
+    data[key] = value;
+  }
+
+  return { data, body };
 }
 
 export function upsertSession(list: Session[], next: Session) {
