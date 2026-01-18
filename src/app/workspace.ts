@@ -263,7 +263,7 @@ export function createWorkspaceStore(options: {
                 {
                   type: "text",
                   text:
-                    "Load the `workspace_guide` skill from this workspace and give a short, welcoming overview of what lives here (skills, plugins, templates) versus what's global. Avoid CLI language or raw file paths. Then suggest two friendly next actions to try inside OpenWork.",
+                    "Give a short, welcoming overview of this workspace and how to use OpenWork. If a workspace guide skill is available, use it. Avoid CLI language or raw file paths. End with two friendly next actions to try inside OpenWork.",
                 },
               ],
             });

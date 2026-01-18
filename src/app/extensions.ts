@@ -39,7 +39,7 @@ export function createExtensionsStore(options: {
   const [packageSearch, setPackageSearch] = createSignal("");
 
   const skillDocFallbacks: Record<string, string> = {
-    workspace_guide: "Starter workspace guide. Explains what lives in this workspace and what to try next.",
+    "workspace-guide": "Workspace guide that introduces OpenWork and suggests first steps.",
   };
   const failedSkillDocs = new Set<string>();
   const skillDocKey = (root: string, name: string) => `${root}::${name}`;
