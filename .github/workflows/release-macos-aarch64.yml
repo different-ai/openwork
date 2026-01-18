@@ -142,6 +142,10 @@ jobs:
             os_type: windows
             target: x86_64-pc-windows-msvc
             args: "--target x86_64-pc-windows-msvc --bundles msi"
+          - platform: ubuntu-22.04
+            os_type: linux
+            target: x86_64-unknown-linux-gnu
+            args: "--target x86_64-unknown-linux-gnu --bundles deb,appimage"
 
     steps:
       - name: Set release metadata
@@ -216,6 +220,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Install Linux build dependencies
+        if: matrix.os_type == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            libappindicator3-dev \
+            librsvg2-dev
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -267,6 +286,27 @@ jobs:
 
       - name: Build + upload (Windows)
         if: matrix.os_type == 'windows'
+        uses: tauri-apps/tauri-action@v0.5.17
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
+          projectPath: .
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+
+      - name: Build + upload (Linux)
+        if: matrix.os_type == 'linux'
         uses: tauri-apps/tauri-action@v0.5.17
         env:
           CI: true
@@ -351,3 +391,40 @@ jobs:
           } else {
             Write-Host "No latest.json found in bundle; skipping."
           }
+
+      - name: Upload updater artifacts (Linux)
+        if: matrix.os_type == 'linux'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          BUNDLE_ROOT="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle"
+          if [ ! -d "$BUNDLE_ROOT" ]; then
+            echo "No bundle directory found at $BUNDLE_ROOT; skipping."
+            exit 0
+          fi
+
+          ARCHIVE_PATH=$(find "$BUNDLE_ROOT" -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" \) | head -n 1 || true)
+          if [ -z "$ARCHIVE_PATH" ]; then
+            echo "No updater archive found under $BUNDLE_ROOT; skipping."
+            exit 0
+          fi
+
+          SIG_PATH="$ARCHIVE_PATH.sig"
+          if [ ! -f "$SIG_PATH" ]; then
+            SIG_PATH=$(find "$BUNDLE_ROOT" -type f -name "*.sig" | head -n 1 || true)
+            if [ -z "$SIG_PATH" ]; then
+              echo "No updater signature found for $ARCHIVE_PATH; skipping."
+              exit 0
+            fi
+          fi
+
+          gh release upload "$RELEASE_TAG" "$ARCHIVE_PATH" "$SIG_PATH" --clobber
+
+          LATEST_JSON=$(find "$BUNDLE_ROOT" -type f -name "latest.json" | head -n 1 || true)
+          if [ -n "$LATEST_JSON" ]; then
+            gh release upload "$RELEASE_TAG" "$LATEST_JSON" --clobber
+          else
+            echo "No latest.json found in bundle; skipping."
+          fi
