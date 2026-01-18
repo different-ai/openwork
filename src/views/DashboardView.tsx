@@ -60,6 +60,7 @@ export type DashboardViewProps = {
   setTemplateDraftPrompt: (value: string) => void;
   setTemplateDraftScope: (value: "workspace" | "global") => void;
   openTemplateModal: () => void;
+  resetTemplateDraft?: (scope?: "workspace" | "global") => void;
   runTemplate: (template: WorkspaceTemplate) => void;
   deleteTemplate: (templateId: string) => void;
   refreshSkills: () => void;
@@ -287,10 +288,17 @@ export default function DashboardView(props: DashboardViewProps) {
               <Button
                 variant="secondary"
                 onClick={() => {
-                  props.setTemplateDraftTitle("");
-                  props.setTemplateDraftDescription("");
-                  props.setTemplateDraftPrompt("");
-                  props.openTemplateModal();
+                    const reset = props.resetTemplateDraft;
+                    if (reset) {
+                      reset("workspace");
+                    } else {
+                      props.setTemplateDraftTitle("");
+                      props.setTemplateDraftDescription("");
+                      props.setTemplateDraftPrompt("");
+                      props.setTemplateDraftScope("workspace");
+                    }
+                    props.openTemplateModal();
+
                 }}
                 disabled={props.busy}
               >
@@ -472,10 +480,15 @@ export default function DashboardView(props: DashboardViewProps) {
                   <Button
                     variant="secondary"
                     onClick={() => {
-                      props.setTemplateDraftTitle("");
-                      props.setTemplateDraftDescription("");
-                      props.setTemplateDraftPrompt("");
-                      props.setTemplateDraftScope("workspace");
+                      const reset = props.resetTemplateDraft;
+                      if (reset) {
+                        reset("workspace");
+                      } else {
+                        props.setTemplateDraftTitle("");
+                        props.setTemplateDraftDescription("");
+                        props.setTemplateDraftPrompt("");
+                        props.setTemplateDraftScope("workspace");
+                      }
                       props.openTemplateModal();
                     }}
                     disabled={props.busy}
