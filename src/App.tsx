@@ -54,6 +54,7 @@ import type {
   WorkspaceOpenworkConfig,
   WorkspacePreset,
   WorkspaceTemplate,
+  UpdateHandle,
 } from "./app/types";
 import {
   clearModePreference,
