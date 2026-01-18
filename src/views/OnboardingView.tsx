@@ -99,153 +99,165 @@ export default function OnboardingView(props: OnboardingViewProps) {
                  <div class="space-y-2">
                    <div class="text-sm font-medium text-white">Starter Workspace</div>
                    <div class="text-xs text-zinc-500">
-                     OpenWork will create a ready-to-run folder and start OpenCode inside it.
+                     OpenWork will create a ready-to-run folder and get everything set up for you.
                    </div>
                   <div class={`text-xs ${props.developerMode ? "text-zinc-600 font-mono" : "text-zinc-500"} break-all`}>
                     {props.developerMode ? props.activeWorkspacePath || "(initializing...)" : "A starter workspace will be created for you."}
                   </div>
+                </div>
 
-                 </div>
- 
-                 <div class="pt-3 border-t border-zinc-800/60 space-y-2">
-                   <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
-                   <div class="space-y-2">
-                     <div class="flex items-center gap-3 text-sm text-zinc-300">
-                       <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                       Scheduler plugin (workspace-scoped)
-                     </div>
-                     <div class="flex items-center gap-3 text-sm text-zinc-300">
-                       <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                       Starter templates ("Understand this workspace", etc.)
-                     </div>
-                     <div class="flex items-center gap-3 text-sm text-zinc-300">
-                       <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                       You can add more folders when prompted
-                     </div>
-                   </div>
-                 </div>
-               </div>
- 
-               <Button onClick={props.onStartHost} disabled={props.busy || !props.activeWorkspacePath.trim()} class="w-full py-3 text-base">
-                 Start Workspace
-               </Button>
- 
-               <details class="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3">
-                 <summary class="flex items-center justify-between cursor-pointer text-xs text-zinc-500">
-                   Advanced settings
-                   <ChevronDown size={14} class="text-zinc-600" />
-                 </summary>
-                 <div class="pt-3 space-y-3">
-                   <div class="text-xs text-zinc-600">
-                     Authorized folders live in <span class="font-mono">.opencode/openwork.json</span> and can be updated here anytime.
-                   </div>
- 
-                   <div class="space-y-3">
-                     <div class="flex gap-2">
-                       <input
-                         class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
-                         placeholder="Add folder path"
-                         value={props.newAuthorizedDir}
-                         onInput={(e) => props.onSetAuthorizedDir(e.currentTarget.value)}
-                         onKeyDown={(e) => {
-                           if (e.key === "Enter") {
-                             props.onAddAuthorizedDir();
-                           }
-                         }}
-                       />
-                       <Show when={isTauriRuntime()}>
-                         <Button variant="outline" onClick={props.onAddAuthorizedDirFromPicker} disabled={props.busy}>
-                           Pick
-                         </Button>
-                       </Show>
-                       <Button variant="secondary" onClick={props.onAddAuthorizedDir} disabled={!props.newAuthorizedDir.trim()}>
-                         Add
-                       </Button>
-                     </div>
- 
-                     <Show when={props.authorizedDirs.length}>
-                       <div class="space-y-2">
-                         <For each={props.authorizedDirs}>
-                           {(dir, idx) => (
-                             <div class="flex items-center justify-between gap-3 rounded-xl bg-black/20 border border-zinc-800 px-3 py-2">
-                               <div class="min-w-0 text-xs font-mono text-zinc-300 truncate">{dir}</div>
-                               <Button
-                                 variant="ghost"
-                                 class="!p-2 rounded-lg text-xs text-zinc-400 hover:text-white"
-                                 onClick={() => props.onRemoveAuthorizedDir(idx())}
-                                 disabled={props.busy}
-                                 title="Remove"
-                               >
-                                 Remove
-                               </Button>
-                             </div>
-                           )}
-                         </For>
-                       </div>
-                     </Show>
-                   </div>
- 
-                   <Show when={isTauriRuntime() && props.developerMode}>
-                     <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
-                       <div class="flex items-start justify-between gap-4">
-                         <div class="min-w-0">
-                           <div class="text-sm font-medium text-white">OpenCode CLI</div>
-                           <div class="mt-1 text-xs text-zinc-500">
-                             <Show when={props.engineDoctorFound != null} fallback={<span>Checking install...</span>}>
-                               <Show when={props.engineDoctorFound} fallback={<span>Not found. Install to run Host mode.</span>}>
-                                 <span class="font-mono">{props.engineDoctorVersion ?? "Installed"}</span>
-                                 <Show when={props.engineDoctorResolvedPath}>
-                                   <span class="text-zinc-600"> · </span>
-                                   <span class="font-mono text-zinc-600 truncate">{props.engineDoctorResolvedPath}</span>
-                                 </Show>
-                               </Show>
-                             </Show>
-                           </div>
-                         </div>
- 
-                         <Button variant="secondary" onClick={props.onRefreshEngineDoctor} disabled={props.busy}>
-                           Re-check
-                         </Button>
-                       </div>
- 
-                       <Show when={props.engineDoctorFound === false}>
-                         <div class="mt-4 space-y-2">
-                           <div class="text-xs text-zinc-500">
-                             {isWindowsPlatform()
-                               ? "Install OpenCode with one of the commands below, then restart OpenWork."
-                               : "Install OpenCode from https://opencode.ai/install"}
-                           </div>
-                           <Show when={isWindowsPlatform()}>
-                             <div class="text-xs text-zinc-500 space-y-1 font-mono">
-                               <div>choco install opencode</div>
-                               <div>scoop install extras/opencode</div>
-                               <div>npm install -g opencode-ai</div>
-                             </div>
-                           </Show>
-                           <div class="flex gap-2 pt-2">
-                             <Button onClick={props.onInstallEngine} disabled={props.busy}>
-                               Install OpenCode
-                             </Button>
-                             <Button variant="outline" onClick={props.onShowSearchNotes} disabled={props.busy}>
-                               Show search notes
-                             </Button>
-                           </div>
-                         </div>
-                       </Show>
- 
-                       <Show when={props.engineInstallLogs}>
-                         <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{props.engineInstallLogs}</pre>
-                       </Show>
- 
-                       <Show when={props.engineDoctorCheckedAt}>
-                         <div class="mt-3 text-[11px] text-zinc-600">
-                           Last checked {props.engineDoctorCheckedAt ? new Date(props.engineDoctorCheckedAt).toLocaleTimeString() : ""}
-                         </div>
-                       </Show>
-                     </div>
-                   </Show>
-                 </div>
-               </details>
+                <div class="pt-3 border-t border-zinc-800/60 space-y-2">
+                  <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
+                  <div class="space-y-2">
+                    <div class="flex items-center gap-3 text-sm text-zinc-300">
+                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                      Scheduler plugin (workspace-scoped)
+                    </div>
+                    <div class="flex items-center gap-3 text-sm text-zinc-300">
+                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                      Starter templates ("Understand this workspace", etc.)
+                    </div>
+                    <div class="flex items-center gap-3 text-sm text-zinc-300">
+                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
+                      Add more folders when prompted
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-zinc-800 bg-zinc-950/50 px-4 py-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Access</div>
+                    <div class="mt-1 text-sm text-white">{props.authorizedDirs.length} folder{props.authorizedDirs.length === 1 ? "" : "s"} allowed</div>
+                    <div class="text-xs text-zinc-500">You can manage access in advanced settings.</div>
+                  </div>
+                  <div class="text-xs text-zinc-600 font-mono truncate max-w-[9rem]">
+                    <Show when={props.developerMode}>{props.authorizedDirs[0] ?? ""}</Show>
+                  </div>
+                </div>
+              </div>
+
+              <Button onClick={props.onStartHost} disabled={props.busy || !props.activeWorkspacePath.trim()} class="w-full py-3 text-base">
+                Start OpenWork
+              </Button>
+
+              <details class="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3">
+                <summary class="flex items-center justify-between cursor-pointer text-xs text-zinc-500">
+                  Advanced settings
+                  <ChevronDown size={14} class="text-zinc-600" />
+                </summary>
+                <div class="pt-3 space-y-3">
+                  <div class="text-xs text-zinc-500">
+                    Manage which folders OpenWork can access.
+                  </div>
+
+                  <div class="space-y-3">
+                    <div class="flex gap-2">
+                      <input
+                        class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
+                        placeholder="Add folder path"
+                        value={props.newAuthorizedDir}
+                        onInput={(e) => props.onSetAuthorizedDir(e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            props.onAddAuthorizedDir();
+                          }
+                        }}
+                      />
+                      <Show when={isTauriRuntime()}>
+                        <Button variant="outline" onClick={props.onAddAuthorizedDirFromPicker} disabled={props.busy}>
+                          Pick
+                        </Button>
+                      </Show>
+                      <Button variant="secondary" onClick={props.onAddAuthorizedDir} disabled={!props.newAuthorizedDir.trim()}>
+                        Add
+                      </Button>
+                    </div>
+
+                    <Show when={props.authorizedDirs.length}>
+                      <div class="space-y-2">
+                        <For each={props.authorizedDirs}>
+                          {(dir, idx) => (
+                            <div class="flex items-center justify-between gap-3 rounded-xl bg-black/20 border border-zinc-800 px-3 py-2">
+                              <div class="min-w-0 text-xs font-mono text-zinc-300 truncate">{dir}</div>
+                              <Button
+                                variant="ghost"
+                                class="!p-2 rounded-lg text-xs text-zinc-400 hover:text-white"
+                                onClick={() => props.onRemoveAuthorizedDir(idx())}
+                                disabled={props.busy}
+                                title="Remove"
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+
+                  <Show when={isTauriRuntime() && props.developerMode}>
+                    <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4">
+                      <div class="flex items-start justify-between gap-4">
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium text-white">OpenCode CLI</div>
+                          <div class="mt-1 text-xs text-zinc-500">
+                            <Show when={props.engineDoctorFound != null} fallback={<span>Checking install...</span>}>
+                              <Show when={props.engineDoctorFound} fallback={<span>Not found. Install to run Host mode.</span>}>
+                                <span class="font-mono">{props.engineDoctorVersion ?? "Installed"}</span>
+                                <Show when={props.engineDoctorResolvedPath}>
+                                  <span class="text-zinc-600"> · </span>
+                                  <span class="font-mono text-zinc-600 truncate">{props.engineDoctorResolvedPath}</span>
+                                </Show>
+                              </Show>
+                            </Show>
+                          </div>
+                        </div>
+
+                        <Button variant="secondary" onClick={props.onRefreshEngineDoctor} disabled={props.busy}>
+                          Re-check
+                        </Button>
+                      </div>
+
+                      <Show when={props.engineDoctorFound === false}>
+                        <div class="mt-4 space-y-2">
+                          <div class="text-xs text-zinc-500">
+                            {isWindowsPlatform()
+                              ? "Install OpenCode with one of the commands below, then restart OpenWork."
+                              : "Install OpenCode from https://opencode.ai/install"}
+                          </div>
+                          <Show when={isWindowsPlatform()}>
+                            <div class="text-xs text-zinc-500 space-y-1 font-mono">
+                              <div>choco install opencode</div>
+                              <div>scoop install extras/opencode</div>
+                              <div>npm install -g opencode-ai</div>
+                            </div>
+                          </Show>
+                          <div class="flex gap-2 pt-2">
+                            <Button onClick={props.onInstallEngine} disabled={props.busy}>
+                              Install OpenCode
+                            </Button>
+                            <Button variant="outline" onClick={props.onShowSearchNotes} disabled={props.busy}>
+                              Show search notes
+                            </Button>
+                          </div>
+                        </div>
+                      </Show>
+
+                      <Show when={props.engineInstallLogs}>
+                        <pre class="mt-4 max-h-48 overflow-auto rounded-xl bg-black/50 border border-zinc-800 p-3 text-xs text-zinc-300 whitespace-pre-wrap">{props.engineInstallLogs}</pre>
+                      </Show>
+
+                      <Show when={props.engineDoctorCheckedAt}>
+                        <div class="mt-3 text-[11px] text-zinc-600">
+                          Last checked {props.engineDoctorCheckedAt ? new Date(props.engineDoctorCheckedAt).toLocaleTimeString() : ""}
+                        </div>
+                      </Show>
+                    </div>
+                  </Show>
+                </div>
+              </details>
  
                <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
                  Back
@@ -351,6 +363,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-5 flex items-center justify-between">
                   <div>
                     <div class="text-sm text-white font-medium">Engine already running</div>
+                    <div class="text-xs text-zinc-500">Attach to the existing session on this device.</div>
                     <Show when={props.developerMode}>
                       <div class="text-xs text-zinc-500 font-mono truncate max-w-[14rem] md:max-w-[22rem]">
                         {props.engineBaseUrl}
