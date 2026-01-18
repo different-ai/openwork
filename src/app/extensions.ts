@@ -38,6 +38,12 @@ export function createExtensionsStore(options: {
   const [openPackageSource, setOpenPackageSource] = createSignal("");
   const [packageSearch, setPackageSearch] = createSignal("");
 
+  const skillDocFallbacks: Record<string, string> = {
+    workspace_guide: "Starter workspace guide. Explains what lives in this workspace and what to try next.",
+  };
+  const failedSkillDocs = new Set<string>();
+  const skillDocKey = (root: string, name: string) => `${root}::${name}`;
+
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
@@ -68,14 +74,23 @@ export function createExtensionsStore(options: {
       const dirs = nodes.filter((n) => n.type === "directory" && !n.ignored);
 
       const next: SkillCard[] = [];
+      const root = options.activeWorkspaceRoot().trim();
 
       for (const dir of dirs) {
         let description: string | undefined;
+        const fallback = skillDocFallbacks[dir.name];
+        const docKey = skillDocKey(root, dir.name);
+
+        if (fallback && failedSkillDocs.has(docKey)) {
+          description = fallback;
+          next.push({ name: dir.name, path: dir.path, description });
+          continue;
+        }
 
         try {
           const skillDoc = unwrap(
             await c.file.read({
-              directory: options.activeWorkspaceRoot().trim(),
+              directory: root,
               path: `.opencode/skill/${dir.name}/SKILL.md`,
             }),
           );
@@ -92,7 +107,10 @@ export function createExtensionsStore(options: {
             }
           }
         } catch {
-          // ignore missing SKILL.md
+          if (fallback) {
+            failedSkillDocs.add(docKey);
+            description = fallback;
+          }
         }
 
         next.push({ name: dir.name, path: dir.path, description });
