@@ -26,6 +26,8 @@ import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   CURATED_PACKAGES,
   DEFAULT_MODEL,
+  DEMO_MODE_PREF_KEY,
+  DEMO_SEQUENCE_PREF_KEY,
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
@@ -35,6 +37,8 @@ import type {
   Client,
   CuratedPackage,
   DashboardTab,
+  DemoSequence,
+  MessageWithParts,
   Mode,
   ModelOption,
   ModelRef,
@@ -43,6 +47,7 @@ import type {
   ReloadReason,
   ResetOpenworkMode,
   SkillCard,
+  TodoItem,
   View,
   WorkspaceDisplay,
   WorkspaceTemplate,
@@ -147,19 +152,292 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
+  const [demoMode, setDemoMode] = createSignal(false);
+  const [demoSequence, setDemoSequence] = createSignal<DemoSequence>("cold-open");
+
+  const [demoSessions, setDemoSessions] = createSignal<ReturnType<typeof sessions>>([]);
+  const [demoSessionStatusById, setDemoSessionStatusById] = createSignal<Record<string, string>>({});
+  const [demoMessages, setDemoMessages] = createSignal<MessageWithParts[]>([]);
+  const [demoTodos, setDemoTodos] = createSignal<TodoItem[]>([]);
+  const [demoArtifacts, setDemoArtifacts] = createSignal<ReturnType<typeof deriveArtifacts>>([]);
+  const [demoSelectedSessionId, setDemoSelectedSessionId] = createSignal<string | null>(null);
+  const [demoWorkingFiles, setDemoWorkingFiles] = createSignal<string[]>([]);
+  const [demoAuthorizedDirs, setDemoAuthorizedDirs] = createSignal<string[]>([]);
+  const [demoActiveWorkspaceDisplay, setDemoActiveWorkspaceDisplay] = createSignal<WorkspaceDisplay>({
+    id: "demo",
+    name: "Demo",
+    path: "~/OpenWork Demo",
+    preset: "starter",
+  });
+
+  const isDemoMode = createMemo(() => demoMode());
+
+  function setDemoSequenceState(sequence: DemoSequence) {
+    const now = Date.now();
+
+    setDemoSelectedSessionId(null);
+
+    const makeToolPart = (tool: string, title: string, output: string, path?: string) => ({
+      id: `tool-${sequence}-${Math.random().toString(36).slice(2, 8)}`,
+      type: "tool",
+      sessionID: `demo-${sequence}`,
+      messageID: `msg-${sequence}-assistant`,
+      tool,
+      state: {
+        status: "completed",
+        title,
+        output,
+        ...(path ? { path } : {}),
+      },
+    } as any);
+
+    const makeTextPart = (text: string) => ({
+      id: `text-${sequence}-${Math.random().toString(36).slice(2, 8)}`,
+      type: "text",
+      sessionID: `demo-${sequence}`,
+      messageID: `msg-${sequence}-assistant`,
+      text,
+    } as any);
+
+    const baseSession = {
+      id: `demo-${sequence}`,
+      slug: "demo",
+      title: "Demo run",
+      directory: "~/OpenWork Demo",
+      time: { updated: now },
+    } as any;
+
+    const baseUser = {
+      id: `msg-${sequence}-user`,
+      sessionID: baseSession.id,
+      role: "user",
+      time: { created: now - 120000 },
+    } as any;
+
+    const baseAssistant = {
+      id: `msg-${sequence}-assistant`,
+      sessionID: baseSession.id,
+      role: "assistant",
+      time: { created: now - 90000 },
+    } as any;
+
+    if (sequence === "cold-open") {
+      const parts = [
+        makeTextPart("Scheduled weekly finance recap and prepared the grocery draft."),
+        makeToolPart(
+          "schedule_job",
+          "Scheduled weekly finance recap",
+          "Next run: Monday 9:00 AM",
+        ),
+        makeToolPart(
+          "read",
+          "Summarized meeting notes",
+          "Generated notes summary: highlights + follow-ups.",
+          "notes/summary.md",
+        ),
+        makeToolPart(
+          "write",
+          "Prepared grocery order",
+          "Cart ready with 14 items.",
+          "home/grocery-list.md",
+        ),
+      ];
+
+      const messages = [
+        { info: baseUser, parts: [{ type: "text", text: "Run the weekly stack." } as any] },
+        { info: baseAssistant, parts },
+      ];
+
+      setDemoActiveWorkspaceDisplay({
+        id: "demo",
+        name: "Home",
+        path: "~/OpenWork Demo",
+        preset: "starter",
+      });
+      setDemoSessions([baseSession]);
+      setDemoSessionStatusById({ [baseSession.id]: "completed" });
+      setDemoMessages(messages);
+      setDemoTodos([
+        { id: "cold-1", content: "Schedule recurring recap", status: "completed", priority: "high" },
+        { id: "cold-2", content: "Summarize notes", status: "completed", priority: "medium" },
+        { id: "cold-3", content: "Prepare grocery order", status: "completed", priority: "medium" },
+      ]);
+      setDemoAuthorizedDirs(["~/OpenWork Demo", "~/Documents/Notes"]);
+      setDemoSelectedSessionId(baseSession.id);
+      const derived = deriveArtifacts(messages as MessageWithParts[]);
+      setDemoArtifacts(derived);
+      setDemoWorkingFiles(deriveWorkingFiles(derived));
+      return;
+    }
+
+    if (sequence === "scheduler") {
+      const parts = [
+        makeTextPart("Scheduled finance recap and weekly report export."),
+        makeToolPart(
+          "schedule_job",
+          "Weekly finance recap",
+          "Next run: Monday 9:00 AM",
+        ),
+        makeToolPart(
+          "schedule_job",
+          "Weekly report export",
+          "Next run: Friday 4:00 PM",
+        ),
+      ];
+
+      const messages = [
+        { info: baseUser, parts: [{ type: "text", text: "Set up weekly finance jobs." } as any] },
+        { info: baseAssistant, parts },
+      ];
+
+      setDemoActiveWorkspaceDisplay({
+        id: "demo-finance",
+        name: "Finance",
+        path: "~/OpenWork Demo/finance",
+        preset: "starter",
+      });
+      setDemoSessions([{ ...baseSession, title: "Weekly finance recap" }]);
+      setDemoSessionStatusById({ [baseSession.id]: "completed" });
+      setDemoMessages(messages);
+      setDemoTodos([
+        { id: "sched-1", content: "Create weekly recap", status: "completed", priority: "high" },
+        { id: "sched-2", content: "Schedule export", status: "completed", priority: "medium" },
+      ]);
+      setDemoAuthorizedDirs(["~/OpenWork Demo/finance"]);
+      setDemoSelectedSessionId(baseSession.id);
+      const derived = deriveArtifacts(messages as MessageWithParts[]);
+      setDemoArtifacts(derived);
+      setDemoWorkingFiles(deriveWorkingFiles(derived));
+      return;
+    }
+
+    if (sequence === "summaries") {
+      const parts = [
+        makeTextPart("Compiled the latest meeting notes and flagged action items."),
+        makeToolPart(
+          "read",
+          "Summarized Q1 planning notes",
+          "Summary saved with 6 action items.",
+          "notes/summary.md",
+        ),
+        makeToolPart(
+          "write",
+          "Created follow-up list",
+          "Action items captured in follow-ups.md",
+          "notes/follow-ups.md",
+        ),
+      ];
+
+      const messages = [
+        { info: baseUser, parts: [{ type: "text", text: "Summarize the latest notes." } as any] },
+        { info: baseAssistant, parts },
+      ];
+
+      setDemoActiveWorkspaceDisplay({
+        id: "demo-notes",
+        name: "Notes",
+        path: "~/OpenWork Demo/notes",
+        preset: "starter",
+      });
+      setDemoSessions([{ ...baseSession, title: "Notes summary" }]);
+      setDemoSessionStatusById({ [baseSession.id]: "completed" });
+      setDemoMessages(messages);
+      setDemoTodos([
+        { id: "sum-1", content: "Read recent notes", status: "completed", priority: "high" },
+        { id: "sum-2", content: "Create summary", status: "completed", priority: "medium" },
+        { id: "sum-3", content: "Publish follow-ups", status: "completed", priority: "medium" },
+      ]);
+      setDemoAuthorizedDirs(["~/OpenWork Demo/notes"]);
+      setDemoSelectedSessionId(baseSession.id);
+      const derived = deriveArtifacts(messages as MessageWithParts[]);
+      setDemoArtifacts(derived);
+      setDemoWorkingFiles(deriveWorkingFiles(derived));
+      return;
+    }
+
+    const parts = [
+      makeTextPart("Prepared a checkout-ready grocery cart from this week's meal plan."),
+      makeToolPart(
+        "read",
+        "Parsed meal plan",
+        "Identified 14 ingredients needed.",
+        "home/meal-plan.md",
+      ),
+      makeToolPart(
+        "write",
+        "Generated grocery list",
+        "Grocery list ready for review.",
+        "home/grocery-list.md",
+      ),
+      makeToolPart(
+        "tool.browser",
+        "Built Instacart draft",
+        "Cart ready with 14 items.",
+      ),
+    ];
+
+    const messages = [
+      { info: baseUser, parts: [{ type: "text", text: "Prep grocery order for this week." } as any] },
+      { info: baseAssistant, parts },
+    ];
+
+    setDemoActiveWorkspaceDisplay({
+      id: "demo-home",
+      name: "Home",
+      path: "~/OpenWork Demo/home",
+      preset: "starter",
+    });
+    setDemoSessions([{ ...baseSession, title: "Grocery order" }]);
+    setDemoSessionStatusById({ [baseSession.id]: "completed" });
+    setDemoMessages(messages);
+    setDemoTodos([
+      { id: "gro-1", content: "Read meal plan", status: "completed", priority: "high" },
+      { id: "gro-2", content: "Generate list", status: "completed", priority: "medium" },
+      { id: "gro-3", content: "Prepare checkout cart", status: "completed", priority: "medium" },
+    ]);
+    setDemoAuthorizedDirs(["~/OpenWork Demo/home"]);
+    setDemoSelectedSessionId(baseSession.id);
+    const derived = deriveArtifacts(messages as MessageWithParts[]);
+    setDemoArtifacts(derived);
+    setDemoWorkingFiles(deriveWorkingFiles(derived));
+  }
+
   const artifacts = createMemo(() => deriveArtifacts(messages()));
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
+
+  const activeSessionId = createMemo(() => (isDemoMode() ? demoSelectedSessionId() : selectedSessionId()));
+  const activeSessions = createMemo(() => (isDemoMode() ? demoSessions() : sessions()));
+  const activeSessionStatusById = createMemo(() => (isDemoMode() ? demoSessionStatusById() : sessionStatusById()));
+  const activeMessages = createMemo(() => (isDemoMode() ? demoMessages() : messages()));
+  const activeTodos = createMemo(() => (isDemoMode() ? demoTodos() : todos()));
+  const activeArtifacts = createMemo(() => (isDemoMode() ? demoArtifacts() : artifacts()));
+  const activeWorkingFiles = createMemo(() => (isDemoMode() ? demoWorkingFiles() : workingFiles()));
+
+  const selectDemoSession = (sessionId: string) => {
+    setDemoSelectedSessionId(sessionId);
+  };
+
+  createEffect(() => {
+    if (!isDemoMode()) return;
+    setDemoSequenceState(demoSequence());
+  });
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
   async function sendPrompt() {
+    const content = prompt().trim();
+    if (!content) return;
+
+    if (isDemoMode()) {
+      setLastPromptSent(content);
+      setPrompt("");
+      return;
+    }
+
     const c = client();
     const sessionID = selectedSessionId();
     if (!c || !sessionID) return;
-
-    const content = prompt().trim();
-    if (!content) return;
 
     setBusy(true);
     setBusyLabel("Running");
@@ -380,6 +658,11 @@ export default function App() {
   }
 
   async function runTemplate(template: WorkspaceTemplate) {
+    if (isDemoMode()) {
+      setView("session");
+      return;
+    }
+
     const c = client();
     if (!c) return;
 
@@ -465,6 +748,14 @@ export default function App() {
     stopHost,
     setEngineInstallLogs,
   } = workspaceStore;
+
+  const activeAuthorizedDirs = createMemo(() =>
+    isDemoMode() ? demoAuthorizedDirs() : workspaceStore.authorizedDirs(),
+  );
+  const activeWorkspaceDisplay = createMemo(() =>
+    isDemoMode() ? demoActiveWorkspaceDisplay() : workspaceStore.activeWorkspaceDisplay(),
+  );
+  const activePermissionMemo = createMemo(() => (isDemoMode() ? null : activePermission()));
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(new Set());
   const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
@@ -963,6 +1254,11 @@ export default function App() {
   }
 
   async function createSessionAndOpen() {
+    if (isDemoMode()) {
+      setView("session");
+      return;
+    }
+
     const c = client();
     if (!c) return;
 
@@ -1088,6 +1384,21 @@ export default function App() {
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
           setModelVariant(storedVariant.trim());
+        }
+
+        const storedDemoMode = window.localStorage.getItem(DEMO_MODE_PREF_KEY);
+        if (storedDemoMode != null) {
+          setDemoMode(storedDemoMode === "1");
+        }
+
+        const storedDemoSequence = window.localStorage.getItem(DEMO_SEQUENCE_PREF_KEY);
+        if (
+          storedDemoSequence === "cold-open" ||
+          storedDemoSequence === "scheduler" ||
+          storedDemoSequence === "summaries" ||
+          storedDemoSequence === "groceries"
+        ) {
+          setDemoSequence(storedDemoSequence);
         }
 
         const storedUpdateAutoCheck = window.localStorage.getItem("openwork.updateAutoCheck");
@@ -1243,6 +1554,24 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(DEMO_MODE_PREF_KEY, demoMode() ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(DEMO_SEQUENCE_PREF_KEY, demoSequence());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
     const state = updateStatus();
     if (typeof window === "undefined") return;
     if (state.state === "idle" && state.lastCheckedAt) {
@@ -1349,7 +1678,7 @@ export default function App() {
     newTaskDisabled: newTaskDisabled(),
     headerStatus: headerStatus(),
     error: error(),
-    activeWorkspaceDisplay: workspaceStore.activeWorkspaceDisplay(),
+    activeWorkspaceDisplay: activeWorkspaceDisplay(),
     workspaceSearch: workspaceStore.workspaceSearch(),
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
     workspacePickerOpen: workspaceStore.workspacePickerOpen(),
@@ -1361,15 +1690,15 @@ export default function App() {
     createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
     setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
     createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
-    sessions: sessions().map((s) => ({
+    sessions: activeSessions().map((s) => ({
       id: s.id,
       slug: s.slug,
       title: s.title,
       time: s.time,
       directory: s.directory,
     })),
-    sessionStatusById: sessionStatusById(),
-    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+    sessionStatusById: activeSessionStatusById(),
+    activeWorkspaceRoot: isDemoMode() ? demoActiveWorkspaceDisplay().path : workspaceStore.activeWorkspaceRoot().trim(),
     workspaceTemplates: workspaceTemplates(),
     globalTemplates: globalTemplates(),
     setTemplateDraftTitle,
@@ -1414,7 +1743,7 @@ export default function App() {
     suggestedPlugins: SUGGESTED_PLUGINS,
     addPlugin,
     createSessionAndOpen,
-    selectSession,
+    selectSession: isDemoMode() ? selectDemoSession : selectSession,
     defaultModelLabel: formatModelLabel(defaultModel(), providers()),
     defaultModelRef: formatModelRef(defaultModel()),
     openDefaultModelPicker,
@@ -1430,6 +1759,10 @@ export default function App() {
       const trimmed = next.trim();
       setModelVariant(trimmed ? trimmed : null);
     },
+    demoMode: demoMode(),
+    toggleDemoMode: () => setDemoMode((v) => !v),
+    demoSequence: demoSequence(),
+    setDemoSequence,
     updateAutoCheck: updateAutoCheck(),
     toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
     updateStatus: updateStatus(),
@@ -1462,11 +1795,12 @@ export default function App() {
             <DashboardView {...dashboardProps()} />
           </Match>
           <Match when={view() === "session"}>
-             <SessionView
-                selectedSessionId={selectedSessionId()}
+
+            <SessionView
+                selectedSessionId={activeSessionId()}
                 setView={setView}
                 setTab={setTab}
-                activeWorkspaceDisplay={workspaceStore.activeWorkspaceDisplay()}
+                activeWorkspaceDisplay={activeWorkspaceDisplay()}
                 setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
                 setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
                 headerStatus={headerStatus()}
@@ -1480,14 +1814,14 @@ export default function App() {
 
                 sendPromptAsync={sendPrompt}
                 newTaskDisabled={newTaskDisabled()}
-                sessions={sessions().map((session) => ({
+                sessions={activeSessions().map((session) => ({
                   id: session.id,
                   title: session.title,
                   slug: session.slug,
                 }))}
-                selectSession={selectSession}
-                messages={messages()}
-                todos={todos()}
+                selectSession={isDemoMode() ? selectDemoSession : selectSession}
+                messages={activeMessages()}
+                todos={activeTodos()}
                 busyLabel={busyLabel()}
                 developerMode={developerMode()}
                 showThinking={showThinking()}
@@ -1497,14 +1831,14 @@ export default function App() {
                 setExpandedStepIds={setExpandedStepIds}
                 expandedSidebarSections={expandedSidebarSections()}
                 setExpandedSidebarSections={setExpandedSidebarSections}
-                artifacts={artifacts()}
-                workingFiles={workingFiles()}
-                authorizedDirs={workspaceStore.authorizedDirs()}
+                artifacts={activeArtifacts()}
+                workingFiles={activeWorkingFiles()}
+                authorizedDirs={activeAuthorizedDirs()}
                 busy={busy()}
                 prompt={prompt()}
                 setPrompt={setPrompt}
                 sendPrompt={sendPrompt}
-                activePermission={activePermission()}
+                activePermission={activePermissionMemo()}
                 permissionReplyBusy={permissionReplyBusy()}
                 respondPermission={respondPermission}
                 respondPermissionAndRemember={respondPermissionAndRemember}
