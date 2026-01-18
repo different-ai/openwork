@@ -144,7 +144,7 @@ export default function SessionView(props: SessionViewProps) {
   const resolveArtifactPath = (artifact: ArtifactItem) => {
     const rawPath = artifact.path?.trim();
     if (!rawPath) return null;
-    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\//.test(rawPath)) {
+    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\/)/.test(rawPath)) {
       return rawPath;
     }
 
