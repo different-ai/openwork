@@ -1013,7 +1013,7 @@ export default function App() {
       if (!result.found) {
         setError(
           isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows, then restart OpenWork. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            ? "OpenCode CLI not found. Install with one of these, then restart OpenWork: choco install opencode, scoop install extras/opencode, or npm install -g opencode-ai. If it is installed, ensure `opencode.exe` or `opencode.cmd` is on PATH (try `opencode --version` in PowerShell)."
             : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;

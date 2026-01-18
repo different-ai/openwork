@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch } from "solid-js";
 import type { Mode, OnboardingStep } from "../app/types";
-import { isTauriRuntime } from "../app/utils";
+import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
 import { ArrowLeftRight, CheckCircle2, Circle, Trash2 } from "lucide-solid";
 
 import Button from "../components/Button";
@@ -199,7 +199,18 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
                   <Show when={props.engineDoctorFound === false}>
                     <div class="mt-4 space-y-2">
-                      <div class="text-xs text-zinc-500">Install OpenCode from https://opencode.ai/install</div>
+                      <div class="text-xs text-zinc-500">
+                        {isWindowsPlatform()
+                          ? "Install OpenCode with one of the commands below, then restart OpenWork."
+                          : "Install OpenCode from https://opencode.ai/install"}
+                      </div>
+                      <Show when={isWindowsPlatform()}>
+                        <div class="text-xs text-zinc-500 space-y-1 font-mono">
+                          <div>choco install opencode</div>
+                          <div>scoop install extras/opencode</div>
+                          <div>npm install -g opencode-ai</div>
+                        </div>
+                      </Show>
                       <div class="flex gap-2 pt-2">
                         <Button onClick={props.onInstallEngine} disabled={props.busy}>
                           Install OpenCode

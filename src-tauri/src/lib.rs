@@ -7,7 +7,7 @@ use std::{
   net::TcpListener,
   path::{Path, PathBuf},
   process::{Child, Command, Stdio},
-  sync::Mutex,
+  sync::{Arc, Mutex},
   time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -120,7 +120,7 @@ impl WorkspaceOpenworkConfig {
 
 #[derive(Default)]
 struct EngineManager {
-  inner: Mutex<EngineState>,
+  inner: Arc<Mutex<EngineState>>,
 }
 
 #[derive(Default)]
@@ -787,6 +787,9 @@ fn find_free_port() -> Result<u16, String> {
 #[cfg(windows)]
 const OPENCODE_EXECUTABLE: &str = "opencode.exe";
 
+#[cfg(windows)]
+const OPENCODE_CMD: &str = "opencode.cmd";
+
 #[cfg(not(windows))]
 const OPENCODE_EXECUTABLE: &str = "opencode";
 
@@ -833,19 +836,65 @@ fn candidate_opencode_paths() -> Vec<PathBuf> {
     candidates.push(home.join(".opencode").join("bin").join(OPENCODE_EXECUTABLE));
   }
 
-  // Homebrew default paths.
-  candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  #[cfg(windows)]
+  {
+    if let Some(app_data) = env::var_os("APPDATA") {
+      let base = PathBuf::from(app_data).join("npm");
+      candidates.push(base.join(OPENCODE_EXECUTABLE));
+      candidates.push(base.join(OPENCODE_CMD));
+    }
 
-  // Common Linux paths.
-  candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+    if let Some(local_app_data) = env::var_os("LOCALAPPDATA") {
+      let npm = PathBuf::from(local_app_data).join("npm");
+      candidates.push(npm.join(OPENCODE_EXECUTABLE));
+      candidates.push(npm.join(OPENCODE_CMD));
+      candidates.push(PathBuf::from(local_app_data).join("OpenCode").join(OPENCODE_EXECUTABLE));
+    }
+
+    if let Some(home) = home_dir() {
+      let scoop = home.join("scoop").join("shims");
+      candidates.push(scoop.join(OPENCODE_EXECUTABLE));
+      candidates.push(scoop.join(OPENCODE_CMD));
+    }
+
+    candidates.push(PathBuf::from("C:\\ProgramData\\chocolatey\\bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("C:\\ProgramData\\chocolatey\\bin").join(OPENCODE_CMD));
+  }
+
+  #[cfg(not(windows))]
+  {
+    // Homebrew default paths.
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+
+    // Common Linux paths.
+    candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  }
 
   candidates
 }
 
+fn command_for_program(program: &Path) -> Command {
+  #[cfg(windows)]
+  {
+    if program
+      .extension()
+      .and_then(|ext| ext.to_str())
+      .map(|ext| ext.eq_ignore_ascii_case("cmd"))
+      .unwrap_or(false)
+    {
+      let mut command = Command::new("cmd");
+      command.arg("/C").arg(program);
+      return command;
+    }
+  }
+
+  Command::new(program)
+}
+
 fn opencode_version(program: &OsStr) -> Option<String> {
-  let output = Command::new(program).arg("--version").output().ok()?;
+  let output = command_for_program(Path::new(program)).arg("--version").output().ok()?;
   let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
   let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -869,7 +918,7 @@ fn truncate_output(input: &str, max_chars: usize) -> String {
 }
 
 fn opencode_serve_help(program: &OsStr) -> (bool, Option<i32>, Option<String>, Option<String>) {
-  match Command::new(program).arg("serve").arg("--help").output() {
+  match command_for_program(Path::new(program)).arg("serve").arg("--help").output() {
     Ok(output) => {
       let status = output.status.code();
       let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -912,6 +961,14 @@ fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
   if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
     notes.push(format!("Found in PATH: {}", path.display()));
     return (Some(path), true, notes);
+  }
+
+  #[cfg(windows)]
+  {
+    if let Some(path) = resolve_in_path(OPENCODE_CMD) {
+      notes.push(format!("Found in PATH: {}", path.display()));
+      return (Some(path), true, notes);
+    }
   }
 
   notes.push("Not found on PATH".to_string());
@@ -1279,7 +1336,7 @@ fn engine_start(
     ));
   };
 
-  let mut command = Command::new(&program);
+  let mut command = command_for_program(&program);
   command
     .arg("serve")
     .arg("--hostname")
@@ -1325,12 +1382,52 @@ fn engine_start(
   // marker for UI-driven launches so we can key off it in engine logs.
   command.env("OPENWORK", "1");
 
-  let child = command
+  let mut child = command
     .spawn()
     .map_err(|e| format!("Failed to start opencode: {e}"))?;
 
   state.last_stdout = None;
   state.last_stderr = None;
+
+  std::thread::sleep(std::time::Duration::from_millis(200));
+  if let Ok(Some(status)) = child.try_wait() {
+    let mut stderr = String::new();
+    if let Some(mut stream) = child.stderr.take() {
+      use std::io::Read;
+      let mut buffer = Vec::new();
+      let _ = stream.read_to_end(&mut buffer);
+      stderr = String::from_utf8_lossy(&buffer).trim().to_string();
+    }
+
+    let suffix = if stderr.is_empty() {
+      String::new()
+    } else {
+      format!("\n{}", stderr)
+    };
+
+    return Err(format!(
+      "OpenCode exited immediately with status {}.{}",
+      status.code().unwrap_or(-1),
+      suffix
+    ));
+  }
+
+  if let Some(stream) = child.stderr.take() {
+    let stderr_state = manager.inner.clone();
+    std::thread::spawn(move || {
+      use std::io::Read;
+      let mut buffer = Vec::new();
+      let mut reader = stream;
+      let _ = reader.read_to_end(&mut buffer);
+      let output = String::from_utf8_lossy(&buffer).trim().to_string();
+      if output.is_empty() {
+        return;
+      }
+      if let Ok(mut state) = stderr_state.lock() {
+        state.last_stderr = Some(truncate_output(&output, 8000));
+      }
+    });
+  }
 
   state.child = Some(child);
   state.project_dir = Some(project_dir);
