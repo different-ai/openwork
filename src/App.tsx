@@ -1908,7 +1908,8 @@ export default function App() {
       <CreateWorkspaceModal
         open={workspaceStore.createWorkspaceOpen()}
         onClose={() => workspaceStore.setCreateWorkspaceOpen(false)}
-        onConfirm={(preset) => workspaceStore.createWorkspaceFlow(preset)}
+        onPickFolder={workspaceStore.pickWorkspaceFolder}
+        onConfirm={(preset, folder) => workspaceStore.createWorkspaceFlow(preset, folder)}
       />
     </>
   );

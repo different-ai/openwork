@@ -309,29 +309,26 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function createWorkspaceFlow(preset: WorkspacePreset) {
+  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
     if (!isTauriRuntime()) {
       options.setError("Workspace creation requires the Tauri app runtime.");
       return;
     }
 
-    // Close the modal immediately when confirming - folder picker will appear
+    if (!folder) {
+      options.setError("Choose a folder to create the workspace.");
+      return;
+    }
+
     setCreateWorkspaceOpen(false);
 
     try {
-      const selection = await pickDirectory({ title: "Choose workspace folder" });
-      const folder =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-
-      // User cancelled folder selection
-      if (!folder) return;
-
       options.setBusy(true);
       options.setBusyLabel("Creating workspace");
       options.setBusyStartedAt(Date.now());
       options.setError(null);
 
-      const name = folder.split("/").filter(Boolean).pop() ?? "Workspace";
+      const name = folder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
       const ws = await workspaceCreate({ folderPath: folder, name, preset });
       setWorkspaces(ws.workspaces);
       syncActiveWorkspaceId(ws.activeId);
@@ -352,6 +349,24 @@ export function createWorkspaceStore(options: {
       options.setBusy(false);
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
+    }
+  }
+
+  async function pickWorkspaceFolder() {
+    if (!isTauriRuntime()) {
+      options.setError("Workspace creation requires the Tauri app runtime.");
+      return null;
+    }
+
+    try {
+      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const folder =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+
+      return folder ?? null;
+    } catch (e) {
+      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      return null;
     }
   }
 
@@ -762,6 +777,7 @@ export function createWorkspaceStore(options: {
     activateWorkspace,
     connectToServer,
     createWorkspaceFlow,
+    pickWorkspaceFolder,
     startHost,
     stopHost,
     bootstrapOnboarding,

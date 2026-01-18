@@ -37,7 +37,8 @@ export type DashboardViewProps = {
   activateWorkspace: (id: string) => void;
   createWorkspaceOpen: boolean;
   setCreateWorkspaceOpen: (open: boolean) => void;
-  createWorkspaceFlow: (preset: "starter" | "automation" | "minimal") => void;
+  createWorkspaceFlow: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
+  pickWorkspaceFolder: () => Promise<string | null>;
   sessions: Array<{ id: string; slug?: string | null; title: string; time: { updated: number }; directory?: string | null }>;
   sessionStatusById: Record<string, string>;
   activeWorkspaceRoot: string;
