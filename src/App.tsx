@@ -721,6 +721,8 @@ export default function App() {
     loadWorkspaceTemplates,
     loadSessions,
     refreshPendingPermissions,
+    selectedSessionId,
+    selectSession,
     setSelectedSessionId,
     setMessages,
     setTodos,

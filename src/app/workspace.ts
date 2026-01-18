@@ -55,6 +55,8 @@ export function createWorkspaceStore(options: {
   loadWorkspaceTemplates: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void>;
   loadSessions: (scopeRoot?: string) => Promise<void>;
   refreshPendingPermissions: () => Promise<void>;
+  selectedSessionId: () => string | null;
+  selectSession: (id: string) => Promise<void>;
   setSelectedSessionId: (value: string | null) => void;
   setMessages: (value: any[]) => void;
   setTodos: (value: any[]) => void;
@@ -261,7 +263,7 @@ export function createWorkspaceStore(options: {
                 {
                   type: "text",
                   text:
-                    "Load the `workspace_guide` skill from this workspace and explain, in plain language, what lives in this folder (skills/plugins/templates) and what’s global. Then suggest 2 quick next actions the user can do in OpenWork.",
+                    "Load the `workspace_guide` skill from this workspace and give a short, welcoming overview of what lives here (skills, plugins, templates) versus what's global. Avoid CLI language or raw file paths. Then suggest two friendly next actions to try inside OpenWork.",
                 },
               ],
             });
@@ -273,6 +275,16 @@ export function createWorkspaceStore(options: {
             }
 
             await options.loadSessions(activeWorkspaceRoot().trim()).catch(() => undefined);
+
+            if (session?.id) {
+              try {
+                await options.selectSession(session.id);
+                options.setView("session");
+                options.setTab("sessions");
+              } catch {
+                // ignore selection failure
+              }
+            }
           }
         }
       } catch {
@@ -280,8 +292,10 @@ export function createWorkspaceStore(options: {
       }
 
       options.refreshSkills().catch(() => undefined);
-      options.setView("dashboard");
-      options.setTab("home");
+      if (!options.selectedSessionId()) {
+        options.setView("dashboard");
+        options.setTab("home");
+      }
       return true;
     } catch (e) {
       options.setClient(null);
