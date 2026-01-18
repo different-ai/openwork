@@ -184,16 +184,6 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-zinc-800 bg-zinc-950 flex-col">
-            <div class="p-4 border-b border-zinc-800">
-              <WorkspaceChip
-                workspace={props.activeWorkspaceDisplay}
-                onClick={() => {
-                  props.setWorkspaceSearch("");
-                  props.setWorkspacePickerOpen(true);
-                }}
-              />
-            </div>
-
             <div class="px-4 pt-4">
               <button
                 class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-white text-black text-sm font-medium shadow-lg shadow-white/10"
