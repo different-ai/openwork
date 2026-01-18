@@ -27,7 +27,6 @@ import {
 
 import Button from "../components/Button";
 import PartView from "../components/PartView";
-import ThinkingBlock, { type ThinkingStep } from "../components/ThinkingBlock";
 import WorkspaceChip from "../components/WorkspaceChip";
 import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
 
@@ -200,6 +199,39 @@ export default function SessionView(props: SessionViewProps) {
     return "Connect a provider to customize this.";
   });
 
+  const isAssistantMessage = (msg: MessageWithParts) => (msg.info as any).role === "assistant";
+  const isUserMessage = (msg: MessageWithParts) => (msg.info as any).role === "user";
+
+  const lastUserMessageId = createMemo(() => {
+    const list = props.messages;
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const msg = list[i];
+      if (msg && isUserMessage(msg)) return String((msg.info as any).id ?? "");
+    }
+    return "";
+  });
+
+  const hasAssistantTextAfterLastUser = createMemo(() => {
+    const pivot = lastUserMessageId();
+    if (!pivot) return false;
+    const list = props.messages;
+    const pivotIndex = list.findIndex((msg) => String((msg.info as any).id ?? "") === pivot);
+    if (pivotIndex < 0) return false;
+    for (let i = pivotIndex + 1; i < list.length; i += 1) {
+      const msg = list[i];
+      if (!msg || !isAssistantMessage(msg)) continue;
+      if (msg.parts.some((part) => part.type === "text" && part.text?.trim())) {
+        return true;
+      }
+    }
+    return false;
+  });
+
+  const showAnticipatoryCursor = createMemo(() => {
+    if (props.busyLabel !== "Running") return false;
+    return !hasAssistantTextAfterLastUser();
+  });
+
   return (
     <Show
       when={props.selectedSessionId}
@@ -306,10 +338,14 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
-              <Show when={props.busyLabel === "Running"}>
-                <ThinkingBlock
-                  steps={[{ status: "running", text: "Working..." } satisfies ThinkingStep]}
-                />
+              <Show when={showAnticipatoryCursor()}>
+                <div class="flex justify-start">
+                  <div class="max-w-[68ch] text-[15px] leading-7 text-zinc-200">
+                    <div class="flex items-center h-[1.625rem]">
+                      <div class="h-2 w-2 rounded-full bg-zinc-400/80 animate-pulse motion-reduce:animate-none shadow-[0_0_8px_rgba(255,255,255,0.12)]" />
+                    </div>
+                  </div>
+                </div>
               </Show>
 
               <For each={props.messages}>
