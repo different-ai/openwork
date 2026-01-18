@@ -1242,7 +1242,7 @@ export default function App() {
 
       if (!result.found) {
         setError(
-          "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+          "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`. On Windows, use `choco install opencode`, `scoop install extras/opencode`, or `npm install -g opencode-ai`, then retry.",
         );
         return false;
       }
@@ -2504,6 +2504,15 @@ export default function App() {
                           </div>
                           <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
                             curl -fsSL https://opencode.ai/install | bash
+                          </div>
+                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                            choco install opencode
+                          </div>
+                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                            scoop install extras/opencode
+                          </div>
+                          <div class="rounded-xl bg-black/40 border border-zinc-800 px-3 py-2 font-mono text-xs text-zinc-300">
+                            npm install -g opencode-ai
                           </div>
 
                           <div class="flex gap-2 pt-2">

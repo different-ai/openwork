@@ -2,10 +2,12 @@ use std::{
   env,
   ffi::OsStr,
   fs,
+  io::Read,
   net::TcpListener,
   path::{Path, PathBuf},
   process::{Child, Command, Stdio},
-  sync::Mutex,
+  thread,
+  time::Duration,
 };
 
 #[cfg(target_os = "macos")]
@@ -59,6 +61,7 @@ fn maybe_infer_xdg_home(var_name: &str, candidates: Vec<PathBuf>, relative_marke
 }
 
 use serde::Serialize;
+use std::sync::Mutex;
 use tauri::State;
 
 #[derive(Default)]
@@ -132,6 +135,9 @@ fn find_free_port() -> Result<u16, String> {
 #[cfg(windows)]
 const OPENCODE_EXECUTABLE: &str = "opencode.exe";
 
+#[cfg(windows)]
+const OPENCODE_CMD: &str = "opencode.cmd";
+
 #[cfg(not(windows))]
 const OPENCODE_EXECUTABLE: &str = "opencode";
 
@@ -171,26 +177,75 @@ fn resolve_in_path(name: &str) -> Option<PathBuf> {
   None
 }
 
+fn command_for_program(program: &Path) -> Command {
+  #[cfg(windows)]
+  {
+    let is_cmd = program
+      .extension()
+      .and_then(|ext| ext.to_str())
+      .map(|ext| ext.eq_ignore_ascii_case("cmd"))
+      .unwrap_or(false);
+    if is_cmd {
+      let mut cmd = Command::new("cmd");
+      cmd.arg("/C").arg(program);
+      return cmd;
+    }
+  }
+
+  Command::new(program)
+}
+
 fn candidate_opencode_paths() -> Vec<PathBuf> {
   let mut candidates = Vec::new();
 
   if let Some(home) = home_dir() {
     candidates.push(home.join(".opencode").join("bin").join(OPENCODE_EXECUTABLE));
+
+    #[cfg(windows)]
+    {
+      if let Ok(app_data) = env::var("APPDATA") {
+        let app_data = PathBuf::from(app_data);
+        candidates.push(app_data.join("npm").join(OPENCODE_EXECUTABLE));
+        candidates.push(app_data.join("npm").join(OPENCODE_CMD));
+      }
+
+      if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
+        let local_app_data = PathBuf::from(local_app_data);
+        candidates.push(local_app_data.join("npm").join(OPENCODE_EXECUTABLE));
+        candidates.push(local_app_data.join("npm").join(OPENCODE_CMD));
+        candidates.push(local_app_data.join("OpenCode").join(OPENCODE_EXECUTABLE));
+      }
+
+      candidates.push(home.join("scoop").join("shims").join(OPENCODE_EXECUTABLE));
+      candidates.push(home.join("scoop").join("shims").join(OPENCODE_CMD));
+    }
   }
 
-  // Homebrew default paths.
-  candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  #[cfg(windows)]
+  {
+    candidates.push(PathBuf::from("C:\\ProgramData\\chocolatey\\bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("C:\\ProgramData\\chocolatey\\bin").join(OPENCODE_CMD));
+  }
 
-  // Common Linux paths.
-  candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
-  candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  #[cfg(not(windows))]
+  {
+    // Homebrew default paths.
+    candidates.push(PathBuf::from("/opt/homebrew/bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+
+    // Common Linux paths.
+    candidates.push(PathBuf::from("/usr/bin").join(OPENCODE_EXECUTABLE));
+    candidates.push(PathBuf::from("/usr/local/bin").join(OPENCODE_EXECUTABLE));
+  }
 
   candidates
 }
 
 fn opencode_version(program: &OsStr) -> Option<String> {
-  let output = Command::new(program).arg("--version").output().ok()?;
+  let output = command_for_program(Path::new(program))
+    .arg("--version")
+    .output()
+    .ok()?;
   let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
   let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -205,7 +260,7 @@ fn opencode_version(program: &OsStr) -> Option<String> {
 }
 
 fn opencode_supports_serve(program: &OsStr) -> bool {
-  Command::new(program)
+  command_for_program(Path::new(program))
     .arg("serve")
     .arg("--help")
     .stdout(Stdio::null())
@@ -232,6 +287,12 @@ fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
   }
 
   if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
+    notes.push(format!("Found in PATH: {}", path.display()));
+    return (Some(path), true, notes);
+  }
+
+  #[cfg(windows)]
+  if let Some(path) = resolve_in_path(OPENCODE_CMD) {
     notes.push(format!("Found in PATH: {}", path.display()));
     return (Some(path), true, notes);
   }
@@ -539,7 +600,7 @@ fn engine_start(
     ));
   };
 
-  let mut command = Command::new(&program);
+  let mut command = command_for_program(&program);
   command
     .arg("serve")
     .arg("--hostname")
@@ -556,7 +617,7 @@ fn engine_start(
     .current_dir(&project_dir)
     .stdin(Stdio::null())
     .stdout(Stdio::null())
-    .stderr(Stdio::null());
+    .stderr(Stdio::piped());
 
   // Best-effort: restore env parity with terminal installs.
   // If the GUI process doesn't have XDG_* vars but the user's OpenCode auth/config lives under
@@ -581,9 +642,26 @@ fn engine_start(
   // Tag requests and logs to make debugging easier.
   command.env("OPENCODE_CLIENT", "openwork");
 
-  let child = command
-    .spawn()
-    .map_err(|e| format!("Failed to start opencode: {e}"))?;
+  let mut child = command.spawn().map_err(|e| format!("Failed to start opencode: {e}"))?;
+
+  thread::sleep(Duration::from_millis(200));
+  if let Some(status) = child.try_wait().map_err(|e| format!("Failed to start opencode: {e}"))? {
+    let mut stderr_snapshot = String::new();
+    if let Some(mut stderr) = child.stderr.take() {
+      let _ = stderr.read_to_string(&mut stderr_snapshot);
+    }
+    let details = stderr_snapshot.trim();
+    if details.is_empty() {
+      return Err(format!("OpenCode exited immediately with status {status}."));
+    }
+    return Err(format!("OpenCode exited immediately with status {status}.\n{details}"));
+  }
+
+  if let Some(mut stderr) = child.stderr.take() {
+    thread::spawn(move || {
+      let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+    });
+  }
 
   state.child = Some(child);
   state.project_dir = Some(project_dir);
