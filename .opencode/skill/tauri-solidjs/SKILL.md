@@ -34,7 +34,7 @@ pnpm tauri android build
 ## Project Structure
 
 ```
-apps/openwork/
+vendor/openwork/
   src-tauri/
     src/
       main.rs           # Rust entry point
@@ -45,13 +45,14 @@ apps/openwork/
   src/
     App.tsx             # SolidJS root component
     index.tsx           # Entry point
-    components/         # UI components
-    stores/             # Solid stores for state
-    lib/                # Utilities and OpenCode bridge
+  components/         # UI components
+  stores/             # Solid stores for state
+  lib/                # Utilities and OpenCode bridge
   index.html            # HTML template
   package.json          # Frontend dependencies
   vite.config.ts        # Vite configuration
 ```
+
 
 ## Key Dependencies
 

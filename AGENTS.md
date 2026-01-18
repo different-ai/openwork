@@ -40,7 +40,7 @@ OpenWork exists to bring OpenCode's agentic power to non-technical people throug
 ## Local Structure
 
 ```
-apps/openwork/
+vendor/openwork/
   AGENTS.md           # This file
   design-prd.md       # Exhaustive PRD and user flow map
   .gitignore          # Ignores vendor/opencode, node_modules, etc.
@@ -103,9 +103,10 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 
 1. Ensure `main` is green and up to date.
 2. Bump versions (keep these in sync):
-   - `apps/openwork/package.json` (`version`)
-   - `apps/openwork/src-tauri/tauri.conf.json` (`version`)
-   - `apps/openwork/src-tauri/Cargo.toml` (`version`)
+- `vendor/openwork/package.json` (`version`)
+- `vendor/openwork/src-tauri/tauri.conf.json` (`version`)
+- `vendor/openwork/src-tauri/Cargo.toml` (`version`)
+
 3. Merge the version bump to `main`.
 4. Create and push a tag:
    - `git tag vX.Y.Z`

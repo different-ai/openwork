@@ -7,12 +7,12 @@ description: PRD authoring conventions for OpenWork
 
 All new PRDs for OpenWork must live at:
 
-- `apps/openwork/pr/<prd-name>.md`
+- `vendor/openwork/pr/<prd-name>.md`
 
 Examples:
 
-- `apps/openwork/pr/onboarding-1.0.md`
-- `apps/openwork/pr/folder-workspaces-jit.md`
+- `vendor/openwork/pr/onboarding-1.0.md`
+- `vendor/openwork/pr/folder-workspaces-jit.md`
 
 ## Why
 
