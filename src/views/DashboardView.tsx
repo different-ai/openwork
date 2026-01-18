@@ -12,7 +12,7 @@ import PluginsView from "./PluginsView";
 import SettingsView from "./SettingsView";
 import SkillsView from "./SkillsView";
 import TemplatesView from "./TemplatesView";
-import { Command, Cpu, FileText, Package, Play, Plus, Shield, Smartphone } from "lucide-solid";
+import { Command, Cpu, FileText, Package, Play, Plus, Settings, Smartphone } from "lucide-solid";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -203,7 +203,7 @@ export default function DashboardView(props: DashboardViewProps) {
             {navItem("templates", "Templates", <FileText size={18} />)}
             {navItem("skills", "Skills", <Package size={18} />)}
             {navItem("plugins", "Plugins", <Cpu size={18} />)}
-            {navItem("settings", "Settings", <Shield size={18} />)}
+            {navItem("settings", "Settings", <Settings size={18} />)}
           </nav>
         </div>
 
@@ -633,7 +633,7 @@ export default function DashboardView(props: DashboardViewProps) {
               }`}
               onClick={() => props.setTab("settings")}
             >
-              <Shield size={18} />
+              <Settings size={18} />
               Settings
             </button>
           </div>
