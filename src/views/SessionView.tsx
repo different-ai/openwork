@@ -88,10 +88,13 @@ export default function SessionView(props: SessionViewProps) {
     messagesEndEl?.scrollIntoView({ behavior: "smooth" });
   });
 
+  const realTodos = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
+
   const progressDots = createMemo(() => {
-    const total = props.todos.length;
+    const activeTodos = realTodos();
+    const total = activeTodos.length;
     if (!total) return [] as boolean[];
-    const completed = props.todos.filter((t) => t.status === "completed").length;
+    const completed = activeTodos.filter((todo) => todo.status === "completed").length;
     return Array.from({ length: total }, (_, idx) => idx < completed);
   });
 
@@ -391,7 +394,7 @@ export default function SessionView(props: SessionViewProps) {
 
           <aside class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
             <div class="p-4 space-y-4 overflow-y-auto flex-1">
-              <Show when={progressDots().length > 0}>
+              <Show when={realTodos().length > 0}>
                 <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
                   <button
                     class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
