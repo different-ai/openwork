@@ -4,10 +4,8 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime } from "../app/utils";
 
 import Button from "../components/Button";
-import CreateWorkspaceModal from "../components/CreateWorkspaceModal";
 import OpenWorkLogo from "../components/OpenWorkLogo";
 import WorkspaceChip from "../components/WorkspaceChip";
-import WorkspacePicker from "../components/WorkspacePicker";
 import PluginsView from "./PluginsView";
 import SettingsView from "./SettingsView";
 import SkillsView from "./SkillsView";
@@ -562,23 +560,6 @@ export default function DashboardView(props: DashboardViewProps) {
             </div>
           </div>
         </Show>
-
-        <WorkspacePicker
-          open={props.workspacePickerOpen}
-          workspaces={props.filteredWorkspaces}
-          activeWorkspaceId={props.activeWorkspaceId}
-          search={props.workspaceSearch}
-          onSearch={props.setWorkspaceSearch}
-          onClose={() => props.setWorkspacePickerOpen(false)}
-          onSelect={props.activateWorkspace}
-          onCreateNew={() => props.setCreateWorkspaceOpen(true)}
-        />
-
-        <CreateWorkspaceModal
-          open={props.createWorkspaceOpen}
-          onClose={() => props.setCreateWorkspaceOpen(false)}
-          onConfirm={(preset) => props.createWorkspaceFlow(preset)}
-        />
 
         <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
           <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
