@@ -11,7 +11,7 @@ import {
 
 import { applyEdits, modify } from "jsonc-parser";
 
-import type { Message, Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type { Provider } from "@opencode-ai/sdk/v2/client";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -36,19 +36,14 @@ import type {
   Client,
   CuratedPackage,
   DashboardTab,
-  MessageInfo,
-  MessageWithParts,
   Mode,
   ModelOption,
   ModelRef,
   OnboardingStep,
-  OpencodeEvent,
-  PendingPermission,
   PluginScope,
   ReloadReason,
   ResetOpenworkMode,
   SkillCard,
-  TodoItem,
   View,
   WorkspaceDisplay,
   WorkspaceOpenworkConfig,
@@ -68,23 +63,17 @@ import {
   isTauriRuntime,
   isWindowsPlatform,
   lastUserModelFromMessages,
-  modelFromUserMessage,
-  normalizeEvent,
-  normalizeSessionStatus,
   parseModelRef,
   readModePreference,
-  removePart,
   safeParseJson,
   safeStringify,
   summarizeStep,
   templatePathFromWorkspaceRoot,
-  upsertMessage,
-  upsertPart,
-  upsertSession,
   writeModePreference,
 } from "./app/utils";
 import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./app/templates";
 import { createUpdaterState } from "./app/updater";
+import { createSessionStore } from "./app/session";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -153,20 +142,108 @@ export default function App() {
   const [connectedVersion, setConnectedVersion] = createSignal<string | null>(null);
   const [sseConnected, setSseConnected] = createSignal(false);
 
-  const [sessions, setSessions] = createSignal<Session[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
-  const [sessionStatusById, setSessionStatusById] = createSignal<Record<string, string>>({});
+  const [busy, setBusy] = createSignal(false);
+  const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
+  const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [developerMode, setDeveloperMode] = createSignal(false);
 
-  const [messages, setMessages] = createSignal<MessageWithParts[]>([]);
-  const [todos, setTodos] = createSignal<TodoItem[]>([]);
-  const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
-  const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
+  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
+
+  const sessionStore = createSessionStore({
+    client,
+    selectedSessionId,
+    setSelectedSessionId,
+    sessionModelState: () => ({ overrides: sessionModelOverrideById(), resolved: sessionModelById() }),
+    setSessionModelState: (updater) => {
+      const next = updater({ overrides: sessionModelOverrideById(), resolved: sessionModelById() });
+      setSessionModelOverrideById(next.overrides);
+      setSessionModelById(next.resolved);
+      return next;
+    },
+    lastUserModelFromMessages,
+    developerMode,
+    setError,
+    setSseConnected,
+  });
+
+  const {
+    sessions,
+    sessionStatusById,
+    selectedSession,
+    selectedSessionStatus,
+    messages,
+    todos,
+    pendingPermissions,
+    permissionReplyBusy,
+    events,
+    activePermission,
+    loadSessions,
+    refreshPendingPermissions,
+    selectSession,
+    respondPermission,
+    setSessions,
+    setSessionStatusById,
+    setMessages,
+    setTodos,
+    setPendingPermissions,
+  } = sessionStore;
 
   const artifacts = createMemo(() => deriveArtifacts(messages()));
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+
+  async function sendPrompt() {
+    const c = client();
+    const sessionID = selectedSessionId();
+    if (!c || !sessionID) return;
+
+    const content = prompt().trim();
+    if (!content) return;
+
+    setBusy(true);
+    setBusyLabel("Running");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      setLastPromptSent(content);
+      setPrompt("");
+
+      const model = selectedSessionModel();
+
+      await c.session.promptAsync({
+        sessionID,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: content }],
+      });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [sessionID]: model,
+      }));
+
+      setSessionModelOverrideById((current) => {
+        if (!current[sessionID]) return current;
+        const copy = { ...current };
+        delete copy[sessionID];
+        return copy;
+      });
+
+      await loadSessions(activeWorkspaceRoot().trim()).catch(() => undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
 
   const [templates, setTemplates] = createSignal<WorkspaceTemplate[]>([]);
   const [workspaceTemplatesLoaded, setWorkspaceTemplatesLoaded] = createSignal(false);
@@ -178,12 +255,155 @@ export default function App() {
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
   const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
-
   const workspaceTemplates = createMemo(() => templates().filter((t) => t.scope === "workspace"));
   const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
 
+  function openTemplateModal() {
+    const seedTitle = selectedSession()?.title ?? "";
+    const seedPrompt = lastPromptSent() || prompt();
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
+
+    resetTemplateDraft(
+      {
+        setTitle: setTemplateDraftTitle,
+        setDescription: setTemplateDraftDescription,
+        setPrompt: setTemplateDraftPrompt,
+        setScope: setTemplateDraftScope,
+      },
+      nextDraft.scope,
+    );
+
+    setTemplateDraftTitle(nextDraft.title);
+    setTemplateDraftPrompt(nextDraft.prompt);
+    setTemplateModalOpen(true);
+  }
+
+  async function saveTemplate() {
+    const draft = buildTemplateDraft({
+      scope: templateDraftScope(),
+    });
+    draft.title = templateDraftTitle().trim();
+    draft.description = templateDraftDescription().trim();
+    draft.prompt = templateDraftPrompt().trim();
+
+    if (!draft.title || !draft.prompt) {
+      setError("Template title and prompt are required.");
+      return;
+    }
+
+    if (draft.scope === "workspace") {
+      if (!isTauriRuntime()) {
+        setError("Workspace templates require the desktop app.");
+        return;
+      }
+      if (!activeWorkspacePath().trim()) {
+        setError("Pick a workspace folder first.");
+        return;
+      }
+    }
+
+    setBusy(true);
+    setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const template = createTemplateRecord(draft);
+
+      if (draft.scope === "workspace") {
+        const workspaceRoot = activeWorkspacePath().trim();
+        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } else {
+        setTemplates((current) => [template, ...current]);
+        setGlobalTemplatesLoaded(true);
+      }
+
+      setTemplateModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function deleteTemplate(templateId: string) {
+    const scope = templates().find((t) => t.id === templateId)?.scope;
+
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) return;
+      const workspaceRoot = activeWorkspacePath().trim();
+      if (!workspaceRoot) return;
+
+      setBusy(true);
+      setBusyLabel("Deleting template");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      try {
+        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+      }
+
+      return;
+    }
+
+    setTemplates((current) => current.filter((t) => t.id !== templateId));
+    setGlobalTemplatesLoaded(true);
+  }
+
+  async function runTemplate(template: WorkspaceTemplate) {
+    const c = client();
+    if (!c) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const session = unwrap(
+        await c.session.create({ title: template.title, directory: activeWorkspaceRoot().trim() }),
+      );
+      await loadSessions(activeWorkspaceRoot().trim());
+      await selectSession(session.id);
+      setView("session");
+
+      const model = defaultModel();
+
+      await c.session.promptAsync({
+        sessionID: session.id,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: template.prompt }],
+      });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [session.id]: model,
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
+
+  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
+    // Intentional no-op: permission prompts grant session-scoped access only.
+    // Persistent workspace roots must be managed explicitly via workspace settings.
+    await respondPermission(requestID, reply);
+  }
   const [openPackageSource, setOpenPackageSource] = createSignal("");
   const [packageSearch, setPackageSearch] = createSignal("");
 
@@ -203,9 +423,6 @@ export default function App() {
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string | null>(null);
 
-  const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
-  const [developerMode, setDeveloperMode] = createSignal(false);
-
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
   const [providerConnectedIds, setProviderConnectedIds] = createSignal<string[]>([]);
@@ -214,8 +431,6 @@ export default function App() {
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
   const [modelPickerQuery, setModelPickerQuery] = createSignal("");
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
-  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
@@ -226,11 +441,6 @@ export default function App() {
     artifacts: true,
     context: true,
   });
-
-  const [busy, setBusy] = createSignal(false);
-  const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
-  const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
 
@@ -289,17 +499,6 @@ export default function App() {
     loadPluginsFromConfigHelpers(config, setPluginList, (message) => setPluginStatus(message));
   };
 
-  const selectedSession = createMemo(() => {
-    const id = selectedSessionId();
-    if (!id) return null;
-    return sessions().find((s) => s.id === id) ?? null;
-  });
-
-  const selectedSessionStatus = createMemo(() => {
-    const id = selectedSessionId();
-    if (!id) return "idle";
-    return sessionStatusById()[id] ?? "idle";
-  });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
     const id = selectedSessionId();
@@ -440,16 +639,6 @@ export default function App() {
     setModelPickerOpen(false);
   }
 
-  const activePermission = createMemo(() => {
-    const id = selectedSessionId();
-    const list = pendingPermissions();
-
-    if (id) {
-      return list.find((p) => p.sessionID === id) ?? null;
-    }
-
-    return list[0] ?? null;
-  });
 
   async function refreshEngine() {
     if (!isTauriRuntime()) return;
@@ -782,22 +971,6 @@ export default function App() {
     }
   }
 
-  async function loadSessions(c: Client, options?: { scopeRoot?: string }) {
-    const list = unwrap(await c.session.list());
-    const root = (options?.scopeRoot ?? activeWorkspaceRoot()).trim();
-    const filtered = root ? list.filter((session) => session.directory === root) : list;
-    setSessions(filtered);
-  }
-
-  async function refreshPendingPermissions(c: Client) {
-    const list = unwrap(await c.permission.list());
-
-    setPendingPermissions((current) => {
-      const now = Date.now();
-      const byId = new Map(current.map((p) => [p.id, p] as const));
-      return list.map((p) => ({ ...p, receivedAt: byId.get(p.id)?.receivedAt ?? now }));
-    });
-  }
 
   async function activateWorkspace(workspaceId: string) {
     const id = workspaceId.trim();
@@ -865,8 +1038,8 @@ export default function App() {
       setConnectedVersion(health.version);
       setBaseUrl(nextBaseUrl);
 
-      await loadSessions(nextClient, { scopeRoot: activeWorkspaceRoot() });
-      await refreshPendingPermissions(nextClient);
+      await loadSessions(activeWorkspaceRoot().trim());
+      await refreshPendingPermissions();
 
       try {
         const providerList = unwrap(await nextClient.provider.list());
@@ -890,6 +1063,8 @@ export default function App() {
       setSelectedSessionId(null);
       setMessages([]);
       setTodos([]);
+      setPendingPermissions([]);
+      setSessionStatusById({});
 
       // Auto-create a first-run onboarding session in the active workspace.
       try {
@@ -928,7 +1103,7 @@ export default function App() {
               // ignore
             }
 
-            await loadSessions(nextClient, { scopeRoot: activeWorkspaceRoot() }).catch(() => undefined);
+            await loadSessions(activeWorkspaceRoot().trim()).catch(() => undefined);
 
           }
         }
@@ -1098,43 +1273,6 @@ export default function App() {
     }
   }
 
-  async function selectSession(sessionID: string) {
-    const c = client();
-    if (!c) return;
-
-    setSelectedSessionId(sessionID);
-    setError(null);
-
-    const msgs = unwrap(await c.session.messages({ sessionID }));
-    setMessages(msgs);
-
-    const model = lastUserModelFromMessages(msgs);
-    if (model) {
-      setSessionModelById((current) => ({
-        ...current,
-        [sessionID]: model,
-      }));
-
-      setSessionModelOverrideById((current) => {
-        if (!current[sessionID]) return current;
-        const copy = { ...current };
-        delete copy[sessionID];
-        return copy;
-      });
-    }
-
-    try {
-      setTodos(unwrap(await c.session.todo({ sessionID })));
-    } catch {
-      setTodos([]);
-    }
-
-    try {
-      await refreshPendingPermissions(c);
-    } catch {
-      // ignore
-    }
-  }
 
   async function createSessionAndOpen() {
     const c = client();
@@ -1147,200 +1285,9 @@ export default function App() {
 
     try {
       const session = unwrap(await c.session.create({ title: "New task", directory: activeWorkspaceRoot().trim() }));
-      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() });
+      await loadSessions(activeWorkspaceRoot().trim());
       await selectSession(session.id);
       setView("session");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-    }
-  }
-
-  async function sendPrompt() {
-    const c = client();
-    const sessionID = selectedSessionId();
-    if (!c || !sessionID) return;
-
-    const content = prompt().trim();
-    if (!content) return;
-
-    setBusy(true);
-    setBusyLabel("Running");
-    setBusyStartedAt(Date.now());
-    setError(null);
-
-    try {
-      setLastPromptSent(content);
-      setPrompt("");
-
-      const model = selectedSessionModel();
-
-      await c.session.promptAsync({
-        sessionID,
-        model,
-        variant: modelVariant() ?? undefined,
-        parts: [{ type: "text", text: content }],
-      });
-
-
-      setSessionModelById((current) => ({
-        ...current,
-        [sessionID]: model,
-      }));
-
-      setSessionModelOverrideById((current) => {
-        if (!current[sessionID]) return current;
-        const copy = { ...current };
-        delete copy[sessionID];
-        return copy;
-      });
-
-      // Streaming UI is driven by SSE; do not block on fetching the full
-      // message list here.
-      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() }).catch(() => undefined);
-
-    } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-    }
-  }
-
-  function openTemplateModal() {
-    const seedTitle = selectedSession()?.title ?? "";
-    const seedPrompt = lastPromptSent() || prompt();
-    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
-
-    resetTemplateDraft(
-      {
-        setTitle: setTemplateDraftTitle,
-        setDescription: setTemplateDraftDescription,
-        setPrompt: setTemplateDraftPrompt,
-        setScope: setTemplateDraftScope,
-      },
-      nextDraft.scope,
-    );
-
-    setTemplateDraftTitle(nextDraft.title);
-    setTemplateDraftPrompt(nextDraft.prompt);
-    setTemplateModalOpen(true);
-  }
-
-  async function saveTemplate() {
-    const draft = buildTemplateDraft({
-      scope: templateDraftScope(),
-    });
-    draft.title = templateDraftTitle().trim();
-    draft.description = templateDraftDescription().trim();
-    draft.prompt = templateDraftPrompt().trim();
-
-    if (!draft.title || !draft.prompt) {
-      setError("Template title and prompt are required.");
-      return;
-    }
-
-    if (draft.scope === "workspace") {
-      if (!isTauriRuntime()) {
-        setError("Workspace templates require the desktop app.");
-        return;
-      }
-      if (!activeWorkspacePath().trim()) {
-        setError("Pick a workspace folder first.");
-        return;
-      }
-    }
-
-    setBusy(true);
-    setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
-    setBusyStartedAt(Date.now());
-    setError(null);
-
-    try {
-      const template = createTemplateRecord(draft);
-
-      if (draft.scope === "workspace") {
-        const workspaceRoot = activeWorkspacePath().trim();
-        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
-        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
-      } else {
-        setTemplates((current) => [template, ...current]);
-        setGlobalTemplatesLoaded(true);
-      }
-
-      setTemplateModalOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
-    }
-  }
-
-  async function deleteTemplate(templateId: string) {
-    const scope = templates().find((t) => t.id === templateId)?.scope;
-
-    if (scope === "workspace") {
-      if (!isTauriRuntime()) return;
-      const workspaceRoot = activeWorkspacePath().trim();
-      if (!workspaceRoot) return;
-
-      setBusy(true);
-      setBusyLabel("Deleting template");
-      setBusyStartedAt(Date.now());
-      setError(null);
-
-      try {
-        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
-        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : safeStringify(e));
-      } finally {
-        setBusy(false);
-        setBusyLabel(null);
-        setBusyStartedAt(null);
-      }
-
-      return;
-    }
-
-    setTemplates((current) => current.filter((t) => t.id !== templateId));
-    setGlobalTemplatesLoaded(true);
-  }
-
-  async function runTemplate(template: WorkspaceTemplate) {
-    const c = client();
-    if (!c) return;
-
-    setBusy(true);
-    setError(null);
-
-    try {
-      const session = unwrap(
-        await c.session.create({ title: template.title, directory: activeWorkspaceRoot().trim() }),
-      );
-      await loadSessions(c, { scopeRoot: activeWorkspaceRoot() });
-      await selectSession(session.id);
-      setView("session");
-
-      const model = defaultModel();
-
-      await c.session.promptAsync({
-        sessionID: session.id,
-        model,
-        variant: modelVariant() ?? undefined,
-        parts: [{ type: "text", text: template.prompt }],
-      });
-
-      setSessionModelById((current) => ({
-        ...current,
-        [session.id]: model,
-      }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
@@ -1664,28 +1611,6 @@ export default function App() {
     }
   }
 
-  async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
-    const c = client();
-    if (!c || permissionReplyBusy()) return;
-
-    setPermissionReplyBusy(true);
-    setError(null);
-
-    try {
-      unwrap(await c.permission.reply({ requestID, reply }));
-      await refreshPendingPermissions(c);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setPermissionReplyBusy(false);
-    }
-  }
-
-  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
-    // Intentional no-op: permission prompts grant session-scoped access only.
-    // Persistent workspace roots must be managed explicitly via workspace settings.
-    await respondPermission(requestID, reply);
-  }
 
   async function persistAuthorizedRoots(nextRoots: string[]) {
     if (!isTauriRuntime()) return;
@@ -2131,205 +2056,6 @@ export default function App() {
     }
   });
 
-  createEffect(() => {
-    const c = client();
-    if (!c) return;
-
-    const controller = new AbortController();
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
-
-        for await (const raw of sub.stream) {
-          if (cancelled) break;
-
-          const event = normalizeEvent(raw);
-          if (!event) continue;
-
-          if (event.type === "server.connected") {
-            setSseConnected(true);
-          }
-
-          if (developerMode()) {
-            setEvents((current) => {
-              const next = [{ type: event.type, properties: event.properties }, ...current];
-              return next.slice(0, 150);
-            });
-          }
-
-          if (event.type === "session.updated" || event.type === "session.created") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.info && typeof record.info === "object") {
-                setSessions((current) => upsertSession(current, record.info as Session));
-              }
-            }
-          }
-
-          if (event.type === "session.deleted") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const info = record.info as Session | undefined;
-              if (info?.id) {
-                setSessions((current) => current.filter((s) => s.id !== info.id));
-              }
-            }
-          }
-
-          if (event.type === "session.status") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              if (sessionID) {
-                setSessionStatusById((current) => ({
-                  ...current,
-                  [sessionID]: normalizeSessionStatus(record.status),
-                }));
-              }
-            }
-          }
-
-          if (event.type === "session.idle") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              if (sessionID) {
-                setSessionStatusById((current) => ({
-                  ...current,
-                  [sessionID]: "idle",
-                }));
-              }
-            }
-          }
-
-          if (event.type === "message.updated") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.info && typeof record.info === "object") {
-                const info = record.info as Message;
-
-                const model = modelFromUserMessage(info);
-                if (model) {
-                  setSessionModelById((current) => ({
-                    ...current,
-                    [info.sessionID]: model,
-                  }));
-
-                  setSessionModelOverrideById((current) => {
-                    if (!current[info.sessionID]) return current;
-                    const copy = { ...current };
-                    delete copy[info.sessionID];
-                    return copy;
-                  });
-                }
-
-                if (selectedSessionId() && info.sessionID === selectedSessionId()) {
-                  setMessages((current) => upsertMessage(current, info));
-                }
-              }
-            }
-          }
-
-          if (event.type === "message.removed") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (
-                selectedSessionId() &&
-                record.sessionID === selectedSessionId() &&
-                typeof record.messageID === "string"
-              ) {
-                setMessages((current) => current.filter((m) => m.info.id !== record.messageID));
-              }
-            }
-          }
-
-          if (event.type === "message.part.updated") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.part && typeof record.part === "object") {
-                const part = record.part as Part;
-                if (selectedSessionId() && part.sessionID === selectedSessionId()) {
-                  setMessages((current) => {
-                    const next = upsertPart(current, part);
-
-                    // Some streaming servers only send `delta` updates and keep
-                    // `part.text` as the full aggregation; others send the
-                    // full part each time. If we have a delta, apply it to the
-                    // latest text part to ensure visible streaming.
-                    if (typeof record.delta === "string" && record.delta && part.type === "text") {
-                      const msgIdx = next.findIndex((m) => m.info.id === part.messageID);
-                      if (msgIdx !== -1) {
-                        const msg = next[msgIdx];
-                        const parts = msg.parts.slice();
-                        const pIdx = parts.findIndex((p) => p.id === part.id);
-                        if (pIdx !== -1) {
-                          const currentPart = parts[pIdx] as any;
-                          if (typeof currentPart.text === "string" && currentPart.text.endsWith(record.delta) === false) {
-                            parts[pIdx] = { ...(parts[pIdx] as any), text: `${currentPart.text}${record.delta}` };
-                            const copy = next.slice();
-                            copy[msgIdx] = { ...msg, parts };
-                            return copy;
-                          }
-                        }
-                      }
-                    }
-
-                    return next;
-                  });
-                }
-
-              }
-            }
-          }
-
-          if (event.type === "message.part.removed") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              const messageID = typeof record.messageID === "string" ? record.messageID : null;
-              const partID = typeof record.partID === "string" ? record.partID : null;
-
-              if (sessionID && selectedSessionId() && sessionID === selectedSessionId() && messageID && partID) {
-                setMessages((current) => removePart(current, messageID, partID));
-              }
-            }
-          }
-
-          if (event.type === "todo.updated") {
-            const id = selectedSessionId();
-            if (id && event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.sessionID === id && Array.isArray(record.todos)) {
-                setTodos(record.todos as any);
-              }
-            }
-          }
-
-          if (event.type === "permission.asked" || event.type === "permission.replied") {
-            try {
-              await refreshPendingPermissions(c);
-            } catch {
-              // ignore
-            }
-          }
-        }
-      } catch (e) {
-        if (cancelled) return;
-
-        const message = e instanceof Error ? e.message : String(e);
-        if (message.toLowerCase().includes("abort")) return;
-
-        setError(message);
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-      controller.abort();
-    });
-  });
 
   const headerStatus = createMemo(() => {
     if (!client() || !connectedVersion()) return "Disconnected";
