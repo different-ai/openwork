@@ -107,6 +107,12 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 - `vendor/openwork/src-tauri/tauri.conf.json` (`version`)
 - `vendor/openwork/src-tauri/Cargo.toml` (`version`)
 
+You can bump all three non-interactively with:
+- `pnpm bump:patch`
+- `pnpm bump:minor`
+- `pnpm bump:major`
+- `pnpm bump:set -- 0.1.21`
+
 3. Merge the version bump to `main`.
 4. Create and push a tag:
    - `git tag vX.Y.Z`
