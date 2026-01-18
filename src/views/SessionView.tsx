@@ -182,6 +182,24 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const modelLabelParts = createMemo(() => {
+    const label = props.selectedSessionModelLabel || "Model";
+    const [provider, model] = label.split(" · ");
+    return {
+      provider: provider?.trim() || label,
+      model: model?.trim() || "Ready",
+    };
+  });
+
+  const isModelUnknown = createMemo(() =>
+    ["model", "unknown", "default"].includes((props.selectedSessionModelLabel || "").trim().toLowerCase()),
+  );
+
+  const modelUnavailableDetail = createMemo(() => {
+    if (props.selectedSessionModelLabel) return null;
+    return "Connect a provider to customize this.";
+  });
+
   return (
     <Show
       when={props.selectedSessionId}
@@ -587,15 +605,34 @@ export default function SessionView(props: SessionViewProps) {
         </div>
 
         <div class="p-4 border-t border-zinc-800 bg-zinc-950 sticky bottom-0 z-20">
-          <div class="max-w-2xl mx-auto flex items-center gap-3">
+          <div class="max-w-2xl mx-auto flex flex-col gap-3">
             <button
               type="button"
-              class="px-3 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-xs text-zinc-300 hover:text-white hover:border-zinc-700 transition-colors"
+              class="w-full flex items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-left text-sm text-zinc-200 transition-colors hover:border-zinc-700 hover:bg-zinc-900/90 disabled:opacity-70"
               onClick={() => props.openSessionModelPicker()}
+              disabled={props.busy}
             >
-              {props.selectedSessionModelLabel || "Model"}
+              <div class="flex items-center gap-3">
+                <div class="h-9 w-9 rounded-xl bg-zinc-950/60 border border-zinc-800 flex items-center justify-center text-zinc-400">
+                  <Zap size={16} />
+                </div>
+                <div>
+                  <div class="text-[11px] uppercase tracking-wide text-zinc-500">Assistant</div>
+                  <div class="text-sm text-zinc-100 font-medium">
+                    {isModelUnknown() ? "Standard" : modelLabelParts().model}
+                  </div>
+                  <div class="text-[11px] text-zinc-500">{modelLabelParts().provider}</div>
+                  <Show when={modelUnavailableDetail()}>
+                    <div class="text-[11px] text-zinc-600">{modelUnavailableDetail()}</div>
+                  </Show>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-zinc-500">
+                <span>Change</span>
+                <ChevronDown size={16} class="text-zinc-600" />
+              </div>
             </button>
-            <div class="relative flex-1">
+            <div class="relative">
               <input
                 type="text"
                 disabled={props.busy}
