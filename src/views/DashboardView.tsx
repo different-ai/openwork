@@ -253,7 +253,9 @@ export default function DashboardView(props: DashboardViewProps) {
               }}
             />
             <h1 class="text-lg font-medium">{title()}</h1>
-            <span class="text-xs text-zinc-600">{props.headerStatus}</span>
+            <Show when={props.developerMode}>
+              <span class="text-xs text-zinc-600">{props.headerStatus}</span>
+            </Show>
             <Show when={props.busyHint}>
               <span class="text-xs text-zinc-500">{props.busyHint}</span>
             </Show>
@@ -269,6 +271,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 New Task
               </Button>
             </Show>
+
             <Show when={props.tab === "templates"}>
               <Button
                 variant="secondary"
@@ -291,9 +294,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 New
               </Button>
             </Show>
-            <Button variant="ghost" onClick={props.toggleDeveloperMode}>
-              <Shield size={16} />
-            </Button>
           </div>
         </header>
 

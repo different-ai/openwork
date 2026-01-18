@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -64,10 +64,14 @@ export type SessionViewProps = {
   artifacts: ArtifactItem[];
   workingFiles: string[];
   authorizedDirs: string[];
+  activePlugins: string[];
+  activePluginStatus: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
   sendPrompt: () => Promise<void>;
+  selectedSessionModelLabel: string;
+  openSessionModelPicker: () => void;
   activePermission: PendingPermission | null;
   permissionReplyBusy: boolean;
   respondPermission: (requestID: string, reply: "once" | "always" | "reject") => void;
@@ -85,10 +89,33 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const progressDots = createMemo(() => {
-    const total = props.todos.length || 3;
+    const total = props.todos.length;
+    if (!total) return [] as boolean[];
     const completed = props.todos.filter((t) => t.status === "completed").length;
     return Array.from({ length: total }, (_, idx) => idx < completed);
   });
+
+  const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (!artifactToast()) return;
+    const id = window.setTimeout(() => setArtifactToast(null), 3000);
+    return () => window.clearTimeout(id);
+  });
+
+  const humanizePlugin = (name: string) => {
+    const cleaned = name
+      .replace(/^@[^/]+\//, "")
+      .replace(/[-_]+/g, " ")
+      .replace(/\b(opencode|plugin)\b/gi, "")
+      .trim();
+    return cleaned
+      .split(" ")
+      .filter(Boolean)
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ")
+      .trim();
+  };
 
   const toggleSteps = (id: string) => {
     props.setExpandedStepIds((current) => {
@@ -138,33 +165,33 @@ export default function SessionView(props: SessionViewProps) {
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
             </Button>
-            <WorkspaceChip
-              workspace={props.activeWorkspaceDisplay}
-              onClick={() => {
-                props.setWorkspaceSearch("");
-                props.setWorkspacePickerOpen(true);
-              }}
-            />
-            <span class="text-xs text-zinc-600">{props.headerStatus}</span>
-            <Show when={props.busyHint}>
-              <span class="text-xs text-zinc-500">· {props.busyHint}</span>
-            </Show>
+             <WorkspaceChip
+               workspace={props.activeWorkspaceDisplay}
+               onClick={() => {
+                 props.setWorkspaceSearch("");
+                 props.setWorkspacePickerOpen(true);
+               }}
+             />
+             <Show when={props.developerMode}>
+               <span class="text-xs text-zinc-600">{props.headerStatus}</span>
+             </Show>
+             <Show when={props.busyHint}>
+               <span class="text-xs text-zinc-500">· {props.busyHint}</span>
+             </Show>
+
           </div>
         </header>
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-zinc-800 bg-zinc-950 flex-col">
             <div class="p-4 border-b border-zinc-800">
-              <div class="text-[11px] uppercase tracking-wider text-zinc-500">Workspace</div>
-              <div class="mt-2">
-                <WorkspaceChip
-                  workspace={props.activeWorkspaceDisplay}
-                  onClick={() => {
-                    props.setWorkspaceSearch("");
-                    props.setWorkspacePickerOpen(true);
-                  }}
-                />
-              </div>
+              <WorkspaceChip
+                workspace={props.activeWorkspaceDisplay}
+                onClick={() => {
+                  props.setWorkspaceSearch("");
+                  props.setWorkspacePickerOpen(true);
+                }}
+              />
             </div>
 
             <div class="px-4 pt-4">
@@ -254,10 +281,10 @@ export default function SessionView(props: SessionViewProps) {
                     <Show when={renderableParts().length > 0}>
                       <div class="flex">
                         <div
-                          class={`w-full p-4 text-sm leading-relaxed rounded-2xl ${
+                          class={`w-full text-sm leading-relaxed ${
                             (msg.info as any).role === "user"
-                              ? "bg-white text-black shadow-xl shadow-white/5 max-w-[520px] ml-auto"
-                              : "bg-zinc-900/80 border border-zinc-800 text-zinc-200"
+                              ? "bg-white text-black shadow-xl shadow-white/5 max-w-[520px] ml-auto p-4 rounded-2xl"
+                              : "text-zinc-200"
                           }`}
                         >
                           <For each={groups()}>
@@ -341,7 +368,11 @@ export default function SessionView(props: SessionViewProps) {
                         <div class="text-xs text-zinc-500">Document</div>
                       </div>
                     </div>
-                    <Button variant="outline" class="text-xs" disabled>
+                    <Button
+                      variant="outline"
+                      class="text-xs"
+                      onClick={() => setArtifactToast("Open isn't wired yet — I can hook this to reveal in Finder next.")}
+                    >
                       Open
                     </Button>
                   </div>
@@ -352,40 +383,48 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
 
+          <Show when={artifactToast()}>
+            <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-zinc-900 border border-zinc-800 px-4 py-2 text-xs text-zinc-300 shadow-lg">
+              {artifactToast()}
+            </div>
+          </Show>
+
           <aside class="hidden lg:flex w-80 border-l border-zinc-800 bg-zinc-950 flex-col">
             <div class="p-4 space-y-4 overflow-y-auto flex-1">
-              <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
-                <button
-                  class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
-                  onClick={() => toggleSidebar("progress")}
-                >
-                  <span>Progress</span>
-                  <ChevronDown
-                    size={16}
-                    class={`transition-transform ${props.expandedSidebarSections.progress ? "rotate-180" : ""}`.trim()}
-                  />
-                </button>
-                <Show when={props.expandedSidebarSections.progress}>
-                  <div class="px-4 pb-4 pt-1">
-                    <div class="flex items-center gap-2">
-                      <For each={progressDots()}>
-                        {(done) => (
-                          <div
-                            class={`h-6 w-6 rounded-full border flex items-center justify-center ${
-                              done ? "border-emerald-400 text-emerald-400" : "border-zinc-700 text-zinc-700"
-                            }`}
-                          >
-                            <Show when={done}>
-                              <Check size={14} />
-                            </Show>
-                          </div>
-                        )}
-                      </For>
+              <Show when={progressDots().length > 0}>
+                <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
+                  <button
+                    class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
+                    onClick={() => toggleSidebar("progress")}
+                  >
+                    <span>Progress</span>
+                    <ChevronDown
+                      size={16}
+                      class={`transition-transform ${props.expandedSidebarSections.progress ? "rotate-180" : ""}`.trim()}
+                    />
+                  </button>
+                  <Show when={props.expandedSidebarSections.progress}>
+                    <div class="px-4 pb-4 pt-1">
+                      <div class="flex items-center gap-2">
+                        <For each={progressDots()}>
+                          {(done) => (
+                            <div
+                              class={`h-6 w-6 rounded-full border flex items-center justify-center ${
+                                done ? "border-emerald-400 text-emerald-400" : "border-zinc-700 text-zinc-700"
+                              }`}
+                            >
+                              <Show when={done}>
+                                <Check size={14} />
+                              </Show>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                      <div class="mt-2 text-xs text-zinc-500">Steps will show as the task unfolds.</div>
                     </div>
-                    <div class="mt-2 text-xs text-zinc-500">Steps will show as the task unfolds.</div>
-                  </div>
-                </Show>
-              </div>
+                  </Show>
+                </div>
+              </Show>
 
               <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60">
                 <button
@@ -434,6 +473,32 @@ export default function SessionView(props: SessionViewProps) {
                 </button>
                 <Show when={props.expandedSidebarSections.context}>
                   <div class="px-4 pb-4 pt-1 space-y-4">
+                    <Show when={props.activePlugins.length || props.activePluginStatus}>
+                      <div>
+                        <div class="flex items-center justify-between text-xs text-zinc-500">
+                          <span>Active plugins</span>
+                          <span>{props.activePlugins.length}</span>
+                        </div>
+                        <div class="mt-2 space-y-2">
+                          <Show
+                            when={props.activePlugins.length}
+                            fallback={
+                              <div class="text-xs text-zinc-600">{props.activePluginStatus ?? "No plugins loaded."}</div>
+                            }
+                          >
+                            <For each={props.activePlugins}>
+                              {(plugin) => (
+                                <div class="flex items-center gap-2 text-xs text-zinc-300">
+                                  <Circle size={8} class="text-zinc-500" />
+                                  <span class="truncate">{humanizePlugin(plugin) || plugin}</span>
+                                </div>
+                              )}
+                            </For>
+                          </Show>
+                        </div>
+                      </div>
+                    </Show>
+
                     <div>
                       <div class="flex items-center justify-between text-xs text-zinc-500">
                         <span>Selected folders</span>
@@ -477,7 +542,15 @@ export default function SessionView(props: SessionViewProps) {
         </div>
 
         <div class="p-4 border-t border-zinc-800 bg-zinc-950 sticky bottom-0 z-20">
-          <div class="max-w-2xl mx-auto relative">
+          <div class="max-w-2xl mx-auto flex items-center gap-3">
+            <button
+              type="button"
+              class="px-3 py-2 rounded-xl border border-zinc-800 bg-zinc-900 text-xs text-zinc-300 hover:text-white hover:border-zinc-700 transition-colors"
+              onClick={() => props.openSessionModelPicker()}
+            >
+              {props.selectedSessionModelLabel || "Model"}
+            </button>
+            <div class="relative flex-1">
               <input
                 type="text"
                 disabled={props.busy}
@@ -497,9 +570,9 @@ export default function SessionView(props: SessionViewProps) {
                 class="absolute right-2 top-2 p-2 bg-white text-black rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75"
                 title="Run"
               >
-
-              <ArrowRight size={20} />
-            </button>
+                <ArrowRight size={20} />
+              </button>
+            </div>
           </div>
         </div>
 

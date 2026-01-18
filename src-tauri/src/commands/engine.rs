@@ -155,6 +155,23 @@ pub fn engine_start(
     });
   }
 
+  if let Some(stream) = child.stdout.take() {
+    let stdout_state = manager.inner.clone();
+    std::thread::spawn(move || {
+      use std::io::Read;
+      let mut buffer = Vec::new();
+      let mut reader = stream;
+      let _ = reader.read_to_end(&mut buffer);
+      let output = String::from_utf8_lossy(&buffer).trim().to_string();
+      if output.is_empty() {
+        return;
+      }
+      if let Ok(mut state) = stdout_state.lock() {
+        state.last_stdout = Some(crate::utils::truncate_output(&output, 8000));
+      }
+    });
+  }
+
   state.child = Some(child);
   state.project_dir = Some(project_dir);
   state.hostname = Some(hostname.clone());
