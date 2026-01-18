@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::types::{WorkspaceOpenworkConfig, WorkspaceTemplate};
 use crate::utils::now_ms;
+use crate::workspace::templates::serialize_template_frontmatter;
 
 pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
   let mut out = existing;
@@ -138,12 +139,14 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
   ];
 
   for template in defaults {
-    let file_path = templates_dir.join(format!("{}.json", template.id));
-    fs::write(
-      &file_path,
-      serde_json::to_string_pretty(&template).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("Failed to write {}: {e}", file_path.display()))?;
+    let template_dir = templates_dir.join(&template.id);
+    fs::create_dir_all(&template_dir)
+      .map_err(|e| format!("Failed to create {}: {e}", template_dir.display()))?;
+
+    let file_path = template_dir.join("template.yml");
+    let serialized = serialize_template_frontmatter(&template)?;
+    fs::write(&file_path, serialized)
+      .map_err(|e| format!("Failed to write {}: {e}", file_path.display()))?;
   }
 
   Ok(())
