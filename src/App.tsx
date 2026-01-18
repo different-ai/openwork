@@ -1,5 +1,4 @@
 import {
-  For,
   Match,
   Show,
   Switch,
@@ -10,18 +9,17 @@ import {
   onMount,
 } from "solid-js";
 
-import { applyEdits, modify, parse } from "jsonc-parser";
+import { applyEdits, modify } from "jsonc-parser";
 
 import type { Message, Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
-
-import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 
-import Button from "./components/Button";
-import TextInput from "./components/TextInput";
+import ModelPickerModal from "./components/ModelPickerModal";
+import ResetModal from "./components/ResetModal";
+import TemplateModal from "./components/TemplateModal";
 import OnboardingView from "./views/OnboardingView";
 import DashboardView from "./views/DashboardView";
 import SessionView from "./views/SessionView";
@@ -50,9 +48,7 @@ import type {
   ReloadReason,
   ResetOpenworkMode,
   SkillCard,
-  SuggestedPlugin,
   TodoItem,
-  UpdateHandle,
   View,
   WorkspaceDisplay,
   WorkspaceOpenworkConfig,
@@ -71,7 +67,6 @@ import {
   isTauriRuntime,
   isWindowsPlatform,
   lastUserModelFromMessages,
-  modelEquals,
   modelFromUserMessage,
   normalizeEvent,
   normalizeSessionStatus,
@@ -87,6 +82,14 @@ import {
   upsertSession,
   writeModePreference,
 } from "./app/utils";
+import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./app/templates";
+import { createUpdaterState } from "./app/updater";
+import {
+  isPluginInstalled,
+  loadPluginsFromConfig as loadPluginsFromConfigHelpers,
+  parsePluginListFromContent,
+  stripPluginVersion,
+} from "./app/plugins";
 import {
   engineDoctor,
   engineInfo,
@@ -111,7 +114,6 @@ import {
   type EngineDoctorResult,
   type EngineInfo,
   type OpencodeConfigFile,
-  type UpdaterEnvironment,
   type WorkspaceInfo,
 } from "./lib/tauri";
 
@@ -175,6 +177,7 @@ export default function App() {
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
   const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
+
   const workspaceTemplates = createMemo(() => templates().filter((t) => t.scope === "workspace"));
   const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
 
@@ -230,28 +233,22 @@ export default function App() {
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
 
-  const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);
-
-  const [updateEnv, setUpdateEnv] = createSignal<UpdaterEnvironment | null>(null);
+  const updater = createUpdaterState();
+  const {
+    updateAutoCheck,
+    setUpdateAutoCheck,
+    updateStatus,
+    setUpdateStatus,
+    pendingUpdate,
+    setPendingUpdate,
+    updateEnv,
+    setUpdateEnv,
+  } = updater;
 
   const [resetModalOpen, setResetModalOpen] = createSignal(false);
   const [resetModalMode, setResetModalMode] = createSignal<ResetOpenworkMode>("onboarding");
   const [resetModalText, setResetModalText] = createSignal("");
   const [resetModalBusy, setResetModalBusy] = createSignal(false);
-
-  const [updateStatus, setUpdateStatus] = createSignal<
-    | { state: "idle"; lastCheckedAt: number | null }
-    | { state: "checking"; startedAt: number }
-    | { state: "available"; lastCheckedAt: number; version: string; date?: string; notes?: string }
-    | { state: "downloading"; lastCheckedAt: number; version: string; totalBytes: number | null; downloadedBytes: number; notes?: string }
-    | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
-    | { state: "error"; lastCheckedAt: number | null; message: string }
-  >({ state: "idle", lastCheckedAt: null });
-
-  const [pendingUpdate, setPendingUpdate] = createSignal<
-    | null
-    | { update: UpdateHandle; version: string; notes?: string }
-  >(null);
 
   const busySeconds = createMemo(() => {
     const start = busyStartedAt();
@@ -284,74 +281,11 @@ export default function App() {
     });
   });
 
-  const normalizePluginList = (value: unknown) => {
-    if (!value) return [] as string[];
-    if (Array.isArray(value)) {
-      return value
-        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
-        .filter((entry) => entry.length > 0);
-    }
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      return trimmed ? [trimmed] : [];
-    }
-    return [] as string[];
-  };
-
-  const stripPluginVersion = (spec: string) => {
-    const trimmed = spec.trim();
-    if (!trimmed) return "";
-
-    const looksLikeVersion = (suffix: string) =>
-      /^(latest|next|beta|alpha|canary|rc|stable|\d)/i.test(suffix);
-
-    if (trimmed.startsWith("@")) {
-      const slashIndex = trimmed.indexOf("/");
-      if (slashIndex === -1) return trimmed;
-
-      const atIndex = trimmed.indexOf("@", slashIndex + 1);
-      if (atIndex === -1) return trimmed;
-
-      const suffix = trimmed.slice(atIndex + 1);
-      return looksLikeVersion(suffix) ? trimmed.slice(0, atIndex) : trimmed;
-    }
-
-    const atIndex = trimmed.indexOf("@");
-    if (atIndex === -1) return trimmed;
-
-    const suffix = trimmed.slice(atIndex + 1);
-    return looksLikeVersion(suffix) ? trimmed.slice(0, atIndex) : trimmed;
-  };
-
-  const pluginNamesLower = createMemo(() => {
-    const normalized = pluginList().flatMap((entry) => {
-      const raw = entry.toLowerCase();
-      const stripped = stripPluginVersion(entry).toLowerCase();
-      return stripped && stripped !== raw ? [raw, stripped] : [raw];
-    });
-
-    return new Set(normalized);
-  });
-
-  const isPluginInstalled = (pluginName: string, aliases: string[] = []) => {
-    const list = pluginNamesLower();
-    return [pluginName, ...aliases].some((entry) => list.has(entry.toLowerCase()));
-  };
+  const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
+    isPluginInstalled(pluginList(), pluginName, aliases);
 
   const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
-    if (!config?.content) {
-      setPluginList([]);
-      return;
-    }
-
-    try {
-      const parsed = parse(config.content) as Record<string, unknown> | undefined;
-      const next = normalizePluginList(parsed?.plugin);
-      setPluginList(next);
-    } catch (e) {
-      setPluginList([]);
-      setPluginStatus(e instanceof Error ? e.message : "Failed to parse opencode.json");
-    }
+    loadPluginsFromConfigHelpers(config, setPluginList, (message) => setPluginStatus(message));
   };
 
   const selectedSession = createMemo(() => {
@@ -1279,26 +1213,37 @@ export default function App() {
   function openTemplateModal() {
     const seedTitle = selectedSession()?.title ?? "";
     const seedPrompt = lastPromptSent() || prompt();
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
 
-    setTemplateDraftTitle(seedTitle);
-    setTemplateDraftDescription("");
-    setTemplateDraftPrompt(seedPrompt);
-    setTemplateDraftScope("workspace");
+    resetTemplateDraft(
+      {
+        setTitle: setTemplateDraftTitle,
+        setDescription: setTemplateDraftDescription,
+        setPrompt: setTemplateDraftPrompt,
+        setScope: setTemplateDraftScope,
+      },
+      nextDraft.scope,
+    );
+
+    setTemplateDraftTitle(nextDraft.title);
+    setTemplateDraftPrompt(nextDraft.prompt);
     setTemplateModalOpen(true);
   }
 
   async function saveTemplate() {
-    const title = templateDraftTitle().trim();
-    const promptText = templateDraftPrompt().trim();
-    const description = templateDraftDescription().trim();
-    const scope = templateDraftScope();
+    const draft = buildTemplateDraft({
+      scope: templateDraftScope(),
+    });
+    draft.title = templateDraftTitle().trim();
+    draft.description = templateDraftDescription().trim();
+    draft.prompt = templateDraftPrompt().trim();
 
-    if (!title || !promptText) {
+    if (!draft.title || !draft.prompt) {
       setError("Template title and prompt are required.");
       return;
     }
 
-    if (scope === "workspace") {
+    if (draft.scope === "workspace") {
       if (!isTauriRuntime()) {
         setError("Workspace templates require the desktop app.");
         return;
@@ -1310,21 +1255,14 @@ export default function App() {
     }
 
     setBusy(true);
-    setBusyLabel(scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
     setBusyStartedAt(Date.now());
     setError(null);
 
     try {
-      const template: WorkspaceTemplate = {
-        id: `tmpl_${Date.now()}`,
-        title,
-        description,
-        prompt: promptText,
-        createdAt: Date.now(),
-        scope,
-      };
+      const template = createTemplateRecord(draft);
 
-      if (scope === "workspace") {
+      if (draft.scope === "workspace") {
         const workspaceRoot = activeWorkspacePath().trim();
         await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
         await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
@@ -1544,14 +1482,14 @@ export default function App() {
         return;
       }
 
-      try {
-        const parsed = parse(config.content ?? "") as Record<string, unknown> | undefined;
-        const next = normalizePluginList(parsed?.plugin);
-        setSidebarPluginList(next);
-      } catch {
-        setSidebarPluginList([]);
-        setSidebarPluginStatus("Failed to parse opencode.json");
-      }
+       try {
+         const next = parsePluginListFromContent(config.content ?? "");
+         setSidebarPluginList(next);
+       } catch {
+         setSidebarPluginList([]);
+         setSidebarPluginStatus("Failed to parse opencode.json");
+       }
+
 
       loadPluginsFromConfig(config);
     } catch (e) {
@@ -1606,8 +1544,7 @@ export default function App() {
         return;
       }
 
-      const parsed = parse(raw) as Record<string, unknown> | undefined;
-      const plugins = normalizePluginList(parsed?.plugin);
+      const plugins = parsePluginListFromContent(raw);
 
       const desired = stripPluginVersion(pluginName).toLowerCase();
       if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
@@ -2565,6 +2502,16 @@ export default function App() {
     setTemplateDraftDescription,
     setTemplateDraftPrompt,
     setTemplateDraftScope,
+    resetTemplateDraft: (scope: "workspace" | "global" = "workspace") =>
+      resetTemplateDraft(
+        {
+          setTitle: setTemplateDraftTitle,
+          setDescription: setTemplateDraftDescription,
+          setPrompt: setTemplateDraftPrompt,
+          setScope: setTemplateDraftScope,
+        },
+        scope,
+      ),
     openTemplateModal,
     runTemplate,
     deleteTemplate,
@@ -2589,7 +2536,7 @@ export default function App() {
     pluginStatus: pluginStatus(),
     activePluginGuide: activePluginGuide(),
     setActivePluginGuide,
-    isPluginInstalled,
+    isPluginInstalled: isPluginInstalledByName,
     suggestedPlugins: SUGGESTED_PLUGINS,
     addPlugin,
     createSessionAndOpen,
@@ -2714,258 +2661,43 @@ export default function App() {
         </Switch>
       </Show>
 
-      <Show when={modelPickerOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
-            <div class="p-6 flex flex-col min-h-0">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h3 class="text-lg font-semibold text-white">
-                    {modelPickerTarget() === "default" ? "Default model" : "Model"}
-                  </h3>
-                  <p class="text-sm text-zinc-400 mt-1">
-                    Choose from your configured providers. This selection {modelPickerTarget() === "default"
-                      ? "will be used for new sessions"
-                      : "applies to your next message"}.
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  class="!p-2 rounded-full"
-                  onClick={() => setModelPickerOpen(false)}
-                >
-                  <X size={16} />
-                </Button>
-              </div>
+      <ModelPickerModal
+        open={modelPickerOpen()}
+        options={modelOptions()}
+        filteredOptions={filteredModelOptions()}
+        query={modelPickerQuery()}
+        setQuery={setModelPickerQuery}
+        target={modelPickerTarget()}
+        current={modelPickerCurrent()}
+        onSelect={applyModelSelection}
+        onClose={() => setModelPickerOpen(false)}
+      />
 
-              <div class="mt-5">
-                <div class="relative">
-                  <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-                  <input
-                    type="text"
-                    value={modelPickerQuery()}
-                    onInput={(e) => setModelPickerQuery(e.currentTarget.value)}
-                    placeholder="Search models…"
-                    class="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600"
-                  />
-                </div>
-                <Show when={modelPickerQuery().trim()}>
-                  <div class="mt-2 text-xs text-zinc-500">
-                    Showing {filteredModelOptions().length} of {modelOptions().length}
-                  </div>
-                </Show>
-              </div>
+      <ResetModal
+        open={resetModalOpen()}
+        mode={resetModalMode()}
+        text={resetModalText()}
+        busy={resetModalBusy()}
+        canReset={!resetModalBusy() && !anyActiveRuns() && resetModalText().trim().toUpperCase() === "RESET"}
+        hasActiveRuns={anyActiveRuns()}
+        onClose={() => setResetModalOpen(false)}
+        onConfirm={confirmReset}
+        onTextChange={setResetModalText}
+      />
 
-              <div class="mt-4 space-y-2 overflow-y-auto pr-1 -mr-1 min-h-0">
-                 <For each={filteredModelOptions()}>
-                   {(opt) => {
-                     const active = () =>
-                       modelEquals(modelPickerCurrent(), {
-                         providerID: opt.providerID,
-                         modelID: opt.modelID,
-                       });
-
-                     return (
-                       <button
-                         class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                           active()
-                             ? "border-white/20 bg-white/5"
-                             : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
-                         }`}
-                         onClick={() =>
-                           applyModelSelection({
-                             providerID: opt.providerID,
-                             modelID: opt.modelID,
-                           })
-                         }
-                       >
-                         <div class="flex items-start justify-between gap-3">
-                           <div class="min-w-0">
-                             <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
-                               <span class="truncate">{opt.title}</span>
-                             </div>
-                             <Show when={opt.description}>
-                               <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
-                             </Show>
-                             <Show when={opt.footer}>
-                               <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
-                             </Show>
-                             <div class="text-[11px] text-zinc-600 font-mono mt-2">
-                               {opt.providerID}/{opt.modelID}
-                             </div>
-                           </div>
-
-                           <div class="pt-0.5 text-zinc-500">
-                             <Show when={active()} fallback={<Circle size={14} />}>
-                               <CheckCircle2 size={14} class="text-emerald-400" />
-                             </Show>
-                           </div>
-                         </div>
-                       </button>
-                     );
-                   }}
-                 </For>
-              </div>
-
-              <div class="mt-5 flex justify-end shrink-0">
-                <Button variant="outline" onClick={() => setModelPickerOpen(false)}>
-                  Done
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Show>
-
-      <Show when={resetModalOpen()}>
-        <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h3 class="text-lg font-semibold text-white">
-                    <Switch>
-                      <Match when={resetModalMode() === "onboarding"}>Reset onboarding</Match>
-                      <Match when={true}>Reset app data</Match>
-                    </Switch>
-                  </h3>
-                  <p class="text-sm text-zinc-400 mt-1">
-                    Type <span class="font-mono">RESET</span> to confirm. OpenWork will restart.
-                  </p>
-                </div>
-                <Button
-                  variant="ghost"
-                  class="!p-2 rounded-full"
-                  onClick={() => setResetModalOpen(false)}
-                  disabled={resetModalBusy()}
-                >
-                  <X size={16} />
-                </Button>
-              </div>
-
-              <div class="mt-6 space-y-4">
-                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400">
-                  <Switch>
-                    <Match when={resetModalMode() === "onboarding"}>
-                      Clears OpenWork local preferences and workspace onboarding markers.
-                    </Match>
-                    <Match when={true}>
-                      Clears OpenWork cache and app data on this device.
-                    </Match>
-                  </Switch>
-                </div>
-
-                <Show when={anyActiveRuns()}>
-                  <div class="text-xs text-red-300">Stop active runs before resetting.</div>
-                </Show>
-
-                <TextInput
-                  label="Confirmation"
-                  placeholder="Type RESET"
-                  value={resetModalText()}
-                  onInput={(e) => setResetModalText(e.currentTarget.value)}
-                  disabled={resetModalBusy()}
-                />
-              </div>
-
-              <div class="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setResetModalOpen(false)} disabled={resetModalBusy()}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  onClick={confirmReset}
-                  disabled={resetModalBusy() || anyActiveRuns() || resetModalText().trim().toUpperCase() !== "RESET"}
-                >
-                  Reset & Restart
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Show>
-
-      <Show when={templateModalOpen()}>
-         <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-            <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-              <div class="p-6">
-                <div class="flex items-start justify-between gap-4">
-                 <div>
-                   <h3 class="text-lg font-semibold text-white">Save Template</h3>
-                   <p class="text-sm text-zinc-400 mt-1">Reuse a workflow with one tap.</p>
-                 </div>
-                 <Button
-                   variant="ghost"
-                   class="!p-2 rounded-full"
-                   onClick={() => setTemplateModalOpen(false)}
-                 >
-                   <X size={16} />
-                 </Button>
-               </div>
-
-
-              <div class="mt-6 space-y-4">
-                <TextInput
-                  label="Title"
-                  value={templateDraftTitle()}
-                  onInput={(e) => setTemplateDraftTitle(e.currentTarget.value)}
-                  placeholder="e.g. Daily standup summary"
-                />
-
-                <TextInput
-                  label="Description (optional)"
-                  value={templateDraftDescription()}
-                  onInput={(e) => setTemplateDraftDescription(e.currentTarget.value)}
-                  placeholder="What does this template do?"
-                />
-
-                <div class="grid grid-cols-2 gap-2">
-                  <button
-                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
-                      templateDraftScope() === "workspace"
-                        ? "bg-white/10 text-white border-white/20"
-                        : "text-zinc-400 border-zinc-800 hover:text-white"
-                    }`}
-                    onClick={() => setTemplateDraftScope("workspace")}
-                    type="button"
-                  >
-                    Workspace
-                  </button>
-                  <button
-                    class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
-                      templateDraftScope() === "global"
-                        ? "bg-white/10 text-white border-white/20"
-                        : "text-zinc-400 border-zinc-800 hover:text-white"
-                    }`}
-                    onClick={() => setTemplateDraftScope("global")}
-                    type="button"
-                  >
-                    Global
-                  </button>
-                </div>
-
-                <label class="block">
-                  <div class="mb-1 text-xs font-medium text-neutral-300">Prompt</div>
-                  <textarea
-                    class="w-full min-h-40 rounded-xl bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20"
-                    value={templateDraftPrompt()}
-                    onInput={(e) => setTemplateDraftPrompt(e.currentTarget.value)}
-                    placeholder="Write the instructions you want to reuse…"
-                  />
-                  <div class="mt-1 text-xs text-neutral-500">This becomes the first user message.</div>
-                </label>
-              </div>
-
-              <div class="mt-6 flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setTemplateModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={saveTemplate}>Save</Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </Show>
+      <TemplateModal
+        open={templateModalOpen()}
+        title={templateDraftTitle()}
+        description={templateDraftDescription()}
+        prompt={templateDraftPrompt()}
+        scope={templateDraftScope()}
+        onClose={() => setTemplateModalOpen(false)}
+        onSave={saveTemplate}
+        onTitleChange={setTemplateDraftTitle}
+        onDescriptionChange={setTemplateDraftDescription}
+        onPromptChange={setTemplateDraftPrompt}
+        onScopeChange={setTemplateDraftScope}
+      />
     </>
   );
 }
