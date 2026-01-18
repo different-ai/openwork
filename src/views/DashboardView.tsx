@@ -131,6 +131,10 @@ export type DashboardViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   safeStringify: (value: unknown) => string;
+  demoMode: boolean;
+  toggleDemoMode: () => void;
+  demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
+  setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
@@ -542,6 +546,10 @@ export default function DashboardView(props: DashboardViewProps) {
                 pendingPermissions={props.pendingPermissions}
                 events={props.events}
                 safeStringify={props.safeStringify}
+                demoMode={props.demoMode}
+                toggleDemoMode={props.toggleDemoMode}
+                demoSequence={props.demoSequence}
+                setDemoSequence={props.setDemoSequence}
               />
             </Match>
           </Switch>
