@@ -14,6 +14,12 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{Manager, State};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 #[cfg(target_os = "macos")]
 const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
 
@@ -885,9 +891,13 @@ fn command_for_program(program: &Path) -> Command {
       .unwrap_or(false)
     {
       let mut command = Command::new("cmd");
-      command.arg("/C").arg(program);
+      command.arg("/C").arg(program).creation_flags(CREATE_NO_WINDOW);
       return command;
     }
+
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW);
+    return command;
   }
 
   Command::new(program)
@@ -1451,6 +1461,8 @@ fn opkg_install(project_dir: String, package: String) -> Result<ExecResult, Stri
   }
 
   let mut opkg = Command::new("opkg");
+  #[cfg(windows)]
+  opkg.creation_flags(CREATE_NO_WINDOW);
   opkg
     .arg("install")
     .arg(&package)
@@ -1464,6 +1476,8 @@ fn opkg_install(project_dir: String, package: String) -> Result<ExecResult, Stri
   }
 
   let mut openpackage = Command::new("openpackage");
+  #[cfg(windows)]
+  openpackage.creation_flags(CREATE_NO_WINDOW);
   openpackage
     .arg("install")
     .arg(&package)
@@ -1477,6 +1491,8 @@ fn opkg_install(project_dir: String, package: String) -> Result<ExecResult, Stri
   }
 
   let mut pnpm = Command::new("pnpm");
+  #[cfg(windows)]
+  pnpm.creation_flags(CREATE_NO_WINDOW);
   pnpm
     .arg("dlx")
     .arg("opkg")
@@ -1492,6 +1508,8 @@ fn opkg_install(project_dir: String, package: String) -> Result<ExecResult, Stri
   }
 
   let mut npx = Command::new("npx");
+  #[cfg(windows)]
+  npx.creation_flags(CREATE_NO_WINDOW);
   npx
     .arg("opkg")
     .arg("install")
