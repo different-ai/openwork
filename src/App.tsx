@@ -822,7 +822,7 @@ export default function App() {
         }
       }
 
-      await refreshPlugins().catch(() => undefined);
+      await refreshPlugins("project").catch(() => undefined);
       await refreshSkills().catch(() => undefined);
 
       clearReloadRequired();
@@ -1293,6 +1293,7 @@ export default function App() {
     activeWorkspacePath: workspaceStore.activeWorkspacePath(),
     localHostLabel: localHostLabel(),
     engineRunning: Boolean(engine()?.running),
+    developerMode: developerMode(),
     engineBaseUrl: engine()?.baseUrl ?? null,
     engineDoctorFound: engineDoctorResult()?.found ?? null,
     engineDoctorSupportsServe: engineDoctorResult()?.supportsServe ?? null,
@@ -1461,7 +1462,7 @@ export default function App() {
             <DashboardView {...dashboardProps()} />
           </Match>
           <Match when={view() === "session"}>
-            <SessionView
+             <SessionView
                 selectedSessionId={selectedSessionId()}
                 setView={setView}
                 setTab={setTab}
@@ -1470,7 +1471,13 @@ export default function App() {
                 setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
                 headerStatus={headerStatus()}
                 busyHint={busyHint()}
+                selectedSessionModelLabel={selectedSessionModelLabel()}
+                openSessionModelPicker={openSessionModelPicker}
+                activePlugins={sidebarPluginList()}
+                activePluginStatus={sidebarPluginStatus()}
+
                 createSessionAndOpen={createSessionAndOpen}
+
                 sendPromptAsync={sendPrompt}
                 newTaskDisabled={newTaskDisabled()}
                 sessions={sessions().map((session) => ({
