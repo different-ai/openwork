@@ -15,7 +15,9 @@
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
-    "test:e2e": "node scripts/e2e.mjs"
+    "test:session-switch": "node scripts/session-switch.mjs",
+    "test:fs-engine": "node scripts/fs-engine.mjs",
+    "test:e2e": "node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.19",

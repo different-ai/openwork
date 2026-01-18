@@ -224,3 +224,13 @@ export async function writeOpencodeConfig(
 export async function resetOpenworkState(mode: "onboarding" | "all"): Promise<void> {
   return invoke<void>("reset_openwork_state", { mode });
 }
+
+export type CacheResetResult = {
+  removed: string[];
+  missing: string[];
+  errors: string[];
+};
+
+export async function resetOpencodeCache(): Promise<CacheResetResult> {
+  return invoke<CacheResetResult>("reset_opencode_cache");
+}

@@ -3,7 +3,7 @@ import { createSignal } from "solid-js";
 import { applyEdits, modify } from "jsonc-parser";
 
 import type { Client, CuratedPackage, Mode, PluginScope, ReloadReason, SkillCard } from "./types";
-import { isTauriRuntime } from "./utils";
+import { addOpencodeCacheHint, isTauriRuntime } from "./utils";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -281,7 +281,8 @@ export function createExtensionsStore(options: {
 
       await refreshSkills();
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
     }
@@ -333,7 +334,8 @@ export function createExtensionsStore(options: {
 
       await refreshSkills();
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : "Unknown error");
+      const message = e instanceof Error ? e.message : "Unknown error";
+      options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
     }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
@@ -152,4 +152,13 @@ export function parseArgs(argv) {
     args.set(key, value);
   }
   return args;
+}
+
+export function canWriteWorkspace(directory) {
+  try {
+    const stat = statSync(directory);
+    return stat && stat.isDirectory();
+  } catch {
+    return false;
+  }
 }

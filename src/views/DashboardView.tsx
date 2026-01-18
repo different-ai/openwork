@@ -117,24 +117,28 @@ export type DashboardViewProps = {
   checkForUpdates: () => void;
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
-  anyActiveRuns: boolean;
-  engineSource: "path" | "sidecar";
-  setEngineSource: (value: "path" | "sidecar") => void;
-  isWindows: boolean;
-  toggleDeveloperMode: () => void;
-  developerMode: boolean;
-  stopHost: () => void;
-  openResetModal: (mode: "onboarding" | "all") => void;
-  resetModalBusy: boolean;
-  onResetStartupPreference: () => void;
-  pendingPermissions: unknown;
-  events: unknown;
-  safeStringify: (value: unknown) => string;
-  demoMode: boolean;
-  toggleDemoMode: () => void;
-  demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
-  setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
-};
+   anyActiveRuns: boolean;
+   engineSource: "path" | "sidecar";
+   setEngineSource: (value: "path" | "sidecar") => void;
+   isWindows: boolean;
+   toggleDeveloperMode: () => void;
+   developerMode: boolean;
+   stopHost: () => void;
+   openResetModal: (mode: "onboarding" | "all") => void;
+   resetModalBusy: boolean;
+   onResetStartupPreference: () => void;
+   pendingPermissions: unknown;
+   events: unknown;
+   safeStringify: (value: unknown) => string;
+   repairOpencodeCache: () => void;
+   cacheRepairBusy: boolean;
+   cacheRepairResult: string | null;
+   demoMode: boolean;
+   toggleDemoMode: () => void;
+   demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
+   setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
+ };
+
 
 export default function DashboardView(props: DashboardViewProps) {
   const title = createMemo(() => {
@@ -545,6 +549,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 pendingPermissions={props.pendingPermissions}
                 events={props.events}
                 safeStringify={props.safeStringify}
+                repairOpencodeCache={props.repairOpencodeCache}
+                cacheRepairBusy={props.cacheRepairBusy}
+                cacheRepairResult={props.cacheRepairResult}
                 demoMode={props.demoMode}
                 toggleDemoMode={props.toggleDemoMode}
                 demoSequence={props.demoSequence}
@@ -556,8 +563,31 @@ export default function DashboardView(props: DashboardViewProps) {
 
         <Show when={props.error}>
           <div class="mx-auto max-w-5xl px-6 md:px-10 pb-24 md:pb-10">
-            <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20">
-              {props.error}
+            <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20 space-y-3">
+              <div>{props.error}</div>
+              <Show when={props.developerMode}>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={props.repairOpencodeCache}
+                    disabled={props.cacheRepairBusy || !props.developerMode}
+                  >
+                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={props.stopHost}
+                    disabled={props.busy}
+                  >
+                    Retry
+                  </Button>
+                  <Show when={props.cacheRepairResult}>
+                    <span class="text-xs text-red-200/80">{props.cacheRepairResult}</span>
+                  </Show>
+                </div>
+              </Show>
             </div>
           </div>
         </Show>

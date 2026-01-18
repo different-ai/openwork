@@ -75,6 +75,7 @@ import {
   summarizeStep,
   templatePathFromWorkspaceRoot,
   writeModePreference,
+  addOpencodeCacheHint,
 } from "./app/utils";
 import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./app/templates";
 import { createUpdaterState } from "./app/updater";
@@ -86,6 +87,7 @@ import {
   workspaceTemplateDelete,
   workspaceTemplateWrite,
   resetOpenworkState,
+  resetOpencodeCache,
 } from "./lib/tauri";
 
 
@@ -474,7 +476,8 @@ export default function App() {
 
       await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(() => undefined);
     } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -506,6 +509,8 @@ export default function App() {
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string | null>(null);
+  const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
+  const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -621,7 +626,8 @@ export default function App() {
 
       setTemplateModalOpen(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -645,9 +651,11 @@ export default function App() {
       try {
         await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
         await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : safeStringify(e));
-      } finally {
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(addOpencodeCacheHint(message));
+    } finally {
+
         setBusy(false);
         setBusyLabel(null);
         setBusyStartedAt(null);
@@ -694,7 +702,8 @@ export default function App() {
         [session.id]: model,
       }));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      const message = e instanceof Error ? e.message : "Unknown error";
+      setError(addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
     }
@@ -1019,7 +1028,8 @@ export default function App() {
         window.location.reload();
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(addOpencodeCacheHint(message));
       setResetModalBusy(false);
     }
   }
@@ -1126,6 +1136,37 @@ export default function App() {
       setReloadError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
       setReloadBusy(false);
+    }
+  }
+
+  async function repairOpencodeCache() {
+    if (!isTauriRuntime()) {
+      setCacheRepairResult("Cache repair requires the desktop app.");
+      return;
+    }
+
+    if (cacheRepairBusy()) return;
+
+    setCacheRepairBusy(true);
+    setCacheRepairResult(null);
+    setError(null);
+
+    try {
+      const result = await resetOpencodeCache();
+      if (result.errors.length) {
+        setCacheRepairResult(result.errors[0]);
+        return;
+      }
+
+      if (result.removed.length) {
+        setCacheRepairResult("OpenCode cache repaired. Restart the engine if it was running.");
+      } else {
+        setCacheRepairResult("No OpenCode cache found. Nothing to repair.");
+      }
+    } catch (e) {
+      setCacheRepairResult(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setCacheRepairBusy(false);
     }
   }
 
@@ -1280,7 +1321,8 @@ export default function App() {
       await selectSession(session.id);
       setView("session");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
+      const message = e instanceof Error ? e.message : "Unknown error";
+      setError(addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
     }
@@ -1388,7 +1430,8 @@ export default function App() {
     } catch (e) {
       setWorkspaceTemplatesLoaded(true);
       if (!options?.quiet) {
-        setError(e instanceof Error ? e.message : safeStringify(e));
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        setError(addOpencodeCacheHint(message));
       }
     }
   }
@@ -1752,6 +1795,7 @@ export default function App() {
     createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
     setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
     createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
+    pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
     sessions: activeSessions().map((s) => ({
       id: s.id,
       slug: s.slug,
@@ -1846,6 +1890,9 @@ export default function App() {
     pendingPermissions: pendingPermissions(),
     events: events(),
     safeStringify,
+    repairOpencodeCache,
+    cacheRepairBusy: cacheRepairBusy(),
+    cacheRepairResult: cacheRepairResult(),
   });
 
 

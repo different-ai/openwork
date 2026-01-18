@@ -11,6 +11,7 @@ import type {
   TodoItem,
 } from "./types";
 import {
+  addOpencodeCacheHint,
   modelFromUserMessage,
   normalizeEvent,
   normalizeSessionStatus,
@@ -46,6 +47,12 @@ export function createSessionStore(options: {
   const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
+
+  const addError = (error: unknown, fallback = "Unknown error") => {
+    const message = error instanceof Error ? error.message : fallback;
+    if (!message) return;
+    options.setError(addOpencodeCacheHint(message));
+  };
 
   const selectedSession = createMemo(() => {
     const id = options.selectedSessionId();
@@ -128,7 +135,7 @@ export function createSessionStore(options: {
       unwrap(await c.permission.reply({ requestID, reply }));
       await refreshPendingPermissions();
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : "Unknown error");
+      addError(e);
     } finally {
       setPermissionReplyBusy(false);
     }

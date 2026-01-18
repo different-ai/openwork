@@ -51,6 +51,9 @@ export type SettingsViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   safeStringify: (value: unknown) => string;
+  repairOpencodeCache: () => void;
+  cacheRepairBusy: boolean;
+  cacheRepairResult: string | null;
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -428,18 +431,41 @@ export default function SettingsView(props: SettingsViewProps) {
         <section>
           <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
 
-          <div class="grid md:grid-cols-2 gap-4">
-            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-              <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
-              <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
-                {props.safeStringify(props.pendingPermissions)}
-              </pre>
+          <div class="space-y-4">
+            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+              <div class="min-w-0">
+                <div class="text-sm text-zinc-200">OpenCode cache</div>
+                <div class="text-xs text-zinc-600">
+                  Repairs cached data used to start the engine. Safe to run.
+                </div>
+                <Show when={props.cacheRepairResult}>
+                  <div class="text-xs text-zinc-400 mt-2">{props.cacheRepairResult}</div>
+                </Show>
+              </div>
+              <Button
+                variant="secondary"
+                class="text-xs h-8 py-0 px-3 shrink-0"
+                onClick={props.repairOpencodeCache}
+                disabled={props.cacheRepairBusy || !isTauriRuntime()}
+                title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
+              >
+                {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+              </Button>
             </div>
-            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-              <div class="text-xs text-zinc-500 mb-2">Recent events</div>
-              <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
-                {props.safeStringify(props.events)}
-              </pre>
+
+            <div class="grid md:grid-cols-2 gap-4">
+              <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
+                <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
+                <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+                  {props.safeStringify(props.pendingPermissions)}
+                </pre>
+              </div>
+              <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
+                <div class="text-xs text-zinc-500 mb-2">Recent events</div>
+                <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+                  {props.safeStringify(props.events)}
+                </pre>
+              </div>
             </div>
           </div>
         </section>

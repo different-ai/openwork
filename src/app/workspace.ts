@@ -8,7 +8,7 @@ import type {
   WorkspaceOpenworkConfig,
   WorkspacePreset,
 } from "./types";
-import { isTauriRuntime, safeStringify, writeModePreference } from "./utils";
+import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "./utils";
 import { unwrap } from "../lib/opencode";
 import {
   engineDoctor,
@@ -300,7 +300,8 @@ export function createWorkspaceStore(options: {
     } catch (e) {
       options.setClient(null);
       options.setConnectedVersion(null);
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
       return false;
     } finally {
       options.setBusy(false);
@@ -344,7 +345,8 @@ export function createWorkspaceStore(options: {
       options.setView("dashboard");
       options.setTab("home");
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -365,7 +367,8 @@ export function createWorkspaceStore(options: {
 
       return folder ?? null;
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
       return null;
     }
   }
@@ -430,7 +433,8 @@ export function createWorkspaceStore(options: {
 
       return true;
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
       return false;
     } finally {
       options.setBusy(false);
@@ -464,7 +468,8 @@ export function createWorkspaceStore(options: {
       options.setOnboardingStep("mode");
       options.setView("onboarding");
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -490,7 +495,8 @@ export function createWorkspaceStore(options: {
 
       await refreshEngineDoctor();
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -535,7 +541,8 @@ export function createWorkspaceStore(options: {
     try {
       await persistAuthorizedRoots(roots);
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     }
   }
 
@@ -555,7 +562,8 @@ export function createWorkspaceStore(options: {
         await persistAuthorizedRoots(roots);
       }
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     }
   }
 
@@ -566,7 +574,8 @@ export function createWorkspaceStore(options: {
     try {
       await persistAuthorizedRoots(roots);
     } catch (e) {
-      options.setError(e instanceof Error ? e.message : safeStringify(e));
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
     }
   }
 

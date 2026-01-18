@@ -233,6 +233,23 @@ export function safeParseJson<T>(raw: string): T | null {
   }
 }
 
+export function addOpencodeCacheHint(message: string) {
+  const lower = message.toLowerCase();
+  const cacheSignals = [
+    ".cache/opencode",
+    "library/caches/opencode",
+    "appdata/local/opencode",
+    "fetch_jwks.js",
+    "opencode cache",
+  ];
+
+  if (cacheSignals.some((signal) => lower.includes(signal)) && lower.includes("enoent")) {
+    return `${message}\n\nOpenCode cache looks corrupted. Use Repair cache in Settings to rebuild it.`;
+  }
+
+  return message;
+}
+
 export function parseTemplateFrontmatter(raw: string) {
   const trimmed = raw.trimStart();
   if (!trimmed.startsWith("---")) return null;
