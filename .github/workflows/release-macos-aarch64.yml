@@ -138,14 +138,14 @@ jobs:
             os_type: macos
             target: x86_64-apple-darwin
             args: "--target x86_64-apple-darwin --bundles dmg,app"
+          - platform: ubuntu-22.04
+            os_type: linux
+            target: x86_64-unknown-linux-gnu
+            args: "--target x86_64-unknown-linux-gnu --bundles appimage,deb"
           - platform: windows-2022
             os_type: windows
             target: x86_64-pc-windows-msvc
             args: "--target x86_64-pc-windows-msvc --bundles msi"
-          - platform: ubuntu-22.04
-            os_type: linux
-            target: x86_64-unknown-linux-gnu
-            args: "--target x86_64-unknown-linux-gnu --bundles deb,appimage"
 
     steps:
       - name: Set release metadata
@@ -252,8 +252,7 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload (macOS)
-        if: matrix.os_type == 'macos'
+      - name: Build + upload
         uses: tauri-apps/tauri-action@v0.5.17
         env:
           CI: true
@@ -282,148 +281,4 @@ jobs:
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
-
-      - name: Build + upload (Windows)
-        if: matrix.os_type == 'windows'
-        uses: tauri-apps/tauri-action@v0.5.17
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
-          projectPath: .
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-
-      - name: Build + upload (Linux)
-        if: matrix.os_type == 'linux'
-        uses: tauri-apps/tauri-action@v0.5.17
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
-          prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
-          projectPath: .
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
-
-      - name: Upload updater artifacts (macOS)
-        if: matrix.os_type == 'macos'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          UPDATER_DIR="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/macos"
-
-          if ls -1 "$UPDATER_DIR/"*.app.tar.gz >/dev/null 2>&1; then
-            UPDATE_ARCHIVE="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz | head -n 1)"
-            UPDATE_SIG_PATH="$(ls -1 "$UPDATER_DIR/"*.app.tar.gz.sig | head -n 1)"
-            gh release upload "$RELEASE_TAG" "$UPDATE_ARCHIVE" "$UPDATE_SIG_PATH" --clobber
-          else
-            echo "No updater artifacts found in $UPDATER_DIR; skipping."
-          fi
-
-          LATEST_JSON="$UPDATER_DIR/latest.json"
-          FALLBACK_JSON="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle/latest.json"
-          if [ -f "$LATEST_JSON" ]; then
-            gh release upload "$RELEASE_TAG" "$LATEST_JSON" --clobber
-          elif [ -f "$FALLBACK_JSON" ]; then
-            gh release upload "$RELEASE_TAG" "$FALLBACK_JSON" --clobber
-          else
-            echo "No latest.json found in updater bundle; skipping."
-          fi
-
-      - name: Upload updater artifacts (Windows)
-        if: matrix.os_type == 'windows'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $bundleRoot = Join-Path $env:GITHUB_WORKSPACE "src-tauri/target/${{ matrix.target }}/release/bundle"
-          if (-not (Test-Path $bundleRoot)) {
-            Write-Host "No bundle directory found at $bundleRoot; skipping."
-            exit 0
-          }
-
-          $zip = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "*.zip" | Select-Object -First 1
-          if (-not $zip) {
-            Write-Host "No updater zip found under $bundleRoot; skipping."
-            exit 0
-          }
-
-          $sigPath = "$($zip.FullName).sig"
-          if (-not (Test-Path $sigPath)) {
-            $sig = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "*.sig" | Select-Object -First 1
-            if (-not $sig) {
-              Write-Host "No updater signature found for $($zip.FullName); skipping."
-              exit 0
-            }
-            $sigPath = $sig.FullName
-          }
-
-          gh release upload $env:RELEASE_TAG $zip.FullName $sigPath --clobber
-
-          $latestJson = Get-ChildItem -Path $bundleRoot -Recurse -File -Filter "latest.json" | Select-Object -First 1
-          if ($latestJson) {
-            gh release upload $env:RELEASE_TAG $latestJson.FullName --clobber
-          } else {
-            Write-Host "No latest.json found in bundle; skipping."
-          }
-
-      - name: Upload updater artifacts (Linux)
-        if: matrix.os_type == 'linux'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          BUNDLE_ROOT="$GITHUB_WORKSPACE/src-tauri/target/${{ matrix.target }}/release/bundle"
-          if [ ! -d "$BUNDLE_ROOT" ]; then
-            echo "No bundle directory found at $BUNDLE_ROOT; skipping."
-            exit 0
-          fi
-
-          ARCHIVE_PATH=$(find "$BUNDLE_ROOT" -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.tar.gz" \) | head -n 1 || true)
-          if [ -z "$ARCHIVE_PATH" ]; then
-            echo "No updater archive found under $BUNDLE_ROOT; skipping."
-            exit 0
-          fi
-
-          SIG_PATH="$ARCHIVE_PATH.sig"
-          if [ ! -f "$SIG_PATH" ]; then
-            SIG_PATH=$(find "$BUNDLE_ROOT" -type f -name "*.sig" | head -n 1 || true)
-            if [ -z "$SIG_PATH" ]; then
-              echo "No updater signature found for $ARCHIVE_PATH; skipping."
-              exit 0
-            fi
-          fi
-
-          gh release upload "$RELEASE_TAG" "$ARCHIVE_PATH" "$SIG_PATH" --clobber
-
-          LATEST_JSON=$(find "$BUNDLE_ROOT" -type f -name "latest.json" | head -n 1 || true)
-          if [ -n "$LATEST_JSON" ]; then
-            gh release upload "$RELEASE_TAG" "$LATEST_JSON" --clobber
-          else
-            echo "No latest.json found in bundle; skipping."
-          fi
+          uploadUpdaterJson: true
