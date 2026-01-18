@@ -9,9 +9,8 @@ import {
   onMount,
 } from "solid-js";
 
-import { applyEdits, modify } from "jsonc-parser";
 
-import type { Message, Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type { Provider } from "@opencode-ai/sdk/v2/client";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -36,23 +35,16 @@ import type {
   Client,
   CuratedPackage,
   DashboardTab,
-  MessageInfo,
-  MessageWithParts,
   Mode,
   ModelOption,
   ModelRef,
   OnboardingStep,
-  OpencodeEvent,
-  PendingPermission,
   PluginScope,
   ReloadReason,
   ResetOpenworkMode,
   SkillCard,
-  TodoItem,
   View,
   WorkspaceDisplay,
-  WorkspaceOpenworkConfig,
-  WorkspacePreset,
   WorkspaceTemplate,
   UpdateHandle,
 } from "./app/types";
@@ -68,54 +60,24 @@ import {
   isTauriRuntime,
   isWindowsPlatform,
   lastUserModelFromMessages,
-  modelFromUserMessage,
-  normalizeEvent,
-  normalizeSessionStatus,
   parseModelRef,
   readModePreference,
-  removePart,
   safeParseJson,
   safeStringify,
   summarizeStep,
   templatePathFromWorkspaceRoot,
-  upsertMessage,
-  upsertPart,
-  upsertSession,
   writeModePreference,
 } from "./app/utils";
 import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./app/templates";
 import { createUpdaterState } from "./app/updater";
+import { createSessionStore } from "./app/session";
+import { createExtensionsStore } from "./app/extensions";
+import { createWorkspaceStore } from "./app/workspace";
 import {
-  isPluginInstalled,
-  loadPluginsFromConfig as loadPluginsFromConfigHelpers,
-  parsePluginListFromContent,
-  stripPluginVersion,
-} from "./app/plugins";
-import {
-  engineDoctor,
-  engineInfo,
-  engineInstall,
-  engineStart,
-  engineStop,
-  importSkill,
-  opkgInstall,
-  pickDirectory,
-  readOpencodeConfig,
   updaterEnvironment,
-
-  workspaceBootstrap,
-  workspaceCreate,
-  workspaceSetActive,
-  workspaceOpenworkRead,
-  workspaceOpenworkWrite,
   workspaceTemplateDelete,
   workspaceTemplateWrite,
-  writeOpencodeConfig,
   resetOpenworkState,
-  type EngineDoctorResult,
-  type EngineInfo,
-  type OpencodeConfigFile,
-  type WorkspaceInfo,
 } from "./lib/tauri";
 
 
@@ -126,25 +88,7 @@ export default function App() {
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [tab, setTab] = createSignal<DashboardTab>("home");
 
-  const [engine, setEngine] = createSignal<EngineInfo | null>(null);
-  const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
-  const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
-  const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">("path");
-
-  const [projectDir, setProjectDir] = createSignal("");
-
-  const [workspaces, setWorkspaces] = createSignal<WorkspaceInfo[]>([]);
-  const [activeWorkspaceId, setActiveWorkspaceId] = createSignal<string>("starter");
-
-  const [authorizedDirs, setAuthorizedDirs] = createSignal<string[]>([]);
-  const [newAuthorizedDir, setNewAuthorizedDir] = createSignal("");
-
-  const [workspaceConfig, setWorkspaceConfig] = createSignal<WorkspaceOpenworkConfig | null>(null);
-  const [workspaceConfigLoaded, setWorkspaceConfigLoaded] = createSignal(false);
-  const [workspaceSearch, setWorkspaceSearch] = createSignal("");
-  const [workspacePickerOpen, setWorkspacePickerOpen] = createSignal(false);
-  const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -153,20 +97,109 @@ export default function App() {
   const [connectedVersion, setConnectedVersion] = createSignal<string | null>(null);
   const [sseConnected, setSseConnected] = createSignal(false);
 
-  const [sessions, setSessions] = createSignal<Session[]>([]);
-  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
-  const [sessionStatusById, setSessionStatusById] = createSignal<Record<string, string>>({});
 
-  const [messages, setMessages] = createSignal<MessageWithParts[]>([]);
-  const [todos, setTodos] = createSignal<TodoItem[]>([]);
-  const [pendingPermissions, setPendingPermissions] = createSignal<PendingPermission[]>([]);
-  const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const [busy, setBusy] = createSignal(false);
+  const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
+  const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
+  const [error, setError] = createSignal<string | null>(null);
+  const [developerMode, setDeveloperMode] = createSignal(false);
+
+  const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(null);
+  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
+  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
+
+  const sessionStore = createSessionStore({
+    client,
+    selectedSessionId,
+    setSelectedSessionId,
+    sessionModelState: () => ({ overrides: sessionModelOverrideById(), resolved: sessionModelById() }),
+    setSessionModelState: (updater) => {
+      const next = updater({ overrides: sessionModelOverrideById(), resolved: sessionModelById() });
+      setSessionModelOverrideById(next.overrides);
+      setSessionModelById(next.resolved);
+      return next;
+    },
+    lastUserModelFromMessages,
+    developerMode,
+    setError,
+    setSseConnected,
+  });
+
+  const {
+    sessions,
+    sessionStatusById,
+    selectedSession,
+    selectedSessionStatus,
+    messages,
+    todos,
+    pendingPermissions,
+    permissionReplyBusy,
+    events,
+    activePermission,
+    loadSessions,
+    refreshPendingPermissions,
+    selectSession,
+    respondPermission,
+    setSessions,
+    setSessionStatusById,
+    setMessages,
+    setTodos,
+    setPendingPermissions,
+  } = sessionStore;
 
   const artifacts = createMemo(() => deriveArtifacts(messages()));
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+
+  async function sendPrompt() {
+    const c = client();
+    const sessionID = selectedSessionId();
+    if (!c || !sessionID) return;
+
+    const content = prompt().trim();
+    if (!content) return;
+
+    setBusy(true);
+    setBusyLabel("Running");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      setLastPromptSent(content);
+      setPrompt("");
+
+      const model = selectedSessionModel();
+
+      await c.session.promptAsync({
+        sessionID,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: content }],
+      });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [sessionID]: model,
+      }));
+
+      setSessionModelOverrideById((current) => {
+        if (!current[sessionID]) return current;
+        const copy = { ...current };
+        delete copy[sessionID];
+        return copy;
+      });
+
+      await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(() => undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
 
   const [templates, setTemplates] = createSignal<WorkspaceTemplate[]>([]);
   const [workspaceTemplatesLoaded, setWorkspaceTemplatesLoaded] = createSignal(false);
@@ -178,24 +211,14 @@ export default function App() {
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
   const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
 
-
   const workspaceTemplates = createMemo(() => templates().filter((t) => t.scope === "workspace"));
   const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
 
-  const [skills, setSkills] = createSignal<SkillCard[]>([]);
-  const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
-  const [openPackageSource, setOpenPackageSource] = createSignal("");
-  const [packageSearch, setPackageSearch] = createSignal("");
-
-  const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
-  const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
-  const [pluginList, setPluginList] = createSignal<string[]>([]);
-  const [pluginInput, setPluginInput] = createSignal("");
-  const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
-  const [activePluginGuide, setActivePluginGuide] = createSignal<string | null>(null);
-
-  const [sidebarPluginList, setSidebarPluginList] = createSignal<string[]>([]);
-  const [sidebarPluginStatus, setSidebarPluginStatus] = createSignal<string | null>(null);
+  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
+    // Intentional no-op: permission prompts grant session-scoped access only.
+    // Persistent workspace roots must be managed explicitly via workspace settings.
+    await respondPermission(requestID, reply);
+  }
 
   const [reloadRequired, setReloadRequired] = createSignal(false);
   const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
@@ -203,8 +226,44 @@ export default function App() {
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string | null>(null);
 
-  const [events, setEvents] = createSignal<OpencodeEvent[]>([]);
-  const [developerMode, setDeveloperMode] = createSignal(false);
+  const extensionsStore = createExtensionsStore({
+    client,
+    mode,
+    projectDir: () => workspaceProjectDir(),
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    setError,
+    markReloadRequired,
+  });
+
+  const {
+    skills,
+    skillsStatus,
+    openPackageSource,
+    setOpenPackageSource,
+    packageSearch,
+    setPackageSearch,
+    pluginScope,
+    setPluginScope,
+    pluginConfig,
+    pluginList,
+    pluginInput,
+    setPluginInput,
+    pluginStatus,
+    activePluginGuide,
+    setActivePluginGuide,
+    sidebarPluginList,
+    sidebarPluginStatus,
+    isPluginInstalledByName,
+    refreshSkills,
+    refreshPlugins,
+    addPlugin,
+    installFromOpenPackage,
+    useCuratedPackage,
+    importLocalSkill,
+  } = extensionsStore;
 
   const [providers, setProviders] = createSignal<Provider[]>([]);
   const [providerDefaults, setProviderDefaults] = createSignal<Record<string, string>>({});
@@ -214,11 +273,198 @@ export default function App() {
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<"session" | "default">("session");
   const [modelPickerQuery, setModelPickerQuery] = createSignal("");
-  const [sessionModelOverrideById, setSessionModelOverrideById] = createSignal<Record<string, ModelRef>>({});
-  const [sessionModelById, setSessionModelById] = createSignal<Record<string, ModelRef>>({});
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+
+  function openTemplateModal() {
+    const seedTitle = selectedSession()?.title ?? "";
+    const seedPrompt = lastPromptSent() || prompt();
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
+
+    resetTemplateDraft(
+      {
+        setTitle: setTemplateDraftTitle,
+        setDescription: setTemplateDraftDescription,
+        setPrompt: setTemplateDraftPrompt,
+        setScope: setTemplateDraftScope,
+      },
+      nextDraft.scope,
+    );
+
+    setTemplateDraftTitle(nextDraft.title);
+    setTemplateDraftPrompt(nextDraft.prompt);
+    setTemplateModalOpen(true);
+  }
+
+  async function saveTemplate() {
+    const draft = buildTemplateDraft({
+      scope: templateDraftScope(),
+    });
+    draft.title = templateDraftTitle().trim();
+    draft.description = templateDraftDescription().trim();
+    draft.prompt = templateDraftPrompt().trim();
+
+    if (!draft.title || !draft.prompt) {
+      setError("Template title and prompt are required.");
+      return;
+    }
+
+    if (draft.scope === "workspace") {
+      if (!isTauriRuntime()) {
+        setError("Workspace templates require the desktop app.");
+        return;
+      }
+      if (!workspaceStore.activeWorkspaceRoot().trim()) {
+        setError("Pick a workspace folder first.");
+        return;
+      }
+    }
+
+    setBusy(true);
+    setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
+    setBusyStartedAt(Date.now());
+    setError(null);
+
+    try {
+      const template = createTemplateRecord(draft);
+
+      if (draft.scope === "workspace") {
+        const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+        await workspaceTemplateWrite({ workspacePath: workspaceRoot, template });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } else {
+        setTemplates((current) => [template, ...current]);
+        setGlobalTemplatesLoaded(true);
+      }
+
+      setTemplateModalOpen(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
+  async function deleteTemplate(templateId: string) {
+    const scope = templates().find((t) => t.id === templateId)?.scope;
+
+    if (scope === "workspace") {
+      if (!isTauriRuntime()) return;
+      const workspaceRoot = workspaceStore.activeWorkspaceRoot().trim();
+      if (!workspaceRoot) return;
+
+      setBusy(true);
+      setBusyLabel("Deleting template");
+      setBusyStartedAt(Date.now());
+      setError(null);
+
+      try {
+        await workspaceTemplateDelete({ workspacePath: workspaceRoot, templateId });
+        await loadWorkspaceTemplates({ workspaceRoot, quiet: true });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      } finally {
+        setBusy(false);
+        setBusyLabel(null);
+        setBusyStartedAt(null);
+      }
+
+      return;
+    }
+
+    setTemplates((current) => current.filter((t) => t.id !== templateId));
+    setGlobalTemplatesLoaded(true);
+  }
+
+  async function runTemplate(template: WorkspaceTemplate) {
+    const c = client();
+    if (!c) return;
+
+    setBusy(true);
+    setError(null);
+
+    try {
+      const session = unwrap(
+        await c.session.create({ title: template.title, directory: workspaceStore.activeWorkspaceRoot().trim() }),
+      );
+      await loadSessions(workspaceStore.activeWorkspaceRoot().trim());
+      await selectSession(session.id);
+      setView("session");
+
+      const model = defaultModel();
+
+      await c.session.promptAsync({
+        sessionID: session.id,
+        model,
+        variant: modelVariant() ?? undefined,
+        parts: [{ type: "text", text: template.prompt }],
+      });
+
+      setSessionModelById((current) => ({
+        ...current,
+        [session.id]: model,
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const workspaceStore = createWorkspaceStore({
+    mode,
+    setMode,
+    onboardingStep,
+    setOnboardingStep,
+    rememberModeChoice,
+    baseUrl,
+    setBaseUrl,
+    clientDirectory,
+    setClientDirectory,
+    client,
+    setClient,
+    setConnectedVersion,
+    setSseConnected,
+    setProviders,
+    setProviderDefaults,
+    setProviderConnectedIds,
+    setError,
+    setBusy,
+    setBusyLabel,
+    setBusyStartedAt,
+    loadWorkspaceTemplates,
+    loadSessions,
+    refreshPendingPermissions,
+    setSelectedSessionId,
+    setMessages,
+    setTodos,
+    setPendingPermissions,
+    setSessionStatusById,
+    defaultModel,
+    modelVariant,
+    refreshSkills,
+    refreshPlugins,
+    engineSource,
+    setEngineSource,
+    setView,
+    setTab,
+    isWindowsPlatform,
+  });
+
+  const {
+    engine,
+    engineDoctorResult,
+    engineDoctorCheckedAt,
+    engineInstallLogs,
+    projectDir: workspaceProjectDir,
+    newAuthorizedDir,
+    refreshEngineDoctor,
+    stopHost,
+    setEngineInstallLogs,
+  } = workspaceStore;
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(new Set());
   const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
@@ -226,11 +472,6 @@ export default function App() {
     artifacts: true,
     context: true,
   });
-
-  const [busy, setBusy] = createSignal(false);
-  const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
-  const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
-  const [error, setError] = createSignal<string | null>(null);
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
 
@@ -280,25 +521,6 @@ export default function App() {
         .toLowerCase();
       return haystack.includes(query);
     });
-  });
-
-  const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
-    isPluginInstalled(pluginList(), pluginName, aliases);
-
-  const loadPluginsFromConfig = (config: OpencodeConfigFile | null) => {
-    loadPluginsFromConfigHelpers(config, setPluginList, (message) => setPluginStatus(message));
-  };
-
-  const selectedSession = createMemo(() => {
-    const id = selectedSessionId();
-    if (!id) return null;
-    return sessions().find((s) => s.id === id) ?? null;
-  });
-
-  const selectedSessionStatus = createMemo(() => {
-    const id = selectedSessionId();
-    if (!id) return "idle";
-    return sessionStatusById()[id] ?? "idle";
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
@@ -440,34 +662,6 @@ export default function App() {
     setModelPickerOpen(false);
   }
 
-  const activePermission = createMemo(() => {
-    const id = selectedSessionId();
-    const list = pendingPermissions();
-
-    if (id) {
-      return list.find((p) => p.sessionID === id) ?? null;
-    }
-
-    return list[0] ?? null;
-  });
-
-  async function refreshEngine() {
-    if (!isTauriRuntime()) return;
-
-    try {
-      const info = await engineInfo();
-      setEngine(info);
-
-      if (info.projectDir) {
-        setProjectDir(info.projectDir);
-      }
-      if (info.baseUrl) {
-        setBaseUrl(info.baseUrl);
-      }
-    } catch {
-      // ignore
-    }
-  }
 
   function anyActiveRuns() {
     const statuses = sessionStatusById();
@@ -1557,208 +1751,105 @@ export default function App() {
       const edits = modify(raw, ["plugin"], next, {
         formattingOptions: { insertSpaces: true, tabSize: 2 },
       });
-      const updated = applyEdits(raw, edits);
-
-      await writeOpencodeConfig(scope, targetDir, updated);
-      markReloadRequired("plugins");
-      if (isManualInput) {
-        setPluginInput("");
-      }
-      await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(e instanceof Error ? e.message : "Failed to update opencode.json");
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt, message });
     }
   }
 
-  async function installFromOpenPackage(sourceOverride?: string) {
-    if (mode() !== "host" || !isTauriRuntime()) {
-      setError("OpenPackage installs are only available in Host mode.");
+  async function installUpdateAndRestart() {
+    const pending = pendingUpdate();
+    if (!pending) return;
+
+    if (anyActiveRuns()) {
+      setError("Stop active runs before installing an update.");
       return;
     }
 
-    const targetDir = projectDir().trim();
-    const pkg = (sourceOverride ?? openPackageSource()).trim();
-
-    if (!targetDir) {
-      setError("Pick a project folder first.");
-      return;
-    }
-
-    if (!pkg) {
-      setError("Enter an OpenPackage source (e.g. github:anthropics/claude-code).");
-      return;
-    }
-
-    setOpenPackageSource(pkg);
-    setBusy(true);
     setError(null);
-    setSkillsStatus("Installing OpenPackage...");
-
     try {
-      const result = await opkgInstall(targetDir, pkg);
-      if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
-      } else {
-        setSkillsStatus(result.stdout || "Installed.");
-        markReloadRequired("skills");
-      }
-
-      await refreshSkills();
+      await pending.update.install();
+      await pending.update.close();
+      await relaunch();
     } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    } finally {
-      setBusy(false);
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setUpdateStatus({ state: "error", lastCheckedAt: null, message });
     }
   }
 
-  async function useCuratedPackage(pkg: CuratedPackage) {
-    if (pkg.installable) {
-      await installFromOpenPackage(pkg.source);
-      return;
-    }
-
-    setOpenPackageSource(pkg.source);
-    setSkillsStatus(
-      "This is a curated list, not an OpenPackage yet. Copy the link or watch the PRD for planned registry search integration.",
-    );
-  }
-
-  async function importLocalSkill() {
-    if (mode() !== "host" || !isTauriRuntime()) {
-      setError("Skill import is only available in Host mode.");
-      return;
-    }
-
-    const targetDir = projectDir().trim();
-    if (!targetDir) {
-      setError("Pick a project folder first.");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setSkillsStatus(null);
-
-    try {
-      const selection = await pickDirectory({ title: "Select skill folder" });
-      const sourceDir =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-
-      if (!sourceDir) {
-        return;
-      }
-
-      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
-      if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
-      } else {
-        setSkillsStatus(result.stdout || "Imported.");
-        markReloadRequired("skills");
-      }
-
-      await refreshSkills();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Unknown error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function respondPermission(requestID: string, reply: "once" | "always" | "reject") {
+  async function createSessionAndOpen() {
     const c = client();
-    if (!c || permissionReplyBusy()) return;
+    if (!c) return;
 
-    setPermissionReplyBusy(true);
+    setBusy(true);
+    setBusyLabel("Creating session");
+    setBusyStartedAt(Date.now());
     setError(null);
 
     try {
-      unwrap(await c.permission.reply({ requestID, reply }));
-      await refreshPendingPermissions(c);
+      const session = unwrap(
+        await c.session.create({ title: "New task", directory: workspaceStore.activeWorkspaceRoot().trim() }),
+      );
+      await loadSessions(workspaceStore.activeWorkspaceRoot().trim());
+      await selectSession(session.id);
+      setView("session");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
     } finally {
-      setPermissionReplyBusy(false);
+      setBusy(false);
     }
   }
 
-  async function respondPermissionAndRemember(requestID: string, reply: "once" | "always" | "reject") {
-    // Intentional no-op: permission prompts grant session-scoped access only.
-    // Persistent workspace roots must be managed explicitly via workspace settings.
-    await respondPermission(requestID, reply);
-  }
-
-  async function persistAuthorizedRoots(nextRoots: string[]) {
-    if (!isTauriRuntime()) return;
-    const root = activeWorkspacePath().trim();
-    if (!root) return;
-
-    const existing = workspaceConfig();
-    const cfg: WorkspaceOpenworkConfig = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: nextRoots,
-    };
-
-    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
-    setWorkspaceConfig(cfg);
-  }
-
-  function normalizeRoots(list: string[]) {
-    const out: string[] = [];
-    for (const entry of list) {
-      const trimmed = entry.trim().replace(/\/+$/, "");
-      if (!trimmed) continue;
-      if (!out.includes(trimmed)) out.push(trimmed);
-    }
-    return out;
-  }
-
-  async function addAuthorizedDir() {
-    const next = newAuthorizedDir().trim();
-    if (!next) return;
-
-    const roots = normalizeRoots([...authorizedDirs(), next]);
-    setAuthorizedDirs(roots);
-    setNewAuthorizedDir("");
+  async function loadWorkspaceTemplates(options?: { workspaceRoot?: string; quiet?: boolean }) {
+    const c = client();
+    const root = (options?.workspaceRoot ?? workspaceStore.activeWorkspaceRoot()).trim();
+    if (!c || !root) return;
 
     try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
+      const templatesPath = ".openwork/templates";
+      const nodes = unwrap(await c.file.list({ directory: root, path: templatesPath }));
+      const jsonFiles = nodes
+        .filter((n) => n.type === "file" && !n.ignored)
+        .filter((n) => n.name.toLowerCase().endsWith(".json"));
 
-  async function addAuthorizedDirFromPicker(options?: { persistToWorkspace?: boolean }) {
-    if (!isTauriRuntime()) return;
+      const loaded: WorkspaceTemplate[] = [];
 
-    try {
-      const selection = await pickDirectory({ title: "Add folder" });
-      const path =
-        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+      for (const node of jsonFiles) {
+        const content = unwrap(await c.file.read({ directory: root, path: node.path }));
+        if (content.type !== "text") continue;
 
-      if (!path) return;
+        const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(content.content);
+        if (!parsed) continue;
 
-      const roots = normalizeRoots([...authorizedDirs(), path]);
-      setAuthorizedDirs(roots);
+        const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
+        const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
+        if (!promptText.trim()) continue;
 
-      if (options?.persistToWorkspace) {
-        await persistAuthorizedRoots(roots);
+        loaded.push({
+          id: typeof parsed.id === "string" ? parsed.id : node.name.replace(/\.json$/i, ""),
+          title,
+          description: typeof parsed.description === "string" ? parsed.description : "",
+          prompt: promptText,
+          createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
+          scope: "workspace",
+        });
       }
+
+      const stable = loaded.slice().sort((a, b) => b.createdAt - a.createdAt);
+
+      setTemplates((current) => {
+        const globals = current.filter((t) => t.scope === "global");
+        return [...stable, ...globals];
+      });
+      setWorkspaceTemplatesLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
+      setWorkspaceTemplatesLoaded(true);
+      if (!options?.quiet) {
+        setError(e instanceof Error ? e.message : safeStringify(e));
+      }
     }
   }
 
-  async function removeAuthorizedDir(index: number) {
-    const roots = authorizedDirs().filter((_, i) => i !== index);
-    setAuthorizedDirs(roots);
-
-    try {
-      await persistAuthorizedRoots(roots);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : safeStringify(e));
-    }
-  }
 
   onMount(async () => {
     const modePref = readModePreference();
@@ -1778,50 +1869,11 @@ export default function App() {
           setClientDirectory(storedClientDir);
         }
 
-        // Legacy: projectDir is now derived from the active workspace.
-        const storedProjectDir = window.localStorage.getItem("openwork.projectDir");
-        if (storedProjectDir && !projectDir().trim()) {
-          setProjectDir(storedProjectDir);
-        }
-
         const storedEngineSource = window.localStorage.getItem("openwork.engineSource");
         if (storedEngineSource === "path" || storedEngineSource === "sidecar") {
           setEngineSource(storedEngineSource);
         }
 
-        const storedAuthorized = window.localStorage.getItem("openwork.authorizedDirs");
-        if (storedAuthorized) {
-          const parsed = JSON.parse(storedAuthorized) as unknown;
-          if (Array.isArray(parsed) && parsed.every((v) => typeof v === "string")) {
-            setAuthorizedDirs(parsed);
-          }
-        }
-
-        // Legacy (pre-workspace templates): normalize any stored templates into global templates.
-        const storedTemplates = window.localStorage.getItem("openwork.templates");
-         if (storedTemplates) {
-           const parsed = JSON.parse(storedTemplates) as unknown;
-           if (Array.isArray(parsed)) {
-             const normalized = (parsed as unknown[])
-               .filter((v) => v && typeof v === "object")
-               .map((entry) => {
-                 const record = entry as Record<string, unknown>;
-                 return {
-                   id: typeof record.id === "string" ? record.id : `tmpl_${Date.now()}`,
-                   title: typeof record.title === "string" ? record.title : "Untitled",
-                   description: typeof record.description === "string" ? record.description : "",
-                   prompt: typeof record.prompt === "string" ? record.prompt : "",
-                   createdAt: typeof record.createdAt === "number" ? record.createdAt : Date.now(),
-                   scope: "global" as const,
-                 } satisfies WorkspaceTemplate;
-               })
-               .filter((t) => t.prompt.trim().length > 0);
-
-             setTemplates(normalized);
-           }
-         }
-
-         setGlobalTemplatesLoaded(true);
 
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
@@ -1895,103 +1947,13 @@ export default function App() {
       }
     }
 
-    await refreshEngine();
-    await refreshEngineDoctor();
-
-     // Bootstrap workspaces (Host mode only).
-     if (isTauriRuntime()) {
-       try {
-          const ws = await workspaceBootstrap();
-          setWorkspaces(ws.workspaces);
-          setActiveWorkspaceId(ws.activeId);
-          const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-          if (active) {
-            setProjectDir(active.path);
-            if (isTauriRuntime()) {
-              try {
-                const cfg = await workspaceOpenworkRead({ workspacePath: active.path });
-                setWorkspaceConfig(cfg);
-                setWorkspaceConfigLoaded(true);
-                const roots = Array.isArray(cfg.authorizedRoots) ? cfg.authorizedRoots : [];
-                setAuthorizedDirs(roots.length ? roots : [active.path]);
-              } catch {
-                setWorkspaceConfig(null);
-                setWorkspaceConfigLoaded(true);
-                setAuthorizedDirs([active.path]);
-              }
-            } else if (!authorizedDirs().length) {
-              setAuthorizedDirs([active.path]);
-            }
-
-            await loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
-          }
-       } catch {
-         // ignore
-       }
-     }
-
-     const info = engine();
-     if (info?.baseUrl) {
-       setBaseUrl(info.baseUrl);
-     }
-
-     // Auto-continue based on saved preference.
-     if (!modePref) return;
-
-
-    if (modePref === "host") {
-      setMode("host");
-
-      if (info?.running && info.baseUrl) {
-        setOnboardingStep("connecting");
-        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
-        if (!ok) {
-          setMode(null);
-          setOnboardingStep("mode");
-        }
-        return;
-      }
-
-       if (isTauriRuntime() && activeWorkspacePath().trim()) {
-         if (!authorizedDirs().length && activeWorkspacePath().trim()) {
-           setAuthorizedDirs([activeWorkspacePath().trim()]);
-         }
-
-         setOnboardingStep("connecting");
-         const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
-         if (!ok) {
-           setOnboardingStep("host");
-         }
-         return;
-       }
-
-       // Missing required info; take them directly to Host setup.
-       setOnboardingStep("host");
-       return;
-     }
-
-    // Client preference.
-    setMode("client");
-    if (!baseUrl().trim()) {
-      setOnboardingStep("client");
-      return;
-    }
-
-    setOnboardingStep("connecting");
-    const ok = await connectToServer(
-      baseUrl().trim(),
-      clientDirectory().trim() ? clientDirectory().trim() : undefined,
-    );
-
-    if (!ok) {
-      setOnboardingStep("client");
-    }
+    void workspaceStore.bootstrapOnboarding();
   });
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (onboardingStep() !== "host") return;
-    void refreshEngineDoctor();
+    void workspaceStore.refreshEngineDoctor();
   });
 
   createEffect(() => {
@@ -2016,7 +1978,7 @@ export default function App() {
     if (typeof window === "undefined") return;
     // Legacy key: keep for backwards compatibility.
     try {
-      window.localStorage.setItem("openwork.projectDir", projectDir());
+      window.localStorage.setItem("openwork.projectDir", workspaceProjectDir());
     } catch {
       // ignore
     }
@@ -2031,15 +1993,6 @@ export default function App() {
     }
   });
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    // Legacy persistence; workspace config is authoritative in the desktop app.
-    try {
-      window.localStorage.setItem("openwork.authorizedDirs", JSON.stringify(authorizedDirs()));
-    } catch {
-      // ignore
-    }
-  });
 
   createEffect(() => {
     if (typeof window === "undefined") return;
@@ -2117,220 +2070,6 @@ export default function App() {
   });
 
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      const value = modelVariant();
-      if (value) {
-        window.localStorage.setItem(VARIANT_PREF_KEY, value);
-      } else {
-        window.localStorage.removeItem(VARIANT_PREF_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    const c = client();
-    if (!c) return;
-
-    const controller = new AbortController();
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
-
-        for await (const raw of sub.stream) {
-          if (cancelled) break;
-
-          const event = normalizeEvent(raw);
-          if (!event) continue;
-
-          if (event.type === "server.connected") {
-            setSseConnected(true);
-          }
-
-          if (developerMode()) {
-            setEvents((current) => {
-              const next = [{ type: event.type, properties: event.properties }, ...current];
-              return next.slice(0, 150);
-            });
-          }
-
-          if (event.type === "session.updated" || event.type === "session.created") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.info && typeof record.info === "object") {
-                setSessions((current) => upsertSession(current, record.info as Session));
-              }
-            }
-          }
-
-          if (event.type === "session.deleted") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const info = record.info as Session | undefined;
-              if (info?.id) {
-                setSessions((current) => current.filter((s) => s.id !== info.id));
-              }
-            }
-          }
-
-          if (event.type === "session.status") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              if (sessionID) {
-                setSessionStatusById((current) => ({
-                  ...current,
-                  [sessionID]: normalizeSessionStatus(record.status),
-                }));
-              }
-            }
-          }
-
-          if (event.type === "session.idle") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              if (sessionID) {
-                setSessionStatusById((current) => ({
-                  ...current,
-                  [sessionID]: "idle",
-                }));
-              }
-            }
-          }
-
-          if (event.type === "message.updated") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.info && typeof record.info === "object") {
-                const info = record.info as Message;
-
-                const model = modelFromUserMessage(info);
-                if (model) {
-                  setSessionModelById((current) => ({
-                    ...current,
-                    [info.sessionID]: model,
-                  }));
-
-                  setSessionModelOverrideById((current) => {
-                    if (!current[info.sessionID]) return current;
-                    const copy = { ...current };
-                    delete copy[info.sessionID];
-                    return copy;
-                  });
-                }
-
-                if (selectedSessionId() && info.sessionID === selectedSessionId()) {
-                  setMessages((current) => upsertMessage(current, info));
-                }
-              }
-            }
-          }
-
-          if (event.type === "message.removed") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (
-                selectedSessionId() &&
-                record.sessionID === selectedSessionId() &&
-                typeof record.messageID === "string"
-              ) {
-                setMessages((current) => current.filter((m) => m.info.id !== record.messageID));
-              }
-            }
-          }
-
-          if (event.type === "message.part.updated") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.part && typeof record.part === "object") {
-                const part = record.part as Part;
-                if (selectedSessionId() && part.sessionID === selectedSessionId()) {
-                  setMessages((current) => {
-                    const next = upsertPart(current, part);
-
-                    // Some streaming servers only send `delta` updates and keep
-                    // `part.text` as the full aggregation; others send the
-                    // full part each time. If we have a delta, apply it to the
-                    // latest text part to ensure visible streaming.
-                    if (typeof record.delta === "string" && record.delta && part.type === "text") {
-                      const msgIdx = next.findIndex((m) => m.info.id === part.messageID);
-                      if (msgIdx !== -1) {
-                        const msg = next[msgIdx];
-                        const parts = msg.parts.slice();
-                        const pIdx = parts.findIndex((p) => p.id === part.id);
-                        if (pIdx !== -1) {
-                          const currentPart = parts[pIdx] as any;
-                          if (typeof currentPart.text === "string" && currentPart.text.endsWith(record.delta) === false) {
-                            parts[pIdx] = { ...(parts[pIdx] as any), text: `${currentPart.text}${record.delta}` };
-                            const copy = next.slice();
-                            copy[msgIdx] = { ...msg, parts };
-                            return copy;
-                          }
-                        }
-                      }
-                    }
-
-                    return next;
-                  });
-                }
-
-              }
-            }
-          }
-
-          if (event.type === "message.part.removed") {
-            if (event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
-              const messageID = typeof record.messageID === "string" ? record.messageID : null;
-              const partID = typeof record.partID === "string" ? record.partID : null;
-
-              if (sessionID && selectedSessionId() && sessionID === selectedSessionId() && messageID && partID) {
-                setMessages((current) => removePart(current, messageID, partID));
-              }
-            }
-          }
-
-          if (event.type === "todo.updated") {
-            const id = selectedSessionId();
-            if (id && event.properties && typeof event.properties === "object") {
-              const record = event.properties as Record<string, unknown>;
-              if (record.sessionID === id && Array.isArray(record.todos)) {
-                setTodos(record.todos as any);
-              }
-            }
-          }
-
-          if (event.type === "permission.asked" || event.type === "permission.replied") {
-            try {
-              await refreshPendingPermissions(c);
-            } catch {
-              // ignore
-            }
-          }
-        }
-      } catch (e) {
-        if (cancelled) return;
-
-        const message = e instanceof Error ? e.message : String(e);
-        if (message.toLowerCase().includes("abort")) return;
-
-        setError(message);
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-      controller.abort();
-    });
-  });
-
   const headerStatus = createMemo(() => {
     if (!client() || !connectedVersion()) return "Disconnected";
     const bits = [`Connected · ${connectedVersion()}`];
@@ -2365,8 +2104,8 @@ export default function App() {
     baseUrl: baseUrl(),
     clientDirectory: clientDirectory(),
     newAuthorizedDir: newAuthorizedDir(),
-    authorizedDirs: authorizedDirs(),
-    activeWorkspacePath: activeWorkspacePath(),
+    authorizedDirs: workspaceStore.authorizedDirs(),
+    activeWorkspacePath: workspaceStore.activeWorkspacePath(),
     localHostLabel: localHostLabel(),
     engineRunning: Boolean(engine()?.running),
     engineBaseUrl: engine()?.baseUrl ?? null,
@@ -2391,74 +2130,22 @@ export default function App() {
       setOnboardingStep(nextMode === "host" ? "host" : "client");
     },
     onRememberModeToggle: () => setRememberModeChoice((v) => !v),
-    onStartHost: async () => {
-      setMode("host");
-      setOnboardingStep("connecting");
-      const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
-      if (!ok) {
-        setOnboardingStep("host");
-      }
-    },
-    onAttachHost: async () => {
-      setMode("host");
-      setOnboardingStep("connecting");
-      const ok = await connectToServer(engine()?.baseUrl ?? "", engine()?.projectDir ?? undefined);
-      if (!ok) {
-        setMode(null);
-        setOnboardingStep("mode");
-      }
-    },
-    onConnectClient: async () => {
-      setMode("client");
-      setOnboardingStep("connecting");
-      const ok = await connectToServer(
-        baseUrl().trim(),
-        clientDirectory().trim() ? clientDirectory().trim() : undefined,
-      );
-      if (!ok) {
-        setOnboardingStep("client");
-      }
-    },
-    onBackToMode: () => {
-      setMode(null);
-      setOnboardingStep("mode");
-    },
-    onSetAuthorizedDir: setNewAuthorizedDir,
-    onAddAuthorizedDir: addAuthorizedDir,
-    onAddAuthorizedDirFromPicker: () => addAuthorizedDirFromPicker({ persistToWorkspace: true }),
-    onRemoveAuthorizedDir: removeAuthorizedDir,
+    onStartHost: workspaceStore.onStartHost,
+    onAttachHost: workspaceStore.onAttachHost,
+    onConnectClient: workspaceStore.onConnectClient,
+    onBackToMode: workspaceStore.onBackToMode,
+    onSetAuthorizedDir: workspaceStore.setNewAuthorizedDir,
+    onAddAuthorizedDir: workspaceStore.addAuthorizedDir,
+    onAddAuthorizedDirFromPicker: () => workspaceStore.addAuthorizedDirFromPicker({ persistToWorkspace: true }),
+    onRemoveAuthorizedDir: workspaceStore.removeAuthorizedDirAtIndex,
     onRefreshEngineDoctor: async () => {
-      setEngineInstallLogs(null);
-      await refreshEngineDoctor();
+      workspaceStore.setEngineInstallLogs(null);
+      await workspaceStore.refreshEngineDoctor();
     },
-    onInstallEngine: async () => {
-      setError(null);
-      setEngineInstallLogs(null);
-      setBusy(true);
-      setBusyLabel("Installing OpenCode");
-      setBusyStartedAt(Date.now());
-
-      try {
-        const result = await engineInstall();
-        const combined = `${result.stdout}${result.stderr ? `\n${result.stderr}` : ""}`.trim();
-        setEngineInstallLogs(combined || null);
-
-        if (!result.ok) {
-          setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
-        }
-
-        await refreshEngineDoctor();
-      } catch (e) {
-        setError(e instanceof Error ? e.message : safeStringify(e));
-      } finally {
-        setBusy(false);
-        setBusyLabel(null);
-        setBusyStartedAt(null);
-      }
-    },
+    onInstallEngine: workspaceStore.onInstallEngine,
     onShowSearchNotes: () => {
-      const notes = engineDoctorResult()?.notes?.join("\n") ?? "";
-      setEngineInstallLogs(notes || null);
+      const notes = workspaceStore.engineDoctorResult()?.notes?.join("\n") ?? "";
+      workspaceStore.setEngineInstallLogs(notes || null);
     },
   });
 
@@ -2476,18 +2163,18 @@ export default function App() {
     newTaskDisabled: newTaskDisabled(),
     headerStatus: headerStatus(),
     error: error(),
-    activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    workspaceSearch: workspaceSearch(),
-    setWorkspaceSearch,
-    workspacePickerOpen: workspacePickerOpen(),
-    setWorkspacePickerOpen,
-    workspaces: workspaces(),
-    filteredWorkspaces: filteredWorkspaces(),
-    activeWorkspaceId: activeWorkspaceId(),
-    activateWorkspace,
-    createWorkspaceOpen: createWorkspaceOpen(),
-    setCreateWorkspaceOpen,
-    createWorkspaceFlow,
+    activeWorkspaceDisplay: workspaceStore.activeWorkspaceDisplay(),
+    workspaceSearch: workspaceStore.workspaceSearch(),
+    setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
+    workspacePickerOpen: workspaceStore.workspacePickerOpen(),
+    setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
+    workspaces: workspaceStore.workspaces(),
+    filteredWorkspaces: workspaceStore.filteredWorkspaces(),
+    activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+    activateWorkspace: workspaceStore.activateWorkspace,
+    createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
+    setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
+    createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
     sessions: sessions().map((s) => ({
       id: s.id,
       slug: s.slug,
@@ -2496,7 +2183,7 @@ export default function App() {
       directory: s.directory,
     })),
     sessionStatusById: sessionStatusById(),
-    activeWorkspaceRoot: activeWorkspaceRoot().trim(),
+    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
     workspaceTemplates: workspaceTemplates(),
     globalTemplates: globalTemplates(),
     setTemplateDraftTitle,
@@ -2580,29 +2267,6 @@ export default function App() {
     safeStringify,
   });
 
-  const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
-  const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
-    const ws = activeWorkspaceInfo();
-    if (!ws) {
-      return {
-        id: "",
-        name: "Workspace",
-        path: "",
-        preset: "starter",
-      };
-    }
-    return { ...ws, name: ws.name || ws.path || "Workspace" };
-  });
-  const activeWorkspacePath = createMemo(() => activeWorkspaceInfo()?.path ?? "");
-  const activeWorkspaceRoot = createMemo(() => activeWorkspacePath().trim());
-  const filteredWorkspaces = createMemo(() => {
-    const query = workspaceSearch().trim().toLowerCase();
-    if (!query) return workspaces();
-    return workspaces().filter((ws) => {
-      const haystack = `${ws.name ?? ""} ${ws.path ?? ""}`.toLowerCase();
-      return haystack.includes(query);
-    });
-  });
 
   return (
     <>
@@ -2616,9 +2280,9 @@ export default function App() {
                 selectedSessionId={selectedSessionId()}
                 setView={setView}
                 setTab={setTab}
-                activeWorkspaceDisplay={activeWorkspaceDisplay()}
-                setWorkspaceSearch={setWorkspaceSearch}
-                setWorkspacePickerOpen={setWorkspacePickerOpen}
+                activeWorkspaceDisplay={workspaceStore.activeWorkspaceDisplay()}
+                setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
+                setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
                 headerStatus={headerStatus()}
                 busyHint={busyHint()}
                 createSessionAndOpen={createSessionAndOpen}
@@ -2643,7 +2307,7 @@ export default function App() {
                 setExpandedSidebarSections={setExpandedSidebarSections}
                 artifacts={artifacts()}
                 workingFiles={workingFiles()}
-                authorizedDirs={authorizedDirs()}
+                authorizedDirs={workspaceStore.authorizedDirs()}
                 busy={busy()}
                 prompt={prompt()}
                 setPrompt={setPrompt}
