@@ -1,3 +1,5 @@
+use tauri::Manager;
+
 #[tauri::command]
 pub fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), String> {
   let mode = mode.trim();

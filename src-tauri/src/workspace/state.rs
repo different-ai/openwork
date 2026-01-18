@@ -1,7 +1,8 @@
 use std::fs;
-use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+
+use tauri::Manager;
 
 use crate::types::{WorkspaceInfo, WorkspaceStateV1};
 use crate::utils::now_ms;

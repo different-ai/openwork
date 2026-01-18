@@ -15,17 +15,6 @@ pub fn opencode_executable_name() -> &'static str {
   OPENCODE_EXECUTABLE
 }
 
-pub fn opencode_cmd_name() -> Option<&'static str> {
-  #[cfg(windows)]
-  {
-    Some(OPENCODE_CMD)
-  }
-  #[cfg(not(windows))]
-  {
-    None
-  }
-}
-
 pub fn candidate_opencode_paths() -> Vec<PathBuf> {
   let mut candidates = Vec::new();
 
