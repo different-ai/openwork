@@ -400,6 +400,7 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
         results.push({
           id,
           name,
+          path: match,
           kind: "file",
           size: state.size ? String(state.size) : undefined,
         });
