@@ -257,6 +257,7 @@ export default function SessionView(props: SessionViewProps) {
 
               <For each={props.messages}>
                 {(msg) => {
+                  const isUser = () => (msg.info as any).role === "user";
                   const renderableParts = () =>
                     msg.parts.filter((p) => {
                       if (p.type === "reasoning") {
@@ -276,32 +277,35 @@ export default function SessionView(props: SessionViewProps) {
 
                   const groups = () =>
                     props.groupMessageParts(renderableParts(), String((msg.info as any).id ?? "message"));
+                  const groupSpacing = () => (isUser() ? "mb-3" : "mb-4");
 
                   return (
                     <Show when={renderableParts().length > 0}>
-                      <div class="flex">
+                      <div class={`flex ${isUser() ? "justify-end" : "justify-start"}`.trim()}>
                         <div
-                          class={`w-full text-sm leading-relaxed ${
-                            (msg.info as any).role === "user"
-                              ? "bg-white text-black shadow-xl shadow-white/5 max-w-[520px] ml-auto p-4 rounded-2xl"
-                              : "text-zinc-200"
+                          class={`w-full ${
+                            isUser()
+                              ? "max-w-[520px] rounded-2xl bg-white text-black shadow-xl shadow-white/5 p-4 text-sm leading-relaxed"
+                              : "max-w-[68ch] text-[15px] leading-7 text-zinc-200"
                           }`}
                         >
                           <For each={groups()}>
                             {(group, idx) => (
-                              <div class={idx() === groups().length - 1 ? "" : "mb-3"}>
+                              <div class={idx() === groups().length - 1 ? "" : groupSpacing()}>
                                 <Show when={group.kind === "text"}>
-                                  <PartView
-                                    part={(group as { kind: "text"; part: Part }).part}
-                                    developerMode={props.developerMode}
-                                    showThinking={props.showThinking}
-                                    tone={(msg.info as any).role === "user" ? "dark" : "light"}
-                                  />
+                                    <PartView
+                                      part={(group as { kind: "text"; part: Part }).part}
+                                      developerMode={props.developerMode}
+                                      showThinking={props.showThinking}
+                                      tone={isUser() ? "dark" : "light"}
+                                    />
                                 </Show>
                                 <Show when={group.kind === "steps"}>
-                                  <div class="mt-2">
+                                  <div class={isUser() ? "mt-2" : "mt-3 border-t border-zinc-800/60 pt-3"}>
                                     <button
-                                      class="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300"
+                                      class={`flex items-center gap-2 text-xs ${
+                                        isUser() ? "text-zinc-500 hover:text-zinc-300" : "text-zinc-500 hover:text-zinc-200"
+                                      }`}
                                       onClick={() => toggleSteps((group as any).id)}
                                     >
                                       <span>
@@ -313,7 +317,13 @@ export default function SessionView(props: SessionViewProps) {
                                       />
                                     </button>
                                     <Show when={props.expandedStepIds.has((group as any).id)}>
-                                      <div class="mt-3 space-y-3 rounded-xl border border-zinc-800 bg-zinc-950/60 p-3">
+                                      <div
+                                        class={`mt-3 space-y-3 rounded-xl border p-3 ${
+                                          isUser()
+                                            ? "border-zinc-800 bg-zinc-950/60"
+                                            : "border-zinc-800/70 bg-zinc-900/40"
+                                        }`}
+                                      >
                                         <For each={(group as any).parts as Part[]}>
                                           {(part) => {
                                             const summary = props.summarizeStep(part);
@@ -333,7 +343,7 @@ export default function SessionView(props: SessionViewProps) {
                                                         part={part}
                                                         developerMode={props.developerMode}
                                                         showThinking={props.showThinking}
-                                                        tone={(msg.info as any).role === "user" ? "dark" : "light"}
+                                                        tone={isUser() ? "dark" : "light"}
                                                       />
                                                     </div>
                                                   </Show>

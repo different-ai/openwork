@@ -58,8 +58,8 @@ export default function PartView(props: Props) {
   const tone = () => props.tone ?? "light";
   const showThinking = () => props.showThinking ?? true;
 
-  const textClass = () => (tone() === "dark" ? "text-black" : "text-neutral-100");
-  const subtleTextClass = () => (tone() === "dark" ? "text-black/70" : "text-neutral-400");
+  const textClass = () => (tone() === "dark" ? "text-black" : "text-zinc-200");
+  const subtleTextClass = () => (tone() === "dark" ? "text-black/70" : "text-zinc-400");
   const panelBgClass = () => (tone() === "dark" ? "bg-black/10" : "bg-black/30");
   const toolOnly = () => developerMode();
   const showToolOutput = () => developerMode();
