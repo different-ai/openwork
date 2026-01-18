@@ -19,6 +19,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import ModelPickerModal from "./components/ModelPickerModal";
 import ResetModal from "./components/ResetModal";
 import TemplateModal from "./components/TemplateModal";
+import WorkspacePicker from "./components/WorkspacePicker";
+import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
 import OnboardingView from "./views/OnboardingView";
 import DashboardView from "./views/DashboardView";
 import SessionView from "./views/SessionView";
@@ -1890,6 +1892,23 @@ export default function App() {
         onDescriptionChange={setTemplateDraftDescription}
         onPromptChange={setTemplateDraftPrompt}
         onScopeChange={setTemplateDraftScope}
+      />
+
+      <WorkspacePicker
+        open={workspaceStore.workspacePickerOpen()}
+        workspaces={workspaceStore.filteredWorkspaces()}
+        activeWorkspaceId={workspaceStore.activeWorkspaceId()}
+        search={workspaceStore.workspaceSearch()}
+        onSearch={workspaceStore.setWorkspaceSearch}
+        onClose={() => workspaceStore.setWorkspacePickerOpen(false)}
+        onSelect={workspaceStore.activateWorkspace}
+        onCreateNew={() => workspaceStore.setCreateWorkspaceOpen(true)}
+      />
+
+      <CreateWorkspaceModal
+        open={workspaceStore.createWorkspaceOpen()}
+        onClose={() => workspaceStore.setCreateWorkspaceOpen(false)}
+        onConfirm={(preset) => workspaceStore.createWorkspaceFlow(preset)}
       />
     </>
   );

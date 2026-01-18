@@ -315,11 +315,15 @@ export function createWorkspaceStore(options: {
       return;
     }
 
+    // Close the modal immediately when confirming - folder picker will appear
+    setCreateWorkspaceOpen(false);
+
     try {
       const selection = await pickDirectory({ title: "Choose workspace folder" });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
+      // User cancelled folder selection
       if (!folder) return;
 
       options.setBusy(true);
@@ -340,7 +344,6 @@ export function createWorkspaceStore(options: {
       }
 
       setWorkspacePickerOpen(false);
-      setCreateWorkspaceOpen(false);
       options.setView("dashboard");
       options.setTab("home");
     } catch (e) {
