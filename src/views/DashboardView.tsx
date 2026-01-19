@@ -3,6 +3,7 @@ import type {
   CuratedPackage,
   DashboardTab,
   McpServerEntry,
+  McpStatusMap,
   PluginScope,
   SkillCard,
   WorkspaceTemplate,
@@ -123,6 +124,8 @@ export type DashboardViewProps = {
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
   mcpLastUpdatedAt: number | null;
+  mcpStatuses: McpStatusMap;
+  mcpConnectingName: string | null;
   selectedMcp: string | null;
   setSelectedMcp: (value: string | null) => void;
   quickConnect: McpDirectoryInfo[];
@@ -139,6 +142,8 @@ export type DashboardViewProps = {
   setAdvancedEnabled: (value: boolean) => void;
   advancedCommand: string;
   advancedAuthCommand: string;
+  showMcpReloadBanner: boolean;
+  reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   selectSession: (sessionId: string) => Promise<void> | void;
   defaultModelLabel: string;
@@ -698,6 +703,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 mcpServers={props.mcpServers}
                 mcpStatus={props.mcpStatus}
                 mcpLastUpdatedAt={props.mcpLastUpdatedAt}
+                mcpStatuses={props.mcpStatuses}
+                mcpConnectingName={props.mcpConnectingName}
                 selectedMcp={props.selectedMcp}
                 setSelectedMcp={props.setSelectedMcp}
                 quickConnect={props.quickConnect}
@@ -714,6 +721,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 setAdvancedEnabled={props.setAdvancedEnabled}
                 advancedCommand={props.advancedCommand}
                 advancedAuthCommand={props.advancedAuthCommand}
+                showMcpReloadBanner={props.showMcpReloadBanner}
+                reloadMcpEngine={props.reloadMcpEngine}
               />
             </Match>
 

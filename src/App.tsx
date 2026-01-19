@@ -55,6 +55,7 @@ import type {
   View,
   WorkspaceDisplay,
   McpServerEntry,
+  McpStatusMap,
   WorkspaceTemplate,
   UpdateHandle,
 } from "./app/types";
@@ -678,6 +679,8 @@ export default function App() {
   const [mcpServers, setMcpServers] = createSignal<McpServerEntry[]>([]);
   const [mcpStatus, setMcpStatus] = createSignal<string | null>(null);
   const [mcpLastUpdatedAt, setMcpLastUpdatedAt] = createSignal<number | null>(null);
+  const [mcpStatuses, setMcpStatuses] = createSignal<McpStatusMap>({});
+  const [mcpConnectingName, setMcpConnectingName] = createSignal<string | null>(null);
   const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
   const [advancedMcpName, setAdvancedMcpName] = createSignal("");
   const [advancedMcpUrl, setAdvancedMcpUrl] = createSignal("");
@@ -1654,16 +1657,19 @@ export default function App() {
   }
 
   async function refreshMcpServers() {
+    const projectDir = workspaceProjectDir().trim();
+
     if (!isTauriRuntime()) {
       setMcpStatus("MCP configuration is only available in Host mode.");
       setMcpServers([]);
+      setMcpStatuses({});
       return;
     }
 
-    const projectDir = workspaceProjectDir().trim();
     if (!projectDir) {
       setMcpStatus("Pick a workspace folder to load MCP servers.");
       setMcpServers([]);
+      setMcpStatuses({});
       return;
     }
 
@@ -1672,6 +1678,7 @@ export default function App() {
       const config = await readOpencodeConfig("project", projectDir);
       if (!config.exists || !config.content) {
         setMcpServers([]);
+        setMcpStatuses({});
         setMcpStatus("No opencode.json found yet. Add an MCP to create one.");
         return;
       }
@@ -1679,11 +1686,23 @@ export default function App() {
       const next = parseMcpServersFromContent(config.content);
       setMcpServers(next);
       setMcpLastUpdatedAt(Date.now());
+
+      const activeClient = client();
+      if (activeClient) {
+        try {
+          const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+          setMcpStatuses(status as McpStatusMap);
+        } catch {
+          setMcpStatuses({});
+        }
+      }
+
       if (!next.length) {
         setMcpStatus("No MCP servers configured yet.");
       }
     } catch (e) {
       setMcpServers([]);
+      setMcpStatuses({});
       setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
     }
   }
@@ -1705,36 +1724,39 @@ export default function App() {
       return;
     }
 
+    const activeClient = client();
+    if (!activeClient) {
+      setMcpStatus("Connect to the OpenCode server first.");
+      return;
+    }
+
+    const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
     try {
       setMcpStatus(null);
-      const config = await readOpencodeConfig("project", projectDir);
-      const raw = config.content ?? "";
-      const nextConfig = raw.trim()
-        ? (parse(raw) as Record<string, unknown>)
-        : { $schema: "https://opencode.ai/config.json" };
+      setMcpConnectingName(entry.name);
 
-      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
-      const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-      mcp[slug] = {
-        type: "remote",
-        url: entry.url,
-        enabled: true,
-        ...(entry.oauth ? { oauth: {} } : {}),
-      };
+      const status = unwrap(
+        await activeClient.mcp.add({
+          directory: projectDir,
+          name: slug,
+          config: {
+            type: "remote",
+            url: entry.url,
+            enabled: true,
+            ...(entry.oauth ? { oauth: {} } : {}),
+          },
+        })
+      );
 
-      nextConfig.mcp = mcp;
-      const formatted = JSON.stringify(nextConfig, null, 2);
-
-      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
-      if (!result.ok) {
-        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-      }
-
+      setMcpStatuses(status as McpStatusMap);
       markReloadRequired("mcp");
       setMcpStatus("Reload required to activate the new MCP.");
       await refreshMcpServers();
     } catch (e) {
       setMcpStatus(e instanceof Error ? e.message : "Failed to connect MCP.");
+    } finally {
+      setMcpConnectingName(null);
     }
   }
 
@@ -1753,29 +1775,28 @@ export default function App() {
       return;
     }
 
+    const activeClient = client();
+    if (!activeClient) {
+      setMcpStatus("Connect to the OpenCode server first.");
+      return;
+    }
+
     try {
-      const config = await readOpencodeConfig("project", projectDir);
-      const raw = config.content ?? "";
-      const nextConfig = raw.trim()
-        ? (parse(raw) as Record<string, unknown>)
-        : { $schema: "https://opencode.ai/config.json" };
+      setMcpStatus(null);
+      const status = unwrap(
+        await activeClient.mcp.add({
+          directory: projectDir,
+          name,
+          config: {
+            type: "remote",
+            url,
+            enabled: advancedMcpEnabled(),
+            ...(advancedMcpOAuth() ? { oauth: {} } : { oauth: false }),
+          },
+        })
+      );
 
-      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
-      mcp[name] = {
-        type: "remote",
-        url,
-        enabled: advancedMcpEnabled(),
-        ...(advancedMcpOAuth() ? { oauth: {} } : { oauth: false }),
-      };
-
-      nextConfig.mcp = mcp;
-      const formatted = JSON.stringify(nextConfig, null, 2);
-
-      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
-      if (!result.ok) {
-        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
-      }
-
+      setMcpStatuses(status as McpStatusMap);
       markReloadRequired("mcp");
       setMcpStatus("Reload required to activate the new MCP.");
       setAdvancedMcpName("");
@@ -2581,6 +2602,8 @@ export default function App() {
     mcpServers: mcpServers(),
     mcpStatus: mcpStatus(),
     mcpLastUpdatedAt: mcpLastUpdatedAt(),
+    mcpStatuses: mcpStatuses(),
+    mcpConnectingName: mcpConnectingName(),
     selectedMcp: selectedMcp(),
     setSelectedMcp,
     quickConnect: MCP_QUICK_CONNECT,
@@ -2598,6 +2621,8 @@ export default function App() {
     setAdvancedEnabled: setAdvancedMcpEnabled,
     advancedCommand: advancedCommand(),
     advancedAuthCommand: advancedAuthCommand(),
+    showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
+    reloadMcpEngine: () => reloadEngineInstance(),
   });
 
   return (

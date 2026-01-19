@@ -144,6 +144,15 @@ export type McpServerEntry = {
   config: McpServerConfig;
 };
 
+export type McpStatus =
+  | { status: "connected" }
+  | { status: "disabled" }
+  | { status: "failed"; error: string }
+  | { status: "needs_auth" }
+  | { status: "needs_client_registration"; error: string };
+
+export type McpStatusMap = Record<string, McpStatus>;
+
 export type ReloadReason = "plugins" | "skills" | "mcp";
 
 export type PendingPermission = ApiPermissionRequest & {

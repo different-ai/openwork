@@ -1,12 +1,12 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 
-import type { McpServerEntry } from "../app/types";
+import type { McpServerEntry, McpStatusMap } from "../app/types";
 import type { McpDirectoryInfo } from "../app/constants";
 import { formatRelativeTime, isTauriRuntime } from "../app/utils";
 
 import Button from "../components/Button";
 import TextInput from "../components/TextInput";
-import { CheckCircle2, CircleAlert, Copy, PlugZap, RefreshCcw, Server, Settings } from "lucide-solid";
+import { CheckCircle2, CircleAlert, Copy, Loader2, PlugZap, RefreshCcw, Server, Settings } from "lucide-solid";
 
 export type McpViewProps = {
   mode: "host" | "client" | null;
@@ -15,6 +15,8 @@ export type McpViewProps = {
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
   mcpLastUpdatedAt: number | null;
+  mcpStatuses: McpStatusMap;
+  mcpConnectingName: string | null;
   selectedMcp: string | null;
   setSelectedMcp: (name: string | null) => void;
   quickConnect: McpDirectoryInfo[];
@@ -31,31 +33,40 @@ export type McpViewProps = {
   setAdvancedEnabled: (value: boolean) => void;
   advancedCommand: string;
   advancedAuthCommand: string;
+  showMcpReloadBanner: boolean;
+  reloadMcpEngine: () => void;
 };
 
-const statusBadge = (status: "connected" | "needs_auth" | "error" | "disabled") => {
+const statusBadge = (status: "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected") => {
   switch (status) {
     case "connected":
       return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
     case "needs_auth":
+    case "needs_client_registration":
       return "bg-amber-500/10 text-amber-300 border-amber-500/20";
     case "disabled":
       return "bg-zinc-800/60 text-zinc-400 border-zinc-700/50";
+    case "disconnected":
+      return "bg-zinc-900/80 text-zinc-200 border-zinc-700/50";
     default:
       return "bg-red-500/10 text-red-300 border-red-500/20";
   }
 };
 
-const statusLabel = (status: "connected" | "needs_auth" | "error" | "disabled") => {
+const statusLabel = (status: "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected") => {
   switch (status) {
     case "connected":
       return "Connected";
     case "needs_auth":
       return "Needs auth";
+    case "needs_client_registration":
+      return "Register client";
     case "disabled":
       return "Disabled";
+    case "disconnected":
+      return "Disconnected";
     default:
-      return "Error";
+      return "Failed";
   }
 };
 
@@ -72,6 +83,8 @@ export default function McpView(props: McpViewProps) {
 
   const advancedCommand = () => props.advancedCommand;
   const advancedAuthCommand = () => props.advancedAuthCommand;
+
+  const quickConnectStatus = (name: string) => props.mcpStatuses[name];
 
   const canConnect = (entry: McpDirectoryInfo) =>
     props.mode === "host" && isTauriRuntime() && !props.busy && !!props.activeWorkspaceRoot.trim();
@@ -102,6 +115,20 @@ export default function McpView(props: McpViewProps) {
             </Show>
           </div>
 
+          <Show when={props.showMcpReloadBanner}>
+            <div class="bg-zinc-900/60 border border-zinc-800/70 rounded-2xl px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div class="text-sm font-medium text-white">Reload required</div>
+                <div class="text-xs text-zinc-500">
+                  Changes need a quick reload to activate MCP tools.
+                </div>
+              </div>
+              <Button variant="secondary" onClick={() => props.reloadMcpEngine()}>
+                Reload Engine
+              </Button>
+            </div>
+          </Show>
+
           <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
             <div class="flex items-center justify-between">
               <div class="text-sm font-medium text-white">Quick connect</div>
@@ -117,14 +144,32 @@ export default function McpView(props: McpViewProps) {
                         <div class="text-xs text-zinc-500 mt-1">{entry.description}</div>
                         <div class="text-xs text-zinc-600 font-mono mt-1">{entry.url}</div>
                       </div>
-                      <Button
-                        variant="secondary"
-                        onClick={() => props.connectMcp(entry)}
-                        disabled={!canConnect(entry)}
-                      >
-                        <PlugZap size={16} />
-                        Connect
-                      </Button>
+                      <div class="flex flex-col items-end gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={() => props.connectMcp(entry)}
+                          disabled={!canConnect(entry) || props.mcpConnectingName === entry.name}
+                        >
+                          {props.mcpConnectingName === entry.name ? (
+                            <>
+                              <Loader2 size={16} class="animate-spin" />
+                              Connecting
+                            </>
+                          ) : (
+                            <>
+                              <PlugZap size={16} />
+                              Connect
+                            </>
+                          )}
+                        </Button>
+                        <Show when={quickConnectStatus(entry.name)}>
+                          {(status) => (
+                            <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status().status)}`}>
+                              {statusLabel(status().status)}
+                            </div>
+                          )}
+                        </Show>
+                      </div>
                     </div>
                     <div class="text-[11px] text-zinc-500">No environment variables required.</div>
                   </div>
@@ -149,7 +194,13 @@ export default function McpView(props: McpViewProps) {
               <div class="grid gap-3">
                 <For each={props.mcpServers}>
                   {(entry) => {
-                    const status = entry.config.enabled === false ? "disabled" : entry.config.oauth === false ? "connected" : "needs_auth";
+                    const resolved = props.mcpStatuses[entry.name];
+                    const status =
+                      entry.config.enabled === false
+                        ? "disabled"
+                        : resolved?.status
+                          ? resolved.status
+                          : "disconnected";
                     return (
                       <button
                         type="button"
@@ -301,19 +352,20 @@ export default function McpView(props: McpViewProps) {
                     {entry().config.type === "remote" ? entry().config.url : entry().config.command?.join(" ")}
                   </div>
                   <div class="flex items-center gap-2">
-                    {entry().config.enabled === false ? (
-                      <span class="inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border bg-zinc-800/60 text-zinc-400 border-zinc-700/50">
-                        Disabled
-                      </span>
-                    ) : entry().config.oauth === false ? (
-                      <span class="inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border bg-emerald-500/10 text-emerald-300 border-emerald-500/20">
-                        Connected
-                      </span>
-                    ) : (
-                      <span class="inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border bg-amber-500/10 text-amber-300 border-amber-500/20">
-                        Needs auth
-                      </span>
-                    )}
+                    {(() => {
+                      const resolved = props.mcpStatuses[entry().name];
+                      const status =
+                        entry().config.enabled === false
+                          ? "disabled"
+                          : resolved?.status
+                            ? resolved.status
+                            : "disconnected";
+                      return (
+                        <span class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
+                          {statusLabel(status)}
+                        </span>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -342,6 +394,15 @@ export default function McpView(props: McpViewProps) {
                     <CircleAlert size={14} />
                     Run opencode mcp auth for OAuth servers if prompted.
                   </div>
+                  {(() => {
+                    const status = props.mcpStatuses[entry().name];
+                    if (!status || status.status !== "failed") return null;
+                    return (
+                      <div class="text-xs text-red-300">
+                        {"error" in status ? status.error : "Connection failed"}
+                      </div>
+                    );
+                  })()}
                 </div>
               </div>
             )}
