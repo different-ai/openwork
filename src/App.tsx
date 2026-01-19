@@ -19,6 +19,7 @@ import ResetModal from "./components/ResetModal";
 import TemplateModal from "./components/TemplateModal";
 import WorkspacePicker from "./components/WorkspacePicker";
 import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
+import McpAuthModal from "./components/McpAuthModal";
 import OnboardingView from "./views/OnboardingView";
 import DashboardView from "./views/DashboardView";
 import SessionView from "./views/SessionView";
@@ -298,6 +299,10 @@ export default function App() {
   const [advancedMcpOAuth, setAdvancedMcpOAuth] = createSignal(true);
   const [advancedMcpEnabled, setAdvancedMcpEnabled] = createSignal(true);
   const advancedCommand = createMemo(() => "opencode mcp add");
+
+  // MCP OAuth modal state
+  const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
+  const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
 
   const advancedAuthCommand = createMemo(() => {
     const name = advancedMcpName().trim() || "my-mcp";
@@ -885,67 +890,135 @@ export default function App() {
   }
 
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
+    console.log("[connectMcp] called with entry:", entry);
+
     if (mode() !== "host") {
+      console.log("[connectMcp] ❌ mode is not host, mode=", mode());
       setMcpStatus("MCP connections are only available in Host mode.");
       return;
     }
 
     const projectDir = workspaceProjectDir().trim();
+    console.log("[connectMcp] projectDir:", projectDir);
     if (!projectDir) {
+      console.log("[connectMcp] ❌ no projectDir");
       setMcpStatus("Pick a workspace folder first.");
       return;
     }
 
     if (!isTauriRuntime()) {
+      console.log("[connectMcp] ❌ not Tauri runtime");
       setMcpStatus("MCP connections require the desktop app.");
       return;
     }
+    console.log("[connectMcp] ✓ is Tauri runtime");
 
     const activeClient = client();
+    console.log("[connectMcp] activeClient:", activeClient ? "exists" : "null");
     if (!activeClient) {
+      console.log("[connectMcp] ❌ no activeClient");
       setMcpStatus("Connect to the OpenCode server first.");
       return;
     }
 
     const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    console.log("[connectMcp] slug:", slug);
 
     try {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
+      console.log("[connectMcp] connecting name set to:", entry.name);
 
-      const config = await readOpencodeConfig("project", projectDir);
-      if (!config.exists || !config.content?.trim()) {
-        const baseConfig = {
-          $schema: "https://opencode.ai/config.json",
-          autoupdate: true,
-        };
-        const result = await writeOpencodeConfig("project", projectDir, `${JSON.stringify(baseConfig, null, 2)}\n`);
-        if (!result.ok) {
-          throw new Error(result.stderr || result.stdout || "Failed to create opencode.json");
+      // Step 1: Read existing opencode.json config
+      console.log("[connectMcp] reading opencode config for projectDir:", projectDir);
+      const configFile = await readOpencodeConfig("project", projectDir);
+      console.log("[connectMcp] config file result:", configFile);
+
+      // Step 2: Parse and merge the MCP entry into the config
+      let existingConfig: Record<string, unknown> = {};
+      if (configFile.exists && configFile.content?.trim()) {
+        try {
+          existingConfig = parse(configFile.content) ?? {};
+          console.log("[connectMcp] parsed existing config:", existingConfig);
+        } catch (parseErr) {
+          console.warn("[connectMcp] failed to parse existing config, starting fresh:", parseErr);
+          existingConfig = {};
         }
       }
 
-      const status = unwrap(
-        await activeClient.mcp.add({
-          directory: projectDir,
-          name: slug,
-          config: {
-            type: "remote",
-            url: entry.url,
-            enabled: true,
-            ...(entry.oauth ? { oauth: {} } : {}),
-          },
-        })
+      // Ensure base structure
+      if (!existingConfig["$schema"]) {
+        existingConfig["$schema"] = "https://opencode.ai/config.json";
+      }
+
+      // Ensure mcp object exists
+      const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
+      existingConfig["mcp"] = mcpSection;
+
+      // Add the new MCP server entry
+      const mcpEntryConfig: Record<string, unknown> = {
+        type: "remote",
+        url: entry.url,
+        enabled: true,
+      };
+      if (entry.oauth) {
+        mcpEntryConfig["oauth"] = {};
+      }
+      mcpSection[slug] = mcpEntryConfig;
+      console.log("[connectMcp] merged MCP config:", existingConfig);
+
+      // Step 3: Write the updated config back
+      const writeResult = await writeOpencodeConfig(
+        "project",
+        projectDir,
+        `${JSON.stringify(existingConfig, null, 2)}\n`
       );
+      console.log("[connectMcp] writeOpencodeConfig result:", writeResult);
+      if (!writeResult.ok) {
+        throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
+      }
+
+      // Step 4: Call SDK mcp.add to update runtime state
+      const mcpAddPayload = {
+        directory: projectDir,
+        name: slug,
+        config: {
+          type: "remote" as const,
+          url: entry.url,
+          enabled: true,
+          ...(entry.oauth ? { oauth: {} } : {}),
+        },
+      };
+      console.log("[connectMcp] calling activeClient.mcp.add with:", mcpAddPayload);
+
+      const rawResult = await activeClient.mcp.add(mcpAddPayload);
+      console.log("[connectMcp] mcp.add raw result:", rawResult);
+
+      const status = unwrap(rawResult);
+      console.log("[connectMcp] mcp.add unwrapped status:", status);
 
       setMcpStatuses(status as McpStatusMap);
+
+      // Step 5: If OAuth, open the auth modal (modal handles the auth flow)
+      if (entry.oauth) {
+        console.log("[connectMcp] entry has OAuth, opening auth modal for:", entry.name);
+        setMcpAuthEntry(entry);
+        setMcpAuthModalOpen(true);
+      } else {
+        setMcpStatus("Reload required to activate the new MCP.");
+      }
+
       markReloadRequired("mcp");
-      setMcpStatus("Reload required to activate the new MCP.");
+      console.log("[connectMcp] ✓ marked reload required, refreshing servers");
+
       await refreshMcpServers();
+      console.log("[connectMcp] ✓ done");
     } catch (e) {
+      console.error("[connectMcp] ❌ error:", e);
       setMcpStatus(e instanceof Error ? e.message : "Failed to connect MCP.");
     } finally {
       setMcpConnectingName(null);
+      console.log("[connectMcp] finally block, connecting name cleared");
     }
   }
 
@@ -1790,6 +1863,24 @@ export default function App() {
         onClose={() => setResetModalOpen(false)}
         onConfirm={confirmReset}
         onTextChange={setResetModalText}
+      />
+
+      <McpAuthModal
+        open={mcpAuthModalOpen()}
+        client={client()}
+        entry={mcpAuthEntry()}
+        projectDir={workspaceProjectDir()}
+        onClose={() => {
+          setMcpAuthModalOpen(false);
+          setMcpAuthEntry(null);
+        }}
+        onComplete={() => {
+          setMcpAuthModalOpen(false);
+          setMcpAuthEntry(null);
+          markReloadRequired("mcp");
+          setMcpStatus("OAuth completed. Reload the engine to activate the MCP.");
+        }}
+        onReloadEngine={() => reloadEngineInstance()}
       />
 
       <TemplateModal

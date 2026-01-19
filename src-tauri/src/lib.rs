@@ -14,7 +14,7 @@ pub use types::*;
 
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
-use commands::misc::{reset_opencode_cache, reset_openwork_state};
+use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
 use commands::opkg::{import_skill, opkg_install};
 use commands::updater::updater_environment;
 use commands::workspace::{
@@ -61,7 +61,8 @@ pub fn run() {
       write_opencode_config,
       updater_environment,
       reset_openwork_state,
-      reset_opencode_cache
+      reset_opencode_cache,
+      opencode_mcp_auth
     ])
     .run(tauri::generate_context!())
     .expect("error while running OpenWork");

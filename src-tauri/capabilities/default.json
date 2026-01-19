@@ -9,6 +9,8 @@
     "updater:default",
     "process:default",
     "opener:allow-reveal-item-in-dir",
-    "opener:allow-open-path"
+    "opener:allow-open-path",
+    "opener:allow-open-url",
+    "opener:allow-default-urls"
   ]
 }

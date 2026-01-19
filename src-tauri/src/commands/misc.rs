@@ -3,7 +3,10 @@ use tauri::Manager;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use crate::engine::doctor::resolve_engine_path;
 use crate::paths::home_dir;
+use crate::platform::command_for_program;
+use crate::types::ExecResult;
 
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
@@ -110,4 +113,43 @@ pub fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), S
   }
 
   Ok(())
+}
+
+/// Run `opencode mcp auth <server_name>` in the given project directory.
+/// This spawns the process detached so the OAuth flow can open a browser.
+#[tauri::command]
+pub fn opencode_mcp_auth(project_dir: String, server_name: String) -> Result<ExecResult, String> {
+  let project_dir = project_dir.trim();
+  let server_name = server_name.trim();
+
+  if project_dir.is_empty() {
+    return Err("project_dir is required".to_string());
+  }
+  if server_name.is_empty() {
+    return Err("server_name is required".to_string());
+  }
+
+  let (program, _in_path, notes) = resolve_engine_path(false);
+  let Some(program) = program else {
+    let notes_text = notes.join("\n");
+    return Err(format!(
+      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+    ));
+  };
+
+  let output = command_for_program(&program)
+    .arg("mcp")
+    .arg("auth")
+    .arg(server_name)
+    .current_dir(project_dir)
+    .output()
+    .map_err(|e| format!("Failed to run opencode mcp auth: {e}"))?;
+
+  let status = output.status.code().unwrap_or(-1);
+  Ok(ExecResult {
+    ok: output.status.success(),
+    status,
+    stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+    stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+  })
 }

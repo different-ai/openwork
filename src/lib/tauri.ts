@@ -234,3 +234,10 @@ export type CacheResetResult = {
 export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
+
+export async function opencodeMcpAuth(
+  projectDir: string,
+  serverName: string,
+): Promise<ExecResult> {
+  return invoke<ExecResult>("opencode_mcp_auth", { projectDir, serverName });
+}

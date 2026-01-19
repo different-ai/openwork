@@ -151,36 +151,6 @@ export default function SettingsView(props: SettingsViewProps) {
         </Show>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
-        <div class="flex items-start justify-between gap-4">
-          <div class="space-y-2">
-            <div class="text-sm font-medium text-white">Notion</div>
-            <div class="text-xs text-zinc-500">Connect your workspace to power CRM workflows.</div>
-            <div class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${notionStatusStyle()}`}>
-              <span>{notionStatusLabel()}</span>
-              <Show when={props.notionStatusDetail}>
-                <span class="text-zinc-400">• {props.notionStatusDetail}</span>
-              </Show>
-            </div>
-          </div>
-          <Button
-            variant={props.notionStatus === "connected" ? "outline" : "secondary"}
-            onClick={props.connectNotion}
-            disabled={props.notionBusy || props.notionStatus === "connecting" || props.mode !== "host" || !isTauriRuntime()}
-          >
-            {props.notionBusy ? "Connecting..." : props.notionStatus === "connected" ? "Manage" : "Connect Notion"}
-          </Button>
-        </div>
-        <div class="text-xs text-zinc-600">
-          OpenWork only accesses what you approve. You can disconnect anytime.
-        </div>
-        <Show when={props.notionStatus === "connecting"}>
-          <div class="text-xs text-zinc-500">Reload the engine to activate the connection.</div>
-        </Show>
-        <Show when={props.notionError}>
-          <div class="text-xs text-red-300">{props.notionError}</div>
-        </Show>
-      </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div>
