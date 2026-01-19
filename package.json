@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:health": "node scripts/health.mjs",
     "test:sessions": "node scripts/sessions.mjs",
+    "test:refactor": "pnpm typecheck && pnpm test:health && pnpm test:sessions",
     "test:events": "node scripts/events.mjs",
     "test:todos": "node scripts/todos.mjs",
     "test:permissions": "node scripts/permissions.mjs",
