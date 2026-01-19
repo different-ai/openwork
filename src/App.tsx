@@ -15,6 +15,7 @@ import type { Provider } from "@opencode-ai/sdk/v2/client";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/ModelPickerModal";
 import ResetModal from "./components/ResetModal";
@@ -88,6 +89,8 @@ import {
   workspaceTemplateWrite,
   resetOpenworkState,
   resetOpencodeCache,
+  readOpencodeConfig,
+  writeOpencodeConfig,
 } from "./lib/tauri";
 
 
@@ -509,8 +512,18 @@ export default function App() {
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string | null>(null);
+  const [notionStatus, setNotionStatus] = createSignal<"disconnected" | "connecting" | "connected" | "error">(
+    "disconnected",
+  );
+  const [notionStatusDetail, setNotionStatusDetail] = createSignal<string | null>(null);
+  const [notionError, setNotionError] = createSignal<string | null>(null);
+  const [notionBusy, setNotionBusy] = createSignal(false);
+  const [notionSkillInstalled, setNotionSkillInstalled] = createSignal(false);
+  const [tryNotionPromptVisible, setTryNotionPromptVisible] = createSignal(false);
+  const notionIsActive = createMemo(() => notionStatus() === "connected");
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
+
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -522,6 +535,17 @@ export default function App() {
     setBusyStartedAt,
     setError,
     markReloadRequired,
+    onNotionSkillInstalled: () => {
+      setNotionSkillInstalled(true);
+      try {
+        window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+      } catch {
+        // ignore
+      }
+      if (notionIsActive()) {
+        setTryNotionPromptVisible(true);
+      }
+    },
   });
 
   const {
@@ -1069,9 +1093,16 @@ export default function App() {
       };
     }
 
+    if (reasons.length === 1 && reasons[0] === "mcp") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads MCP servers at startup. Reload the engine to activate the new connection.",
+      };
+    }
+
     return {
       title: "Reload required",
-      body: "OpenWork detected plugin/skill changes. Reload the engine to apply them.",
+      body: "OpenWork detected plugin/skill/MCP changes. Reload the engine to apply them.",
     };
   });
 
@@ -1131,7 +1162,29 @@ export default function App() {
       await refreshPlugins("project").catch(() => undefined);
       await refreshSkills().catch(() => undefined);
 
+      let nextStatus = notionStatus();
+      if (notionStatus() === "connecting") {
+        nextStatus = "connected";
+        setNotionStatus(nextStatus);
+      }
+
+      if (nextStatus === "connected") {
+        setNotionStatusDetail((detail) => detail ?? "Workspace connected");
+      }
+
+      try {
+        window.localStorage.setItem("openwork.notionStatus", nextStatus);
+        if (nextStatus === "connected" && notionStatusDetail()) {
+          window.localStorage.setItem("openwork.notionStatusDetail", notionStatusDetail() || "");
+        }
+      } catch {
+        // ignore
+      }
+
       clearReloadRequired();
+      if (notionIsActive() && notionSkillInstalled()) {
+        setTryNotionPromptVisible(true);
+      }
     } catch (e) {
       setReloadError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
@@ -1296,6 +1349,70 @@ export default function App() {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setUpdateStatus({ state: "error", lastCheckedAt: null, message });
+    }
+  }
+
+  async function connectNotion() {
+    if (mode() !== "host") {
+      setNotionError("Notion connections are only available in Host mode.");
+      return;
+    }
+
+    const projectDir = workspaceProjectDir().trim();
+    if (!projectDir) {
+      setNotionError("Pick a workspace folder first.");
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setNotionError("Notion connections require the desktop app.");
+      return;
+    }
+
+    if (notionBusy()) return;
+
+    setNotionBusy(true);
+    setNotionError(null);
+    setNotionStatus("connecting");
+    setNotionStatusDetail("Reload required");
+    setNotionSkillInstalled(false);
+
+    try {
+      const config = await readOpencodeConfig("project", projectDir);
+      const raw = config.content ?? "";
+      const nextConfig = raw.trim()
+        ? (parse(raw) as Record<string, unknown>)
+        : { $schema: "https://opencode.ai/config.json" };
+
+      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
+      mcp.notion = {
+        type: "remote",
+        url: "https://mcp.notion.com",
+        enabled: true,
+      };
+
+      nextConfig.mcp = mcp;
+      const formatted = JSON.stringify(nextConfig, null, 2);
+
+      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+      }
+
+      markReloadRequired("mcp");
+      setNotionStatusDetail("Reload required");
+      try {
+        window.localStorage.setItem("openwork.notionStatus", "connecting");
+        window.localStorage.setItem("openwork.notionStatusDetail", "Reload required");
+        window.localStorage.setItem("openwork.notionSkillInstalled", "0");
+      } catch {
+        // ignore
+      }
+    } catch (e) {
+      setNotionStatus("error");
+      setNotionError(e instanceof Error ? e.message : "Failed to connect Notion.");
+    } finally {
+      setNotionBusy(false);
     }
   }
 
@@ -1517,6 +1634,32 @@ export default function App() {
           if (Number.isFinite(parsed) && parsed > 0) {
             setUpdateStatus({ state: "idle", lastCheckedAt: parsed });
           }
+        }
+
+        const storedNotionStatus = window.localStorage.getItem("openwork.notionStatus");
+        if (
+          storedNotionStatus === "disconnected" ||
+          storedNotionStatus === "connected" ||
+          storedNotionStatus === "connecting" ||
+          storedNotionStatus === "error"
+        ) {
+          setNotionStatus(storedNotionStatus);
+        }
+
+        const storedNotionDetail = window.localStorage.getItem("openwork.notionStatusDetail");
+        if (storedNotionDetail) {
+          setNotionStatusDetail(storedNotionDetail);
+        } else if (storedNotionStatus === "connecting") {
+          setNotionStatusDetail("Reload required");
+        }
+
+        if (storedNotionStatus === "connecting") {
+          markReloadRequired("mcp");
+        }
+
+        const storedNotionSkillInstalled = window.localStorage.getItem("openwork.notionSkillInstalled");
+        if (storedNotionSkillInstalled === "1") {
+          setNotionSkillInstalled(true);
         }
       } catch {
         // ignore
@@ -1893,6 +2036,11 @@ export default function App() {
     repairOpencodeCache,
     cacheRepairBusy: cacheRepairBusy(),
     cacheRepairResult: cacheRepairResult(),
+    notionStatus: notionStatus(),
+    notionStatusDetail: notionStatusDetail(),
+    notionError: notionError(),
+    notionBusy: notionBusy(),
+    connectNotion,
   });
 
 
@@ -1952,6 +2100,17 @@ export default function App() {
                 respondPermission={respondPermission}
                 respondPermissionAndRemember={respondPermissionAndRemember}
                 safeStringify={safeStringify}
+                showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
+                onTryNotionPrompt={() => {
+                  setPrompt("setup my crm");
+                  setTryNotionPromptVisible(false);
+                  setNotionSkillInstalled(true);
+                  try {
+                    window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+                  } catch {
+                    // ignore
+                  }
+                }}
 
             />
           </Match>

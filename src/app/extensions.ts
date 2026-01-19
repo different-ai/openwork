@@ -32,6 +32,7 @@ export function createExtensionsStore(options: {
   setBusyStartedAt: (value: number | null) => void;
   setError: (value: string | null) => void;
   markReloadRequired: (reason: ReloadReason) => void;
+  onNotionSkillInstalled?: () => void;
 }) {
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
@@ -40,6 +41,7 @@ export function createExtensionsStore(options: {
 
   const skillDocFallbacks: Record<string, string> = {
     "workspace-guide": "Workspace guide that introduces OpenWork and suggests first steps.",
+    "manage-crm-notion": "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
   };
   const failedSkillDocs = new Set<string>();
   const skillDocKey = (root: string, name: string) => `${root}::${name}`;
@@ -254,6 +256,7 @@ export function createExtensionsStore(options: {
 
     const targetDir = options.projectDir().trim();
     const pkg = (sourceOverride ?? openPackageSource()).trim();
+    const isNotionSkillInstall = pkg.toLowerCase().includes("manage-crm-notion");
 
     if (!targetDir) {
       options.setError("Pick a project folder first.");
@@ -277,6 +280,9 @@ export function createExtensionsStore(options: {
       } else {
         setSkillsStatus(result.stdout || "Installed.");
         options.markReloadRequired("skills");
+        if (isNotionSkillInstall) {
+          options.onNotionSkillInstalled?.();
+        }
       }
 
       await refreshSkills();

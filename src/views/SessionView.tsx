@@ -73,6 +73,8 @@ export type SessionViewProps = {
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
   activePermission: PendingPermission | null;
+  showTryNotionPrompt: boolean;
+  onTryNotionPrompt: () => void;
   permissionReplyBusy: boolean;
   respondPermission: (requestID: string, reply: "once" | "always" | "reject") => void;
   respondPermissionAndRemember: (requestID: string, reply: "once" | "always" | "reject") => void;
@@ -668,28 +670,40 @@ export default function SessionView(props: SessionViewProps) {
                 <ChevronDown size={16} class="text-zinc-600" />
               </div>
             </button>
-            <div class="relative">
-              <input
-                type="text"
-                disabled={props.busy}
-                value={props.prompt}
-                onInput={(e) => props.setPrompt(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    props.sendPromptAsync().catch(() => undefined);
-                  }
-                }}
-                placeholder={props.busy ? "Working..." : "Ask OpenWork to do something..."}
-                class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-5 pr-14 text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all disabled:opacity-50"
-              />
-              <button
-                disabled={!props.prompt.trim() || props.busy}
-                onClick={() => props.sendPromptAsync().catch(() => undefined)}
-                class="absolute right-2 top-2 p-2 bg-white text-black rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75"
-                title="Run"
-              >
-                <ArrowRight size={20} />
-              </button>
+            <div class="space-y-2">
+              <Show when={props.showTryNotionPrompt}>
+                <button
+                  type="button"
+                  class="w-full flex items-center justify-between gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-left text-sm text-emerald-100 transition-colors hover:bg-emerald-500/15"
+                  onClick={() => props.onTryNotionPrompt()}
+                >
+                  <span>Try it now: set up my CRM in Notion</span>
+                  <span class="text-xs text-emerald-200">Insert prompt</span>
+                </button>
+              </Show>
+              <div class="relative">
+                <input
+                  type="text"
+                  disabled={props.busy}
+                  value={props.prompt}
+                  onInput={(e) => props.setPrompt(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      props.sendPromptAsync().catch(() => undefined);
+                    }
+                  }}
+                  placeholder={props.busy ? "Working..." : "Ask OpenWork to do something..."}
+                  class="w-full bg-zinc-900 border border-zinc-800 rounded-2xl py-4 pl-5 pr-14 text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all disabled:opacity-50"
+                />
+                <button
+                  disabled={!props.prompt.trim() || props.busy}
+                  onClick={() => props.sendPromptAsync().catch(() => undefined)}
+                  class="absolute right-2 top-2 p-2 bg-white text-black rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75"
+                  title="Run"
+                >
+                  <ArrowRight size={20} />
+                </button>
+              </div>
             </div>
           </div>
         </div>

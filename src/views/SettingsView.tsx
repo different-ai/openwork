@@ -54,6 +54,11 @@ export type SettingsViewProps = {
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
+  notionStatus: "disconnected" | "connecting" | "connected" | "error";
+  notionStatusDetail: string | null;
+  notionError: string | null;
+  notionBusy: boolean;
+  connectNotion: () => void;
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -65,6 +70,33 @@ export default function SettingsView(props: SettingsViewProps) {
   const updateDownloadedBytes = () => props.updateStatus?.downloadedBytes ?? null;
   const updateTotalBytes = () => props.updateStatus?.totalBytes ?? null;
   const updateErrorMessage = () => props.updateStatus?.message ?? null;
+
+  const notionStatusLabel = () => {
+    switch (props.notionStatus) {
+      case "connected":
+        return "Connected";
+      case "connecting":
+        return "Reload required";
+      case "error":
+        return "Connection failed";
+      default:
+        return "Not connected";
+    }
+  };
+
+  const notionStatusStyle = () => {
+    if (props.notionStatus === "connected") {
+      return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
+    }
+    if (props.notionStatus === "error") {
+      return "bg-red-500/10 text-red-300 border-red-500/20";
+    }
+    if (props.notionStatus === "connecting") {
+      return "bg-amber-500/10 text-amber-300 border-amber-500/20";
+    }
+    return "bg-zinc-800/60 text-zinc-400 border-zinc-700/50";
+  };
+
 
   return (
     <section class="space-y-6">
@@ -116,6 +148,37 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
           </div>
+        </Show>
+      </div>
+
+      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-2">
+            <div class="text-sm font-medium text-white">Notion</div>
+            <div class="text-xs text-zinc-500">Connect your workspace to power CRM workflows.</div>
+            <div class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${notionStatusStyle()}`}>
+              <span>{notionStatusLabel()}</span>
+              <Show when={props.notionStatusDetail}>
+                <span class="text-zinc-400">• {props.notionStatusDetail}</span>
+              </Show>
+            </div>
+          </div>
+          <Button
+            variant={props.notionStatus === "connected" ? "outline" : "secondary"}
+            onClick={props.connectNotion}
+            disabled={props.notionBusy || props.notionStatus === "connecting" || props.mode !== "host" || !isTauriRuntime()}
+          >
+            {props.notionBusy ? "Connecting..." : props.notionStatus === "connected" ? "Manage" : "Connect Notion"}
+          </Button>
+        </div>
+        <div class="text-xs text-zinc-600">
+          OpenWork only accesses what you approve. You can disconnect anytime.
+        </div>
+        <Show when={props.notionStatus === "connecting"}>
+          <div class="text-xs text-zinc-500">Reload the engine to activate the connection.</div>
+        </Show>
+        <Show when={props.notionError}>
+          <div class="text-xs text-red-300">{props.notionError}</div>
         </Show>
       </div>
 

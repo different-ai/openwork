@@ -84,6 +84,28 @@ export default function SkillsView(props: SkillsViewProps) {
           <div class="text-xs text-zinc-500">{props.filteredPackages.length}</div>
         </div>
 
+        <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="text-sm font-medium text-emerald-100">Manage CRM in Notion</div>
+              <div class="text-xs text-emerald-200/80 mt-1">Set up pipelines, contacts, and follow-ups in minutes.</div>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={() => props.useCuratedPackage({
+                name: "Notion CRM Skill",
+                source: "github:different-ai/openwork-skills#subdirectory=manage-crm-notion",
+                description: "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
+                tags: ["notion", "crm", "demo"],
+                installable: true,
+              })}
+              disabled={props.busy || props.mode !== "host" || !isTauriRuntime()}
+            >
+              Install
+            </Button>
+          </div>
+        </div>
+
         <input
           class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
           placeholder="Search packages or lists (e.g. claude, registry, community)"

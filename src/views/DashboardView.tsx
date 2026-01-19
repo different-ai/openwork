@@ -132,8 +132,14 @@ export type DashboardViewProps = {
    safeStringify: (value: unknown) => string;
    repairOpencodeCache: () => void;
    cacheRepairBusy: boolean;
-   cacheRepairResult: string | null;
-   demoMode: boolean;
+  cacheRepairResult: string | null;
+  notionStatus: "disconnected" | "connecting" | "connected" | "error";
+  notionStatusDetail: string | null;
+  notionError: string | null;
+  notionBusy: boolean;
+  connectNotion: () => void;
+  demoMode: boolean;
+
    toggleDemoMode: () => void;
    demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
    setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
@@ -516,47 +522,53 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
 
             <Match when={props.tab === "settings"}>
-              <SettingsView
-                mode={props.mode}
-                baseUrl={props.baseUrl}
-                headerStatus={props.headerStatus}
-                busy={props.busy}
-                developerMode={props.developerMode}
-                toggleDeveloperMode={props.toggleDeveloperMode}
-                stopHost={props.stopHost}
-                engineSource={props.engineSource}
-                setEngineSource={props.setEngineSource}
-                isWindows={props.isWindows}
-                defaultModelLabel={props.defaultModelLabel}
-                defaultModelRef={props.defaultModelRef}
-                openDefaultModelPicker={props.openDefaultModelPicker}
-                showThinking={props.showThinking}
-                toggleShowThinking={props.toggleShowThinking}
-                modelVariantLabel={props.modelVariantLabel}
-                editModelVariant={props.editModelVariant}
-                updateAutoCheck={props.updateAutoCheck}
-                toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
-                updateStatus={props.updateStatus}
-                updateEnv={props.updateEnv}
-                appVersion={props.appVersion}
-                checkForUpdates={props.checkForUpdates}
-                downloadUpdate={props.downloadUpdate}
-                installUpdateAndRestart={props.installUpdateAndRestart}
-                anyActiveRuns={props.anyActiveRuns}
-                onResetStartupPreference={props.onResetStartupPreference}
-                openResetModal={props.openResetModal}
-                resetModalBusy={props.resetModalBusy}
-                pendingPermissions={props.pendingPermissions}
-                events={props.events}
-                safeStringify={props.safeStringify}
-                repairOpencodeCache={props.repairOpencodeCache}
-                cacheRepairBusy={props.cacheRepairBusy}
-                cacheRepairResult={props.cacheRepairResult}
-                demoMode={props.demoMode}
-                toggleDemoMode={props.toggleDemoMode}
-                demoSequence={props.demoSequence}
-                setDemoSequence={props.setDemoSequence}
-              />
+                <SettingsView
+                  mode={props.mode}
+                  baseUrl={props.baseUrl}
+                  headerStatus={props.headerStatus}
+                  busy={props.busy}
+                  developerMode={props.developerMode}
+                  toggleDeveloperMode={props.toggleDeveloperMode}
+                  stopHost={props.stopHost}
+                  engineSource={props.engineSource}
+                  setEngineSource={props.setEngineSource}
+                  isWindows={props.isWindows}
+                  defaultModelLabel={props.defaultModelLabel}
+                  defaultModelRef={props.defaultModelRef}
+                  openDefaultModelPicker={props.openDefaultModelPicker}
+                  showThinking={props.showThinking}
+                  toggleShowThinking={props.toggleShowThinking}
+                  modelVariantLabel={props.modelVariantLabel}
+                  editModelVariant={props.editModelVariant}
+                  updateAutoCheck={props.updateAutoCheck}
+                  toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
+                  updateStatus={props.updateStatus}
+                  updateEnv={props.updateEnv}
+                  appVersion={props.appVersion}
+                  checkForUpdates={props.checkForUpdates}
+                  downloadUpdate={props.downloadUpdate}
+                  installUpdateAndRestart={props.installUpdateAndRestart}
+                  anyActiveRuns={props.anyActiveRuns}
+                  onResetStartupPreference={props.onResetStartupPreference}
+                  openResetModal={props.openResetModal}
+                  resetModalBusy={props.resetModalBusy}
+                  pendingPermissions={props.pendingPermissions}
+                  events={props.events}
+                  safeStringify={props.safeStringify}
+                  repairOpencodeCache={props.repairOpencodeCache}
+                  cacheRepairBusy={props.cacheRepairBusy}
+                  cacheRepairResult={props.cacheRepairResult}
+                  notionStatus={props.notionStatus}
+                  notionStatusDetail={props.notionStatusDetail}
+                  notionError={props.notionError}
+                  notionBusy={props.notionBusy}
+                  connectNotion={props.connectNotion}
+                  demoMode={props.demoMode}
+                  toggleDemoMode={props.toggleDemoMode}
+                  demoSequence={props.demoSequence}
+                  setDemoSequence={props.setDemoSequence}
+                />
+
             </Match>
           </Switch>
         </div>

@@ -128,7 +128,7 @@ export type SuggestedPlugin = {
 
 export type PluginScope = "project" | "global";
 
-export type ReloadReason = "plugins" | "skills";
+export type ReloadReason = "plugins" | "skills" | "mcp";
 
 export type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;

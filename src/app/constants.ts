@@ -41,6 +41,13 @@ export const CURATED_PACKAGES: CuratedPackage[] = [
     installable: true,
   },
   {
+    name: "Notion CRM Skill",
+    source: "github:different-ai/openwork-skills#subdirectory=manage-crm-notion",
+    description: "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
+    tags: ["notion", "crm", "demo"],
+    installable: true,
+  },
+  {
     name: "Awesome Claude Skills",
     source: "https://github.com/ComposioHQ/awesome-claude-skills",
     description: "Curated list of Claude skills and prompts (not an OpenPackage yet).",
