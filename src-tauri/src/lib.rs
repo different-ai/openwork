@@ -14,6 +14,7 @@ pub use types::*;
 
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
+use commands::http::http_request;
 use commands::misc::{reset_opencode_cache, reset_openwork_state};
 use commands::opkg::{import_skill, opkg_install};
 use commands::updater::updater_environment;
@@ -47,6 +48,7 @@ pub fn run() {
       engine_info,
       engine_doctor,
       engine_install,
+      http_request,
       workspace_bootstrap,
       workspace_set_active,
       workspace_create,

@@ -7,9 +7,22 @@ export const DEMO_MODE_PREF_KEY = "openwork.demoMode";
 export const DEMO_SEQUENCE_PREF_KEY = "openwork.demoSequence";
 
 export const DEFAULT_MODEL: ModelRef = {
-  providerID: "opencode",
-  modelID: "gpt-5-nano",
+  providerID: "lmstudio",
+  modelID: "qwen/qwen3-4b-thinking-2507", // Using the actual first available model
 };
+
+// Dynamic LMStudio provider - will be populated with real models
+export const createLMStudioProvider = (models: any[]) => ({
+  id: "lmstudio",
+  name: "LM Studio",
+  models: models.map(model => ({
+    id: model.id,
+    name: model.id.split('/').pop() || model.id, // Use last part as display name
+    status: "stable",
+    cost: { input: 0, output: 0 },
+    capabilities: { reasoning: false }
+  }))
+});
 
 export const CURATED_PACKAGES: CuratedPackage[] = [
   {

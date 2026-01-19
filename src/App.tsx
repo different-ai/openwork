@@ -14,6 +14,7 @@ import type { Provider } from "@opencode-ai/sdk/v2/client";
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
 import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/ModelPickerModal";
@@ -30,6 +31,7 @@ import {
   DEFAULT_MODEL,
   DEMO_MODE_PREF_KEY,
   DEMO_SEQUENCE_PREF_KEY,
+  createLMStudioProvider,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
@@ -572,9 +574,81 @@ export default function App() {
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
+  async function fetchLMStudioModels() {
+    try {
+      const requestData = {
+        url: "http://localhost:1234/v1/models",
+        method: "GET",
+        headers: {},
+        body: null,
+      };
+
+      const response = await invoke("http_request", { request: requestData }) as any;
+      if (response.status === 200) {
+        const data = JSON.parse(response.body);
+        return data.data || [];
+      }
+    } catch (error) {
+      console.log("Could not fetch LMStudio models:", error);
+    }
+    return [];
+  }
+
+  async function sendLMStudioPrompt(content: string, sessionID: string, modelID: string) {
+    console.log("Sending prompt to LMStudio:", { content, sessionID, modelID });
+    try {
+      // Use Tauri HTTP proxy to bypass CORS
+      console.log("Using Tauri HTTP proxy to connect to LMStudio...");
+
+      const requestData = {
+        url: "http://localhost:1234/v1/chat/completions",
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: modelID,
+          messages: [{ role: "user", content: content }],
+          stream: false,
+        }),
+      };
+
+      const response = await invoke("http_request", { request: requestData }) as any;
+      console.log("LMStudio response via Tauri proxy:", response);
+
+      if (response.status !== 200) {
+        throw new Error(`LMStudio API error: HTTP ${response.status}`);
+      }
+
+      const data = JSON.parse(response.body);
+      const assistantContent = data.choices[0]?.message?.content || "";
+
+      // For now, just log the response. In a full implementation,
+      // you'd want to integrate this with OpenWork's session/message system
+      console.log("LMStudio response:", assistantContent);
+
+    } catch (error) {
+      console.error("Failed to send prompt to LMStudio:", error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      setError(`Failed to connect to LMStudio: ${errorMessage}.
+
+Make sure:
+1. LMStudio is running
+2. Server is enabled on localhost:1234
+3. A model is loaded (current: ${modelID})
+4. LMStudio's local server is accepting connections`);
+    }
+  }
+
   async function sendPrompt() {
+    console.log("sendPrompt function called");
     const content = prompt().trim();
-    if (!content) return;
+    console.log("Prompt content:", content);
+    if (!content) {
+      console.log("No content, returning early");
+      return;
+    }
 
     if (isDemoMode()) {
       setLastPromptSent(content);
@@ -596,13 +670,21 @@ export default function App() {
       setPrompt("");
 
       const model = selectedSessionModel();
+      console.log("Selected model:", model);
 
-      await c.session.promptAsync({
-        sessionID,
-        model,
-        variant: modelVariant() ?? undefined,
-        parts: [{ type: "text", text: content }],
-      });
+      // Handle LMStudio provider with direct API call
+      if (model.providerID === "lmstudio") {
+        console.log("Using LMStudio provider, calling sendLMStudioPrompt");
+        await sendLMStudioPrompt(content, sessionID, model.modelID);
+      } else {
+        console.log("Using non-LMStudio provider, calling OpenCode");
+        await c.session.promptAsync({
+          sessionID,
+          model,
+          variant: modelVariant() ?? undefined,
+          parts: [{ type: "text", text: content }],
+        });
+      }
 
       setSessionModelById((current) => ({
         ...current,
@@ -1362,21 +1444,54 @@ export default function App() {
       unwrap(await c.instance.dispose());
       await waitForHealthy(c, { timeoutMs: 12_000 });
 
+      // Fetch real LMStudio models
+      const lmStudioModels = await fetchLMStudioModels();
+      const lmStudioProvider = lmStudioModels.length > 0
+        ? createLMStudioProvider(lmStudioModels)
+        : null;
+
       try {
         const providerList = unwrap(await c.provider.list());
-        setProviders(providerList.all as unknown as Provider[]);
-        setProviderDefaults(providerList.default);
-        setProviderConnectedIds(providerList.connected);
+        const allProviders = lmStudioProvider
+          ? [...(providerList.all as unknown as Provider[]), lmStudioProvider as unknown as Provider]
+          : providerList.all as unknown as Provider[];
+        setProviders(allProviders);
+
+        const firstModel = lmStudioModels[0]?.id || "local-model";
+        const defaults = lmStudioProvider
+          ? { ...providerList.default, lmstudio: firstModel }
+          : providerList.default;
+        setProviderDefaults(defaults);
+
+        const connected = lmStudioProvider
+          ? [...providerList.connected, "lmstudio"]
+          : providerList.connected;
+        setProviderConnectedIds(connected);
       } catch {
         try {
           const cfg = unwrap(await c.config.providers());
-          setProviders(cfg.providers);
-          setProviderDefaults(cfg.default);
-          setProviderConnectedIds([]);
+          const allProviders = lmStudioProvider
+            ? [...cfg.providers, lmStudioProvider as unknown as Provider]
+            : cfg.providers;
+          setProviders(allProviders);
+
+          const firstModel = lmStudioModels[0]?.id || "local-model";
+          const defaults = lmStudioProvider
+            ? { ...cfg.default, lmstudio: firstModel }
+            : cfg.default;
+          setProviderDefaults(defaults);
+
+          setProviderConnectedIds(lmStudioProvider ? ["lmstudio"] : []);
         } catch {
-          setProviders([]);
-          setProviderDefaults({});
-          setProviderConnectedIds([]);
+          if (lmStudioProvider) {
+            setProviders([lmStudioProvider as unknown as Provider]);
+            setProviderDefaults({ lmstudio: lmStudioModels[0]?.id || "local-model" });
+            setProviderConnectedIds(["lmstudio"]);
+          } else {
+            setProviders([]);
+            setProviderDefaults({});
+            setProviderConnectedIds([]);
+          }
         }
       }
 
