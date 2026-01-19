@@ -1,0 +1,165 @@
+name: PreRelease App
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-release:
+    name: Prepare Prerelease
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set prerelease metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          short_sha=$(echo "$GITHUB_SHA" | cut -c1-7)
+          tag="v${short_sha}-dev"
+
+          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "RELEASE_NAME=OpenWork ${tag}" >> "$GITHUB_ENV"
+
+          {
+            echo "RELEASE_BODY<<__OPENWORK_RELEASE_BODY_EOF__"
+            echo "Automated prerelease from ${GITHUB_REF_NAME} (${GITHUB_SHA})."
+            echo "__OPENWORK_RELEASE_BODY_EOF__"
+          } >> "$GITHUB_ENV"
+
+      - name: Create prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          BODY_FILE="$RUNNER_TEMP/release_body.md"
+          printf '%s\n' "$RELEASE_BODY" > "$BODY_FILE"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Prerelease $RELEASE_TAG already exists; skipping create."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$RELEASE_NAME" \
+            --notes-file "$BODY_FILE" \
+            --prerelease
+
+  publish-tauri:
+    name: Build + Publish (${{ matrix.target }})
+    needs: prepare-release
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 360
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            os_type: macos
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin --bundles dmg,app"
+          - platform: macos-14
+            os_type: macos
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin --bundles dmg,app"
+          - platform: ubuntu-22.04
+            os_type: linux
+            target: x86_64-unknown-linux-gnu
+            args: "--target x86_64-unknown-linux-gnu --bundles appimage,deb"
+          - platform: windows-2022
+            os_type: windows
+            target: x86_64-pc-windows-msvc
+            args: "--target x86_64-pc-windows-msvc --bundles msi"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux build dependencies
+        if: matrix.os_type == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            librsvg2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Write notary API key
+        if: matrix.os_type == 'macos'
+        env:
+          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
+        run: |
+          set -euo pipefail
+
+          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          chmod 600 "$NOTARY_KEY_PATH"
+
+          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
+
+      - name: Build + upload
+        uses: tauri-apps/tauri-action@v0.5.17
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # macOS signing
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+
+          # macOS notarization (App Store Connect API key)
+          APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
+          APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          prerelease: true
+          projectPath: .
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+          includeUpdaterJson: true
