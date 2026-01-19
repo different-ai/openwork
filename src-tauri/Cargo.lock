@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "openwork"
-version = "0.1.20"
+version = "0.1.22"
 dependencies = [
  "serde",
  "serde_json",
