@@ -574,6 +574,16 @@ export default function App() {
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
 
+  // Helper function to add timeout to async operations
+  function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(`Timeout after ${timeoutMs}ms`)), timeoutMs)
+      )
+    ]);
+  }
+
   async function fetchLMStudioModels() {
     try {
       const requestData = {
@@ -583,22 +593,49 @@ export default function App() {
         body: null,
       };
 
-      const response = await invoke("http_request", { request: requestData }) as any;
-      if (response.status === 200) {
+      // Add 5-second timeout to prevent hanging
+      const response = await withTimeout(
+        invoke("http_request", { request: requestData }),
+        5000
+      ) as any;
+
+      if (response?.status === 200) {
         const data = JSON.parse(response.body);
         return data.data || [];
       }
     } catch (error) {
-      console.log("Could not fetch LMStudio models:", error);
+      console.error("Could not fetch LMStudio models:", error);
     }
     return [];
   }
 
   async function sendLMStudioPrompt(content: string, sessionID: string, modelID: string) {
-    console.log("Sending prompt to LMStudio:", { content, sessionID, modelID });
+    const userMessageId = `lmstudio-user-${Date.now()}`;
+    const assistantMessageId = `lmstudio-assistant-${Date.now() + 1}`;
+
     try {
-      // Use Tauri HTTP proxy to bypass CORS
-      console.log("Using Tauri HTTP proxy to connect to LMStudio...");
+      // Add user message to chat
+      const userMessage = {
+        info: {
+          id: userMessageId,
+          sessionID: sessionID,
+          role: "user",
+          time: { created: Date.now() },
+          model: { providerID: "lmstudio", modelID: modelID }
+        },
+        parts: [{
+          id: `${userMessageId}-part`,
+          messageID: userMessageId,
+          sessionID: sessionID,
+          type: "text",
+          text: content
+        }]
+      };
+
+      setMessages(prev => [...prev, userMessage]);
+
+      // Show progress indicator
+      setError(`🤖 LMStudio is thinking... (using ${modelID})`);
 
       const requestData = {
         url: "http://localhost:1234/v1/chat/completions",
@@ -613,42 +650,54 @@ export default function App() {
         }),
       };
 
-      const response = await invoke("http_request", { request: requestData }) as any;
-      console.log("LMStudio response via Tauri proxy:", response);
+      // Increase timeout to 45 seconds for larger models
+      const response = await withTimeout(
+        invoke("http_request", { request: requestData }),
+        45000
+      ) as any;
 
-      if (response.status !== 200) {
-        throw new Error(`LMStudio API error: HTTP ${response.status}`);
+      if (response?.status === 200) {
+        const data = JSON.parse(response.body);
+        const assistantContent = data.choices[0]?.message?.content || "";
+
+        // Add assistant message to chat
+        const assistantMessage = {
+          info: {
+            id: assistantMessageId,
+            sessionID: sessionID,
+            role: "assistant",
+            time: { created: Date.now() },
+          },
+          parts: [{
+            id: `${assistantMessageId}-part`,
+            messageID: assistantMessageId,
+            sessionID: sessionID,
+            type: "text",
+            text: assistantContent
+          }]
+        };
+
+        setMessages(prev => [...prev, assistantMessage]);
+
+        // Clear any previous errors
+        setError(null);
+      } else {
+        throw new Error(`HTTP ${response?.status || 'Unknown'}`);
       }
-
-      const data = JSON.parse(response.body);
-      const assistantContent = data.choices[0]?.message?.content || "";
-
-      // For now, just log the response. In a full implementation,
-      // you'd want to integrate this with OpenWork's session/message system
-      console.log("LMStudio response:", assistantContent);
-
     } catch (error) {
-      console.error("Failed to send prompt to LMStudio:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
 
-      setError(`Failed to connect to LMStudio: ${errorMessage}.
-
-Make sure:
-1. LMStudio is running
-2. Server is enabled on localhost:1234
-3. A model is loaded (current: ${modelID})
-4. LMStudio's local server is accepting connections`);
+      if (errorMessage.includes("Timeout")) {
+        setError(`⏱️ LMStudio timeout: The model took longer than 45 seconds to respond. This can happen with larger models. Try again or check if LMStudio is running at localhost:1234.`);
+      } else {
+        setError(`❌ LMStudio error: ${errorMessage}`);
+      }
     }
   }
 
   async function sendPrompt() {
-    console.log("sendPrompt function called");
     const content = prompt().trim();
-    console.log("Prompt content:", content);
-    if (!content) {
-      console.log("No content, returning early");
-      return;
-    }
+    if (!content) return;
 
     if (isDemoMode()) {
       setLastPromptSent(content);
@@ -670,14 +719,13 @@ Make sure:
       setPrompt("");
 
       const model = selectedSessionModel();
-      console.log("Selected model:", model);
 
       // Handle LMStudio provider with direct API call
       if (model.providerID === "lmstudio") {
-        console.log("Using LMStudio provider, calling sendLMStudioPrompt");
+        // Show a simple notification that LMStudio is being used
+        setError(`Using LMStudio model: ${model.modelID}`);
         await sendLMStudioPrompt(content, sessionID, model.modelID);
       } else {
-        console.log("Using non-LMStudio provider, calling OpenCode");
         await c.session.promptAsync({
           sessionID,
           model,
@@ -1444,11 +1492,19 @@ Make sure:
       unwrap(await c.instance.dispose());
       await waitForHealthy(c, { timeoutMs: 12_000 });
 
-      // Fetch real LMStudio models
-      const lmStudioModels = await fetchLMStudioModels();
-      const lmStudioProvider = lmStudioModels.length > 0
-        ? createLMStudioProvider(lmStudioModels)
-        : null;
+      // Fetch real LMStudio models with timeout
+      let lmStudioModels: any[] = [];
+      let lmStudioProvider = null;
+
+      try {
+        lmStudioModels = await withTimeout(fetchLMStudioModels(), 5000);
+        if (lmStudioModels.length > 0) {
+          lmStudioProvider = createLMStudioProvider(lmStudioModels);
+        }
+      } catch (error) {
+        console.error("Failed to load LMStudio models:", error);
+        // Continue without LMStudio if it fails
+      }
 
       try {
         const providerList = unwrap(await c.provider.list());
