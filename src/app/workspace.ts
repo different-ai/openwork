@@ -251,22 +251,63 @@ export function createWorkspaceStore(options: {
           }
 
           if (!already) {
+            // Wait a bit for skills to be indexed before creating welcome session
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
             const session = unwrap(
               await nextClient.session.create({ directory: wsRoot, title: "Welcome to OpenWork" }),
             );
-            await nextClient.session.promptAsync({
-              directory: wsRoot,
-              sessionID: session.id,
-              model: options.defaultModel(),
-              variant: options.modelVariant() ?? undefined,
-              parts: [
-                {
-                  type: "text",
-                  text:
-                    "Load the `workspace_guide` skill from this workspace and give a short, welcoming overview of what lives here (skills, plugins, templates) versus what's global. Avoid CLI language or raw file paths. Then suggest two friendly next actions to try inside OpenWork.",
-                },
-              ],
-            });
+
+            // Try to create the welcome prompt with retry logic for skill loading
+            let promptSuccess = false;
+            let retryCount = 0;
+            const maxRetries = 3;
+
+            while (!promptSuccess && retryCount < maxRetries) {
+              try {
+                await nextClient.session.promptAsync({
+                  directory: wsRoot,
+                  sessionID: session.id,
+                  model: options.defaultModel(),
+                  variant: options.modelVariant() ?? undefined,
+                  parts: [
+                    {
+                      type: "text",
+                      text:
+                        "Load the `workspace_guide` skill from this workspace and give a short, welcoming overview of what lives here (skills, plugins, templates) versus what's global. Avoid CLI language or raw file paths. Then suggest two friendly next actions to try inside OpenWork.",
+                    },
+                  ],
+                });
+                promptSuccess = true;
+              } catch (e) {
+                retryCount++;
+                if (retryCount < maxRetries) {
+                  // Wait before retrying
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                } else {
+                  // On final failure, try without the skill reference
+                  try {
+                    await nextClient.session.promptAsync({
+                      directory: wsRoot,
+                      sessionID: session.id,
+                      model: options.defaultModel(),
+                      variant: options.modelVariant() ?? undefined,
+                      parts: [
+                        {
+                          type: "text",
+                          text:
+                            "Give a short, welcoming overview of this OpenWork workspace. Explain what lives here (skills, plugins, templates) versus what's global. Avoid CLI language or raw file paths. Then suggest two friendly next actions to try inside OpenWork.",
+                        },
+                      ],
+                    });
+                    promptSuccess = true;
+                  } catch (fallbackError) {
+                    // If both attempts fail, just continue without the welcome session
+                    console.warn("Failed to create welcome session:", fallbackError);
+                  }
+                }
+              }
+            }
 
             try {
               window.localStorage.setItem(storedKey, "1");
