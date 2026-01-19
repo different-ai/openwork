@@ -1679,7 +1679,7 @@ export default function App() {
       if (!config.exists || !config.content) {
         setMcpServers([]);
         setMcpStatuses({});
-        setMcpStatus("No opencode.json found yet. Add an MCP to create one.");
+        setMcpStatus("No opencode.json found yet. Create one by connecting an MCP.");
         return;
       }
 
@@ -1736,6 +1736,18 @@ export default function App() {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
 
+      const config = await readOpencodeConfig("project", projectDir);
+      if (!config.exists || !config.content?.trim()) {
+        const baseConfig = {
+          $schema: "https://opencode.ai/config.json",
+          autoupdate: true,
+        };
+        const result = await writeOpencodeConfig("project", projectDir, `${JSON.stringify(baseConfig, null, 2)}\n`);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || "Failed to create opencode.json");
+        }
+      }
+
       const status = unwrap(
         await activeClient.mcp.add({
           directory: projectDir,
@@ -1783,6 +1795,18 @@ export default function App() {
 
     try {
       setMcpStatus(null);
+      const config = await readOpencodeConfig("project", projectDir);
+      if (!config.exists || !config.content?.trim()) {
+        const baseConfig = {
+          $schema: "https://opencode.ai/config.json",
+          autoupdate: true,
+        };
+        const result = await writeOpencodeConfig("project", projectDir, `${JSON.stringify(baseConfig, null, 2)}\n`);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || "Failed to create opencode.json");
+        }
+      }
+
       const status = unwrap(
         await activeClient.mcp.add({
           directory: projectDir,
