@@ -63,7 +63,7 @@ export type Mode = "host" | "client";
 
 export type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
-export type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "settings";
+export type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "mcp" | "settings";
 
 export type DemoSequence = "cold-open" | "scheduler" | "summaries" | "groceries";
 
@@ -127,6 +127,22 @@ export type SuggestedPlugin = {
 };
 
 export type PluginScope = "project" | "global";
+
+export type McpServerConfig = {
+  type: "remote" | "local";
+  url?: string;
+  command?: string[];
+  enabled?: boolean;
+  headers?: Record<string, string>;
+  environment?: Record<string, string>;
+  oauth?: Record<string, string> | false;
+  timeout?: number;
+};
+
+export type McpServerEntry = {
+  name: string;
+  config: McpServerConfig;
+};
 
 export type ReloadReason = "plugins" | "skills" | "mcp";
 

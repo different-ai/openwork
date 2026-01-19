@@ -96,3 +96,55 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
     ],
   },
 ];
+
+export type McpDirectoryInfo = {
+  name: string;
+  description: string;
+  url: string;
+  oauth: boolean;
+};
+
+export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
+  {
+    name: "Notion",
+    description: "Pages, databases, and project docs in sync.",
+    url: "https://mcp.notion.com/mcp",
+    oauth: true,
+  },
+  {
+    name: "Linear",
+    description: "Plan sprints and ship tickets faster.",
+    url: "https://mcp.linear.app/mcp",
+    oauth: true,
+  },
+  {
+    name: "Sentry",
+    description: "Track releases and resolve production errors.",
+    url: "https://mcp.sentry.dev/mcp",
+    oauth: true,
+  },
+  {
+    name: "Figma",
+    description: "Pull specs and assets from design files.",
+    url: "https://mcp.figma.com/mcp",
+    oauth: true,
+  },
+  {
+    name: "Stripe",
+    description: "Inspect payments, invoices, and subscriptions.",
+    url: "https://mcp.stripe.com",
+    oauth: true,
+  },
+  {
+    name: "HubSpot",
+    description: "CRM notes, companies, and pipeline status.",
+    url: "https://mcp.hubspot.com/anthropic",
+    oauth: true,
+  },
+  {
+    name: "Context7",
+    description: "Search product docs with richer context.",
+    url: "https://mcp.context7.com/mcp",
+    oauth: false,
+  },
+];

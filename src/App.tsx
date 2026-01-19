@@ -30,11 +30,13 @@ import {
   DEFAULT_MODEL,
   DEMO_MODE_PREF_KEY,
   DEMO_SEQUENCE_PREF_KEY,
+  MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./app/constants";
+import { parseMcpServersFromContent } from "./app/mcp";
 import type {
   Client,
   CuratedPackage,
@@ -52,6 +54,7 @@ import type {
   TodoItem,
   View,
   WorkspaceDisplay,
+  McpServerEntry,
   WorkspaceTemplate,
   UpdateHandle,
 } from "./app/types";
@@ -672,10 +675,24 @@ export default function App() {
   const [notionSkillInstalled, setNotionSkillInstalled] = createSignal(false);
   const [tryNotionPromptVisible, setTryNotionPromptVisible] = createSignal(false);
   const notionIsActive = createMemo(() => notionStatus() === "connected");
+  const [mcpServers, setMcpServers] = createSignal<McpServerEntry[]>([]);
+  const [mcpStatus, setMcpStatus] = createSignal<string | null>(null);
+  const [mcpLastUpdatedAt, setMcpLastUpdatedAt] = createSignal<number | null>(null);
+  const [selectedMcp, setSelectedMcp] = createSignal<string | null>(null);
+  const [advancedMcpName, setAdvancedMcpName] = createSignal("");
+  const [advancedMcpUrl, setAdvancedMcpUrl] = createSignal("");
+  const [advancedMcpOAuth, setAdvancedMcpOAuth] = createSignal(true);
+  const [advancedMcpEnabled, setAdvancedMcpEnabled] = createSignal(true);
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(
     null
   );
+  const advancedCommand = createMemo(() => "opencode mcp add");
+
+  const advancedAuthCommand = createMemo(() => {
+    const name = advancedMcpName().trim() || "my-mcp";
+    return `opencode mcp auth ${name}`;
+  });
 
 
   const extensionsStore = createExtensionsStore({
@@ -1607,7 +1624,7 @@ export default function App() {
       const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
       mcp.notion = {
         type: "remote",
-        url: "https://mcp.notion.com",
+        url: "https://mcp.notion.com/mcp",
         enabled: true,
       };
 
@@ -1634,6 +1651,148 @@ export default function App() {
     } finally {
       setNotionBusy(false);
     }
+  }
+
+  async function refreshMcpServers() {
+    if (!isTauriRuntime()) {
+      setMcpStatus("MCP configuration is only available in Host mode.");
+      setMcpServers([]);
+      return;
+    }
+
+    const projectDir = workspaceProjectDir().trim();
+    if (!projectDir) {
+      setMcpStatus("Pick a workspace folder to load MCP servers.");
+      setMcpServers([]);
+      return;
+    }
+
+    try {
+      setMcpStatus(null);
+      const config = await readOpencodeConfig("project", projectDir);
+      if (!config.exists || !config.content) {
+        setMcpServers([]);
+        setMcpStatus("No opencode.json found yet. Add an MCP to create one.");
+        return;
+      }
+
+      const next = parseMcpServersFromContent(config.content);
+      setMcpServers(next);
+      setMcpLastUpdatedAt(Date.now());
+      if (!next.length) {
+        setMcpStatus("No MCP servers configured yet.");
+      }
+    } catch (e) {
+      setMcpServers([]);
+      setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
+    }
+  }
+
+  async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
+    if (mode() !== "host") {
+      setMcpStatus("MCP connections are only available in Host mode.");
+      return;
+    }
+
+    const projectDir = workspaceProjectDir().trim();
+    if (!projectDir) {
+      setMcpStatus("Pick a workspace folder first.");
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setMcpStatus("MCP connections require the desktop app.");
+      return;
+    }
+
+    try {
+      setMcpStatus(null);
+      const config = await readOpencodeConfig("project", projectDir);
+      const raw = config.content ?? "";
+      const nextConfig = raw.trim()
+        ? (parse(raw) as Record<string, unknown>)
+        : { $schema: "https://opencode.ai/config.json" };
+
+      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
+      const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      mcp[slug] = {
+        type: "remote",
+        url: entry.url,
+        enabled: true,
+        ...(entry.oauth ? { oauth: {} } : {}),
+      };
+
+      nextConfig.mcp = mcp;
+      const formatted = JSON.stringify(nextConfig, null, 2);
+
+      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+      }
+
+      markReloadRequired("mcp");
+      setMcpStatus("Reload required to activate the new MCP.");
+      await refreshMcpServers();
+    } catch (e) {
+      setMcpStatus(e instanceof Error ? e.message : "Failed to connect MCP.");
+    }
+  }
+
+  async function addAdvancedMcp() {
+    const name = advancedMcpName().trim();
+    const url = advancedMcpUrl().trim();
+
+    if (!name || !url) {
+      setMcpStatus("Enter a server name and URL.");
+      return;
+    }
+
+    const projectDir = workspaceProjectDir().trim();
+    if (!projectDir) {
+      setMcpStatus("Pick a workspace folder first.");
+      return;
+    }
+
+    try {
+      const config = await readOpencodeConfig("project", projectDir);
+      const raw = config.content ?? "";
+      const nextConfig = raw.trim()
+        ? (parse(raw) as Record<string, unknown>)
+        : { $schema: "https://opencode.ai/config.json" };
+
+      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
+      mcp[name] = {
+        type: "remote",
+        url,
+        enabled: advancedMcpEnabled(),
+        ...(advancedMcpOAuth() ? { oauth: {} } : { oauth: false }),
+      };
+
+      nextConfig.mcp = mcp;
+      const formatted = JSON.stringify(nextConfig, null, 2);
+
+      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
+      if (!result.ok) {
+        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+      }
+
+      markReloadRequired("mcp");
+      setMcpStatus("Reload required to activate the new MCP.");
+      setAdvancedMcpName("");
+      setAdvancedMcpUrl("");
+      await refreshMcpServers();
+    } catch (e) {
+      setMcpStatus(e instanceof Error ? e.message : "Failed to add MCP.");
+    }
+  }
+
+  async function testAdvancedMcp() {
+    if (!advancedMcpUrl().trim()) {
+      setMcpStatus("Enter a server URL first.");
+      return;
+    }
+
+    setMcpStatus("Use opencode mcp debug <name> to validate connection.");
   }
 
   async function createSessionAndOpen() {
@@ -2010,6 +2169,8 @@ export default function App() {
         if (storedNotionStatus === "connecting") {
           markReloadRequired("mcp");
         }
+
+        await refreshMcpServers();
 
         const storedNotionSkillInstalled = window.localStorage.getItem("openwork.notionSkillInstalled");
         if (storedNotionSkillInstalled === "1") {
@@ -2417,6 +2578,26 @@ export default function App() {
     notionError: notionError(),
     notionBusy: notionBusy(),
     connectNotion,
+    mcpServers: mcpServers(),
+    mcpStatus: mcpStatus(),
+    mcpLastUpdatedAt: mcpLastUpdatedAt(),
+    selectedMcp: selectedMcp(),
+    setSelectedMcp,
+    quickConnect: MCP_QUICK_CONNECT,
+    connectMcp,
+    addAdvancedMcp,
+    testAdvancedMcp,
+    refreshMcpServers,
+    advancedName: advancedMcpName(),
+    setAdvancedName: setAdvancedMcpName,
+    advancedUrl: advancedMcpUrl(),
+    setAdvancedUrl: setAdvancedMcpUrl,
+    advancedOAuth: advancedMcpOAuth(),
+    setAdvancedOAuth: setAdvancedMcpOAuth,
+    advancedEnabled: advancedMcpEnabled(),
+    setAdvancedEnabled: setAdvancedMcpEnabled,
+    advancedCommand: advancedCommand(),
+    advancedAuthCommand: advancedAuthCommand(),
   });
 
   return (

@@ -2,16 +2,19 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import type {
   CuratedPackage,
   DashboardTab,
+  McpServerEntry,
   PluginScope,
   SkillCard,
   WorkspaceTemplate,
 } from "../app/types";
+import type { McpDirectoryInfo } from "../app/constants";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime } from "../app/utils";
 
 import Button from "../components/Button";
 import OpenWorkLogo from "../components/OpenWorkLogo";
 import WorkspaceChip from "../components/WorkspaceChip";
+import McpView from "./McpView";
 import PluginsView from "./PluginsView";
 import SettingsView from "./SettingsView";
 import SkillsView from "./SkillsView";
@@ -24,6 +27,7 @@ import {
   Play,
   Plus,
   Settings,
+  Server,
   Smartphone,
 } from "lucide-solid";
 
@@ -78,6 +82,7 @@ export type DashboardViewProps = {
   deleteTemplate: (templateId: string) => void;
   refreshSkills: () => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
+  refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
   openPackageSource: string;
@@ -115,6 +120,25 @@ export type DashboardViewProps = {
     }>;
   }>;
   addPlugin: (pluginNameOverride?: string) => void;
+  mcpServers: McpServerEntry[];
+  mcpStatus: string | null;
+  mcpLastUpdatedAt: number | null;
+  selectedMcp: string | null;
+  setSelectedMcp: (value: string | null) => void;
+  quickConnect: McpDirectoryInfo[];
+  connectMcp: (entry: McpDirectoryInfo) => void;
+  addAdvancedMcp: () => void;
+  testAdvancedMcp: () => void;
+  advancedName: string;
+  setAdvancedName: (value: string) => void;
+  advancedUrl: string;
+  setAdvancedUrl: (value: string) => void;
+  advancedOAuth: boolean;
+  setAdvancedOAuth: (value: boolean) => void;
+  advancedEnabled: boolean;
+  setAdvancedEnabled: (value: boolean) => void;
+  advancedCommand: string;
+  advancedAuthCommand: string;
   createSessionAndOpen: () => void;
   selectSession: (sessionId: string) => Promise<void> | void;
   defaultModelLabel: string;
@@ -181,6 +205,8 @@ export default function DashboardView(props: DashboardViewProps) {
         return "Skills";
       case "plugins":
         return "Plugins";
+      case "mcp":
+        return "MCPs";
       case "settings":
         return "Settings";
       default:
@@ -225,6 +251,9 @@ export default function DashboardView(props: DashboardViewProps) {
         }
         if (currentTab === "plugins" && !cancelled) {
           await props.refreshPlugins();
+        }
+        if (currentTab === "mcp" && !cancelled) {
+          await props.refreshMcpServers();
         }
         if (currentTab === "sessions" && !cancelled) {
           // Stagger these calls to avoid request stacking
@@ -284,6 +313,7 @@ export default function DashboardView(props: DashboardViewProps) {
             {navItem("templates", "Templates", <FileText size={18} />)}
             {navItem("skills", "Skills", <Package size={18} />)}
             {navItem("plugins", "Plugins", <Cpu size={18} />)}
+            {navItem("mcp", "MCPs", <Server size={18} />)}
             {navItem("settings", "Settings", <Settings size={18} />)}
           </nav>
         </div>
@@ -660,6 +690,33 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
+            <Match when={props.tab === "mcp"}>
+              <McpView
+                mode={props.mode}
+                busy={props.busy}
+                activeWorkspaceRoot={props.activeWorkspaceRoot}
+                mcpServers={props.mcpServers}
+                mcpStatus={props.mcpStatus}
+                mcpLastUpdatedAt={props.mcpLastUpdatedAt}
+                selectedMcp={props.selectedMcp}
+                setSelectedMcp={props.setSelectedMcp}
+                quickConnect={props.quickConnect}
+                connectMcp={props.connectMcp}
+                addAdvancedMcp={props.addAdvancedMcp}
+                testAdvancedMcp={props.testAdvancedMcp}
+                advancedName={props.advancedName}
+                setAdvancedName={props.setAdvancedName}
+                advancedUrl={props.advancedUrl}
+                setAdvancedUrl={props.setAdvancedUrl}
+                advancedOAuth={props.advancedOAuth}
+                setAdvancedOAuth={props.setAdvancedOAuth}
+                advancedEnabled={props.advancedEnabled}
+                setAdvancedEnabled={props.setAdvancedEnabled}
+                advancedCommand={props.advancedCommand}
+                advancedAuthCommand={props.advancedAuthCommand}
+              />
+            </Match>
+
             <Match when={props.tab === "settings"}>
                 <SettingsView
                   mode={props.mode}
@@ -791,6 +848,15 @@ export default function DashboardView(props: DashboardViewProps) {
             >
               <Cpu size={18} />
               Plugins
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "mcp" ? "text-white" : "text-zinc-500"
+              }`}
+              onClick={() => props.setTab("mcp")}
+            >
+              <Server size={18} />
+              MCPs
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
