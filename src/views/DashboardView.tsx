@@ -29,7 +29,6 @@ import {
   Plus,
   Settings,
   Server,
-  Smartphone,
 } from "lucide-solid";
 
 export type DashboardViewProps = {
@@ -81,7 +80,7 @@ export type DashboardViewProps = {
   resetTemplateDraft?: (scope?: "workspace" | "global") => void;
   runTemplate: (template: WorkspaceTemplate) => void;
   deleteTemplate: (templateId: string) => void;
-  refreshSkills: () => void;
+  refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
@@ -284,7 +283,7 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   });
 
-  const navItem = (t: DashboardTab, label: string, icon: any) => {
+  const navItem = (t: DashboardTab, label: any, icon: any) => {
     const active = () => props.tab === t;
     return (
       <button
@@ -318,7 +317,16 @@ export default function DashboardView(props: DashboardViewProps) {
             {navItem("templates", "Templates", <FileText size={18} />)}
             {navItem("skills", "Skills", <Package size={18} />)}
             {navItem("plugins", "Plugins", <Cpu size={18} />)}
-            {navItem("mcp", "MCPs", <Server size={18} />)}
+            {navItem(
+              "mcp",
+              <span class="inline-flex items-center gap-2">
+                MCPs
+                <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">
+                  Alpha
+                </span>
+              </span>,
+              <Server size={18} />,
+            )}
             {navItem("settings", "Settings", <Settings size={18} />)}
           </nav>
         </div>
@@ -326,12 +334,12 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class="space-y-4">
           <div class="px-3 py-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
             <div class="flex items-center gap-2 text-xs font-medium text-zinc-400 mb-2">
-              {props.mode === "host" ? (
-                <Cpu size={12} />
-              ) : (
-                <Smartphone size={12} />
-              )}
-              {props.mode === "host" ? "Local Engine" : "Client Mode"}
+              Connection
+              <Show when={props.developerMode}>
+                <span class="text-zinc-600">
+                  {props.mode === "host" ? "Local Engine" : "Client Mode"}
+                </span>
+              </Show>
             </div>
             <div class="flex items-center gap-2">
               <div
@@ -342,16 +350,18 @@ export default function DashboardView(props: DashboardViewProps) {
                 }`}
               />
               <span
-                class={`text-sm font-mono ${
+                class={`text-sm font-medium ${
                   props.clientConnected ? "text-emerald-500" : "text-zinc-500"
                 }`}
               >
-                {props.clientConnected ? "Connected" : "Disconnected"}
+                {props.clientConnected ? "Connected" : "Not connected"}
               </span>
             </div>
-            <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">
-              {props.baseUrl}
-            </div>
+            <Show when={props.developerMode}>
+              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">
+                {props.baseUrl}
+              </div>
+            </Show>
           </div>
 
           <Show when={props.mode === "host"}>

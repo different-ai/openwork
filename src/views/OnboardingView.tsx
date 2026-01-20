@@ -99,7 +99,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                  <div class="space-y-2">
                    <div class="text-sm font-medium text-white">Starter Workspace</div>
                    <div class="text-xs text-zinc-500">
-                     OpenWork will create a ready-to-run folder and get everything set up for you.
+                     A ready-to-run workspace with starter templates and plugins.
                    </div>
                   <div class={`text-xs ${props.developerMode ? "text-zinc-600 font-mono" : "text-zinc-500"} break-all`}>
                     {props.developerMode ? props.activeWorkspacePath || "(initializing...)" : "A starter workspace will be created for you."}
@@ -115,11 +115,11 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     </div>
                     <div class="flex items-center gap-3 text-sm text-zinc-300">
                       <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                      Starter templates ("Understand this workspace", etc.)
+                      Starter templates for files, skills, and plugins
                     </div>
                     <div class="flex items-center gap-3 text-sm text-zinc-300">
                       <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                      Add more folders when prompted
+                      This workspace is preconfigured to show you how to use plugins, templates, and skills
                     </div>
                   </div>
                 </div>

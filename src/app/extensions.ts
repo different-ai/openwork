@@ -39,12 +39,7 @@ export function createExtensionsStore(options: {
   const [openPackageSource, setOpenPackageSource] = createSignal("");
   const [packageSearch, setPackageSearch] = createSignal("");
 
-  const skillDocFallbacks: Record<string, string> = {
-    "workspace-guide": "Workspace guide that introduces OpenWork and suggests first steps.",
-    "manage-crm-notion": "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
-  };
-  const failedSkillDocs = new Set<string>();
-  const skillDocKey = (root: string, name: string) => `${root}::${name}`;
+  const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
@@ -61,6 +56,8 @@ export function createExtensionsStore(options: {
   let refreshPluginsInFlight = false;
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
+  let skillsLoaded = false;
+  let skillsRoot = "";
 
   const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
     isPluginInstalled(pluginList(), pluginName, aliases);
@@ -69,11 +66,29 @@ export function createExtensionsStore(options: {
     loadPluginsFromConfigHelpers(config, setPluginList, (message) => setPluginStatus(message));
   };
 
-  async function refreshSkills() {
+  async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const c = options.client();
-    if (!c) return;
+    if (!c) {
+      setSkills([]);
+      setSkillsStatus("Connect to a host to load skills.");
+      return;
+    }
 
-    // Skip if already in flight
+    const root = options.activeWorkspaceRoot().trim();
+    if (!root) {
+      setSkills([]);
+      setSkillsStatus("Pick a workspace folder first.");
+      return;
+    }
+
+    if (root !== skillsRoot) {
+      skillsLoaded = false;
+    }
+
+    if (!optionsOverride?.force && skillsLoaded) {
+      return;
+    }
+
     if (refreshSkillsInFlight) {
       return;
     }
@@ -86,65 +101,40 @@ export function createExtensionsStore(options: {
 
       if (refreshSkillsAborted) return;
 
-      const nodes = unwrap(
-        await c.file.list({ directory: options.activeWorkspaceRoot().trim(), path: ".opencode/skill" }),
-      );
-
-      if (refreshSkillsAborted) return;
-
-      const dirs = nodes.filter((n) => n.type === "directory" && !n.ignored);
-
-      const next: SkillCard[] = [];
-      const root = options.activeWorkspaceRoot().trim();
-
-      for (const dir of dirs) {
-        if (refreshSkillsAborted) return;
-
-        let description: string | undefined;
-        const fallback = skillDocFallbacks[dir.name];
-        const docKey = skillDocKey(root, dir.name);
-
-        if (fallback && failedSkillDocs.has(docKey)) {
-          description = fallback;
-          next.push({ name: dir.name, path: dir.path, description });
-          continue;
-        }
-
-        try {
-          const skillDoc = unwrap(
-            await c.file.read({
-              directory: root,
-              path: `.opencode/skill/${dir.name}/SKILL.md`,
-            }),
-          );
-
-          if (skillDoc.type === "text") {
-            const lines = skillDoc.content.split("\n");
-            const first = lines
-              .map((l) => l.trim())
-              .filter((l) => l && !l.startsWith("#"))
-              .slice(0, 2)
-              .join(" ");
-            if (first) {
-              description = first;
-            }
-          }
-        } catch {
-          if (fallback) {
-            failedSkillDocs.add(docKey);
-            description = fallback;
-          }
-        }
-
-        next.push({ name: dir.name, path: dir.path, description });
+      const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<any> } };
+      if (!rawClient._client) {
+        throw new Error("OpenCode client unavailable.");
       }
 
+      const result = await rawClient._client.get({ url: "/skill" });
+      if (result?.data === undefined) {
+        const err = result?.error;
+        const message =
+          err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to load skills";
+        throw new Error(message);
+      }
+      const data = result.data as Array<{
+        name: string;
+        description: string;
+        location: string;
+      }>;
+
       if (refreshSkillsAborted) return;
+
+      const next: SkillCard[] = Array.isArray(data)
+        ? data.map((entry) => ({
+            name: entry.name,
+            description: entry.description,
+            path: formatSkillPath(entry.location),
+          }))
+        : [];
 
       setSkills(next);
       if (!next.length) {
-        setSkillsStatus("No skills found in .opencode/skill");
+        setSkillsStatus("No skills found yet.");
       }
+      skillsLoaded = true;
+      skillsRoot = root;
     } catch (e) {
       if (refreshSkillsAborted) return;
       setSkills([]);
@@ -329,7 +319,7 @@ export function createExtensionsStore(options: {
         }
       }
 
-      await refreshSkills();
+      await refreshSkills({ force: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       options.setError(addOpencodeCacheHint(message));
@@ -382,7 +372,7 @@ export function createExtensionsStore(options: {
         options.markReloadRequired("skills");
       }
 
-      await refreshSkills();
+      await refreshSkills({ force: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Unknown error";
       options.setError(addOpencodeCacheHint(message));

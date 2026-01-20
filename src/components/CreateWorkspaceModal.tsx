@@ -1,6 +1,6 @@
 import { For, Show, createSignal } from "solid-js";
 
-import { CheckCircle2, FolderPlus, X } from "lucide-solid";
+import { CheckCircle2, FolderPlus, Loader2, X } from "lucide-solid";
 
 import Button from "./Button";
 
@@ -12,22 +12,18 @@ export default function CreateWorkspaceModal(props: {
 }) {
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);
+  const [pickingFolder, setPickingFolder] = createSignal(false);
 
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter",
-      desc: "Pre-configured with Scheduler & starter templates. Best for general use.",
-    },
-    {
-      id: "automation" as const,
-      name: "Automation",
-      desc: "Optimized for scheduled/background work.",
+      name: "Starter workspace",
+      desc: "Preconfigured to show you how to use plugins, templates, and skills.",
     },
     {
       id: "minimal" as const,
-      name: "Minimal",
-      desc: "Empty project. Adds only core config.",
+      name: "Empty workspace",
+      desc: "Start with a blank folder and add what you need.",
     },
   ];
 
@@ -45,9 +41,15 @@ export default function CreateWorkspaceModal(props: {
   };
 
   const handlePickFolder = async () => {
-    const next = await props.onPickFolder();
-    if (next) {
-      setSelectedFolder(next);
+    if (pickingFolder()) return;
+    setPickingFolder(true);
+    try {
+      const next = await props.onPickFolder();
+      if (next) {
+        setSelectedFolder(next);
+      }
+    } finally {
+      setPickingFolder(false);
     }
   };
 
@@ -77,7 +79,10 @@ export default function CreateWorkspaceModal(props: {
                 <button
                   type="button"
                   onClick={handlePickFolder}
-                  class="w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition hover:border-zinc-500"
+                  disabled={pickingFolder()}
+                  class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${
+                    pickingFolder() ? "opacity-70 cursor-wait" : "hover:border-zinc-500"
+                  }`.trim()}
                 >
                   <div class="flex items-center gap-3 text-zinc-200">
                     <FolderPlus size={20} class="text-zinc-400" />
@@ -85,7 +90,15 @@ export default function CreateWorkspaceModal(props: {
                       <div class="text-sm font-medium text-zinc-100 truncate">{folderLabel()}</div>
                       <div class="text-xs text-zinc-500 font-mono truncate mt-1">{folderSubLabel()}</div>
                     </div>
-                    <span class="text-xs text-zinc-500">Change</span>
+                    <Show
+                      when={pickingFolder()}
+                      fallback={<span class="text-xs text-zinc-500">Change</span>}
+                    >
+                      <span class="flex items-center gap-2 text-xs text-zinc-500">
+                        <Loader2 size={12} class="animate-spin" />
+                        Opening...
+                      </span>
+                    </Show>
                   </div>
                 </button>
               </div>

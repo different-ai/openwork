@@ -26,7 +26,7 @@ export function createSystemState(options: {
   sessions: Accessor<Session[]>;
   sessionStatusById: Accessor<Record<string, string>>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
-  refreshSkills: () => Promise<void>;
+  refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   setProviders: (value: Provider[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -229,7 +229,7 @@ export function createSystemState(options: {
       }
 
       await options.refreshPlugins("project").catch(() => undefined);
-      await options.refreshSkills().catch(() => undefined);
+      await options.refreshSkills({ force: true }).catch(() => undefined);
 
       if (options.notion) {
         let nextStatus = options.notion.status();

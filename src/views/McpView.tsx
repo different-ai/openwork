@@ -72,7 +72,7 @@ const statusLabel = (status: "connected" | "needs_auth" | "needs_client_registra
 
 export default function McpView(props: McpViewProps) {
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
-  const [showDangerousContent, setShowDangerousContent] = createSignal(false);
+  const [showDangerousContent, setShowDangerousContent] = createSignal(true);
 
   const selectedEntry = createMemo(() =>
     props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
@@ -108,9 +108,9 @@ export default function McpView(props: McpViewProps) {
     <section class="space-y-6">
       <div class="space-y-4">
         <div class="space-y-1">
-          <h2 class="text-lg font-semibold text-white">Model Context Protocol</h2>
+          <h2 class="text-lg font-semibold text-white">MCP (Alpha)</h2>
           <p class="text-sm text-zinc-400">
-            MCP servers allow you to easily connect your favorite service and login using your own credentials.
+            MCP servers let you connect services with your own credentials.
           </p>
         </div>
 
@@ -119,7 +119,7 @@ export default function McpView(props: McpViewProps) {
             <TriangleAlert size={20} class="text-amber-400 shrink-0 mt-0.5" />
             <div class="space-y-3">
               <div class="text-sm font-medium text-amber-200">
-                hey we're currently building this and are chatting with opencode to figure out a bug before this can be pushed live.
+                MCP is in alpha while we harden OAuth with OpenCode.
               </div>
               <div class="flex flex-col gap-2">
                 <a
@@ -132,7 +132,7 @@ export default function McpView(props: McpViewProps) {
                   View issue #9510 on GitHub
                 </a>
                 <p class="text-xs text-zinc-400 leading-relaxed">
-                  if you want to fix it or have a look at it feel free to submit a pr and show video for proof the oauth flows works
+                  If you want to help, open a PR and include a short video showing the OAuth flow works end to end.
                 </p>
               </div>
             </div>
@@ -147,7 +147,7 @@ export default function McpView(props: McpViewProps) {
           <Show when={showDangerousContent()} fallback={<ChevronRight size={14} class="group-hover:translate-x-0.5 transition-transform" />}>
             <ChevronDown size={14} />
           </Show>
-          dangerously use
+          {showDangerousContent() ? "Hide advanced settings" : "Show advanced settings"}
         </button>
       </div>
 
@@ -159,7 +159,7 @@ export default function McpView(props: McpViewProps) {
                 <div>
                   <div class="text-sm font-medium text-white">MCPs</div>
                   <div class="text-xs text-zinc-500">
-                    Connect Model Context Protocol servers to expand what OpenWork can do.
+                    Connect MCP servers to expand what OpenWork can do.
                   </div>
                 </div>
                 <div class="text-xs text-zinc-500 text-right">

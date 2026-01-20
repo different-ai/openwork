@@ -1659,7 +1659,7 @@ export default function App() {
     openTemplateModal,
     runTemplate,
     deleteTemplate,
-    refreshSkills: () => refreshSkills().catch(() => undefined),
+    refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),
     skills: skills(),

@@ -109,31 +109,24 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
 
   let defaults = vec![
     WorkspaceTemplate {
-      id: "tmpl_understand_workspace".to_string(),
-      title: "Understand this workspace".to_string(),
-      description: "Explains local vs global tools".to_string(),
-      prompt: "Explain how this workspace is configured and what tools are available locally. Be concise and actionable.".to_string(),
+      id: "tmpl_interact_with_files".to_string(),
+      title: "Learn to interact with files".to_string(),
+      description: "Safe, practical file workflows".to_string(),
+      prompt: "Show me how to interact with files in this workspace. Include safe examples for reading, summarizing, and editing.".to_string(),
       created_at: now_ms(),
     },
     WorkspaceTemplate {
-      id: "tmpl_create_skill".to_string(),
-      title: "Create a new skill".to_string(),
-      description: "Guide to adding capabilities".to_string(),
-      prompt: "I want to create a new skill for this workspace. Guide me through it.".to_string(),
+      id: "tmpl_learn_skills".to_string(),
+      title: "Learn about skills".to_string(),
+      description: "How skills work and how to create your own".to_string(),
+      prompt: "Explain what skills are, how to use them, and how to create a new skill for this workspace.".to_string(),
       created_at: now_ms(),
     },
     WorkspaceTemplate {
-      id: "tmpl_run_scheduled_task".to_string(),
-      title: "Run a scheduled task".to_string(),
-      description: "Demo of the scheduler plugin".to_string(),
-      prompt: "Show me how to schedule a task to run every morning.".to_string(),
-      created_at: now_ms(),
-    },
-    WorkspaceTemplate {
-      id: "tmpl_task_to_template".to_string(),
-      title: "Turn task into template".to_string(),
-      description: "Save workflow for later".to_string(),
-      prompt: "Help me turn the last task into a reusable template.".to_string(),
+      id: "tmpl_learn_plugins".to_string(),
+      title: "Learn about plugins".to_string(),
+      description: "What plugins are and how to install them".to_string(),
+      prompt: "Explain what plugins are and how to install them in this workspace.".to_string(),
       created_at: now_ms(),
     },
   ];

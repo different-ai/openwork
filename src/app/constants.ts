@@ -13,45 +13,10 @@ export const DEFAULT_MODEL: ModelRef = {
 
 export const CURATED_PACKAGES: CuratedPackage[] = [
   {
-    name: "OpenPackage Essentials",
-    source: "essentials",
-    description: "Starter rules, commands, and skills from the OpenPackage registry.",
-    tags: ["registry", "starter"],
-    installable: true,
-  },
-  {
-    name: "Claude Code Plugins",
-    source: "github:anthropics/claude-code",
-    description: "Official Claude Code plugin pack from GitHub.",
-    tags: ["github", "claude"],
-    installable: true,
-  },
-  {
-    name: "Claude Code Commit Commands",
-    source: "github:anthropics/claude-code#subdirectory=plugins/commit-commands",
-    description: "Commit message helper commands (Claude Code plugin).",
-    tags: ["github", "workflow"],
-    installable: true,
-  },
-  {
-    name: "Awesome OpenPackage",
-    source: "git:https://github.com/enulus/awesome-openpackage.git",
-    description: "Community collection of OpenPackage examples and templates.",
-    tags: ["community"],
-    installable: true,
-  },
-  {
-    name: "Notion CRM Skill",
-    source: "github:different-ai/openwork-skills#subdirectory=manage-crm-notion",
-    description: "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
-    tags: ["notion", "crm", "demo"],
-    installable: true,
-  },
-  {
-    name: "Awesome Claude Skills",
-    source: "https://github.com/ComposioHQ/awesome-claude-skills",
-    description: "Curated list of Claude skills and prompts (not an OpenPackage yet).",
-    tags: ["community", "list"],
+    name: "Notion CRM Enrichment Skills",
+    source: "https://github.com/different-ai/notion-crm-enrichment/tree/main/.claude/skills",
+    description: "Enrich Notion CRM data with ready-made skills.",
+    tags: ["notion", "crm", "skills"],
     installable: false,
   },
 ];

@@ -64,7 +64,7 @@ export function createWorkspaceStore(options: {
   setSessionStatusById: (value: Record<string, string>) => void;
   defaultModel: () => any;
   modelVariant: () => string | null;
-  refreshSkills: () => Promise<void>;
+  refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshPlugins: () => Promise<void>;
   engineSource: () => "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
@@ -238,60 +238,7 @@ export function createWorkspaceStore(options: {
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
-      try {
-        if (isTauriRuntime() && activeWorkspaceRoot().trim()) {
-          const wsRoot = activeWorkspaceRoot().trim();
-          const storedKey = `openwork.welcomeSessionCreated:${wsRoot}`;
-
-          let already = false;
-          try {
-            already = window.localStorage.getItem(storedKey) === "1";
-          } catch {
-            // ignore
-          }
-
-          if (!already) {
-            const session = unwrap(
-              await nextClient.session.create({ directory: wsRoot, title: "Welcome to OpenWork" }),
-            );
-            await nextClient.session.promptAsync({
-              directory: wsRoot,
-              sessionID: session.id,
-              model: options.defaultModel(),
-              variant: options.modelVariant() ?? undefined,
-              parts: [
-                {
-                  type: "text",
-                  text:
-                    "Give a short, welcoming overview of this workspace and how to use OpenWork. If a workspace guide skill is available, use it. Avoid CLI language or raw file paths. End with two friendly next actions to try inside OpenWork.",
-                },
-              ],
-            });
-
-            try {
-              window.localStorage.setItem(storedKey, "1");
-            } catch {
-              // ignore
-            }
-
-            await options.loadSessions(activeWorkspaceRoot().trim()).catch(() => undefined);
-
-            if (session?.id) {
-              try {
-                await options.selectSession(session.id);
-                options.setView("session");
-                options.setTab("sessions");
-              } catch {
-                // ignore selection failure
-              }
-            }
-          }
-        }
-      } catch {
-        // ignore onboarding session failures
-      }
-
-      options.refreshSkills().catch(() => undefined);
+      options.refreshSkills({ force: true }).catch(() => undefined);
       if (!options.selectedSessionId()) {
         options.setView("dashboard");
         options.setTab("home");

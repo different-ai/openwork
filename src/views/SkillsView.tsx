@@ -9,7 +9,7 @@ import { Package, Upload } from "lucide-solid";
 export type SkillsViewProps = {
   busy: boolean;
   mode: "host" | "client" | null;
-  refreshSkills: () => void;
+  refreshSkills: (options?: { force?: boolean }) => void;
   skills: SkillCard[];
   skillsStatus: string | null;
   openPackageSource: string;
@@ -27,7 +27,7 @@ export default function SkillsView(props: SkillsViewProps) {
     <section class="space-y-6">
       <div class="flex items-center justify-between">
         <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Skills</h3>
-        <Button variant="secondary" onClick={props.refreshSkills} disabled={props.busy}>
+        <Button variant="secondary" onClick={() => props.refreshSkills({ force: true })} disabled={props.busy}>
           Refresh
         </Button>
       </div>
@@ -87,21 +87,21 @@ export default function SkillsView(props: SkillsViewProps) {
         <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <div class="text-sm font-medium text-emerald-100">Manage CRM in Notion</div>
-              <div class="text-xs text-emerald-200/80 mt-1">Set up pipelines, contacts, and follow-ups in minutes.</div>
+              <div class="text-sm font-medium text-emerald-100">Notion CRM Enrichment Skills</div>
+              <div class="text-xs text-emerald-200/80 mt-1">Add enrichment workflows for contacts, pipelines, and follow-ups.</div>
             </div>
             <Button
               variant="secondary"
               onClick={() => props.useCuratedPackage({
-                name: "Notion CRM Skill",
-                source: "github:different-ai/openwork-skills#subdirectory=manage-crm-notion",
-                description: "Set up a Notion CRM with pipelines, contacts, and follow-ups.",
-                tags: ["notion", "crm", "demo"],
-                installable: true,
+                name: "Notion CRM Enrichment Skills",
+                source: "https://github.com/different-ai/notion-crm-enrichment/tree/main/.claude/skills",
+                description: "Enrich Notion CRM data with ready-made skills.",
+                tags: ["notion", "crm", "skills"],
+                installable: false,
               })}
-              disabled={props.busy || props.mode !== "host" || !isTauriRuntime()}
+              disabled={props.busy}
             >
-              Install
+              View
             </Button>
           </div>
         </div>
@@ -169,7 +169,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={props.skills.length}
           fallback={
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-              No skills detected in `.opencode/skill`.
+              No skills detected yet.
             </div>
           }
         >
