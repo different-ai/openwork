@@ -27,6 +27,7 @@
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.19",
     "@radix-ui/colors": "^3.0.0",
+    "@solid-primitives/storage": "^4.3.3",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "~2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.3",
