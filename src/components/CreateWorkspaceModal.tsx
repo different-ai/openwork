@@ -9,6 +9,11 @@ export default function CreateWorkspaceModal(props: {
   onClose: () => void;
   onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
+  inline?: boolean;
+  showClose?: boolean;
+  title?: string;
+  subtitle?: string;
+  confirmLabel?: string;
 }) {
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);
@@ -44,7 +49,7 @@ export default function CreateWorkspaceModal(props: {
     if (pickingFolder()) return;
     setPickingFolder(true);
     try {
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
       const next = await props.onPickFolder();
       if (next) {
         setSelectedFolder(next);
@@ -54,19 +59,25 @@ export default function CreateWorkspaceModal(props: {
     }
   };
 
-  return (
-    <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-          <div class="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
-            <div>
-              <h3 class="font-semibold text-white text-lg">Create Workspace</h3>
-              <p class="text-zinc-500 text-sm">Initialize a new folder-based workspace.</p>
-            </div>
-            <button onClick={props.onClose} class="hover:bg-zinc-800 p-1 rounded-full">
-              <X size={20} class="text-zinc-500" />
-            </button>
-          </div>
+  const showClose = () => props.showClose ?? true;
+  const title = () => props.title ?? "Create Workspace";
+  const subtitle = () => props.subtitle ?? "Initialize a new folder-based workspace.";
+  const confirmLabel = () => props.confirmLabel ?? "Create Workspace";
+  const isInline = () => props.inline ?? false;
+
+  const content = (
+    <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
+        <div>
+          <h3 class="font-semibold text-white text-lg">{title()}</h3>
+          <p class="text-zinc-500 text-sm">{subtitle()}</p>
+        </div>
+        <Show when={showClose()}>
+          <button onClick={props.onClose} class="hover:bg-zinc-800 p-1 rounded-full">
+            <X size={20} class="text-zinc-500" />
+          </button>
+        </Show>
+      </div>
 
           <div class="p-6 flex-1 overflow-y-auto space-y-8">
             <div class="space-y-4">
@@ -148,19 +159,33 @@ export default function CreateWorkspaceModal(props: {
             </div>
           </div>
 
-          <div class="p-6 border-t border-zinc-800 bg-zinc-950 flex justify-end gap-3">
-            <Button variant="ghost" onClick={props.onClose}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => props.onConfirm(preset(), selectedFolder())}
-              disabled={!selectedFolder()}
-              title={!selectedFolder() ? "Choose a folder to continue." : undefined}
-            >
-              Create Workspace
-            </Button>
-          </div>
-        </div>
+      <div class="p-6 border-t border-zinc-800 bg-zinc-950 flex justify-end gap-3">
+        <Show when={showClose()}>
+          <Button variant="ghost" onClick={props.onClose}>
+            Cancel
+          </Button>
+        </Show>
+        <Button
+          onClick={() => props.onConfirm(preset(), selectedFolder())}
+          disabled={!selectedFolder()}
+          title={!selectedFolder() ? "Choose a folder to continue." : undefined}
+        >
+          {confirmLabel()}
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Show when={props.open || isInline()}>
+      <div
+        class={
+          isInline()
+            ? "w-full"
+            : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+        }
+      >
+        {content}
       </div>
     </Show>
   );
