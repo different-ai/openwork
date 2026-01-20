@@ -24,16 +24,6 @@ export type McpViewProps = {
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
   reloadMcpEngine: () => void;
-  advancedName: string;
-  setAdvancedName: (value: string) => void;
-  advancedUrl: string;
-  setAdvancedUrl: (value: string) => void;
-  advancedOAuth: boolean;
-  setAdvancedOAuth: (value: boolean) => void;
-  advancedEnabled: boolean;
-  setAdvancedEnabled: (value: boolean) => void;
-  addAdvancedMcp: () => void;
-  testAdvancedMcp: () => void;
 };
 
 const statusBadge = (status: "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected") => {
