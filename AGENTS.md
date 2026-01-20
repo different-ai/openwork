@@ -32,23 +32,16 @@ OpenWork is an open-source alternative to Claude Cowork.
 ## Repository Guidance
 
 - Write new PRDs under `prd/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
-- Use MOTIVATION-PHILOSOPHY.md to understand the "why" of OpenWork so you can guide your decisions.
+- Use MOTIVATIONS-PHILOSOPHY.md to understand the "why" of OpenWork so you can guide your decisions.
 
 ## Local Structure
 
 ```
 vendor/openwork/
   AGENTS.md           # This file
-  MOTIVATION-PHILOSOPHY.md       # Exhaustive PRD and user flow map
+  MOTIVATIONS-PHILOSOPHY.md       # Exhaustive PRD and user flow map
   .gitignore          # Ignores vendor/opencode, node_modules, etc.
   .opencode/
-    skill/            # Skills for product workflows
-  vendor/
-    opencode/         # Gitignored OpenCode mirror for self-inspection
-  src-tauri/          # Rust backend (Tauri)
-  src/                # SolidJS frontend
-  package.json        # Frontend dependencies
-  Cargo.toml          # Rust dependencies
 ```
 
 ## OpenCode SDK Usage
