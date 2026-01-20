@@ -132,10 +132,20 @@ export function createSessionStore(options: {
     mark("calling session.messages");
     const msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12_000, "session.messages"));
     mark("session.messages done");
+    // If the selected session changed while we were waiting, abort to avoid
+    // overwriting a newer selection's state.
+    if (options.selectedSessionId() !== sessionID) {
+      mark("aborting: selection changed before messages applied");
+      return;
+    }
     setMessages(msgs);
 
     const model = options.lastUserModelFromMessages(msgs);
     if (model) {
+      if (options.selectedSessionId() !== sessionID) {
+        mark("aborting: selection changed before model applied");
+        return;
+      }
       options.setSessionModelState((current) => ({
         overrides: current.overrides,
         resolved: { ...current.resolved, [sessionID]: model },
@@ -151,8 +161,13 @@ export function createSessionStore(options: {
 
     try {
       mark("calling session.todo");
-      setTodos(unwrap(await withTimeout(c.session.todo({ sessionID }), 8_000, "session.todo")));
+      const todoList = unwrap(await withTimeout(c.session.todo({ sessionID }), 8_000, "session.todo"));
       mark("session.todo done");
+      if (options.selectedSessionId() !== sessionID) {
+        mark("aborting: selection changed before todos applied");
+        return;
+      }
+      setTodos(todoList);
     } catch {
       mark("session.todo failed/timeout");
       setTodos([]);
@@ -162,6 +177,10 @@ export function createSessionStore(options: {
       mark("calling permission.list");
       await withTimeout(refreshPendingPermissions(), 6_000, "permission.list");
       mark("permission.list done");
+      if (options.selectedSessionId() !== sessionID) {
+        mark("aborting: selection changed before permissions applied");
+        return;
+      }
     } catch {
       mark("permission.list failed/timeout");
     }
