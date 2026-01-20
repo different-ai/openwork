@@ -9,7 +9,7 @@ import type {
   TodoItem,
   View,
   WorkspaceDisplay,
-} from "../app/types";
+} from "../types";
 
 import {
   ArrowRight,
@@ -25,10 +25,10 @@ import {
   Zap,
 } from "lucide-solid";
 
-import Button from "../components/Button";
-import PartView from "../components/PartView";
-import WorkspaceChip from "../components/WorkspaceChip";
-import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
+import Button from "../components/button";
+import PartView from "../components/part-view";
+import WorkspaceChip from "../components/workspace-chip";
+import { isTauriRuntime, isWindowsPlatform } from "../utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;

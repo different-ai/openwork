@@ -1,11 +1,11 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 
-import type { McpServerEntry, McpStatusMap } from "../app/types";
-import type { McpDirectoryInfo } from "../app/constants";
-import { formatRelativeTime, isTauriRuntime } from "../app/utils";
+import type { McpServerEntry, McpStatusMap } from "../types";
+import type { McpDirectoryInfo } from "../constants";
+import { formatRelativeTime, isTauriRuntime } from "../utils";
 
-import Button from "../components/Button";
-import TextInput from "../components/TextInput";
+import Button from "../components/button";
+import TextInput from "../components/text-input";
 import { CheckCircle2, CircleAlert, Copy, Loader2, PlugZap, RefreshCcw, Server, Settings, TriangleAlert, ChevronDown, ChevronRight, ExternalLink } from "lucide-solid";
 
 export type McpViewProps = {

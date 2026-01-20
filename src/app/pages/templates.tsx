@@ -1,9 +1,9 @@
 import { For, Show } from "solid-js";
 
-import type { WorkspaceTemplate } from "../app/types";
-import { formatRelativeTime } from "../app/utils";
+import type { WorkspaceTemplate } from "../types";
+import { formatRelativeTime } from "../utils";
 
-import Button from "../components/Button";
+import Button from "../components/button";
 import { FileText, Play, Plus, Trash2 } from "lucide-solid";
 
 export type TemplatesViewProps = {

@@ -2,14 +2,14 @@ import { createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
 
-import type { Client, CuratedPackage, Mode, PluginScope, ReloadReason, SkillCard } from "./types";
-import { addOpencodeCacheHint, isTauriRuntime } from "./utils";
+import type { Client, CuratedPackage, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
+import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
   parsePluginListFromContent,
   stripPluginVersion,
-} from "./plugins";
+} from "../utils/plugins";
 import {
   importSkill,
   opkgInstall,

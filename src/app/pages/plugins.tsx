@@ -1,10 +1,10 @@
 import { For, Show } from "solid-js";
 
-import type { PluginScope } from "../app/types";
-import { isTauriRuntime } from "../app/utils";
+import type { PluginScope } from "../types";
+import { isTauriRuntime } from "../utils";
 
-import Button from "../components/Button";
-import TextInput from "../components/TextInput";
+import Button from "../components/button";
+import TextInput from "../components/text-input";
 import { Cpu } from "lucide-solid";
 
 export type PluginsViewProps = {

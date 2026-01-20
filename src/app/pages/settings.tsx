@@ -1,8 +1,8 @@
 import { Match, Show, Switch } from "solid-js";
 
-import { formatBytes, formatRelativeTime, isTauriRuntime } from "../app/utils";
+import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
-import Button from "../components/Button";
+import Button from "../components/button";
 import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
 
 export type SettingsViewProps = {

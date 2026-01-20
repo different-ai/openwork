@@ -1,9 +1,9 @@
 import { For, Show } from "solid-js";
 
-import type { CuratedPackage, SkillCard } from "../app/types";
-import { isTauriRuntime } from "../app/utils";
+import type { CuratedPackage, SkillCard } from "../types";
+import { isTauriRuntime } from "../utils";
 
-import Button from "../components/Button";
+import Button from "../components/button";
 import { Package, Upload } from "lucide-solid";
 
 export type SkillsViewProps = {

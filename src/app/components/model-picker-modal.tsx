@@ -2,9 +2,9 @@ import { For, Show } from "solid-js";
 
 import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 
-import Button from "./Button";
-import { modelEquals } from "../app/utils";
-import type { ModelOption, ModelRef } from "../app/types";
+import Button from "./button";
+import { modelEquals } from "../utils";
+import type { ModelOption, ModelRef } from "../types";
 
 export type ModelPickerModalProps = {
   open: boolean;

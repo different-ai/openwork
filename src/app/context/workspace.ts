@@ -7,8 +7,8 @@ import type {
   WorkspaceDisplay,
   WorkspaceOpenworkConfig,
   WorkspacePreset,
-} from "./types";
-import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "./utils";
+} from "../types";
+import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "../utils";
 import { unwrap } from "../lib/opencode";
 import { homeDir } from "@tauri-apps/api/path";
 import {
