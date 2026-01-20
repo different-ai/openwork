@@ -88,39 +88,20 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </div>
               <h2 class="text-2xl font-bold tracking-tight">Create your first workspace</h2>
               <p class="text-zinc-400 text-sm leading-relaxed">
-                A workspace is a <span class="font-semibold text-white">folder</span> with its own skills, plugins, and templates.
+                We'll set up a starter folder so you can start working right away.
               </p>
             </div>
 
              <div class="space-y-4">
                <div class="bg-zinc-900/30 border border-zinc-800/60 rounded-2xl p-5 space-y-3">
-                 <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
- 
                  <div class="space-y-2">
-                   <div class="text-sm font-medium text-white">Starter Workspace</div>
+                   <div class="text-xs font-medium text-zinc-500">Workspace</div>
+                   <div class="text-sm font-medium text-white">Starter workspace</div>
                    <div class="text-xs text-zinc-500">
-                     A ready-to-run workspace with starter templates and plugins.
+                     Includes examples for skills, templates, and plugins.
                    </div>
                   <div class={`text-xs ${props.developerMode ? "text-zinc-600 font-mono" : "text-zinc-500"} break-all`}>
                     {props.developerMode ? props.activeWorkspacePath || "(initializing...)" : "A starter workspace will be created for you."}
-                  </div>
-                </div>
-
-                <div class="pt-3 border-t border-zinc-800/60 space-y-2">
-                  <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">What you get</div>
-                  <div class="space-y-2">
-                    <div class="flex items-center gap-3 text-sm text-zinc-300">
-                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                      Scheduler plugin (workspace-scoped)
-                    </div>
-                    <div class="flex items-center gap-3 text-sm text-zinc-300">
-                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                      Starter templates for files, skills, and plugins
-                    </div>
-                    <div class="flex items-center gap-3 text-sm text-zinc-300">
-                      <div class="w-2 h-2 rounded-full bg-emerald-500" />
-                      This workspace is preconfigured to show you how to use plugins, templates, and skills
-                    </div>
                   </div>
                 </div>
               </div>

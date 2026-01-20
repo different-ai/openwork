@@ -44,6 +44,7 @@ export default function CreateWorkspaceModal(props: {
     if (pickingFolder()) return;
     setPickingFolder(true);
     try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
       const next = await props.onPickFolder();
       if (next) {
         setSelectedFolder(next);
