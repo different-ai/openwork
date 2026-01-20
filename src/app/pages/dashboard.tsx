@@ -295,7 +295,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <aside class="w-64 border-r border-gray-6 p-6 hidden md:flex flex-col justify-between bg-gray-1">
         <div>
           <div class="flex items-center gap-3 mb-10 px-2">
-            <div class="w-8 h-8 bg-gray-12 rounded-lg flex items-center justify-center">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center">
               <OpenWorkLogo size={18} class="text-gray-12" />
             </div>
             <span class="font-bold text-lg tracking-tight">OpenWork</span>

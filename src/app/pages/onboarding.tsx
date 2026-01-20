@@ -112,7 +112,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
           <div class="max-w-lg w-full z-10 space-y-6">
             <div class="text-center space-y-2">
-              <div class="w-12 h-12 bg-gray-12 rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-gray-12/10 mb-6">
+              <div class="w-12 h-12 rounded-2xl mx-auto flex items-center justify-center mb-6">
                 <OpenWorkLogo size={18} class="text-gray-12" />
               </div>
               <h2 class="text-2xl font-bold tracking-tight">
@@ -436,7 +436,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-xl w-full z-10 space-y-12">
             <div class="text-center space-y-4">
               <div class="flex items-center justify-center gap-3 mb-6">
-                <div class="w-12 h-12 bg-gray-12 rounded-xl flex items-center justify-center">
+                <div class="w-12 h-12 rounded-xl flex items-center justify-center">
                   <OpenWorkLogo size={24} class="text-gray-1" />
                 </div>
                 <h1 class="text-3xl font-bold tracking-tight text-gray-12">OpenWork</h1>
