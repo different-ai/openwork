@@ -88,24 +88,24 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const notionStatusStyle = () => {
     if (props.notionStatus === "connected") {
-      return "bg-emerald-500/10 text-emerald-300 border-emerald-500/20";
+      return "bg-green-7/10 text-green-11 border-green-7/20";
     }
     if (props.notionStatus === "error") {
-      return "bg-red-500/10 text-red-300 border-red-500/20";
+      return "bg-red-7/10 text-red-11 border-red-7/20";
     }
     if (props.notionStatus === "connecting") {
-      return "bg-amber-500/10 text-amber-300 border-amber-500/20";
+      return "bg-amber-7/10 text-amber-11 border-amber-7/20";
     }
-    return "bg-zinc-800/60 text-zinc-400 border-zinc-700/50";
+    return "bg-gray-4/60 text-gray-11 border-gray-7/50";
   };
 
 
   return (
     <section class="space-y-6">
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
-        <div class="text-sm font-medium text-white">Connection</div>
-        <div class="text-xs text-zinc-500">{props.headerStatus}</div>
-        <div class="text-xs text-zinc-600 font-mono">{props.baseUrl}</div>
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+        <div class="text-sm font-medium text-gray-12">Connection</div>
+        <div class="text-xs text-gray-10">{props.headerStatus}</div>
+        <div class="text-xs text-gray-7 font-mono">{props.baseUrl}</div>
         <div class="pt-2 flex flex-wrap gap-2">
           <Button variant="secondary" onClick={props.toggleDeveloperMode}>
             <Shield size={16} />
@@ -124,8 +124,8 @@ export default function SettingsView(props: SettingsViewProps) {
         </div>
 
         <Show when={isTauriRuntime() && props.mode === "host"}>
-          <div class="pt-4 border-t border-zinc-800/60 space-y-3">
-            <div class="text-xs text-zinc-500">Engine source</div>
+          <div class="pt-4 border-t border-gray-6/60 space-y-3">
+            <div class="text-xs text-gray-10">Engine source</div>
             <div class="grid grid-cols-2 gap-2">
               <Button
                 variant={props.engineSource === "path" ? "secondary" : "outline"}
@@ -143,10 +143,10 @@ export default function SettingsView(props: SettingsViewProps) {
                 Sidecar
               </Button>
             </div>
-            <div class="text-[11px] text-zinc-600">
+            <div class="text-[11px] text-gray-7">
               PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.
               <Show when={props.isWindows}>
-                <span class="text-zinc-500"> Sidecar is currently unavailable on Windows.</span>
+                <span class="text-gray-10"> Sidecar is currently unavailable on Windows.</span>
               </Show>
             </div>
           </div>
@@ -154,16 +154,16 @@ export default function SettingsView(props: SettingsViewProps) {
       </div>
 
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Model</div>
-          <div class="text-xs text-zinc-500">Defaults + thinking controls for runs.</div>
+          <div class="text-sm font-medium text-gray-12">Model</div>
+          <div class="text-xs text-gray-10">Defaults + thinking controls for runs.</div>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200 truncate">{props.defaultModelLabel}</div>
-            <div class="text-xs text-zinc-600 font-mono truncate">{props.defaultModelRef}</div>
+            <div class="text-sm text-gray-12 truncate">{props.defaultModelLabel}</div>
+            <div class="text-xs text-gray-7 font-mono truncate">{props.defaultModelRef}</div>
           </div>
           <Button
             variant="outline"
@@ -175,10 +175,10 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Thinking</div>
-            <div class="text-xs text-zinc-600">Show thinking parts (Developer mode only).</div>
+            <div class="text-sm text-gray-12">Thinking</div>
+            <div class="text-xs text-gray-7">Show thinking parts (Developer mode only).</div>
           </div>
           <Button
             variant="outline"
@@ -190,10 +190,10 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Model variant</div>
-            <div class="text-xs text-zinc-600 font-mono truncate">{props.modelVariantLabel}</div>
+            <div class="text-sm text-gray-12">Model variant</div>
+            <div class="text-xs text-gray-7 font-mono truncate">{props.modelVariantLabel}</div>
           </div>
           <Button
             variant="outline"
@@ -206,10 +206,10 @@ export default function SettingsView(props: SettingsViewProps) {
         </div>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Appearance</div>
-          <div class="text-xs text-zinc-500">Match the system or force light/dark mode.</div>
+          <div class="text-sm font-medium text-gray-12">Appearance</div>
+          <div class="text-xs text-gray-10">Match the system or force light/dark mode.</div>
         </div>
 
         <div class="flex flex-wrap gap-2">
@@ -239,21 +239,21 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="text-xs text-zinc-600">
+        <div class="text-xs text-gray-7">
           System mode follows your OS preference automatically.
         </div>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Demo mode</div>
-          <div class="text-xs text-zinc-500">Lightweight scripted states for recording and review.</div>
+          <div class="text-sm font-medium text-gray-12">Demo mode</div>
+          <div class="text-xs text-gray-10">Lightweight scripted states for recording and review.</div>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Enable demo mode</div>
-            <div class="text-xs text-zinc-600">Replaces live data with demo sequences.</div>
+            <div class="text-sm text-gray-12">Enable demo mode</div>
+            <div class="text-xs text-gray-7">Replaces live data with demo sequences.</div>
           </div>
           <Button
             variant={props.demoMode ? "secondary" : "outline"}
@@ -300,18 +300,18 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="text-xs text-zinc-600">
+        <div class="text-xs text-gray-7">
           Demo sequences swap in scripted sessions, artifacts, and workspace context.
         </div>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
         <div class="flex items-start justify-between gap-4">
           <div>
-            <div class="text-sm font-medium text-white">Updates</div>
-            <div class="text-xs text-zinc-500">Keep OpenWork up to date.</div>
+            <div class="text-sm font-medium text-gray-12">Updates</div>
+            <div class="text-xs text-gray-10">Keep OpenWork up to date.</div>
           </div>
-          <div class="text-xs text-zinc-600 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
+          <div class="text-xs text-gray-7 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
         </div>
 
         <Show
@@ -321,16 +321,16 @@ export default function SettingsView(props: SettingsViewProps) {
               when={props.updateEnv && props.updateEnv.supported === false}
               fallback={
                 <>
-                  <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                  <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                     <div class="space-y-0.5">
-                      <div class="text-sm text-white">Automatic checks</div>
-                      <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                      <div class="text-sm text-gray-12">Automatic checks</div>
+                      <div class="text-xs text-gray-7">Once per day (quiet)</div>
                     </div>
                     <button
                       class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                         props.updateAutoCheck
-                          ? "bg-white/10 text-white border-white/20"
-                          : "text-zinc-500 border-zinc-800 hover:text-white"
+                          ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
+                          : "text-gray-10 border-gray-6 hover:text-gray-12"
                       }`}
                       onClick={props.toggleUpdateAutoCheck}
                     >
@@ -338,9 +338,9 @@ export default function SettingsView(props: SettingsViewProps) {
                     </button>
                   </div>
 
-                  <div class="flex items-center justify-between gap-3 bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                  <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
                     <div class="space-y-0.5">
-                      <div class="text-sm text-white">
+                      <div class="text-sm text-gray-12">
                         <Switch>
                           <Match when={updateState() === "checking"}>Checking...</Match>
                           <Match when={updateState() === "available"}>Update available: v{updateVersion()}</Match>
@@ -351,15 +351,15 @@ export default function SettingsView(props: SettingsViewProps) {
                         </Switch>
                       </div>
                       <Show when={updateState() === "idle" && updateLastCheckedAt()}>
-                        <div class="text-xs text-zinc-600">
+                        <div class="text-xs text-gray-7">
                           Last checked {formatRelativeTime(updateLastCheckedAt() as number)}
                         </div>
                       </Show>
                       <Show when={updateState() === "available" && updateDate()}>
-                        <div class="text-xs text-zinc-600">Published {updateDate()}</div>
+                        <div class="text-xs text-gray-7">Published {updateDate()}</div>
                       </Show>
                       <Show when={updateState() === "downloading"}>
-                        <div class="text-xs text-zinc-600">
+                        <div class="text-xs text-gray-7">
                           {formatBytes((updateDownloadedBytes() as number) ?? 0)}
                           <Show when={updateTotalBytes() != null}>
                             {` / ${formatBytes(updateTotalBytes() as number)}`}
@@ -367,7 +367,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                       </Show>
                       <Show when={updateState() === "error"}>
-                        <div class="text-xs text-red-300">{updateErrorMessage()}</div>
+                        <div class="text-xs text-red-11">{updateErrorMessage()}</div>
                       </Show>
                     </div>
 
@@ -407,40 +407,40 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
 
                   <Show when={updateState() === "available" && updateNotes()}>
-                    <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto">
+                    <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11 whitespace-pre-wrap max-h-40 overflow-auto">
                       {updateNotes()}
                     </div>
                   </Show>
                 </>
               }
             >
-              <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+              <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-sm text-gray-11">
                 {props.updateEnv?.reason ?? "Updates are not supported in this environment."}
               </div>
             </Show>
           }
         >
-          <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
+          <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-sm text-gray-11">
             Updates are only available in the desktop app.
           </div>
         </Show>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
-        <div class="text-sm font-medium text-white">Startup</div>
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+        <div class="text-sm font-medium text-gray-12">Startup</div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
           <div class="flex items-center gap-3">
             <div
               class={`p-2 rounded-lg ${
-                props.mode === "host" ? "bg-indigo-500/10 text-indigo-400" : "bg-emerald-500/10 text-emerald-400"
+                props.mode === "host" ? "bg-indigo-7/10 text-indigo-11" : "bg-green-7/10 text-green-11"
               }`}
             >
               <Show when={props.mode === "host"} fallback={<Smartphone size={18} />}>
                 <HardDrive size={18} />
               </Show>
             </div>
-            <span class="capitalize text-sm font-medium text-white">{props.mode} mode</span>
+            <span class="capitalize text-sm font-medium text-gray-12">{props.mode} mode</span>
           </div>
           <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={props.stopHost} disabled={props.busy}>
             Switch
@@ -448,25 +448,25 @@ export default function SettingsView(props: SettingsViewProps) {
         </div>
 
         <Button variant="secondary" class="w-full justify-between group" onClick={props.onResetStartupPreference}>
-          <span class="text-zinc-300">Reset default startup mode</span>
-          <RefreshCcw size={14} class="text-zinc-500 group-hover:rotate-180 transition-transform" />
+          <span class="text-gray-11">Reset default startup mode</span>
+          <RefreshCcw size={14} class="text-gray-10 group-hover:rotate-180 transition-transform" />
         </Button>
 
-        <p class="text-xs text-zinc-600">
+        <p class="text-xs text-gray-7">
           This clears your saved preference and shows mode selection on next launch.
         </p>
       </div>
 
-      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Advanced</div>
-          <div class="text-xs text-zinc-500">Reset OpenWork local state to retest onboarding.</div>
+          <div class="text-sm font-medium text-gray-12">Advanced</div>
+          <div class="text-xs text-gray-10">Reset OpenWork local state to retest onboarding.</div>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Reset onboarding</div>
-            <div class="text-xs text-zinc-600">Clears OpenWork preferences and restarts the app.</div>
+            <div class="text-sm text-gray-12">Reset onboarding</div>
+            <div class="text-xs text-gray-7">Clears OpenWork preferences and restarts the app.</div>
           </div>
           <Button
             variant="outline"
@@ -479,10 +479,10 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Reset app data</div>
-            <div class="text-xs text-zinc-600">More aggressive. Clears OpenWork cache + app data.</div>
+            <div class="text-sm text-gray-12">Reset app data</div>
+            <div class="text-xs text-gray-7">More aggressive. Clears OpenWork cache + app data.</div>
           </div>
           <Button
             variant="danger"
@@ -495,24 +495,24 @@ export default function SettingsView(props: SettingsViewProps) {
           </Button>
         </div>
 
-        <div class="text-xs text-zinc-600">
-          Requires typing <span class="font-mono text-zinc-400">RESET</span> and will restart the app.
+        <div class="text-xs text-gray-7">
+          Requires typing <span class="font-mono text-gray-11">RESET</span> and will restart the app.
         </div>
       </div>
 
       <Show when={props.developerMode}>
         <section>
-          <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
+          <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">Developer</h3>
 
           <div class="space-y-4">
-            <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div class="min-w-0">
-                <div class="text-sm text-zinc-200">OpenCode cache</div>
-                <div class="text-xs text-zinc-600">
+                <div class="text-sm text-gray-12">OpenCode cache</div>
+                <div class="text-xs text-gray-7">
                   Repairs cached data used to start the engine. Safe to run.
                 </div>
                 <Show when={props.cacheRepairResult}>
-                  <div class="text-xs text-zinc-400 mt-2">{props.cacheRepairResult}</div>
+                  <div class="text-xs text-gray-11 mt-2">{props.cacheRepairResult}</div>
                 </Show>
               </div>
               <Button
@@ -527,15 +527,15 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <div class="grid md:grid-cols-2 gap-4">
-              <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
-                <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4">
+                <div class="text-xs text-gray-10 mb-2">Pending permissions</div>
+                <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                   {props.safeStringify(props.pendingPermissions)}
                 </pre>
               </div>
-              <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                <div class="text-xs text-zinc-500 mb-2">Recent events</div>
-                <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4">
+                <div class="text-xs text-gray-10 mb-2">Recent events</div>
+                <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                   {props.safeStringify(props.events)}
                 </pre>
               </div>

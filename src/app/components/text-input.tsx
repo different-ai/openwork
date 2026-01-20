@@ -11,15 +11,15 @@ export default function TextInput(props: TextInputProps) {
   return (
     <label class="block">
       {label ? (
-        <div class="mb-1 text-xs font-medium text-neutral-300">{label}</div>
+        <div class="mb-1 text-xs font-medium text-gray-11">{label}</div>
       ) : null}
       <input
         {...rest}
-        class={`w-full rounded-xl bg-neutral-900/60 px-3 py-2 text-sm text-neutral-100 placeholder:text-neutral-500 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-white/20 ${
+        class={`w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20 ${
           className ?? ""
         }`.trim()}
       />
-      {hint ? <div class="mt-1 text-xs text-neutral-500">{hint}</div> : null}
+      {hint ? <div class="mt-1 text-xs text-gray-10">{hint}</div> : null}
     </label>
   );
 }

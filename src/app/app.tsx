@@ -1553,6 +1553,8 @@ export default function App() {
         workspaceStore.engineDoctorResult()?.notes?.join("\n") ?? "";
       workspaceStore.setEngineInstallLogs(notes || null);
     },
+    themeMode: themeMode(),
+    setThemeMode,
   });
 
   const dashboardProps = () => ({

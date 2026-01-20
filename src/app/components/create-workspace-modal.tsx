@@ -68,27 +68,27 @@ export default function CreateWorkspaceModal(props: {
   const submitting = () => props.submitting ?? false;
 
   const content = (
-    <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-      <div class="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
+    <div class="bg-gray-2 border border-gray-6 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="p-6 border-b border-gray-6 flex justify-between items-center bg-gray-1">
         <div>
-          <h3 class="font-semibold text-white text-lg">{title()}</h3>
-          <p class="text-zinc-500 text-sm">{subtitle()}</p>
+          <h3 class="font-semibold text-gray-12 text-lg">{title()}</h3>
+          <p class="text-gray-10 text-sm">{subtitle()}</p>
         </div>
         <Show when={showClose()}>
           <button
             onClick={props.onClose}
             disabled={submitting()}
-            class={`hover:bg-zinc-800 p-1 rounded-full ${submitting() ? "opacity-50 cursor-not-allowed" : ""}`.trim()}
+            class={`hover:bg-gray-4 p-1 rounded-full ${submitting() ? "opacity-50 cursor-not-allowed" : ""}`.trim()}
           >
-            <X size={20} class="text-zinc-500" />
+            <X size={20} class="text-gray-10" />
           </button>
         </Show>
       </div>
 
           <div class="p-6 flex-1 overflow-y-auto space-y-8">
             <div class="space-y-4">
-              <div class="flex items-center gap-3 text-sm font-medium text-white">
-                <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
+              <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
+                <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">
                   1
                 </div>
                 Select Folder
@@ -98,21 +98,21 @@ export default function CreateWorkspaceModal(props: {
                   type="button"
                   onClick={handlePickFolder}
                   disabled={pickingFolder() || submitting()}
-                  class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${
-                    pickingFolder() ? "opacity-70 cursor-wait" : "hover:border-zinc-500"
+                  class={`w-full border border-dashed border-gray-7 bg-gray-2/50 rounded-xl p-4 text-left transition ${
+                    pickingFolder() ? "opacity-70 cursor-wait" : "hover:border-gray-7"
                   }`.trim()}
                 >
-                  <div class="flex items-center gap-3 text-zinc-200">
-                    <FolderPlus size={20} class="text-zinc-400" />
+                  <div class="flex items-center gap-3 text-gray-12">
+                    <FolderPlus size={20} class="text-gray-11" />
                     <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-zinc-100 truncate">{folderLabel()}</div>
-                      <div class="text-xs text-zinc-500 font-mono truncate mt-1">{folderSubLabel()}</div>
+                      <div class="text-sm font-medium text-gray-12 truncate">{folderLabel()}</div>
+                      <div class="text-xs text-gray-10 font-mono truncate mt-1">{folderSubLabel()}</div>
                     </div>
                     <Show
                       when={pickingFolder()}
-                      fallback={<span class="text-xs text-zinc-500">Change</span>}
+                      fallback={<span class="text-xs text-gray-10">Change</span>}
                     >
-                      <span class="flex items-center gap-2 text-xs text-zinc-500">
+                      <span class="flex items-center gap-2 text-xs text-gray-10">
                         <Loader2 size={12} class="animate-spin" />
                         Opening...
                       </span>
@@ -123,8 +123,8 @@ export default function CreateWorkspaceModal(props: {
             </div>
 
             <div class="space-y-4">
-              <div class="flex items-center gap-3 text-sm font-medium text-white">
-                <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
+              <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
+                <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">
                   2
                 </div>
                 Choose Preset
@@ -140,23 +140,23 @@ export default function CreateWorkspaceModal(props: {
                       }}
                       class={`p-4 rounded-xl border cursor-pointer transition-all ${
                         preset() === opt.id
-                          ? "bg-indigo-500/10 border-indigo-500/50"
-                          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                          ? "bg-indigo-7/10 border-indigo-7/50"
+                          : "bg-gray-2 border-gray-6 hover:border-gray-7"
                       } ${!selectedFolder() || submitting() ? "pointer-events-none" : ""}`.trim()}
                     >
                       <div class="flex justify-between items-start">
                         <div>
                           <div
                             class={`font-medium text-sm ${
-                              preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
+                              preset() === opt.id ? "text-indigo-11" : "text-gray-12"
                             }`}
                           >
                             {opt.name}
                           </div>
-                          <div class="text-xs text-zinc-500 mt-1">{opt.desc}</div>
+                          <div class="text-xs text-gray-10 mt-1">{opt.desc}</div>
                         </div>
                         <Show when={preset() === opt.id}>
-                          <CheckCircle2 size={16} class="text-indigo-500" />
+                          <CheckCircle2 size={16} class="text-indigo-6" />
                         </Show>
                       </div>
                     </div>
@@ -166,7 +166,7 @@ export default function CreateWorkspaceModal(props: {
             </div>
           </div>
 
-      <div class="p-6 border-t border-zinc-800 bg-zinc-950 flex justify-end gap-3">
+      <div class="p-6 border-t border-gray-6 bg-gray-1 flex justify-end gap-3">
         <Show when={showClose()}>
           <Button variant="ghost" onClick={props.onClose} disabled={submitting()}>
             Cancel
@@ -197,7 +197,7 @@ export default function CreateWorkspaceModal(props: {
         class={
           isInline()
             ? "w-full"
-            : "fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            : "fixed inset-0 z-50 flex items-center justify-center bg-gray-1/60 backdrop-blur-sm p-4 animate-in fade-in duration-200"
         }
       >
         {content}

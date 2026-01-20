@@ -279,8 +279,8 @@ export default function DashboardView(props: DashboardViewProps) {
       <button
         class={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
           active()
-            ? "bg-zinc-900 text-white"
-            : "text-zinc-500 hover:text-white hover:bg-zinc-900/50"
+            ? "bg-gray-2 text-gray-12"
+            : "text-gray-10 hover:text-gray-12 hover:bg-gray-2/50"
         }`}
         onClick={() => props.setTab(t)}
       >
@@ -291,12 +291,12 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   return (
-    <div class="flex h-screen bg-zinc-950 text-white overflow-hidden">
-      <aside class="w-64 border-r border-zinc-800 p-6 hidden md:flex flex-col justify-between bg-zinc-950">
+    <div class="flex h-screen bg-gray-1 text-gray-12 overflow-hidden">
+      <aside class="w-64 border-r border-gray-6 p-6 hidden md:flex flex-col justify-between bg-gray-1">
         <div>
           <div class="flex items-center gap-3 mb-10 px-2">
-            <div class="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
-              <OpenWorkLogo size={18} class="text-black" />
+            <div class="w-8 h-8 bg-gray-12 rounded-lg flex items-center justify-center">
+              <OpenWorkLogo size={18} class="text-gray-12" />
             </div>
             <span class="font-bold text-lg tracking-tight">OpenWork</span>
           </div>
@@ -311,7 +311,7 @@ export default function DashboardView(props: DashboardViewProps) {
               "mcp",
               <span class="inline-flex items-center gap-2">
                 MCPs
-                <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">
+                <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/20 text-amber-12">
                   Alpha
                 </span>
               </span>,
@@ -322,11 +322,11 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <div class="space-y-4">
-          <div class="px-3 py-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
-            <div class="flex items-center gap-2 text-xs font-medium text-zinc-400 mb-2">
+          <div class="px-3 py-3 rounded-xl bg-gray-2/50 border border-gray-6">
+            <div class="flex items-center gap-2 text-xs font-medium text-gray-11 mb-2">
               Connection
               <Show when={props.developerMode}>
-                <span class="text-zinc-600">
+                <span class="text-gray-7">
                   {props.mode === "host" ? "Local Engine" : "Client Mode"}
                 </span>
               </Show>
@@ -335,20 +335,20 @@ export default function DashboardView(props: DashboardViewProps) {
               <div
                 class={`w-2 h-2 rounded-full ${
                   props.clientConnected
-                    ? "bg-emerald-500 animate-pulse"
-                    : "bg-zinc-600"
+                    ? "bg-green-7 animate-pulse"
+                    : "bg-gray-6"
                 }`}
               />
               <span
                 class={`text-sm font-medium ${
-                  props.clientConnected ? "text-emerald-500" : "text-zinc-500"
+                  props.clientConnected ? "text-green-6" : "text-gray-10"
                 }`}
               >
                 {props.clientConnected ? "Connected" : "Not connected"}
               </span>
             </div>
             <Show when={props.developerMode}>
-              <div class="mt-2 text-[11px] text-zinc-600 font-mono truncate">
+              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
                 {props.baseUrl}
               </div>
             </Show>
@@ -379,7 +379,7 @@ export default function DashboardView(props: DashboardViewProps) {
       </aside>
 
       <main class="flex-1 overflow-y-auto relative pb-24 md:pb-0">
-        <header class="h-16 flex items-center justify-between px-6 md:px-10 border-b border-zinc-800 sticky top-0 bg-zinc-950/80 backdrop-blur-md z-10">
+        <header class="h-16 flex items-center justify-between px-6 md:px-10 border-b border-gray-6 sticky top-0 bg-gray-1/80 backdrop-blur-md z-10">
           <div class="flex items-center gap-3">
             <WorkspaceChip
               workspace={props.activeWorkspaceDisplay}
@@ -390,10 +390,10 @@ export default function DashboardView(props: DashboardViewProps) {
             />
             <h1 class="text-lg font-medium">{title()}</h1>
             <Show when={props.developerMode}>
-              <span class="text-xs text-zinc-600">{props.headerStatus}</span>
+              <span class="text-xs text-gray-7">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-zinc-500">{props.busyHint}</span>
+              <span class="text-xs text-gray-10">{props.busyHint}</span>
             </Show>
           </div>
           <div class="flex items-center gap-2">
@@ -442,13 +442,13 @@ export default function DashboardView(props: DashboardViewProps) {
           <Switch>
             <Match when={props.tab === "home"}>
               <section>
-                <div class="bg-gradient-to-r from-zinc-900 to-zinc-800 rounded-3xl p-1 border border-zinc-800 shadow-2xl">
-                  <div class="bg-zinc-950 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
+                <div class="bg-gradient-to-r from-gray-2 to-gray-4 rounded-3xl p-1 border border-gray-6 shadow-2xl">
+                  <div class="bg-gray-1 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
                     <div class="space-y-2 text-center md:text-left">
-                      <h2 class="text-2xl font-semibold text-white">
+                      <h2 class="text-2xl font-semibold text-gray-12">
                         What should we do today?
                       </h2>
-                      <p class="text-zinc-400">
+                      <p class="text-gray-11">
                         Describe an outcome. OpenWork will run it and keep an
                         audit trail.
                       </p>
@@ -470,11 +470,11 @@ export default function DashboardView(props: DashboardViewProps) {
 
               <section>
                 <div class="flex items-center justify-between mb-4">
-                  <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
+                  <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
                     Quick Start Templates
                   </h3>
                   <button
-                    class="text-sm text-zinc-500 hover:text-white"
+                    class="text-sm text-gray-10 hover:text-gray-12"
                     onClick={() => props.setTab("templates")}
                   >
                     View all
@@ -484,7 +484,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 <Show
                   when={quickTemplates().length}
                   fallback={
-                    <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
+                    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-6 text-sm text-gray-10">
                       No templates yet. Starter templates will appear here.
                     </div>
                   }
@@ -494,13 +494,13 @@ export default function DashboardView(props: DashboardViewProps) {
                       {(t) => (
                         <button
                           onClick={() => props.runTemplate(t)}
-                          class="group p-5 rounded-2xl bg-zinc-900/30 border border-zinc-800/50 hover:bg-zinc-900 hover:border-zinc-700 transition-all text-left"
+                          class="group p-5 rounded-2xl bg-gray-2/30 border border-gray-6/50 hover:bg-gray-2 hover:border-gray-7 transition-all text-left"
                         >
-                          <div class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                            <FileText size={20} class="text-indigo-400" />
+                          <div class="w-10 h-10 rounded-full bg-gray-4 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                            <FileText size={20} class="text-indigo-11" />
                           </div>
-                          <h4 class="font-medium text-white mb-1">{t.title}</h4>
-                          <p class="text-sm text-zinc-500">
+                          <h4 class="font-medium text-gray-12 mb-1">{t.title}</h4>
+                          <p class="text-sm text-gray-10">
                             {t.description || "Run a saved workflow"}
                           </p>
                         </button>
@@ -511,17 +511,17 @@ export default function DashboardView(props: DashboardViewProps) {
               </section>
 
               <section>
-                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
+                <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
                   Recent Sessions
                 </h3>
 
-                <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
                   <For each={props.sessions.slice(0, 3)}>
                     {(s, idx) => (
                       <button
-                        class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
+                        class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
                           idx() !== Math.min(props.sessions.length, 3) - 1
-                            ? "border-b border-zinc-800/50"
+                            ? "border-b border-gray-6/50"
                             : ""
                         }`}
                         onPointerDown={(e) => {
@@ -532,14 +532,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         }}
                       >
                         <div class="flex items-center gap-4">
-                          <div class="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs text-zinc-500 font-mono">
+                          <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
                             #{s.slug?.slice(0, 2) ?? ".."}
                           </div>
                           <div>
-                            <div class="font-medium text-sm text-zinc-200">
+                            <div class="font-medium text-sm text-gray-12">
                               {s.title}
                             </div>
-                            <div class="text-xs text-zinc-500 flex items-center gap-2">
+                            <div class="text-xs text-gray-10 flex items-center gap-2">
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
@@ -549,7 +549,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                   s.directory === props.activeWorkspaceRoot
                                 }
                               >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
                                   this workspace
                                 </span>
                               </Show>
@@ -557,7 +557,7 @@ export default function DashboardView(props: DashboardViewProps) {
                           </div>
                         </div>
                         <div class="flex items-center gap-4">
-                          <span class="text-xs px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-400 flex items-center gap-1.5">
+                          <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-current" />
                             {props.sessionStatusById[s.id] ?? "idle"}
                           </span>
@@ -567,7 +567,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   </For>
 
                   <Show when={!props.sessions.length}>
-                    <div class="p-6 text-sm text-zinc-500">
+                    <div class="p-6 text-sm text-gray-10">
                       No sessions yet.
                     </div>
                   </Show>
@@ -577,17 +577,17 @@ export default function DashboardView(props: DashboardViewProps) {
 
             <Match when={props.tab === "sessions"}>
               <section>
-                <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
+                <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
                   Recent Sessions
                 </h3>
 
-                <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
                   <For each={props.sessions.slice(0, 3)}>
                     {(s, idx) => (
                       <button
-                        class={`w-full p-4 flex items-center justify-between hover:bg-zinc-800/50 transition-colors text-left ${
+                        class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
                           idx() !== Math.min(props.sessions.length, 3) - 1
-                            ? "border-b border-zinc-800/50"
+                            ? "border-b border-gray-6/50"
                             : ""
                         }`}
                         onPointerDown={(e) => {
@@ -598,14 +598,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         }}
                       >
                         <div class="flex items-center gap-4">
-                          <div class="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center text-xs text-zinc-500 font-mono">
+                          <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
                             #{s.slug?.slice(0, 2) ?? ".."}
                           </div>
                           <div>
-                            <div class="font-medium text-sm text-zinc-200">
+                            <div class="font-medium text-sm text-gray-12">
                               {s.title}
                             </div>
-                            <div class="text-xs text-zinc-500 flex items-center gap-2">
+                            <div class="text-xs text-gray-10 flex items-center gap-2">
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
@@ -615,7 +615,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                   s.directory === props.activeWorkspaceRoot
                                 }
                               >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
+                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
                                   this workspace
                                 </span>
                               </Show>
@@ -623,7 +623,7 @@ export default function DashboardView(props: DashboardViewProps) {
                           </div>
                         </div>
                         <div class="flex items-center gap-4">
-                          <span class="text-xs px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-400 flex items-center gap-1.5">
+                          <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-current" />
                             {props.sessionStatusById[s.id] ?? "idle"}
                           </span>
@@ -633,7 +633,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   </For>
 
                   <Show when={!props.sessions.length}>
-                    <div class="p-6 text-sm text-zinc-500">
+                    <div class="p-6 text-sm text-gray-10">
                       No sessions yet.
                     </div>
                   </Show>
@@ -770,7 +770,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
         <Show when={props.error}>
           <div class="mx-auto max-w-5xl px-6 md:px-10 pb-24 md:pb-10">
-            <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20 space-y-3">
+            <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20 space-y-3">
               <div>{props.error}</div>
               <Show when={props.developerMode}>
                 <div class="flex flex-wrap items-center gap-2">
@@ -791,7 +791,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     Retry
                   </Button>
                   <Show when={props.cacheRepairResult}>
-                    <span class="text-xs text-red-200/80">
+                    <span class="text-xs text-red-12/80">
                       {props.cacheRepairResult}
                     </span>
                   </Show>
@@ -801,11 +801,11 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </Show>
 
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/90 backdrop-blur-md">
+        <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
           <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "home" ? "text-white" : "text-zinc-500"
+                props.tab === "home" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("home")}
             >
@@ -814,7 +814,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "sessions" ? "text-white" : "text-zinc-500"
+                props.tab === "sessions" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("sessions")}
             >
@@ -823,7 +823,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "templates" ? "text-white" : "text-zinc-500"
+                props.tab === "templates" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("templates")}
             >
@@ -832,7 +832,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "skills" ? "text-white" : "text-zinc-500"
+                props.tab === "skills" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("skills")}
             >
@@ -841,7 +841,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "plugins" ? "text-white" : "text-zinc-500"
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("plugins")}
             >
@@ -850,7 +850,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" ? "text-white" : "text-zinc-500"
+                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("mcp")}
             >
@@ -859,7 +859,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" ? "text-white" : "text-zinc-500"
+                props.tab === "settings" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("settings")}
             >

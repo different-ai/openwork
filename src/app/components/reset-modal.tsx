@@ -20,18 +20,18 @@ export type ResetModalProps = {
 export default function ResetModal(props: ResetModalProps) {
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
+      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
           <div class="p-6">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-white">
+                <h3 class="text-lg font-semibold text-gray-12">
                   <Switch>
                     <Match when={props.mode === "onboarding"}>Reset onboarding</Match>
                     <Match when={true}>Reset app data</Match>
                   </Switch>
                 </h3>
-                <p class="text-sm text-zinc-400 mt-1">
+                <p class="text-sm text-gray-11 mt-1">
                   Type <span class="font-mono">RESET</span> to confirm. OpenWork will restart.
                 </p>
               </div>
@@ -46,7 +46,7 @@ export default function ResetModal(props: ResetModalProps) {
             </div>
 
             <div class="mt-6 space-y-4">
-              <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400">
+              <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11">
                 <Switch>
                   <Match when={props.mode === "onboarding"}>
                     Clears OpenWork local preferences and workspace onboarding markers.
@@ -56,7 +56,7 @@ export default function ResetModal(props: ResetModalProps) {
               </div>
 
               <Show when={props.hasActiveRuns}>
-                <div class="text-xs text-red-300">Stop active runs before resetting.</div>
+                <div class="text-xs text-red-11">Stop active runs before resetting.</div>
               </Show>
 
               <TextInput

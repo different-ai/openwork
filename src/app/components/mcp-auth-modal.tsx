@@ -155,23 +155,23 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
         {/* Backdrop */}
         <div
-          class="absolute inset-0 bg-black/60 backdrop-blur-sm"
+          class="absolute inset-0 bg-gray-1/60 backdrop-blur-sm"
           onClick={handleClose}
         />
 
         {/* Modal */}
-        <div class="relative w-full max-w-lg bg-zinc-900 border border-zinc-800 rounded-2xl shadow-2xl overflow-hidden">
+        <div class="relative w-full max-w-lg bg-gray-2 border border-gray-6 rounded-2xl shadow-2xl overflow-hidden">
           {/* Header */}
-          <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+          <div class="flex items-center justify-between px-6 py-4 border-b border-gray-6">
             <div>
-              <h2 class="text-lg font-semibold text-white">
+              <h2 class="text-lg font-semibold text-gray-12">
                 Connect {serverName()}
               </h2>
-              <p class="text-sm text-zinc-400">We’ll open your browser to finish sign-in.</p>
+              <p class="text-sm text-gray-11">We’ll open your browser to finish sign-in.</p>
             </div>
             <button
               type="button"
-              class="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+              class="p-2 text-gray-11 hover:text-gray-12 hover:bg-gray-4 rounded-lg transition-colors"
               onClick={handleClose}
             >
               <X size={20} />
@@ -182,24 +182,24 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           <div class="px-6 py-5 space-y-5">
             <Show when={loading()}>
               <div class="flex items-center justify-center py-8">
-                <Loader2 size={32} class="animate-spin text-zinc-400" />
+                <Loader2 size={32} class="animate-spin text-gray-11" />
               </div>
             </Show>
 
             <Show when={!loading() && alreadyConnected()}>
-              <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-5 space-y-4">
+              <div class="bg-green-7/10 border border-green-7/20 rounded-xl p-5 space-y-4">
                 <div class="flex items-center gap-3">
-                  <div class="flex-shrink-0 w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
-                    <CheckCircle2 size={24} class="text-emerald-400" />
+                  <div class="flex-shrink-0 w-10 h-10 rounded-full bg-green-7/20 flex items-center justify-center">
+                    <CheckCircle2 size={24} class="text-green-11" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Already Connected</p>
-                    <p class="text-xs text-zinc-400">
+                    <p class="text-sm font-medium text-gray-12">Already Connected</p>
+                    <p class="text-xs text-gray-11">
                       {serverName()} is already authenticated and ready to use.
                     </p>
                   </div>
                 </div>
-                <p class="text-xs text-zinc-500">
+                <p class="text-xs text-gray-10">
                   The MCP may have been configured globally or in a previous session. 
                   You can close this modal and start using the MCP tools right away.
                 </p>
@@ -207,8 +207,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             </Show>
 
             <Show when={error()}>
-              <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-4 space-y-3">
-                <p class="text-sm text-red-300">{error()}</p>
+              <div class="bg-red-7/10 border border-red-7/20 rounded-xl p-4 space-y-3">
+                <p class="text-sm text-red-11">{error()}</p>
                 
                 <Show when={needsReload()}>
                   <div class="flex flex-wrap gap-2 pt-2">
@@ -237,50 +237,50 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={!loading() && !error() && !alreadyConnected()}>
               <div class="space-y-4">
                 <div class="flex items-start gap-3">
-                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-300">
+                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Opening your browser</p>
-                    <p class="text-xs text-zinc-500 mt-1">
+                    <p class="text-sm font-medium text-gray-12">Opening your browser</p>
+                    <p class="text-xs text-gray-10 mt-1">
                       We’ll launch {serverName()}’s sign-in flow automatically.
                     </p>
                   </div>
                 </div>
 
                 <div class="flex items-start gap-3">
-                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-300">
+                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Authorize OpenWork</p>
-                    <p class="text-xs text-zinc-500 mt-1">
+                    <p class="text-sm font-medium text-gray-12">Authorize OpenWork</p>
+                    <p class="text-xs text-gray-10 mt-1">
                       Sign in and approve access when prompted.
                     </p>
                   </div>
                 </div>
 
                 <div class="flex items-start gap-3">
-                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs font-medium text-zinc-300">
+                  <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Return here when you're done</p>
-                    <p class="text-xs text-zinc-500 mt-1">
+                    <p class="text-sm font-medium text-gray-12">Return here when you're done</p>
+                    <p class="text-xs text-gray-10 mt-1">
                       We'll finish connecting as soon as authorization completes.
                     </p>
                   </div>
                 </div>
               </div>
 
-              <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-400">
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-11">
                 Waiting for authorization to complete in your browser...
               </div>
             </Show>
           </div>
 
           {/* Footer */}
-          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-zinc-800 bg-zinc-900/50">
+          <div class="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-6 bg-gray-2/50">
             <Show when={alreadyConnected()}>
               <Button variant="primary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
