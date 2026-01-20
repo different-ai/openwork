@@ -3,7 +3,7 @@ import { render } from "solid-js/web";
 
 import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
-import App from "./app/app";
+import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
 
@@ -79,7 +79,7 @@ const platform: Platform = {
 render(
   () => (
     <PlatformProvider value={platform}>
-      <App />
+      <AppEntry />
     </PlatformProvider>
   ),
   root,
