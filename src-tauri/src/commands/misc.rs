@@ -7,6 +7,7 @@ use crate::engine::doctor::resolve_engine_path;
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
 use crate::types::ExecResult;
+use tauri::{AppHandle, Manager};
 
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
@@ -118,7 +119,11 @@ pub fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), S
 /// Run `opencode mcp auth <server_name>` in the given project directory.
 /// This spawns the process detached so the OAuth flow can open a browser.
 #[tauri::command]
-pub fn opencode_mcp_auth(project_dir: String, server_name: String) -> Result<ExecResult, String> {
+pub fn opencode_mcp_auth(
+  app: AppHandle,
+  project_dir: String,
+  server_name: String,
+) -> Result<ExecResult, String> {
   let project_dir = project_dir.trim();
   let server_name = server_name.trim();
 
@@ -129,7 +134,8 @@ pub fn opencode_mcp_auth(project_dir: String, server_name: String) -> Result<Exe
     return Err("server_name is required".to_string());
   }
 
-  let (program, _in_path, notes) = resolve_engine_path(false);
+  let resource_dir = app.path().resource_dir().ok();
+  let (program, _in_path, notes) = resolve_engine_path(true, resource_dir.as_deref());
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(

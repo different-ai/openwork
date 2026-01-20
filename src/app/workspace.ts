@@ -142,7 +142,7 @@ export function createWorkspaceStore(options: {
     if (!isTauriRuntime()) return;
 
     try {
-      const result = await engineDoctor();
+      const result = await engineDoctor({ preferSidecar: options.engineSource() === "sidecar" });
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
     } catch (e) {
@@ -341,7 +341,7 @@ export function createWorkspaceStore(options: {
     }
 
     try {
-      const result = await engineDoctor();
+      const result = await engineDoctor({ preferSidecar: options.engineSource() === "sidecar" });
       setEngineDoctorResult(result);
       setEngineDoctorCheckedAt(Date.now());
 
@@ -355,7 +355,13 @@ export function createWorkspaceStore(options: {
       }
 
       if (!result.supportsServe) {
-        options.setError("OpenCode CLI is installed, but `opencode serve` is unavailable. Update OpenCode and retry.");
+        const serveDetails = [result.serveHelpStdout, result.serveHelpStderr]
+          .filter((value) => value && value.trim())
+          .join("\n\n");
+        const suffix = serveDetails ? `\n\nServe output:\n${serveDetails}` : "";
+        options.setError(
+          `OpenCode CLI is installed, but \`opencode serve\` is unavailable. Update OpenCode and retry.${suffix}`
+        );
         return false;
       }
     } catch (e) {

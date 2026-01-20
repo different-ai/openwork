@@ -45,7 +45,10 @@ pub fn opencode_serve_help(program: &OsStr) -> (bool, Option<i32>, Option<String
   }
 }
 
-pub fn resolve_sidecar_candidate(prefer_sidecar: bool) -> (Option<std::path::PathBuf>, Vec<String>) {
+pub fn resolve_sidecar_candidate(
+  prefer_sidecar: bool,
+  resource_dir: Option<&Path>,
+) -> (Option<std::path::PathBuf>, Vec<String>) {
   if !prefer_sidecar {
     return (None, Vec::new());
   }
@@ -54,14 +57,31 @@ pub fn resolve_sidecar_candidate(prefer_sidecar: bool) -> (Option<std::path::Pat
 
   #[cfg(not(windows))]
   {
-    let candidate = std::path::PathBuf::from("src-tauri/sidecars")
-      .join(crate::engine::paths::opencode_executable_name());
-    if candidate.is_file() {
-      notes.push(format!("Using bundled sidecar: {}", candidate.display()));
-      return (Some(candidate), notes);
+    let mut candidates = Vec::new();
+
+    if let Some(resource_dir) = resource_dir {
+      candidates.push(
+        resource_dir
+          .join("sidecars")
+          .join(crate::engine::paths::opencode_executable_name()),
+      );
+      candidates.push(resource_dir.join(crate::engine::paths::opencode_executable_name()));
     }
 
-    notes.push(format!("Sidecar requested but missing: {}", candidate.display()));
+    candidates.push(
+      std::path::PathBuf::from("src-tauri/sidecars")
+        .join(crate::engine::paths::opencode_executable_name()),
+    );
+
+    for candidate in candidates {
+      if candidate.is_file() {
+        notes.push(format!("Using bundled sidecar: {}", candidate.display()));
+        return (Some(candidate), notes);
+      }
+
+      notes.push(format!("Sidecar missing: {}", candidate.display()));
+    }
+
     return (None, notes);
   }
 
@@ -72,8 +92,11 @@ pub fn resolve_sidecar_candidate(prefer_sidecar: bool) -> (Option<std::path::Pat
   }
 }
 
-pub fn resolve_engine_path(prefer_sidecar: bool) -> (Option<std::path::PathBuf>, bool, Vec<String>) {
-  let (sidecar, mut notes) = resolve_sidecar_candidate(prefer_sidecar);
+pub fn resolve_engine_path(
+  prefer_sidecar: bool,
+  resource_dir: Option<&Path>,
+) -> (Option<std::path::PathBuf>, bool, Vec<String>) {
+  let (sidecar, mut notes) = resolve_sidecar_candidate(prefer_sidecar, resource_dir);
   let (resolved, in_path, more_notes) = match sidecar {
     Some(path) => (Some(path), false, Vec::new()),
     None => resolve_opencode_executable(),

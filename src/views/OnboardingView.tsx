@@ -27,10 +27,13 @@ export type OnboardingViewProps = {
   engineDoctorVersion: string | null;
   engineDoctorResolvedPath: string | null;
   engineDoctorNotes: string[];
+  engineDoctorServeHelpStdout: string | null;
+  engineDoctorServeHelpStderr: string | null;
   engineDoctorCheckedAt: number | null;
   engineInstallLogs: string | null;
   error: string | null;
   developerMode: boolean;
+  isWindows: boolean;
   onBaseUrlChange: (value: string) => void;
   onClientDirectoryChange: (value: string) => void;
   onModeSelect: (mode: Mode) => void;
@@ -51,7 +54,26 @@ export type OnboardingViewProps = {
 };
 
 export default function OnboardingView(props: OnboardingViewProps) {
-  const engineDoctorAvailable = () => props.engineDoctorFound !== false && props.engineDoctorSupportsServe !== false;
+  const engineDoctorAvailable = () =>
+    props.engineDoctorFound === true && props.engineDoctorSupportsServe === true;
+
+  const engineStatusLabel = () => {
+    if (props.engineDoctorFound == null || props.engineDoctorSupportsServe == null) {
+      return "Checking OpenCode CLI...";
+    }
+    if (!props.engineDoctorFound) return "OpenCode CLI not found.";
+    if (!props.engineDoctorSupportsServe) return "OpenCode CLI needs an update for serve.";
+    if (props.engineDoctorVersion) return `OpenCode ${props.engineDoctorVersion}`;
+    return "OpenCode CLI ready.";
+  };
+
+  const serveHelpOutput = () => {
+    const parts = [
+      props.engineDoctorServeHelpStdout,
+      props.engineDoctorServeHelpStderr,
+    ].filter((value): value is string => Boolean(value && value.trim()));
+    return parts.join("\n\n");
+  };
 
   return (
     <Switch>
@@ -103,6 +125,98 @@ export default function OnboardingView(props: OnboardingViewProps) {
               onConfirm={props.onCreateWorkspace}
               onPickFolder={props.onPickWorkspaceFolder}
             />
+
+            <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4 space-y-3">
+              <div class="flex items-center justify-between gap-3">
+                <div class="text-sm font-medium text-white">OpenCode engine</div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={props.onRefreshEngineDoctor}
+                  disabled={props.busy}
+                >
+                  Refresh
+                </Button>
+              </div>
+              <div class="text-xs text-zinc-500">{engineStatusLabel()}</div>
+
+              <Show when={!engineDoctorAvailable()}>
+                <div class="text-xs text-zinc-500">
+                  {props.isWindows
+                    ? "Install OpenCode for Windows, then restart OpenWork. Ensure opencode.exe is on PATH."
+                    : "Install OpenCode to enable host mode (no terminal required)."}
+                </div>
+                <div class="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={props.onInstallEngine}
+                    disabled={props.busy || props.isWindows}
+                    title={props.isWindows ? "OpenCode install is manual on Windows." : ""}
+                  >
+                    Install OpenCode
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={props.onRefreshEngineDoctor}
+                    disabled={props.busy}
+                  >
+                    Re-check
+                  </Button>
+                </div>
+              </Show>
+
+              <Show when={engineDoctorAvailable()}>
+                <div class="text-xs text-zinc-600">
+                  OpenCode is ready to start in host mode.
+                </div>
+              </Show>
+
+              <Show
+                when={
+                  props.engineDoctorResolvedPath ||
+                  props.engineDoctorVersion ||
+                  props.engineDoctorNotes.length ||
+                  serveHelpOutput()
+                }
+              >
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 space-y-3 text-xs text-zinc-400">
+                  <Show when={props.engineDoctorResolvedPath}>
+                    <div>
+                      <div class="text-[11px] text-zinc-500">Resolved path</div>
+                      <div class="font-mono break-all">{props.engineDoctorResolvedPath}</div>
+                    </div>
+                  </Show>
+                  <Show when={props.engineDoctorVersion}>
+                    <div>
+                      <div class="text-[11px] text-zinc-500">Version</div>
+                      <div class="font-mono">{props.engineDoctorVersion}</div>
+                    </div>
+                  </Show>
+                  <Show when={props.engineDoctorNotes.length}>
+                    <div>
+                      <div class="text-[11px] text-zinc-500">Search notes</div>
+                      <pre class="whitespace-pre-wrap break-words text-xs text-zinc-400">
+                        {props.engineDoctorNotes.join("\n")}
+                      </pre>
+                    </div>
+                  </Show>
+                  <Show when={serveHelpOutput()}>
+                    <div>
+                      <div class="text-[11px] text-zinc-500">serve --help output</div>
+                      <pre class="whitespace-pre-wrap break-words text-xs text-zinc-400">
+                        {serveHelpOutput()}
+                      </pre>
+                    </div>
+                  </Show>
+                </div>
+              </Show>
+
+              <Show when={props.engineInstallLogs}>
+                <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400 whitespace-pre-wrap max-h-40 overflow-auto font-mono">
+                  {props.engineInstallLogs}
+                </div>
+              </Show>
+            </div>
 
             <Button onClick={props.onStartHost} disabled={props.busy || !props.activeWorkspacePath.trim()} class="w-full py-3 text-base">
               Start OpenWork

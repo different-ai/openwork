@@ -1,9 +1,10 @@
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 
 use crate::engine::doctor::{opencode_serve_help, opencode_version, resolve_engine_path};
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{build_engine_command, find_free_port, spawn_engine};
 use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
+use crate::utils::truncate_output;
 
 #[tauri::command]
 pub fn engine_info(manager: State<EngineManager>) -> EngineInfo {
@@ -19,10 +20,11 @@ pub fn engine_stop(manager: State<EngineManager>) -> EngineInfo {
 }
 
 #[tauri::command]
-pub fn engine_doctor(prefer_sidecar: Option<bool>) -> EngineDoctorResult {
+pub fn engine_doctor(app: AppHandle, prefer_sidecar: Option<bool>) -> EngineDoctorResult {
   let prefer_sidecar = prefer_sidecar.unwrap_or(false);
+  let resource_dir = app.path().resource_dir().ok();
 
-  let (resolved, in_path, notes) = resolve_engine_path(prefer_sidecar);
+  let (resolved, in_path, notes) = resolve_engine_path(prefer_sidecar, resource_dir.as_deref());
 
   let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
     match resolved.as_ref() {
@@ -90,6 +92,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
 
 #[tauri::command]
 pub fn engine_start(
+  app: AppHandle,
   manager: State<EngineManager>,
   project_dir: String,
   prefer_sidecar: Option<bool>,
@@ -105,7 +108,9 @@ pub fn engine_start(
   let mut state = manager.inner.lock().expect("engine mutex poisoned");
   EngineManager::stop_locked(&mut state);
 
-  let (program, _in_path, notes) = resolve_engine_path(prefer_sidecar.unwrap_or(false));
+  let resource_dir = app.path().resource_dir().ok();
+  let (program, _in_path, notes) =
+    resolve_engine_path(prefer_sidecar.unwrap_or(false), resource_dir.as_deref());
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(
@@ -119,23 +124,62 @@ pub fn engine_start(
   state.last_stdout = None;
   state.last_stderr = None;
 
-  std::thread::sleep(std::time::Duration::from_millis(200));
-  if let Ok(Some(status)) = child.try_wait() {
-    let mut stderr = String::new();
-    if let Some(mut stream) = child.stderr.take() {
-      use std::io::Read;
-      let mut buffer = Vec::new();
-      let _ = stream.read_to_end(&mut buffer);
-      stderr = String::from_utf8_lossy(&buffer).trim().to_string();
+  let warmup_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+  loop {
+    if let Ok(Some(status)) = child.try_wait() {
+      let mut stdout = String::new();
+      if let Some(mut stream) = child.stdout.take() {
+        use std::io::Read;
+        let mut buffer = Vec::new();
+        let _ = stream.read_to_end(&mut buffer);
+        stdout = String::from_utf8_lossy(&buffer).trim().to_string();
+      }
+
+      let mut stderr = String::new();
+      if let Some(mut stream) = child.stderr.take() {
+        use std::io::Read;
+        let mut buffer = Vec::new();
+        let _ = stream.read_to_end(&mut buffer);
+        stderr = String::from_utf8_lossy(&buffer).trim().to_string();
+      }
+
+      let stdout = if stdout.is_empty() {
+        None
+      } else {
+        Some(truncate_output(&stdout, 8000))
+      };
+      let stderr = if stderr.is_empty() {
+        None
+      } else {
+        Some(truncate_output(&stderr, 8000))
+      };
+
+      let mut parts = Vec::new();
+      if let Some(stdout) = stdout {
+        parts.push(format!("stdout:\n{stdout}"));
+      }
+      if let Some(stderr) = stderr {
+        parts.push(format!("stderr:\n{stderr}"));
+      }
+
+      let suffix = if parts.is_empty() {
+        String::new()
+      } else {
+        format!("\n\n{}", parts.join("\n\n"))
+      };
+
+      return Err(format!(
+        "OpenCode exited immediately with status {}.{}",
+        status.code().unwrap_or(-1),
+        suffix
+      ));
     }
 
-    let suffix = if stderr.is_empty() { String::new() } else { format!("\n{}", stderr) };
+    if std::time::Instant::now() >= warmup_deadline {
+      break;
+    }
 
-    return Err(format!(
-      "OpenCode exited immediately with status {}.{}",
-      status.code().unwrap_or(-1),
-      suffix
-    ));
+    std::thread::sleep(std::time::Duration::from_millis(150));
   }
 
   if let Some(stream) = child.stderr.take() {

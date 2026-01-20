@@ -109,7 +109,7 @@ export default function App() {
   const [tab, setTab] = createSignal<DashboardTab>("home");
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
-    "path"
+    isTauriRuntime() ? "sidecar" : "path"
   );
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
@@ -1570,9 +1570,12 @@ export default function App() {
     engineDoctorVersion: engineDoctorResult()?.version ?? null,
     engineDoctorResolvedPath: engineDoctorResult()?.resolvedPath ?? null,
     engineDoctorNotes: engineDoctorResult()?.notes ?? [],
+    engineDoctorServeHelpStdout: engineDoctorResult()?.serveHelpStdout ?? null,
+    engineDoctorServeHelpStderr: engineDoctorResult()?.serveHelpStderr ?? null,
     engineDoctorCheckedAt: engineDoctorCheckedAt(),
     engineInstallLogs: engineInstallLogs(),
     error: error(),
+    isWindows: isWindowsPlatform(),
     onBaseUrlChange: setBaseUrl,
     onClientDirectoryChange: setClientDirectory,
     onModeSelect: (nextMode: Mode) => {
