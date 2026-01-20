@@ -32,6 +32,9 @@ export default {
   "common.error": "Erro",
   "common.success": "Sucesso",
 
+  // Error messages
+  "error.cacheCorruptedHint": "O cache do OpenCode parece estar corrompido. Use Reparar cache em Configurações para reconstruí-lo.",
+
   // Dashboard tabs
   "tab.home": "Início",
   "tab.sessions": "Sessões",

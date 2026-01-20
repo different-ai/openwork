@@ -32,6 +32,9 @@ export default {
   "common.error": "خطأ",
   "common.success": "نجح",
 
+  // Error messages
+  "error.cacheCorruptedHint": "يبدو أن ذاكرة التخزين المؤقت لـ OpenCode تالفة. استخدم إصلاح ذاكرة التخزين المؤقت في الإعدادات لإعادة بنائها.",
+
   // Dashboard tabs
   "tab.home": "الرئيسية",
   "tab.sessions": "الجلسات",

@@ -32,6 +32,9 @@ export default {
   "common.error": "錯誤",
   "common.success": "成功",
 
+  // Error messages
+  "error.cacheCorruptedHint": "OpenCode 快取似乎已損壞。請在設定中使用修復快取來重建它。",
+
   // Dashboard tabs
   "tab.home": "首頁",
   "tab.sessions": "工作階段",

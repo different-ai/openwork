@@ -233,7 +233,10 @@ export function safeParseJson<T>(raw: string): T | null {
   }
 }
 
-export function addOpencodeCacheHint(message: string) {
+export function addOpencodeCacheHint(
+  message: string,
+  t?: (key: string, params?: Record<string, string | number>) => string
+) {
   const lower = message.toLowerCase();
   const cacheSignals = [
     ".cache/opencode",
@@ -244,7 +247,10 @@ export function addOpencodeCacheHint(message: string) {
   ];
 
   if (cacheSignals.some((signal) => lower.includes(signal)) && lower.includes("enoent")) {
-    return `${message}\n\nOpenCode cache looks corrupted. Use Repair cache in Settings to rebuild it.`;
+    const hint = t
+      ? t("error.cacheCorruptedHint")
+      : "OpenCode cache looks corrupted. Use Repair cache in Settings to rebuild it.";
+    return `${message}\n\n${hint}`;
   }
 
   return message;

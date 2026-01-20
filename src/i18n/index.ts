@@ -12,6 +12,12 @@ import pt from "./locales/pt";
 export type Locale = "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt";
 export type Language = Locale;
 
+// Helper function to validate if a string is a supported language
+export const isLanguage = (value: unknown): value is Locale => {
+  return typeof value === "string" &&
+    ["en", "zh", "ja", "ko", "es", "ar", "zh-tw", "zh-hk", "pt"].includes(value);
+};
+
 // Translation dictionaries
 const translations = {
   en,

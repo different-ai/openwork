@@ -32,6 +32,9 @@ export default {
   "common.error": "エラー",
   "common.success": "成功",
 
+  // Error messages
+  "error.cacheCorruptedHint": "OpenCode キャッシュが破損しているようです。設定で「キャッシュを修復」を使用して再構築してください。",
+
   // Dashboard tabs
   "tab.home": "ホーム",
   "tab.sessions": "セッション",

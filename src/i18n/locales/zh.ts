@@ -25,6 +25,9 @@ export default {
   "common.error": "错误",
   "common.success": "成功",
 
+  // Error messages
+  "error.cacheCorruptedHint": "OpenCode 缓存似乎已损坏。请在设置中使用修复缓存来重建它。",
+
   // Dashboard tabs
   "tab.home": "首页",
   "tab.sessions": "会话",

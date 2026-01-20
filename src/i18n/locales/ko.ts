@@ -26,6 +26,9 @@ export default {
   "common.error": "오류",
   "common.success": "성공",
 
+  // Error messages
+  "error.cacheCorruptedHint": "OpenCode 캐시가 손상된 것 같습니다. 설정에서 캐시 복구를 사용하여 재구축하세요.",
+
   // Dashboard tabs
   "tab.home": "홈",
   "tab.sessions": "세션",

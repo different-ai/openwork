@@ -84,7 +84,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./app/session";
 import { createExtensionsStore } from "./app/extensions";
 import { createWorkspaceStore } from "./app/workspace";
-import { createTranslations, setAppLocale } from "./i18n";
+import { createTranslations, setAppLocale, isLanguage } from "./i18n";
 import {
   updaterEnvironment,
   readOpencodeConfig,
@@ -267,7 +267,7 @@ export default function App() {
       );
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      setError(addOpencodeCacheHint(message));
+      setError(addOpencodeCacheHint(message, t));
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -1214,7 +1214,7 @@ export default function App() {
     } catch (e) {
       mark("error caught", e);
       const message = e instanceof Error ? e.message : "Unknown error";
-      setError(addOpencodeCacheHint(message));
+      setError(addOpencodeCacheHint(message, t));
     } finally {
       setCreatingSession(false);
       setBusy(false);
@@ -1301,7 +1301,7 @@ export default function App() {
 
         // Load language preference
         const storedLanguage = window.localStorage.getItem(LANGUAGE_PREF_KEY);
-        if (storedLanguage === "en" || storedLanguage === "zh" || storedLanguage === "ja" || storedLanguage === "ko" || storedLanguage === "es" || storedLanguage === "ar" || storedLanguage === "zh-tw" || storedLanguage === "zh-hk" || storedLanguage === "pt") {
+        if (isLanguage(storedLanguage)) {
           setLanguage(storedLanguage);
           setAppLocale(storedLanguage);
         }
