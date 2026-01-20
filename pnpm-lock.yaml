@@ -14,6 +14,9 @@ importers:
       '@radix-ui/colors':
         specifier: ^3.0.0
         version: 3.0.0
+      '@solid-primitives/event-bus':
+        specifier: ^1.1.2
+        version: 1.1.2(solid-js@1.9.10)
       '@solid-primitives/storage':
         specifier: ^4.3.3
         version: 4.3.3(solid-js@1.9.10)
@@ -447,6 +450,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@solid-primitives/event-bus@1.1.2':
+    resolution: {integrity: sha512-l+n10/51neGcMaP3ypYt21bXfoeWh8IaC8k7fYuY3ww2a8S1Zv2N2a7FF5Qn+waTu86l0V8/nRHjkyqVIZBYwA==}
+    peerDependencies:
+      solid-js: ^1.6.12
   '@solid-primitives/storage@4.3.3':
     resolution: {integrity: sha512-ACbNwMZ1s8VAvld6EUXkDkX/US3IhtlPLxg6+B2s9MwNUugwdd51I98LPEaHrdLpqPmyzqgoJe0TxEFlf3Dqrw==}
     peerDependencies:
@@ -1281,6 +1288,10 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.55.1':
     optional: true
 
+  '@solid-primitives/event-bus@1.1.2(solid-js@1.9.10)':
+    dependencies:
+      '@solid-primitives/utils': 6.3.2(solid-js@1.9.10)
+      solid-js: 1.9.10
   '@solid-primitives/storage@4.3.3(solid-js@1.9.10)':
     dependencies:
       '@solid-primitives/utils': 6.3.2(solid-js@1.9.10)
