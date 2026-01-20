@@ -29,6 +29,7 @@ import {
   DEFAULT_MODEL,
   DEMO_MODE_PREF_KEY,
   DEMO_SEQUENCE_PREF_KEY,
+  LANGUAGE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
@@ -41,6 +42,7 @@ import type {
   CuratedPackage,
   DashboardTab,
   DemoSequence,
+  Language,
   MessageWithParts,
   Mode,
   ModelOption,
@@ -82,6 +84,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./app/session";
 import { createExtensionsStore } from "./app/extensions";
 import { createWorkspaceStore } from "./app/workspace";
+import { createTranslations, setAppLocale } from "./i18n";
 import {
   updaterEnvironment,
   readOpencodeConfig,
@@ -126,6 +129,10 @@ export default function App() {
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [developerMode, setDeveloperMode] = createSignal(false);
+
+  const [language, setLanguage] = createSignal<Language>("en");
+
+  const t = createTranslations();
 
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
@@ -1292,6 +1299,13 @@ export default function App() {
           setDemoSequence(storedDemoSequence);
         }
 
+        // Load language preference
+        const storedLanguage = window.localStorage.getItem(LANGUAGE_PREF_KEY);
+        if (storedLanguage === "en" || storedLanguage === "zh" || storedLanguage === "ja" || storedLanguage === "ko" || storedLanguage === "es" || storedLanguage === "ar" || storedLanguage === "zh-tw" || storedLanguage === "zh-hk" || storedLanguage === "pt") {
+          setLanguage(storedLanguage);
+          setAppLocale(storedLanguage);
+        }
+
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "openwork.updateAutoCheck"
         );
@@ -1504,6 +1518,16 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(DEMO_SEQUENCE_PREF_KEY, demoSequence());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(LANGUAGE_PREF_KEY, language());
+      setAppLocale(language());
     } catch {
       // ignore
     }
@@ -1761,6 +1785,8 @@ export default function App() {
     advancedAuthCommand: advancedAuthCommand(),
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
     reloadMcpEngine: () => reloadEngineInstance(),
+    language: language(),
+    setLanguage,
   });
 
   return (

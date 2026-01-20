@@ -3,6 +3,7 @@ import type { CuratedPackage, ModelRef, SuggestedPlugin } from "./types";
 export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const THINKING_PREF_KEY = "openwork.showThinking";
 export const VARIANT_PREF_KEY = "openwork.modelVariant";
+export const LANGUAGE_PREF_KEY = "openwork.language";
 export const DEMO_MODE_PREF_KEY = "openwork.demoMode";
 export const DEMO_SEQUENCE_PREF_KEY = "openwork.demoSequence";
 

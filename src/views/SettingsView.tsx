@@ -59,6 +59,8 @@ export type SettingsViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
+  language: "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt";
+  setLanguage: (value: "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt") => void;
 };
 
 export default function SettingsView(props: SettingsViewProps) {
@@ -151,6 +153,48 @@ export default function SettingsView(props: SettingsViewProps) {
         </Show>
       </div>
 
+      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+        <div>
+          <div class="text-sm font-medium text-white">Language</div>
+          <div class="text-xs text-zinc-500">Choose your preferred language.</div>
+        </div>
+
+        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
+          <div class="min-w-0">
+            <div class="text-sm text-zinc-200">
+              {props.language === "en" ? "English" :
+               props.language === "zh" ? "中文" :
+               props.language === "ja" ? "日本語" :
+               props.language === "ko" ? "한국어" :
+               props.language === "es" ? "Español" :
+               props.language === "ar" ? "العربية" :
+               props.language === "zh-tw" ? "繁體中文（台灣）" :
+               props.language === "zh-hk" ? "繁體中文（香港）" :
+               props.language === "pt" ? "Português" :
+               "English"}
+            </div>
+            <div class="text-xs text-zinc-600">
+              {props.language === "zh" ? "简体中文" :
+               props.language === "zh-tw" ? "Taiwan Traditional Chinese" :
+               props.language === "zh-hk" ? "Hong Kong Traditional Chinese" :
+               "English (US)"}
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            class="text-xs h-8 py-0 px-3 shrink-0"
+            onClick={() => {
+              const languages: Array<"en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt"> = ["en", "zh", "ja", "ko", "es", "ar", "zh-tw", "zh-hk", "pt"];
+              const currentIndex = languages.indexOf(props.language);
+              const nextIndex = (currentIndex + 1) % languages.length;
+              props.setLanguage(languages[nextIndex]);
+            }}
+            disabled={props.busy}
+          >
+            Change
+          </Button>
+        </div>
+      </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div>

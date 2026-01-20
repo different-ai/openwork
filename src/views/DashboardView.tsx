@@ -30,6 +30,7 @@ import {
   Settings,
   Server,
 } from "lucide-solid";
+import { createTranslations } from "../i18n";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -196,25 +197,28 @@ export type DashboardViewProps = {
   setDemoSequence: (
     value: "cold-open" | "scheduler" | "summaries" | "groceries"
   ) => void;
+  language: "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt";
+  setLanguage: (value: "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt") => void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
+  const t = createTranslations();
   const title = createMemo(() => {
     switch (props.tab) {
       case "sessions":
-        return "Sessions";
+        return t("tab.sessions");
       case "templates":
-        return "Templates";
+        return t("tab.templates");
       case "skills":
-        return "Skills";
+        return t("tab.skills");
       case "plugins":
-        return "Plugins";
+        return t("tab.plugins");
       case "mcp":
-        return "MCPs";
+        return t("tab.mcp");
       case "settings":
-        return "Settings";
+        return t("tab.settings");
       default:
-        return "Dashboard";
+        return t("tab.home");
     }
   });
 
@@ -782,6 +786,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleDemoMode={props.toggleDemoMode}
                   demoSequence={props.demoSequence}
                   setDemoSequence={props.setDemoSequence}
+                  language={props.language}
+                  setLanguage={props.setLanguage}
                 />
 
             </Match>

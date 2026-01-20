@@ -67,6 +67,8 @@ export type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugi
 
 export type DemoSequence = "cold-open" | "scheduler" | "summaries" | "groceries";
 
+export type Language = "en" | "zh" | "ja" | "ko" | "es" | "ar" | "zh-tw" | "zh-hk" | "pt";
+
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type ResetOpenworkMode = "onboarding" | "all";
