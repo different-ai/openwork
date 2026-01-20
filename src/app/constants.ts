@@ -8,7 +8,7 @@ export const DEMO_SEQUENCE_PREF_KEY = "openwork.demoSequence";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
-  modelID: "gpt-5-nano",
+  modelID: "big-pickle",
 };
 
 export const CURATED_PACKAGES: CuratedPackage[] = [
