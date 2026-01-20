@@ -4,7 +4,7 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import { ArrowLeftRight, CheckCircle2, Circle } from "lucide-solid";
 
 import Button from "../components/Button";
-import CreateWorkspaceModal from "../components/CreateWorkspaceModal";
+import OnboardingWorkspaceSelector from "../components/OnboardingWorkspaceSelector";
 import OpenWorkLogo from "../components/OpenWorkLogo";
 import TextInput from "../components/TextInput";
 
@@ -98,14 +98,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </p>
             </div>
 
-            <CreateWorkspaceModal
-              open
-              inline
-              showClose={false}
-              title={props.workspaces.length <= 1 ? "Create your first workspace" : "Create a workspace"}
-              subtitle="Pick a folder and choose a preset."
-              confirmLabel={props.workspaces.length <= 1 ? "Create workspace" : "Add workspace"}
-              onClose={() => undefined}
+            <OnboardingWorkspaceSelector
+              defaultPath="~/OpenWork/Workspace"
               onConfirm={props.onCreateWorkspace}
               onPickFolder={props.onPickWorkspaceFolder}
             />

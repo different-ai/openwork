@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "./utils";
 import { unwrap } from "../lib/opencode";
+import { homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
@@ -268,6 +269,12 @@ export function createWorkspaceStore(options: {
       return;
     }
 
+    const resolvedFolder = await resolveWorkspacePath(folder);
+    if (!resolvedFolder) {
+      options.setError("Choose a folder to create the workspace.");
+      return;
+    }
+
     setCreateWorkspaceOpen(false);
 
     try {
@@ -276,8 +283,8 @@ export function createWorkspaceStore(options: {
       options.setBusyStartedAt(Date.now());
       options.setError(null);
 
-      const name = folder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
-      const ws = await workspaceCreate({ folderPath: folder, name, preset });
+      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
+      const ws = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(ws.workspaces);
       syncActiveWorkspaceId(ws.activeId);
 
@@ -291,6 +298,7 @@ export function createWorkspaceStore(options: {
       setWorkspacePickerOpen(false);
       options.setView("dashboard");
       options.setTab("home");
+      markOnboardingComplete();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
@@ -378,6 +386,7 @@ export function createWorkspaceStore(options: {
         if (!ok) return false;
       }
 
+      markOnboardingComplete();
       return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -461,6 +470,40 @@ export function createWorkspaceStore(options: {
     return out;
   }
 
+  async function resolveWorkspacePath(input: string) {
+    const trimmed = input.trim();
+    if (!trimmed) return "";
+    if (!isTauriRuntime()) return trimmed;
+
+    if (trimmed === "~") {
+      try {
+        return (await homeDir()).replace(/[\\/]+$/, "");
+      } catch {
+        return trimmed;
+      }
+    }
+
+    if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+      try {
+        const home = (await homeDir()).replace(/[\\/]+$/, "");
+        return `${home}${trimmed.slice(1)}`;
+      } catch {
+        return trimmed;
+      }
+    }
+
+    return trimmed;
+  }
+
+  function markOnboardingComplete() {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("openwork.onboardingComplete", "1");
+    } catch {
+      // ignore
+    }
+  }
+
   async function persistAuthorizedRoots(nextRoots: string[]) {
     if (!isTauriRuntime()) return;
     const root = activeWorkspacePath().trim();
@@ -542,6 +585,13 @@ export function createWorkspaceStore(options: {
         return null;
       }
     })();
+    const onboardingComplete = (() => {
+      try {
+        return window.localStorage.getItem("openwork.onboardingComplete") === "1";
+      } catch {
+        return false;
+      }
+    })();
 
     if (isTauriRuntime()) {
       try {
@@ -584,6 +634,27 @@ export function createWorkspaceStore(options: {
     const info = engine();
     if (info?.baseUrl) {
       options.setBaseUrl(info.baseUrl);
+    }
+
+    if (!modePref && onboardingComplete && activeWorkspacePath().trim()) {
+      options.setMode("host");
+
+      if (info?.running && info.baseUrl) {
+        options.setOnboardingStep("connecting");
+        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
+        if (!ok) {
+          options.setMode(null);
+          options.setOnboardingStep("mode");
+        }
+        return;
+      }
+
+      options.setOnboardingStep("connecting");
+      const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
+      if (!ok) {
+        options.setOnboardingStep("host");
+      }
+      return;
     }
 
     if (!modePref) return;
