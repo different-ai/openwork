@@ -1,8 +1,11 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
 
-import "./app/index.css";
+import { bootstrapTheme } from "./app/theme";
+import "./styles.css";
 import App from "./app/app";
+
+bootstrapTheme();
 
 const root = document.getElementById("root");
 

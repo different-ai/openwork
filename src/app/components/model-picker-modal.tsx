@@ -21,15 +21,15 @@ export type ModelPickerModalProps = {
 export default function ModelPickerModal(props: ModelPickerModalProps) {
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-        <div class="bg-zinc-900 border border-zinc-800/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
+        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
           <div class="p-6 flex flex-col min-h-0">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-white">
+                <h3 class="text-lg font-semibold text-gray-12">
                   {props.target === "default" ? "Default model" : "Model"}
                 </h3>
-                <p class="text-sm text-zinc-400 mt-1">
+                <p class="text-sm text-gray-11 mt-1">
                   Choose from your configured providers. This selection {props.target === "default"
                     ? "will be used for new sessions"
                     : "applies to your next message"}.
@@ -42,17 +42,17 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
             <div class="mt-5">
               <div class="relative">
-                <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-10" />
                 <input
                   type="text"
                   value={props.query}
                   onInput={(e) => props.setQuery(e.currentTarget.value)}
                   placeholder="Search models…"
-                  class="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600"
+                  class="w-full bg-gray-1/40 border border-gray-6 rounded-xl py-2.5 pl-9 pr-3 text-sm text-gray-12 placeholder-gray-6 focus:outline-none focus:ring-1 focus:ring-gray-8 focus:border-gray-8"
                 />
               </div>
               <Show when={props.query.trim()}>
-                <div class="mt-2 text-xs text-zinc-500">
+                <div class="mt-2 text-xs text-gray-10">
                   Showing {props.filteredOptions.length} of {props.options.length}
                 </div>
               </Show>
@@ -71,8 +71,8 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                     <button
                       class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
                         active()
-                          ? "border-white/20 bg-white/5"
-                          : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                          ? "border-gray-6/20 bg-gray-12/5"
+                          : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
                       }`}
                       onClick={() =>
                         props.onSelect({
@@ -83,23 +83,23 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                     >
                       <div class="flex items-start justify-between gap-3">
                         <div class="min-w-0">
-                          <div class="text-sm font-medium text-zinc-100 flex items-center gap-2">
+                          <div class="text-sm font-medium text-gray-12 flex items-center gap-2">
                             <span class="truncate">{opt.title}</span>
                           </div>
                           <Show when={opt.description}>
-                            <div class="text-xs text-zinc-500 mt-1 truncate">{opt.description}</div>
+                            <div class="text-xs text-gray-10 mt-1 truncate">{opt.description}</div>
                           </Show>
                           <Show when={opt.footer}>
-                            <div class="text-[11px] text-zinc-600 mt-2">{opt.footer}</div>
+                            <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
                           </Show>
-                          <div class="text-[11px] text-zinc-600 font-mono mt-2">
+                          <div class="text-[11px] text-gray-7 font-mono mt-2">
                             {opt.providerID}/{opt.modelID}
                           </div>
                         </div>
 
-                        <div class="pt-0.5 text-zinc-500">
+                        <div class="pt-0.5 text-gray-10">
                           <Show when={active()} fallback={<Circle size={14} />}>
-                            <CheckCircle2 size={14} class="text-emerald-400" />
+                            <CheckCircle2 size={14} class="text-green-11" />
                           </Show>
                         </div>
                       </div>

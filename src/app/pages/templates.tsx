@@ -37,7 +37,7 @@ export default function TemplatesView(props: TemplatesViewProps) {
   return (
     <section class="space-y-4">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Templates</h3>
+        <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">Templates</h3>
         <Button variant="secondary" onClick={openNewTemplate} disabled={props.busy}>
           <Plus size={16} />
           New
@@ -47,7 +47,7 @@ export default function TemplatesView(props: TemplatesViewProps) {
       <Show
         when={props.workspaceTemplates.length || props.globalTemplates.length}
         fallback={
-          <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
+          <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-6 text-sm text-gray-10">
             Starter templates will appear here. Create one or save from a session.
           </div>
         }
@@ -55,17 +55,17 @@ export default function TemplatesView(props: TemplatesViewProps) {
         <div class="space-y-6">
           <Show when={props.workspaceTemplates.length}>
             <div class="space-y-3">
-              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+              <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">Workspace</div>
               <For each={props.workspaceTemplates}>
                 {(t) => (
-                  <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                  <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 flex items-start justify-between gap-4">
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
-                        <FileText size={16} class="text-indigo-400" />
-                        <div class="font-medium text-white truncate">{t.title}</div>
+                        <FileText size={16} class="text-indigo-11" />
+                        <div class="font-medium text-gray-12 truncate">{t.title}</div>
                       </div>
-                      <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
-                      <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                      <div class="mt-1 text-sm text-gray-10">{t.description || ""}</div>
+                      <div class="mt-2 text-xs text-gray-7 font-mono">{formatRelativeTime(t.createdAt)}</div>
                     </div>
                     <div class="shrink-0 flex gap-2">
                       <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>
@@ -84,17 +84,17 @@ export default function TemplatesView(props: TemplatesViewProps) {
 
           <Show when={props.globalTemplates.length}>
             <div class="space-y-3">
-              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Global</div>
+              <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">Global</div>
               <For each={props.globalTemplates}>
                 {(t) => (
-                  <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+                  <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 flex items-start justify-between gap-4">
                     <div class="min-w-0">
                       <div class="flex items-center gap-2">
-                        <FileText size={16} class="text-emerald-400" />
-                        <div class="font-medium text-white truncate">{t.title}</div>
+                        <FileText size={16} class="text-green-11" />
+                        <div class="font-medium text-gray-12 truncate">{t.title}</div>
                       </div>
-                      <div class="mt-1 text-sm text-zinc-500">{t.description || ""}</div>
-                      <div class="mt-2 text-xs text-zinc-600 font-mono">{formatRelativeTime(t.createdAt)}</div>
+                      <div class="mt-1 text-sm text-gray-10">{t.description || ""}</div>
+                      <div class="mt-2 text-xs text-gray-7 font-mono">{formatRelativeTime(t.createdAt)}</div>
                     </div>
                     <div class="shrink-0 flex gap-2">
                       <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>

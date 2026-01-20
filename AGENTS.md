@@ -33,6 +33,7 @@ OpenWork is an open-source alternative to Claude Cowork.
 
 - Write new PRDs under `prd/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
 - Use MOTIVATION-PHILOSOPHY.md to understand the "why" of OpenWork so you can guide your decisions.
+- For Radix color scale usage and step guidance, see `design-agents.md`.
 
 ## Local Structure
 

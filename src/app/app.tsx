@@ -75,6 +75,13 @@ import {
   writeModePreference,
   addOpencodeCacheHint,
 } from "./utils";
+import {
+  applyThemeMode,
+  getInitialThemeMode,
+  persistThemeMode,
+  subscribeToSystemTheme,
+  type ThemeMode,
+} from "./theme";
 import { createDemoState } from "./demo-state";
 import { createTemplateState } from "./template-state";
 import { createSystemState } from "./system-state";
@@ -107,6 +114,7 @@ export default function App() {
     createSignal<OnboardingStep>("mode");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [tab, setTab] = createSignal<DashboardTab>("home");
+  const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
     isTauriRuntime() ? "sidecar" : "path"
@@ -1141,6 +1149,21 @@ export default function App() {
       setRememberModeChoice(true);
     }
 
+    const unsubscribeTheme = subscribeToSystemTheme((isDark) => {
+      if (themeMode() !== "system") return;
+      applyThemeMode(isDark ? "dark" : "light");
+    });
+
+    onCleanup(() => {
+      unsubscribeTheme();
+    });
+
+    createEffect(() => {
+      const next = themeMode();
+      persistThemeMode(next);
+      applyThemeMode(next);
+    });
+
     if (typeof window !== "undefined") {
       try {
         const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
@@ -1530,6 +1553,8 @@ export default function App() {
         workspaceStore.engineDoctorResult()?.notes?.join("\n") ?? "";
       workspaceStore.setEngineInstallLogs(notes || null);
     },
+    themeMode: themeMode(),
+    setThemeMode,
   });
 
   const dashboardProps = () => ({
@@ -1649,6 +1674,8 @@ export default function App() {
     openResetModal,
     resetModalBusy: resetModalBusy(),
     onResetStartupPreference: () => clearModePreference(),
+    themeMode: themeMode(),
+    setThemeMode,
     pendingPermissions: pendingPermissions(),
     events: events(),
     safeStringify,
