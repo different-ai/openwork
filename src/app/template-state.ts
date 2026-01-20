@@ -1,10 +1,10 @@
 import { createMemo, createSignal, type Accessor } from "solid-js";
 
 import type { Client, ModelRef, WorkspaceTemplate } from "./types";
-import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./templates";
+import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./utils/templates";
 import { addOpencodeCacheHint, isTauriRuntime, parseTemplateFrontmatter, safeParseJson, safeStringify } from "./utils";
-import { workspaceTemplateDelete, workspaceTemplateWrite } from "../lib/tauri";
-import { unwrap } from "../lib/opencode";
+import { workspaceTemplateDelete, workspaceTemplateWrite } from "./lib/tauri";
+import { unwrap } from "./lib/opencode";
 
 export function createTemplateState(options: {
   client: Accessor<Client | null>;

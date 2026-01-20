@@ -1,5 +1,5 @@
 import type { Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
-import type { ArtifactItem, MessageGroup, MessageInfo, MessageWithParts, ModelRef, OpencodeEvent, PlaceholderAssistantMessage } from "./types";
+import type { ArtifactItem, MessageGroup, MessageInfo, MessageWithParts, ModelRef, OpencodeEvent, PlaceholderAssistantMessage } from "../types";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;

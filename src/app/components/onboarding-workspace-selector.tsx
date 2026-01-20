@@ -2,7 +2,7 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 
 import { CheckCircle2, FolderPlus, Loader2 } from "lucide-solid";
 
-import Button from "./Button";
+import Button from "./button";
 
 export default function OnboardingWorkspaceSelector(props: {
   defaultPath: string;

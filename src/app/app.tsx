@@ -14,15 +14,15 @@ import type { Provider } from "@opencode-ai/sdk/v2/client";
 import { getVersion } from "@tauri-apps/api/app";
 import { parse } from "jsonc-parser";
 
-import ModelPickerModal from "./components/ModelPickerModal";
-import ResetModal from "./components/ResetModal";
-import TemplateModal from "./components/TemplateModal";
-import WorkspacePicker from "./components/WorkspacePicker";
-import CreateWorkspaceModal from "./components/CreateWorkspaceModal";
-import McpAuthModal from "./components/McpAuthModal";
-import OnboardingView from "./views/OnboardingView";
-import DashboardView from "./views/DashboardView";
-import SessionView from "./views/SessionView";
+import ModelPickerModal from "./components/model-picker-modal";
+import ResetModal from "./components/reset-modal";
+import TemplateModal from "./components/template-modal";
+import WorkspacePicker from "./components/workspace-picker";
+import CreateWorkspaceModal from "./components/create-workspace-modal";
+import McpAuthModal from "./components/mcp-auth-modal";
+import OnboardingView from "./pages/onboarding";
+import DashboardView from "./pages/dashboard";
+import SessionView from "./pages/session";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   CURATED_PACKAGES,
@@ -34,8 +34,8 @@ import {
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
-} from "./app/constants";
-import { parseMcpServersFromContent } from "./app/mcp";
+} from "./constants";
+import { parseMcpServersFromContent } from "./mcp";
 import type {
   Client,
   CuratedPackage,
@@ -57,7 +57,7 @@ import type {
   McpStatusMap,
   WorkspaceTemplate,
   UpdateHandle,
-} from "./app/types";
+} from "./types";
 import {
   clearModePreference,
   formatBytes,
@@ -74,14 +74,14 @@ import {
   summarizeStep,
   writeModePreference,
   addOpencodeCacheHint,
-} from "./app/utils";
-import { createDemoState } from "./app/demo-state";
-import { createTemplateState } from "./app/template-state";
-import { createSystemState } from "./app/system-state";
+} from "./utils";
+import { createDemoState } from "./demo-state";
+import { createTemplateState } from "./template-state";
+import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { createSessionStore } from "./app/session";
-import { createExtensionsStore } from "./app/extensions";
-import { createWorkspaceStore } from "./app/workspace";
+import { createSessionStore } from "./context/session";
+import { createExtensionsStore } from "./context/extensions";
+import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
   readOpencodeConfig,

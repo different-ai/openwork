@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-import type { UpdateHandle } from "./types";
+import type { UpdateHandle } from "../types";
 import type { UpdaterEnvironment } from "../lib/tauri";
 
 export type UpdateStatus =

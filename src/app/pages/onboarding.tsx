@@ -1,12 +1,12 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
-import type { Mode, OnboardingStep } from "../app/types";
+import type { Mode, OnboardingStep } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { ArrowLeftRight, CheckCircle2, Circle, ChevronRight } from "lucide-solid";
 
-import Button from "../components/Button";
-import OnboardingWorkspaceSelector from "../components/OnboardingWorkspaceSelector";
-import OpenWorkLogo from "../components/OpenWorkLogo";
-import TextInput from "../components/TextInput";
+import Button from "../components/button";
+import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
+import OpenWorkLogo from "../components/openwork-logo";
+import TextInput from "../components/text-input";
 
 export type OnboardingViewProps = {
   mode: Mode | null;

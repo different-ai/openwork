@@ -2,8 +2,8 @@ import { Show } from "solid-js";
 
 import { X } from "lucide-solid";
 
-import Button from "./Button";
-import TextInput from "./TextInput";
+import Button from "./button";
+import TextInput from "./text-input";
 
 export type TemplateModalProps = {
   open: boolean;

@@ -7,19 +7,19 @@ import type {
   PluginScope,
   SkillCard,
   WorkspaceTemplate,
-} from "../app/types";
-import type { McpDirectoryInfo } from "../app/constants";
+} from "../types";
+import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { formatRelativeTime } from "../app/utils";
+import { formatRelativeTime } from "../utils";
 
-import Button from "../components/Button";
-import OpenWorkLogo from "../components/OpenWorkLogo";
-import WorkspaceChip from "../components/WorkspaceChip";
-import McpView from "./McpView";
-import PluginsView from "./PluginsView";
-import SettingsView from "./SettingsView";
-import SkillsView from "./SkillsView";
-import TemplatesView from "./TemplatesView";
+import Button from "../components/button";
+import OpenWorkLogo from "../components/openwork-logo";
+import WorkspaceChip from "../components/workspace-chip";
+import McpView from "./mcp";
+import PluginsView from "./plugins";
+import SettingsView from "./settings";
+import SkillsView from "./skills";
+import TemplatesView from "./templates";
 import {
   Command,
   Cpu,

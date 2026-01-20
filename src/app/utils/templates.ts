@@ -1,4 +1,4 @@
-import type { WorkspaceTemplate } from "./types";
+import type { WorkspaceTemplate } from "../types";
 
 type TemplateDraft = {
   title: string;

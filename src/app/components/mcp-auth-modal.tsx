@@ -1,8 +1,8 @@
 import { Show, createEffect, createSignal, on } from "solid-js";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
-import Button from "./Button";
-import type { Client } from "../app/types";
-import type { McpDirectoryInfo } from "../app/constants";
+import Button from "./button";
+import type { Client } from "../types";
+import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
 
 export type McpAuthModalProps = {
