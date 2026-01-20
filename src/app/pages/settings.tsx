@@ -27,6 +27,8 @@ export type SettingsViewProps = {
   toggleDemoMode: () => void;
   demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
   setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
+  themeMode: "light" | "dark" | "system";
+  setThemeMode: (value: "light" | "dark" | "system") => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
   updateStatus: {
@@ -201,6 +203,44 @@ export default function SettingsView(props: SettingsViewProps) {
           >
             Edit
           </Button>
+        </div>
+      </div>
+
+      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
+        <div>
+          <div class="text-sm font-medium text-white">Appearance</div>
+          <div class="text-xs text-zinc-500">Match the system or force light/dark mode.</div>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <Button
+            variant={props.themeMode === "system" ? "secondary" : "outline"}
+            class="text-xs h-8 py-0 px-3"
+            onClick={() => props.setThemeMode("system")}
+            disabled={props.busy}
+          >
+            System
+          </Button>
+          <Button
+            variant={props.themeMode === "light" ? "secondary" : "outline"}
+            class="text-xs h-8 py-0 px-3"
+            onClick={() => props.setThemeMode("light")}
+            disabled={props.busy}
+          >
+            Light
+          </Button>
+          <Button
+            variant={props.themeMode === "dark" ? "secondary" : "outline"}
+            class="text-xs h-8 py-0 px-3"
+            onClick={() => props.setThemeMode("dark")}
+            disabled={props.busy}
+          >
+            Dark
+          </Button>
+        </div>
+
+        <div class="text-xs text-zinc-600">
+          System mode follows your OS preference automatically.
         </div>
       </div>
 

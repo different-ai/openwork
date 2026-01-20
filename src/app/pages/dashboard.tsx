@@ -142,6 +142,8 @@ export type DashboardViewProps = {
   editModelVariant: () => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
+  themeMode: "light" | "dark" | "system";
+  setThemeMode: (value: "light" | "dark" | "system") => void;
   updateStatus: {
     state: string;
     lastCheckedAt?: number | null;
@@ -733,6 +735,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   editModelVariant={props.editModelVariant}
                   updateAutoCheck={props.updateAutoCheck}
                   toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
+                  themeMode={props.themeMode}
+                  setThemeMode={props.setThemeMode}
                   updateStatus={props.updateStatus}
                   updateEnv={props.updateEnv}
                   appVersion={props.appVersion}
