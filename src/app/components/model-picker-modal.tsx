@@ -90,9 +90,9 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                             <div class="text-xs text-gray-10 mt-1 truncate">{opt.description}</div>
                           </Show>
                           <Show when={opt.footer}>
-                            <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
+                            <div class="text-[11px] text-gray-9 mt-2">{opt.footer}</div>
                           </Show>
-                          <div class="text-[11px] text-gray-7 font-mono mt-2">
+                          <div class="text-[11px] text-gray-9 font-mono mt-2">
                             {opt.providerID}/{opt.modelID}
                           </div>
                         </div>

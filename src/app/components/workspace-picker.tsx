@@ -63,7 +63,7 @@ export default function WorkspacePicker(props: {
                 >
                   <div class="flex-1 text-left min-w-0">
                     <div class="font-medium truncate">{ws.name}</div>
-                    <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
+                    <div class="text-[10px] text-gray-9 font-mono truncate max-w-[200px]">
                       {ws.path}
                     </div>
                   </div>

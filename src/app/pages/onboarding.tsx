@@ -113,7 +113,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-lg w-full z-10 space-y-6">
             <div class="text-center space-y-2">
               <div class="w-12 h-12 bg-gray-12 rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-gray-12/10 mb-6">
-                <OpenWorkLogo size={18} class="text-gray-12" />
+                <OpenWorkLogo size={18} class="text-gray-1" />
               </div>
               <h2 class="text-2xl font-bold tracking-tight">
                 {props.workspaces.length <= 1 ? "Create your first workspace" : "Create a workspace"}

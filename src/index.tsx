@@ -2,7 +2,7 @@
 import { render } from "solid-js/web";
 
 import { bootstrapTheme } from "./app/theme";
-import "./styles.css";
+import "./app/index.css";
 import App from "./app/app";
 
 bootstrapTheme();

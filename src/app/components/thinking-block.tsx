@@ -32,7 +32,7 @@ export default function ThinkingBlock(props: {
           <span class="truncate">{activeStep()?.text ?? "Working…"}</span>
           <ChevronRight
             size={12}
-            class={`text-gray-7 transition-transform ${expanded() ? "rotate-90" : ""}`}
+            class={`text-gray-9 transition-transform ${expanded() ? "rotate-90" : ""}`}
           />
         </button>
 
@@ -50,7 +50,7 @@ export default function ThinkingBlock(props: {
                           fallback={
                             <Show
                               when={step.status === "error"}
-                              fallback={<Circle size={12} class="text-gray-8" />}
+                              fallback={<Circle size={12} class="text-gray-9" />}
                             >
                               <X size={12} class="text-red-11" />
                             </Show>

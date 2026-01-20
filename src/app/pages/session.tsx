@@ -298,7 +298,7 @@ export default function SessionView(props: SessionViewProps) {
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
             <div class="px-4 pt-4">
               <button
-                class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-12 text-gray-12 text-sm font-medium shadow-lg shadow-gray-12/10"
+                class="w-full flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-12 text-gray-1 text-sm font-medium shadow-lg shadow-gray-12/10"
                 onClick={props.createSessionAndOpen}
                 disabled={props.newTaskDisabled}
               >
@@ -381,7 +381,7 @@ export default function SessionView(props: SessionViewProps) {
                         <div
                           class={`w-full ${
                             isUser()
-                              ? "max-w-[520px] rounded-2xl bg-gray-12 text-gray-12 shadow-xl shadow-gray-12/5 p-4 text-sm leading-relaxed"
+                              ? "max-w-[520px] rounded-2xl bg-gray-3 text-gray-2 shadow-sm border-gray-5 border-2 shadow-gray-12/5 p-4 text-sm leading-relaxed rounded-br-none"
                               : "max-w-[68ch] text-[15px] leading-7 text-gray-12"
                           }`}
                         >
@@ -400,7 +400,7 @@ export default function SessionView(props: SessionViewProps) {
                                   <div class={isUser() ? "mt-2" : "mt-3 border-t border-gray-6/60 pt-3"}>
                                     <button
                                       class={`flex items-center gap-2 text-xs ${
-                                        isUser() ? "text-gray-10 hover:text-gray-11" : "text-gray-10 hover:text-gray-12"
+                                        isUser() ? "text-gray-1 hover:text-gray-3" : "text-gray-10 hover:text-gray-12"
                                       }`}
                                       onClick={() => toggleSteps((group as any).id)}
                                     >

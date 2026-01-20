@@ -49,7 +49,7 @@ export default function OnboardingWorkspaceSelector(props: {
   };
 
   return (
-    <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div class="bg-zinc-10 border border-zinc-11 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
       <div class="p-6 flex-1 overflow-y-auto space-y-8">
         <div class="space-y-4">
           <div class="flex items-center gap-3 text-sm font-medium text-white">
@@ -65,7 +65,7 @@ export default function OnboardingWorkspaceSelector(props: {
               <div class="flex items-center gap-3 text-zinc-200">
                 <FolderPlus size={20} class="text-zinc-400" />
                 <input
-                  class="flex-1 min-w-0 bg-transparent text-sm font-medium text-zinc-100 placeholder-zinc-600 focus:outline-none"
+                  class="flex-1 min-w-0 bg-transparent text-sm font-medium text-zinc-100 placeholder-zinc-400 focus:outline-none"
                   value={selectedFolder()}
                   onInput={(e) => setSelectedFolder(e.currentTarget.value)}
                   placeholder={props.defaultPath}
@@ -74,7 +74,7 @@ export default function OnboardingWorkspaceSelector(props: {
                   type="button"
                   onClick={handlePickFolder}
                   disabled={pickingFolder()}
-                  class="text-xs text-zinc-500 hover:text-zinc-200 transition-colors"
+                  class="text-xs text-zinc-300 hover:text-zinc-200 transition-colors"
                 >
                   <Show
                     when={pickingFolder()}
@@ -104,12 +104,12 @@ export default function OnboardingWorkspaceSelector(props: {
                     if (!canContinue()) return;
                     setPreset(opt.id);
                   }}
-                  class={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    preset() === opt.id
-                      ? "bg-indigo-500/10 border-indigo-500/50"
-                      : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
-                  } ${!canContinue() ? "pointer-events-none" : ""}`.trim()}
-                >
+                      class={`p-4 rounded-xl border cursor-pointer transition-all ${
+                        preset() === opt.id
+                          ? "bg-indigo-500/10 border-indigo-500/50"
+                          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                      } ${!canContinue() ? "pointer-events-none" : ""}`.trim()}
+                    >
                   <div class="flex justify-between items-start">
                     <div>
                       <div
@@ -119,7 +119,7 @@ export default function OnboardingWorkspaceSelector(props: {
                       >
                         {opt.name}
                       </div>
-                      <div class="text-xs text-zinc-500 mt-1">{opt.desc}</div>
+                        <div class="text-xs text-zinc-400 mt-1">{opt.desc}</div>
                     </div>
                     <Show when={preset() === opt.id}>
                       <CheckCircle2 size={16} class="text-indigo-500" />

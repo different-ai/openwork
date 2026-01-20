@@ -1,4 +1,4 @@
-import { radixColors, tailwindSafelist } from './src/styles/tailwind-colors';
+import { radixColors, tailwindSafelist } from './app/styles/tailwind-colors';
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
 darkMode: 'class',

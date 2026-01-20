@@ -296,7 +296,7 @@ export default function DashboardView(props: DashboardViewProps) {
         <div>
           <div class="flex items-center gap-3 mb-10 px-2">
             <div class="w-8 h-8 bg-gray-12 rounded-lg flex items-center justify-center">
-              <OpenWorkLogo size={18} class="text-gray-12" />
+              <OpenWorkLogo size={18} class="text-gray-1" />
             </div>
             <span class="font-bold text-lg tracking-tight">OpenWork</span>
           </div>
