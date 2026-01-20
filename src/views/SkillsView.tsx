@@ -5,6 +5,7 @@ import { isTauriRuntime } from "../app/utils";
 
 import Button from "../components/Button";
 import { Package, Upload } from "lucide-solid";
+import { currentLocale, t } from "../i18n";
 
 export type SkillsViewProps = {
   busy: boolean;
@@ -23,26 +24,29 @@ export type SkillsViewProps = {
 };
 
 export default function SkillsView(props: SkillsViewProps) {
+  // Translation helper that uses current language from i18n
+  const translate = (key: string) => t(key, currentLocale());
+
   return (
     <section class="space-y-6">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Skills</h3>
+        <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">{translate("skills.title")}</h3>
         <Button variant="secondary" onClick={() => props.refreshSkills({ force: true })} disabled={props.busy}>
-          Refresh
+          {translate("skills.refresh")}
         </Button>
       </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-medium text-white">Install from OpenPackage</div>
+          <div class="text-sm font-medium text-white">{translate("skills.install_from_openpackage")}</div>
           <Show when={props.mode !== "host"}>
-            <div class="text-xs text-zinc-500">Host mode only</div>
+            <div class="text-xs text-zinc-500">{translate("skills.host_mode_only")}</div>
           </Show>
         </div>
         <div class="flex flex-col md:flex-row gap-2">
           <input
             class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
-            placeholder="github:anthropics/claude-code"
+            placeholder={translate("skills.source_placeholder")}
             value={props.openPackageSource}
             onInput={(e) => props.setOpenPackageSource(e.currentTarget.value)}
           />
@@ -52,22 +56,22 @@ export default function SkillsView(props: SkillsViewProps) {
             class="md:w-auto"
           >
             <Package size={16} />
-            Install
+            {translate("skills.install")}
           </Button>
         </div>
         <div class="text-xs text-zinc-500">
-          Installs OpenPackage packages into the current workspace. Skills should land in `.opencode/skill`.
+          {translate("skills.install_hint")}
         </div>
 
         <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-          <div class="text-sm font-medium text-white">Import local skill</div>
+          <div class="text-sm font-medium text-white">{translate("skills.import_local")}</div>
           <Button
             variant="secondary"
             onClick={props.importLocalSkill}
             disabled={props.busy || props.mode !== "host" || !isTauriRuntime()}
           >
             <Upload size={16} />
-            Import
+            {translate("skills.import")}
           </Button>
         </div>
 
@@ -80,35 +84,35 @@ export default function SkillsView(props: SkillsViewProps) {
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div class="flex items-center justify-between">
-          <div class="text-sm font-medium text-white">Curated packages</div>
+          <div class="text-sm font-medium text-white">{translate("skills.curated_packages")}</div>
           <div class="text-xs text-zinc-500">{props.filteredPackages.length}</div>
         </div>
 
         <div class="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 p-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <div class="text-sm font-medium text-emerald-100">Notion CRM Enrichment Skills</div>
-              <div class="text-xs text-emerald-200/80 mt-1">Add enrichment workflows for contacts, pipelines, and follow-ups.</div>
+              <div class="text-sm font-medium text-emerald-100">{translate("skills.notion_crm_title")}</div>
+              <div class="text-xs text-emerald-200/80 mt-1">{translate("skills.notion_crm_description")}</div>
             </div>
             <Button
               variant="secondary"
               onClick={() => props.useCuratedPackage({
-                name: "Notion CRM Enrichment Skills",
+                name: translate("skills.notion_crm_title"),
                 source: "https://github.com/different-ai/notion-crm-enrichment/tree/main/.claude/skills",
-                description: "Enrich Notion CRM data with ready-made skills.",
+                description: translate("skills.notion_crm_card_description"),
                 tags: ["notion", "crm", "skills"],
                 installable: false,
               })}
               disabled={props.busy}
             >
-              View
+              {translate("skills.view")}
             </Button>
           </div>
         </div>
 
         <input
           class="w-full bg-zinc-900/50 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600 transition-all"
-          placeholder="Search packages or lists (e.g. claude, registry, community)"
+          placeholder={translate("skills.search_placeholder")}
           value={props.packageSearch}
           onInput={(e) => props.setPackageSearch(e.currentTarget.value)}
         />
@@ -117,7 +121,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={props.filteredPackages.length}
           fallback={
             <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-xs text-zinc-400">
-              No curated matches. Try a different search.
+              {translate("skills.no_matches")}
             </div>
           }
         >
@@ -145,7 +149,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       onClick={() => props.useCuratedPackage(pkg)}
                       disabled={props.busy || (pkg.installable && (props.mode !== "host" || !isTauriRuntime()))}
                     >
-                      {pkg.installable ? "Install" : "View"}
+                      {pkg.installable ? translate("skills.install_package") : translate("skills.view")}
                     </Button>
                   </div>
                 </div>
@@ -155,13 +159,13 @@ export default function SkillsView(props: SkillsViewProps) {
         </Show>
 
         <div class="text-xs text-zinc-500">
-          Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.
+          {translate("skills.registry_notice")}
         </div>
       </div>
 
       <div>
         <div class="flex items-center justify-between mb-3">
-          <div class="text-sm font-medium text-white">Installed skills</div>
+          <div class="text-sm font-medium text-white">{translate("skills.installed")}</div>
           <div class="text-xs text-zinc-500">{props.skills.length}</div>
         </div>
 
@@ -169,7 +173,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={props.skills.length}
           fallback={
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-              No skills detected yet.
+              {translate("skills.no_skills")}
             </div>
           }
         >

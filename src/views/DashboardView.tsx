@@ -11,6 +11,7 @@ import type {
 import type { McpDirectoryInfo } from "../app/constants";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime } from "../app/utils";
+import { t, type Language } from "../i18n";
 
 import Button from "../components/Button";
 import OpenWorkLogo from "../components/OpenWorkLogo";
@@ -196,25 +197,49 @@ export type DashboardViewProps = {
   setDemoSequence: (
     value: "cold-open" | "scheduler" | "summaries" | "groceries"
   ) => void;
+  language: Language;
+  setLanguage: (lang: Language) => void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
+  // Translation helper that uses current language from props
+  const translate = (key: string) => t(key, props.language);
+
+  // Helper function to translate session status
+  const translateStatus = (status: string | null | undefined) => {
+    if (!status) return translate("dashboard.idle");
+    switch (status) {
+      case "idle":
+        return translate("dashboard.idle");
+      case "running":
+        return translate("dashboard.running");
+      case "completed":
+        return translate("dashboard.completed");
+      case "failed":
+        return translate("dashboard.failed");
+      case "retry":
+        return translate("dashboard.retry");
+      default:
+        return status;
+    }
+  };
+
   const title = createMemo(() => {
     switch (props.tab) {
       case "sessions":
-        return "Sessions";
+        return translate("dashboard.sessions");
       case "templates":
-        return "Templates";
+        return translate("dashboard.templates");
       case "skills":
-        return "Skills";
+        return translate("dashboard.skills");
       case "plugins":
-        return "Plugins";
+        return translate("dashboard.plugins");
       case "mcp":
-        return "MCPs";
+        return translate("dashboard.mcps");
       case "settings":
-        return "Settings";
+        return translate("dashboard.settings");
       default:
-        return "Dashboard";
+        return translate("dashboard.title");
     }
   });
 
@@ -312,32 +337,32 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
 
           <nav class="space-y-1">
-            {navItem("home", "Dashboard", <Command size={18} />)}
-            {navItem("sessions", "Sessions", <Play size={18} />)}
-            {navItem("templates", "Templates", <FileText size={18} />)}
-            {navItem("skills", "Skills", <Package size={18} />)}
-            {navItem("plugins", "Plugins", <Cpu size={18} />)}
+            {navItem("home", translate("dashboard.home"), <Command size={18} />)}
+            {navItem("sessions", translate("dashboard.sessions"), <Play size={18} />)}
+            {navItem("templates", translate("dashboard.templates"), <FileText size={18} />)}
+            {navItem("skills", translate("dashboard.skills"), <Package size={18} />)}
+            {navItem("plugins", translate("dashboard.plugins"), <Cpu size={18} />)}
             {navItem(
               "mcp",
               <span class="inline-flex items-center gap-2">
-                MCPs
+                {translate("dashboard.mcps")}
                 <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-200">
-                  Alpha
+                  {translate("common.alpha")}
                 </span>
               </span>,
               <Server size={18} />,
             )}
-            {navItem("settings", "Settings", <Settings size={18} />)}
+            {navItem("settings", translate("dashboard.settings"), <Settings size={18} />)}
           </nav>
         </div>
 
         <div class="space-y-4">
           <div class="px-3 py-3 rounded-xl bg-zinc-900/50 border border-zinc-800">
             <div class="flex items-center gap-2 text-xs font-medium text-zinc-400 mb-2">
-              Connection
+              {translate("dashboard.connection")}
               <Show when={props.developerMode}>
                 <span class="text-zinc-600">
-                  {props.mode === "host" ? "Local Engine" : "Client Mode"}
+                  {props.mode === "host" ? translate("dashboard.local_engine") : translate("dashboard.client_mode")}
                 </span>
               </Show>
             </div>
@@ -354,7 +379,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   props.clientConnected ? "text-emerald-500" : "text-zinc-500"
                 }`}
               >
-                {props.clientConnected ? "Connected" : "Not connected"}
+                {props.clientConnected ? translate("dashboard.connected") : translate("dashboard.not_connected")}
               </span>
             </div>
             <Show when={props.developerMode}>
@@ -371,7 +396,7 @@ export default function DashboardView(props: DashboardViewProps) {
               disabled={props.busy}
               class="w-full"
             >
-              Stop & Disconnect
+              {translate("dashboard.stop_disconnect")}
             </Button>
           </Show>
 
@@ -382,7 +407,7 @@ export default function DashboardView(props: DashboardViewProps) {
               disabled={props.busy}
               class="w-full"
             >
-              Disconnect
+              {translate("dashboard.disconnect")}
             </Button>
           </Show>
         </div>
@@ -417,10 +442,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   props.createSessionAndOpen();
                 }}
                 disabled={props.newTaskDisabled}
-                title={props.newTaskDisabled ? props.busyHint ?? "Busy" : ""}
+                title={props.newTaskDisabled ? props.busyHint ?? translate("dashboard.busy") : ""}
               >
                 <Play size={16} />
-                New Task
+                {translate("dashboard.new_task")}
               </Button>
             </Show>
 
@@ -442,7 +467,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 disabled={props.busy}
               >
                 <Plus size={16} />
-                New
+                {translate("dashboard.new")}
               </Button>
             </Show>
           </div>
@@ -456,23 +481,22 @@ export default function DashboardView(props: DashboardViewProps) {
                   <div class="bg-zinc-950 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
                     <div class="space-y-2 text-center md:text-left">
                       <h2 class="text-2xl font-semibold text-white">
-                        What should we do today?
+                        {translate("dashboard.hero_title")}
                       </h2>
                       <p class="text-zinc-400">
-                        Describe an outcome. OpenWork will run it and keep an
-                        audit trail.
+                        {translate("dashboard.hero_description")}
                       </p>
                     </div>
                     <Button
                       onClick={props.createSessionAndOpen}
                       disabled={props.newTaskDisabled}
                       title={
-                        props.newTaskDisabled ? props.busyHint ?? "Busy" : ""
+                        props.newTaskDisabled ? props.busyHint ?? translate("dashboard.busy") : ""
                       }
                       class="w-full md:w-auto py-3 px-6 text-base"
                     >
                       <Play size={18} />
-                      New Task
+                      {translate("dashboard.new_task")}
                     </Button>
                   </div>
                 </div>
@@ -481,13 +505,13 @@ export default function DashboardView(props: DashboardViewProps) {
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">
-                    Quick Start Templates
+                    {translate("dashboard.quick_start_templates")}
                   </h3>
                   <button
                     class="text-sm text-zinc-500 hover:text-white"
                     onClick={() => props.setTab("templates")}
                   >
-                    View all
+                    {translate("dashboard.view_all")}
                   </button>
                 </div>
 
@@ -495,7 +519,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   when={quickTemplates().length}
                   fallback={
                     <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-                      No templates yet. Starter templates will appear here.
+                      {translate("dashboard.no_templates")}
                     </div>
                   }
                 >
@@ -511,7 +535,7 @@ export default function DashboardView(props: DashboardViewProps) {
                           </div>
                           <h4 class="font-medium text-white mb-1">{t.title}</h4>
                           <p class="text-sm text-zinc-500">
-                            {t.description || "Run a saved workflow"}
+                            {t.description || translate("dashboard.run_workflow")}
                           </p>
                         </button>
                       )}
@@ -522,7 +546,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
               <section>
                 <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
-                  Recent Sessions
+                  {translate("dashboard.recent_sessions")}
                 </h3>
 
                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
@@ -560,7 +584,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                 }
                               >
                                 <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
-                                  this workspace
+                                  {translate("dashboard.this_workspace")}
                                 </span>
                               </Show>
                             </div>
@@ -569,7 +593,7 @@ export default function DashboardView(props: DashboardViewProps) {
                         <div class="flex items-center gap-4">
                           <span class="text-xs px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-400 flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-current" />
-                            {props.sessionStatusById[s.id] ?? "idle"}
+                            {translateStatus(props.sessionStatusById[s.id])}
                           </span>
                         </div>
                       </button>
@@ -578,7 +602,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
                   <Show when={!props.sessions.length}>
                     <div class="p-6 text-sm text-zinc-500">
-                      No sessions yet.
+                      {translate("dashboard.no_sessions")}
                     </div>
                   </Show>
                 </div>
@@ -588,7 +612,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "sessions"}>
               <section>
                 <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">
-                  Recent Sessions
+                  {translate("dashboard.recent_sessions")}
                 </h3>
 
                 <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl overflow-hidden">
@@ -626,7 +650,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                 }
                               >
                                 <span class="text-[11px] px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-500">
-                                  this workspace
+                                  {translate("dashboard.this_workspace")}
                                 </span>
                               </Show>
                             </div>
@@ -635,7 +659,7 @@ export default function DashboardView(props: DashboardViewProps) {
                         <div class="flex items-center gap-4">
                           <span class="text-xs px-2 py-0.5 rounded-full border border-zinc-700/60 text-zinc-400 flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-current" />
-                            {props.sessionStatusById[s.id] ?? "idle"}
+                            {translateStatus(props.sessionStatusById[s.id])}
                           </span>
                         </div>
                       </button>
@@ -644,7 +668,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
                   <Show when={!props.sessions.length}>
                     <div class="p-6 text-sm text-zinc-500">
-                      No sessions yet.
+                      {translate("dashboard.no_sessions")}
                     </div>
                   </Show>
                 </div>
@@ -782,6 +806,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleDemoMode={props.toggleDemoMode}
                   demoSequence={props.demoSequence}
                   setDemoSequence={props.setDemoSequence}
+                  language={props.language}
+                  setLanguage={props.setLanguage}
                 />
 
             </Match>
@@ -800,7 +826,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? translate("dashboard.repairing_cache") : translate("dashboard.repair_cache")}
                   </Button>
                   <Button
                     variant="outline"
@@ -808,7 +834,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Retry
+                    {translate("dashboard.retry")}
                   </Button>
                   <Show when={props.cacheRepairResult}>
                     <span class="text-xs text-red-200/80">
@@ -830,7 +856,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("home")}
             >
               <Command size={18} />
-              Home
+              {translate("dashboard.home")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -839,7 +865,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("sessions")}
             >
               <Play size={18} />
-              Runs
+              {translate("dashboard.runs")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -848,7 +874,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("templates")}
             >
               <FileText size={18} />
-              Templates
+              {translate("dashboard.templates")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -857,7 +883,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("skills")}
             >
               <Package size={18} />
-              Skills
+              {translate("dashboard.skills")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -866,7 +892,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("plugins")}
             >
               <Cpu size={18} />
-              Plugins
+              {translate("dashboard.plugins")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -875,7 +901,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("mcp")}
             >
               <Server size={18} />
-              MCPs
+              {translate("dashboard.mcps")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -884,7 +910,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("settings")}
             >
               <Settings size={18} />
-              Settings
+              {translate("dashboard.settings")}
             </button>
           </div>
         </nav>

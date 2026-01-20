@@ -1,6 +1,7 @@
 import { For, Show, createMemo } from "solid-js";
 
 import { Check, Plus, Search } from "lucide-solid";
+import { t, currentLocale } from "../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
 
@@ -14,6 +15,8 @@ export default function WorkspacePicker(props: {
   onSelect: (workspaceId: string) => void;
   onCreateNew: () => void;
 }) {
+  const translate = (key: string) => t(key, currentLocale());
+
   const filtered = createMemo(() => {
     const query = props.search.trim().toLowerCase();
     if (!query) return props.workspaces;
@@ -35,7 +38,7 @@ export default function WorkspacePicker(props: {
               <Search size={14} class="absolute left-3 top-2.5 text-zinc-500" />
               <input
                 type="text"
-                placeholder="Find workspace..."
+                placeholder={translate("dashboard.find_workspace")}
                 value={props.search}
                 onInput={(e) => props.onSearch(e.currentTarget.value)}
                 class="w-full bg-zinc-950 border border-zinc-800 rounded-lg py-1.5 pl-9 pr-3 text-sm text-white focus:outline-none focus:border-zinc-700"
@@ -45,7 +48,7 @@ export default function WorkspacePicker(props: {
 
           <div class="max-h-64 overflow-y-auto p-1">
             <div class="px-3 py-2 text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">
-              Workspaces
+              {translate("dashboard.workspaces")}
             </div>
 
             <For each={filtered()}>
@@ -84,7 +87,7 @@ export default function WorkspacePicker(props: {
               class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
             >
               <Plus size={16} />
-              New Workspace...
+              {translate("dashboard.new_workspace")}
             </button>
           </div>
         </div>

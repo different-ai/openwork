@@ -66,6 +66,9 @@ import {
   formatRelativeTime,
   groupMessageParts,
   isTauriRuntime,
+} from "./app/utils";
+import { currentLocale, setLocale, t, type Language } from "./i18n";
+import {
   isWindowsPlatform,
   lastUserModelFromMessages,
   parseModelRef,
@@ -894,7 +897,7 @@ export default function App() {
 
     if (mode() !== "host") {
       console.log("[connectMcp] ❌ mode is not host, mode=", mode());
-      setMcpStatus("MCP connections are only available in Host mode.");
+      setMcpStatus(t("mcp.host_mode_only", currentLocale()));
       return;
     }
 
@@ -902,13 +905,13 @@ export default function App() {
     console.log("[connectMcp] projectDir:", projectDir);
     if (!projectDir) {
       console.log("[connectMcp] ❌ no projectDir");
-      setMcpStatus("Pick a workspace folder first.");
+      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
       return;
     }
 
     if (!isTauriRuntime()) {
       console.log("[connectMcp] ❌ not Tauri runtime");
-      setMcpStatus("MCP connections require the desktop app.");
+      setMcpStatus(t("mcp.desktop_required", currentLocale()));
       return;
     }
     console.log("[connectMcp] ✓ is Tauri runtime");
@@ -917,7 +920,7 @@ export default function App() {
     console.log("[connectMcp] activeClient:", activeClient ? "exists" : "null");
     if (!activeClient) {
       console.log("[connectMcp] ❌ no activeClient");
-      setMcpStatus("Connect to the OpenCode server first.");
+      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
       return;
     }
 
@@ -1005,7 +1008,7 @@ export default function App() {
         setMcpAuthEntry(entry);
         setMcpAuthModalOpen(true);
       } else {
-        setMcpStatus("Reload required to activate the new MCP.");
+        setMcpStatus(t("mcp.reload_required_after_add", currentLocale()));
       }
 
       markReloadRequired("mcp");
@@ -1015,7 +1018,7 @@ export default function App() {
       console.log("[connectMcp] ✓ done");
     } catch (e) {
       console.error("[connectMcp] ❌ error:", e);
-      setMcpStatus(e instanceof Error ? e.message : "Failed to connect MCP.");
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
     } finally {
       setMcpConnectingName(null);
       console.log("[connectMcp] finally block, connecting name cleared");
@@ -1027,19 +1030,19 @@ export default function App() {
     const url = advancedMcpUrl().trim();
 
     if (!name || !url) {
-      setMcpStatus("Enter a server name and URL.");
+      setMcpStatus(t("mcp.enter_name_and_url", currentLocale()));
       return;
     }
 
     const projectDir = workspaceProjectDir().trim();
     if (!projectDir) {
-      setMcpStatus("Pick a workspace folder first.");
+      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
       return;
     }
 
     const activeClient = client();
     if (!activeClient) {
-      setMcpStatus("Connect to the OpenCode server first.");
+      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
       return;
     }
 
@@ -1072,22 +1075,22 @@ export default function App() {
 
       setMcpStatuses(status as McpStatusMap);
       markReloadRequired("mcp");
-      setMcpStatus("Reload required to activate the new MCP.");
+      setMcpStatus(t("mcp.reload_required_after_add", currentLocale()));
       setAdvancedMcpName("");
       setAdvancedMcpUrl("");
       await refreshMcpServers();
     } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : "Failed to add MCP.");
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.add_failed", currentLocale()));
     }
   }
 
   async function testAdvancedMcp() {
     if (!advancedMcpUrl().trim()) {
-      setMcpStatus("Enter a server URL first.");
+      setMcpStatus(t("mcp.enter_url_first", currentLocale()));
       return;
     }
 
-    setMcpStatus("Use opencode mcp debug <name> to validate connection.");
+    setMcpStatus(t("mcp.use_debug_command", currentLocale()));
   }
 
   async function createSessionAndOpen() {
@@ -1477,6 +1480,8 @@ export default function App() {
     }
   });
 
+
+
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -1764,6 +1769,8 @@ export default function App() {
     advancedAuthCommand: advancedAuthCommand(),
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
     reloadMcpEngine: () => reloadEngineInstance(),
+    language: currentLocale(),
+    setLanguage: setLocale,
   });
 
   return (
@@ -1866,6 +1873,7 @@ export default function App() {
           resetModalText().trim().toUpperCase() === "RESET"
         }
         hasActiveRuns={anyActiveRuns()}
+        language={currentLocale()}
         onClose={() => setResetModalOpen(false)}
         onConfirm={confirmReset}
         onTextChange={setResetModalText}
@@ -1876,6 +1884,7 @@ export default function App() {
         client={client()}
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
+        language={currentLocale()}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
@@ -1884,7 +1893,7 @@ export default function App() {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
           markReloadRequired("mcp");
-          setMcpStatus("OAuth completed. Reload the engine to activate the MCP.");
+          setMcpStatus(t("mcp.auth.oauth_completed_reload", currentLocale()));
         }}
         onReloadEngine={() => reloadEngineInstance()}
       />

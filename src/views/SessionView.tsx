@@ -29,6 +29,7 @@ import Button from "../components/Button";
 import PartView from "../components/PartView";
 import WorkspaceChip from "../components/WorkspaceChip";
 import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
+import { currentLocale, t } from "../i18n";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -84,6 +85,9 @@ export type SessionViewProps = {
 };
 
 export default function SessionView(props: SessionViewProps) {
+  // Translation helper that uses current language from i18n
+  const translate = (key: string) => t(key, currentLocale());
+
   let messagesEndEl: HTMLDivElement | undefined;
 
   createEffect(() => {
@@ -141,9 +145,9 @@ export default function SessionView(props: SessionViewProps) {
     props.setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
   };
 
-  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
+  const artifactActionLabel = () => (isWindowsPlatform() ? translate("session.open") : translate("session.reveal"));
 
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
+  const artifactActionToast = () => (isWindowsPlatform() ? translate("session.opened_toast") : translate("session.revealed_toast"));
 
   const resolveArtifactPath = (artifact: ArtifactItem) => {
     const rawPath = artifact.path?.trim();
@@ -164,12 +168,12 @@ export default function SessionView(props: SessionViewProps) {
   const handleOpenArtifact = async (artifact: ArtifactItem) => {
     const resolvedPath = resolveArtifactPath(artifact);
     if (!resolvedPath) {
-      setArtifactToast("Artifact path missing.");
+      setArtifactToast(translate("session.artifact_path_missing"));
       return;
     }
 
     if (!isTauriRuntime()) {
-      setArtifactToast("Open is only available in the desktop app.");
+      setArtifactToast(translate("session.desktop_only"));
       return;
     }
 
@@ -182,16 +186,16 @@ export default function SessionView(props: SessionViewProps) {
       }
       setArtifactToast(artifactActionToast());
     } catch (error) {
-      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
+      setArtifactToast(error instanceof Error ? error.message : translate("session.open_failed"));
     }
   };
 
   const modelLabelParts = createMemo(() => {
-    const label = props.selectedSessionModelLabel || "Model";
+    const label = props.selectedSessionModelLabel || translate("session.model");
     const [provider, model] = label.split(" · ");
     return {
       provider: provider?.trim() || label,
-      model: model?.trim() || "Ready",
+      model: model?.trim() || translate("session.ready"),
     };
   });
 
@@ -201,7 +205,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const modelUnavailableDetail = createMemo(() => {
     if (props.selectedSessionModelLabel) return null;
-    return "Connect a provider to customize this.";
+    return translate("session.connect_provider");
   });
 
   const isAssistantMessage = (msg: MessageWithParts) => (msg.info as any).role === "assistant";
@@ -243,14 +247,14 @@ export default function SessionView(props: SessionViewProps) {
       fallback={
         <div class="min-h-screen flex items-center justify-center bg-zinc-950 text-white p-6">
           <div class="text-center space-y-4">
-            <div class="text-lg font-medium">No session selected</div>
+            <div class="text-lg font-medium">{translate("session.no_selected")}</div>
             <Button
               onClick={() => {
                 props.setView("dashboard");
                 props.setTab("sessions");
               }}
             >
-              Back to dashboard
+              {translate("session.back_to_dashboard")}
             </Button>
           </div>
         </div>
@@ -303,12 +307,12 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.newTaskDisabled}
               >
                 <Plus size={16} />
-                New task
+                {translate("session.new_task")}
               </button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-4 py-4">
-              <div class="text-xs text-zinc-500 uppercase tracking-wide mb-3">Recents</div>
+              <div class="text-xs text-zinc-500 uppercase tracking-wide mb-3">{translate("session.recents")}</div>
               <div class="space-y-2">
                 <For each={props.sessions.slice(0, 8)}>
                   {(session) => (
@@ -332,7 +336,7 @@ export default function SessionView(props: SessionViewProps) {
                 </For>
               </div>
               <div class="mt-6 text-xs text-zinc-500">
-                These tasks run locally and aren't synced across devices.
+                {translate("session.recents_notice")}
               </div>
             </div>
           </aside>
@@ -344,9 +348,9 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="w-16 h-16 bg-zinc-900 rounded-3xl mx-auto flex items-center justify-center border border-zinc-800">
                     <Zap class="text-zinc-600" />
                   </div>
-                  <h3 class="text-xl font-medium">Ready to work</h3>
+                  <h3 class="text-xl font-medium">{translate("session.ready_to_work")}</h3>
                   <p class="text-zinc-500 text-sm max-w-xs mx-auto">
-                    Describe a task. I'll show progress and ask for permissions when needed.
+                    {translate("session.ready_description")}
                   </p>
                 </div>
               </Show>
@@ -405,7 +409,7 @@ export default function SessionView(props: SessionViewProps) {
                                       onClick={() => toggleSteps((group as any).id)}
                                     >
                                       <span>
-                                        {props.expandedStepIds.has((group as any).id) ? "Hide steps" : "View steps"}
+                                        {props.expandedStepIds.has((group as any).id) ? translate("session.hide_steps") : translate("session.view_steps")}
                                       </span>
                                       <ChevronDown
                                         size={14}
@@ -477,7 +481,7 @@ export default function SessionView(props: SessionViewProps) {
                       </div>
                       <div>
                         <div class="text-sm text-zinc-100">{artifact.name}</div>
-                        <div class="text-xs text-zinc-500">Document</div>
+                        <div class="text-xs text-zinc-500">{translate("session.document")}</div>
                       </div>
                     </div>
                     <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
@@ -505,7 +509,7 @@ export default function SessionView(props: SessionViewProps) {
                     class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                     onClick={() => toggleSidebar("progress")}
                   >
-                    <span>Progress</span>
+                    <span>{translate("session.progress")}</span>
                     <ChevronDown
                       size={16}
                       class={`transition-transform ${props.expandedSidebarSections.progress ? "rotate-180" : ""}`.trim()}
@@ -528,7 +532,7 @@ export default function SessionView(props: SessionViewProps) {
                           )}
                         </For>
                       </div>
-                      <div class="mt-2 text-xs text-zinc-500">Steps will show as the task unfolds.</div>
+                      <div class="mt-2 text-xs text-zinc-500">{translate("session.steps_notice")}</div>
                     </div>
                   </Show>
                 </div>
@@ -539,7 +543,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                   onClick={() => toggleSidebar("artifacts")}
                 >
-                  <span>Artifacts</span>
+                  <span>{translate("session.artifacts")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.artifacts ? "rotate-180" : ""}`.trim()}
@@ -549,7 +553,7 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="px-4 pb-4 pt-1 space-y-3">
                     <Show
                       when={props.artifacts.length}
-                      fallback={<div class="text-xs text-zinc-600">No artifacts yet.</div>}
+                      fallback={<div class="text-xs text-zinc-600">{translate("session.no_artifacts")}</div>}
                     >
                       <For each={props.artifacts}>
                         {(artifact) => (
@@ -573,7 +577,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                   onClick={() => toggleSidebar("context")}
                 >
-                  <span>Context</span>
+                  <span>{translate("session.context")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.context ? "rotate-180" : ""}`.trim()}
@@ -584,14 +588,14 @@ export default function SessionView(props: SessionViewProps) {
                     <Show when={props.activePlugins.length || props.activePluginStatus}>
                       <div>
                         <div class="flex items-center justify-between text-xs text-zinc-500">
-                          <span>Active plugins</span>
+                          <span>{translate("session.active_plugins")}</span>
                           <span>{props.activePlugins.length}</span>
                         </div>
                         <div class="mt-2 space-y-2">
                           <Show
                             when={props.activePlugins.length}
                             fallback={
-                              <div class="text-xs text-zinc-600">{props.activePluginStatus ?? "No plugins loaded."}</div>
+                              <div class="text-xs text-zinc-600">{props.activePluginStatus ?? translate("session.no_plugins")}</div>
                             }
                           >
                             <For each={props.activePlugins}>
@@ -609,7 +613,7 @@ export default function SessionView(props: SessionViewProps) {
 
                     <div>
                       <div class="flex items-center justify-between text-xs text-zinc-500">
-                        <span>Selected folders</span>
+                        <span>{translate("session.selected_folders")}</span>
                         <span>{props.authorizedDirs.length}</span>
                       </div>
                       <div class="mt-2 space-y-2">
@@ -625,11 +629,11 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
 
                     <div>
-                      <div class="text-xs text-zinc-500">Working files</div>
+                      <div class="text-xs text-zinc-500">{translate("session.working_files")}</div>
                       <div class="mt-2 space-y-2">
                         <Show
                           when={props.workingFiles.length}
-                          fallback={<div class="text-xs text-zinc-600">None yet.</div>}
+                          fallback={<div class="text-xs text-zinc-600">{translate("session.none_yet")}</div>}
                         >
                           <For each={props.workingFiles}>
                             {(file) => (
@@ -659,7 +663,7 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.busy}
               >
                 <Zap size={10} class="text-zinc-600 group-hover:text-amber-400 transition-colors" />
-                <span>{isModelUnknown() ? "Standard" : modelLabelParts().model}</span>
+                <span>{isModelUnknown() ? translate("session.standard") : modelLabelParts().model}</span>
               </button>
 
               <div class="p-2 pt-6 pb-3 px-4">
@@ -669,8 +673,8 @@ export default function SessionView(props: SessionViewProps) {
                     class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-left text-sm text-emerald-100 transition-colors hover:bg-emerald-500/15"
                     onClick={() => props.onTryNotionPrompt()}
                   >
-                    <span>Try it now: set up my CRM in Notion</span>
-                    <span class="text-xs text-emerald-200 font-medium">Insert prompt</span>
+                    <span>{translate("session.try_notion_prompt")}</span>
+                    <span class="text-xs text-emerald-200 font-medium">{translate("session.insert_prompt")}</span>
                   </button>
                 </Show>
 
@@ -685,7 +689,7 @@ export default function SessionView(props: SessionViewProps) {
                         props.sendPromptAsync().catch(() => undefined);
                       }
                     }}
-                    placeholder="Ask OpenWork..."
+                    placeholder={translate("session.placeholder")}
                     class="flex-1 bg-transparent border-none p-0 text-zinc-100 placeholder-zinc-500 focus:ring-0 text-[15px] leading-relaxed"
                   />
 
@@ -693,7 +697,7 @@ export default function SessionView(props: SessionViewProps) {
                     disabled={!props.prompt.trim() || props.busy}
                     onClick={() => props.sendPromptAsync().catch(() => undefined)}
                     class="p-1.5 bg-white text-black rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 ml-2"
-                    title="Run"
+                    title={translate("session.run")}
                   >
                     <ArrowRight size={18} />
                   </button>
@@ -712,16 +716,16 @@ export default function SessionView(props: SessionViewProps) {
                     <Shield size={24} />
                   </div>
                   <div>
-                    <h3 class="text-lg font-semibold text-white">Permission Required</h3>
-                    <p class="text-sm text-zinc-400 mt-1">OpenCode is requesting permission to continue.</p>
+                    <h3 class="text-lg font-semibold text-white">{translate("session.permission_required")}</h3>
+                    <p class="text-sm text-zinc-400 mt-1">{translate("session.permission_description")}</p>
                   </div>
                 </div>
 
                 <div class="bg-zinc-950/50 rounded-xl p-4 border border-zinc-800 mb-6">
-                  <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">Permission</div>
+                  <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">{translate("session.permission_label")}</div>
                   <div class="text-sm text-zinc-200 font-mono">{props.activePermission?.permission}</div>
 
-                  <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">Scope</div>
+                  <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">{translate("session.scope_label")}</div>
                   <div class="flex items-center gap-2 text-sm font-mono text-amber-200 bg-amber-950/30 px-2 py-1 rounded border border-amber-500/20">
                     <HardDrive size={12} />
                     {props.activePermission?.patterns.join(", ")}
@@ -729,7 +733,7 @@ export default function SessionView(props: SessionViewProps) {
 
                   <Show when={Object.keys(props.activePermission?.metadata ?? {}).length > 0}>
                     <details class="mt-4 rounded-lg bg-black/20 p-2">
-                      <summary class="cursor-pointer text-xs text-zinc-400">Details</summary>
+                      <summary class="cursor-pointer text-xs text-zinc-400">{translate("session.details")}</summary>
                       <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-200">
                         {props.safeStringify(props.activePermission?.metadata)}
                       </pre>
@@ -747,7 +751,7 @@ export default function SessionView(props: SessionViewProps) {
                       disabled={props.permissionReplyBusy}
                     >
 
-                    Deny
+                    {translate("session.deny")}
                   </Button>
                   <div class="grid grid-cols-2 gap-2">
                     <Button
@@ -756,7 +760,7 @@ export default function SessionView(props: SessionViewProps) {
                       onClick={() => props.activePermission && props.respondPermission(props.activePermission.id, "once")}
                       disabled={props.permissionReplyBusy}
                     >
-                      Once
+                      {translate("session.once")}
                     </Button>
                     <Button
                       variant="primary"
@@ -767,7 +771,7 @@ export default function SessionView(props: SessionViewProps) {
                       }
                       disabled={props.permissionReplyBusy}
                     >
-                      Allow for session
+                      {translate("session.allow_for_session")}
                     </Button>
                   </div>
                 </div>

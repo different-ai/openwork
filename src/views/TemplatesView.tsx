@@ -5,6 +5,7 @@ import { formatRelativeTime } from "../app/utils";
 
 import Button from "../components/Button";
 import { FileText, Play, Plus, Trash2 } from "lucide-solid";
+import { currentLocale, t } from "../i18n";
 
 export type TemplatesViewProps = {
   busy: boolean;
@@ -21,6 +22,9 @@ export type TemplatesViewProps = {
 };
 
 export default function TemplatesView(props: TemplatesViewProps) {
+  // Translation helper that uses current language from i18n
+  const translate = (key: string) => t(key, currentLocale());
+
   const openNewTemplate = () => {
     const reset = props.resetTemplateDraft;
     if (reset) {
@@ -37,10 +41,10 @@ export default function TemplatesView(props: TemplatesViewProps) {
   return (
     <section class="space-y-4">
       <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">Templates</h3>
+        <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider">{translate("templates.title")}</h3>
         <Button variant="secondary" onClick={openNewTemplate} disabled={props.busy}>
           <Plus size={16} />
-          New
+          {translate("templates.new")}
         </Button>
       </div>
 
@@ -48,14 +52,14 @@ export default function TemplatesView(props: TemplatesViewProps) {
         when={props.workspaceTemplates.length || props.globalTemplates.length}
         fallback={
           <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-6 text-sm text-zinc-500">
-            Starter templates will appear here. Create one or save from a session.
+            {translate("templates.empty_state")}
           </div>
         }
       >
         <div class="space-y-6">
           <Show when={props.workspaceTemplates.length}>
             <div class="space-y-3">
-              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Workspace</div>
+              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{translate("templates.workspace")}</div>
               <For each={props.workspaceTemplates}>
                 {(t) => (
                   <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
@@ -70,7 +74,7 @@ export default function TemplatesView(props: TemplatesViewProps) {
                     <div class="shrink-0 flex gap-2">
                       <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>
                         <Play size={16} />
-                        Run
+                        {translate("templates.run")}
                       </Button>
                       <Button variant="danger" onClick={() => props.deleteTemplate(t.id)} disabled={props.busy}>
                         <Trash2 size={16} />
@@ -84,7 +88,7 @@ export default function TemplatesView(props: TemplatesViewProps) {
 
           <Show when={props.globalTemplates.length}>
             <div class="space-y-3">
-              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">Global</div>
+              <div class="text-xs font-semibold text-zinc-500 uppercase tracking-wider">{translate("templates.global")}</div>
               <For each={props.globalTemplates}>
                 {(t) => (
                   <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 flex items-start justify-between gap-4">
@@ -99,7 +103,7 @@ export default function TemplatesView(props: TemplatesViewProps) {
                     <div class="shrink-0 flex gap-2">
                       <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>
                         <Play size={16} />
-                        Run
+                        {translate("templates.run")}
                       </Button>
                       <Button variant="danger" onClick={() => props.deleteTemplate(t.id)} disabled={props.busy}>
                         <Trash2 size={16} />

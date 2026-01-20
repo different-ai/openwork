@@ -4,6 +4,7 @@ import Button from "./Button";
 import type { Client } from "../app/types";
 import type { McpDirectoryInfo } from "../app/constants";
 import { unwrap } from "../lib/opencode";
+import { t, type Language } from "../i18n";
 
 export type McpAuthModalProps = {
   open: boolean;
@@ -13,9 +14,20 @@ export type McpAuthModalProps = {
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
+  language: Language;
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
+  const translate = (key: string, replacements?: Record<string, string>) => {
+    let result = t(key, props.language);
+    if (replacements) {
+      Object.entries(replacements).forEach(([placeholder, value]) => {
+        result = result.replace(`{${placeholder}}`, value);
+      });
+    }
+    return result;
+  };
+
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [needsReload, setNeedsReload] = createSignal(false);
@@ -70,29 +82,26 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         setAlreadyConnected(true);
       } else if (authStatus.status === "needs_client_registration") {
         setNeedsReload(true);
-        setError(authStatus.error ?? "Client registration is required before OAuth can continue.");
+        setError(authStatus.error ?? translate("mcp.auth.client_registration_required"));
       } else if (authStatus.status === "disabled") {
-        setError("This MCP server is disabled. Enable it and try again.");
+        setError(translate("mcp.auth.server_disabled"));
       } else if (authStatus.status === "failed") {
-        setError(authStatus.error ?? "OAuth authentication failed.");
+        setError(authStatus.error ?? translate("mcp.auth.oauth_failed"));
       } else if (authStatus.status === "needs_auth") {
-        setError("Authorization is still required. Try again to restart the flow.");
+        setError(translate("mcp.auth.authorization_still_required"));
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start OAuth flow";
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
 
       if (message.toLowerCase().includes("does not support oauth")) {
+        const serverSlug = props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server";
         setError(
-          `${message}\n\n` +
-          "This could mean:\n" +
-          "• The MCP server doesn't advertise OAuth capabilities\n" +
-          "• The engine needs to reload to discover server capabilities\n" +
-          "• Try: opencode mcp auth " + (props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server") + " from the CLI"
+          `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
         );
         setNeedsReload(true);
       } else if (message.toLowerCase().includes("not found") || message.toLowerCase().includes("unknown")) {
         setNeedsReload(true);
-        setError(`${message}. Try reloading the engine first.`);
+        setError(translate("mcp.auth.try_reload_engine", { message }));
       } else {
         setError(message);
       }
@@ -165,9 +174,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
             <div>
               <h2 class="text-lg font-semibold text-white">
-                Connect {serverName()}
+                {translate("mcp.auth.connect_server", { server: serverName() })}
               </h2>
-              <p class="text-sm text-zinc-400">We’ll open your browser to finish sign-in.</p>
+              <p class="text-sm text-zinc-400">{translate("mcp.auth.open_browser_signin")}</p>
             </div>
             <button
               type="button"
@@ -193,15 +202,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-emerald-400" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Already Connected</p>
+                    <p class="text-sm font-medium text-white">{translate("mcp.auth.already_connected")}</p>
                     <p class="text-xs text-zinc-400">
-                      {serverName()} is already authenticated and ready to use.
+                      {translate("mcp.auth.already_connected_description", { server: serverName() })}
                     </p>
                   </div>
                 </div>
                 <p class="text-xs text-zinc-500">
-                  The MCP may have been configured globally or in a previous session. 
-                  You can close this modal and start using the MCP tools right away.
+                  {translate("mcp.auth.configured_previously")}
                 </p>
               </div>
             </Show>
@@ -215,19 +223,19 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <Show when={props.onReloadEngine}>
                       <Button variant="secondary" onClick={handleReloadAndRetry}>
                         <RefreshCcw size={14} />
-                        Reload engine and retry
+                        {translate("mcp.auth.reload_engine_retry")}
                       </Button>
                     </Show>
                     <Button variant="ghost" onClick={handleRetry}>
-                      Retry Now
+                      {translate("mcp.auth.retry_now")}
                     </Button>
                   </div>
                 </Show>
-                
+
                 <Show when={!needsReload()}>
                   <div class="pt-2">
                     <Button variant="ghost" onClick={handleRetry}>
-                      Retry
+                      {translate("mcp.auth.retry")}
                     </Button>
                   </div>
                 </Show>
@@ -241,9 +249,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Opening your browser</p>
+                    <p class="text-sm font-medium text-white">{translate("mcp.auth.step1_title")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      We’ll launch {serverName()}’s sign-in flow automatically.
+                      {translate("mcp.auth.step1_description", { server: serverName() })}
                     </p>
                   </div>
                 </div>
@@ -253,9 +261,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Authorize OpenWork</p>
+                    <p class="text-sm font-medium text-white">{translate("mcp.auth.step2_title")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      Sign in and approve access when prompted.
+                      {translate("mcp.auth.step2_description")}
                     </p>
                   </div>
                 </div>
@@ -265,16 +273,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Return here when you're done</p>
+                    <p class="text-sm font-medium text-white">{translate("mcp.auth.step3_title")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      We'll finish connecting as soon as authorization completes.
+                      {translate("mcp.auth.step3_description")}
                     </p>
                   </div>
                 </div>
               </div>
 
               <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-400">
-                Waiting for authorization to complete in your browser...
+                {translate("mcp.auth.waiting_authorization")}
               </div>
             </Show>
           </div>
@@ -284,16 +292,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={alreadyConnected()}>
               <Button variant="primary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                Done
+                {translate("mcp.auth.done")}
               </Button>
             </Show>
             <Show when={!alreadyConnected()}>
               <Button variant="ghost" onClick={handleClose}>
-                Cancel
+                {translate("mcp.auth.cancel")}
               </Button>
               <Button variant="secondary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                I'm done
+                {translate("mcp.auth.im_done")}
               </Button>
             </Show>
           </div>
