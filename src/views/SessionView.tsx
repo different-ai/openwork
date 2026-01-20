@@ -351,116 +351,151 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
-              <For each={props.messages}>
-                {(msg) => {
-                  const isUser = () => (msg.info as any).role === "user";
-                  const renderableParts = () =>
-                    msg.parts.filter((p) => {
-                      if (p.type === "reasoning") {
-                        return props.developerMode && props.showThinking;
-                      }
-
-                      if (p.type === "step-start" || p.type === "step-finish") {
-                        return props.developerMode;
-                      }
-
-                      if (p.type === "text" || p.type === "tool") {
-                        return true;
-                      }
-
+              {(() => {
+                // Collect all step parts from all messages for aggregated view
+                const allStepsFromAllMessages = createMemo(() => {
+                  const steps: Part[] = [];
+                  for (const msg of props.messages) {
+                    const renderableParts = msg.parts.filter((p) => {
+                      if (p.type === "reasoning") return props.developerMode && props.showThinking;
+                      if (p.type === "step-start" || p.type === "step-finish") return props.developerMode;
+                      if (p.type === "text" || p.type === "tool") return true;
                       return props.developerMode;
                     });
+                    const groups = props.groupMessageParts(renderableParts, String((msg.info as any).id ?? "message"));
+                    for (const group of groups) {
+                      if (group.kind === "steps") {
+                        steps.push(...(group as any).parts);
+                      }
+                    }
+                  }
+                  return steps;
+                });
 
-                  const groups = () =>
-                    props.groupMessageParts(renderableParts(), String((msg.info as any).id ?? "message"));
-                  const groupSpacing = () => (isUser() ? "mb-3" : "mb-4");
+                const globalStepsId = "global-all-steps";
+                const isGlobalStepsExpanded = () => props.expandedStepIds.has(globalStepsId);
+                const toggleGlobalSteps = () => {
+                  props.setExpandedStepIds((current) => {
+                    const next = new Set(current);
+                    if (next.has(globalStepsId)) {
+                      next.delete(globalStepsId);
+                    } else {
+                      next.add(globalStepsId);
+                    }
+                    return next;
+                  });
+                };
 
-                  return (
-                    <Show when={renderableParts().length > 0}>
-                      <div class={`flex ${isUser() ? "justify-end" : "justify-start"}`.trim()}>
-                        <div
-                          class={`w-full ${
-                            isUser()
-                              ? "max-w-[520px] rounded-2xl bg-white text-black shadow-xl shadow-white/5 p-4 text-sm leading-relaxed"
-                              : "max-w-[68ch] text-[15px] leading-7 text-zinc-200"
-                          }`}
-                        >
-                          <For each={groups()}>
-                            {(group, idx) => (
-                              <div class={idx() === groups().length - 1 ? "" : groupSpacing()}>
-                                <Show when={group.kind === "text"}>
-                                    <PartView
-                                      part={(group as { kind: "text"; part: Part }).part}
-                                      developerMode={props.developerMode}
-                                      showThinking={props.showThinking}
-                                      tone={isUser() ? "dark" : "light"}
-                                    />
-                                </Show>
-                                <Show when={group.kind === "steps"}>
-                                  <div class={isUser() ? "mt-2" : "mt-3 border-t border-zinc-800/60 pt-3"}>
-                                    <button
-                                      class={`flex items-center gap-2 text-xs ${
-                                        isUser() ? "text-zinc-500 hover:text-zinc-300" : "text-zinc-500 hover:text-zinc-200"
-                                      }`}
-                                      onClick={() => toggleSteps((group as any).id)}
-                                    >
-                                      <span>
-                                        {props.expandedStepIds.has((group as any).id) ? "Hide steps" : "View steps"}
-                                      </span>
-                                      <ChevronDown
-                                        size={14}
-                                        class={`transition-transform ${props.expandedStepIds.has((group as any).id) ? "rotate-180" : ""}`.trim()}
+                return (
+                  <>
+                    <For each={props.messages}>
+                      {(msg) => {
+                        const isUser = () => (msg.info as any).role === "user";
+                        const renderableParts = () =>
+                          msg.parts.filter((p) => {
+                            if (p.type === "reasoning") {
+                              return props.developerMode && props.showThinking;
+                            }
+                            if (p.type === "step-start" || p.type === "step-finish") {
+                              return props.developerMode;
+                            }
+                            if (p.type === "text" || p.type === "tool") {
+                              return true;
+                            }
+                            return props.developerMode;
+                          });
+
+                        const groups = () =>
+                          props.groupMessageParts(renderableParts(), String((msg.info as any).id ?? "message"));
+                        const groupSpacing = () => (isUser() ? "mb-3" : "mb-4");
+
+                        // Only get text groups - steps will be shown in aggregated view
+                        const textGroups = () => groups().filter((g) => g.kind === "text");
+
+                        // Only render if there's text content
+                        const hasTextContent = () => textGroups().length > 0;
+
+                        return (
+                          <Show when={hasTextContent()}>
+                            <div class={`flex ${isUser() ? "justify-end" : "justify-start"}`.trim()}>
+                              <div
+                                class={`w-full ${
+                                  isUser()
+                                    ? "max-w-[520px] rounded-2xl bg-white text-black shadow-xl shadow-white/5 p-4 text-sm leading-relaxed"
+                                    : "max-w-[68ch] text-[15px] leading-7 text-zinc-200"
+                                }`}
+                              >
+                                <For each={textGroups()}>
+                                  {(group, idx) => (
+                                    <div class={idx() === textGroups().length - 1 ? "" : groupSpacing()}>
+                                      <PartView
+                                        part={(group as { kind: "text"; part: Part }).part}
+                                        developerMode={props.developerMode}
+                                        showThinking={props.showThinking}
+                                        tone={isUser() ? "dark" : "light"}
                                       />
-                                    </button>
-                                    <Show when={props.expandedStepIds.has((group as any).id)}>
-                                      <div
-                                        class={`mt-3 space-y-3 rounded-xl border p-3 ${
-                                          isUser()
-                                            ? "border-zinc-800 bg-zinc-950/60"
-                                            : "border-zinc-800/70 bg-zinc-900/40"
-                                        }`}
-                                      >
-                                        <For each={(group as any).parts as Part[]}>
-                                          {(part) => {
-                                            const summary = props.summarizeStep(part);
-                                            return (
-                                              <div class="flex items-start gap-3 text-xs text-zinc-300">
-                                                <div class="mt-0.5 h-5 w-5 rounded-full border border-zinc-700 flex items-center justify-center text-zinc-500">
-                                                  {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
-                                                </div>
-                                                <div>
-                                                  <div class="text-zinc-200">{summary.title}</div>
-                                                  <Show when={summary.detail}>
-                                                    <div class="mt-1 text-zinc-500">{summary.detail}</div>
-                                                  </Show>
-                                                  <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
-                                                    <div class="mt-2 text-xs text-zinc-500">
-                                                      <PartView
-                                                        part={part}
-                                                        developerMode={props.developerMode}
-                                                        showThinking={props.showThinking}
-                                                        tone={isUser() ? "dark" : "light"}
-                                                      />
-                                                    </div>
-                                                  </Show>
-                                                </div>
-                                              </div>
-                                            );
-                                          }}
-                                        </For>
-                                      </div>
-                                    </Show>
-                                  </div>
-                                </Show>
+                                    </div>
+                                  )}
+                                </For>
                               </div>
-                            )}
-                          </For>
-                        </div>
+                            </div>
+                          </Show>
+                        );
+                      }}
+                    </For>
+
+                    {/* Aggregated steps viewer */}
+                    <Show when={allStepsFromAllMessages().length > 0}>
+                      <div class="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden">
+                        <button
+                          class="w-full px-3 py-2 flex items-center justify-between text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                          onClick={toggleGlobalSteps}
+                        >
+                          <span class="font-medium">
+                            {allStepsFromAllMessages().length} step{allStepsFromAllMessages().length !== 1 ? "s" : ""} completed
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            class={`transition-transform ${isGlobalStepsExpanded() ? "rotate-180" : ""}`.trim()}
+                          />
+                        </button>
+                        <Show when={isGlobalStepsExpanded()}>
+                          <div class="border-t border-zinc-800/60 p-3 space-y-3 max-h-80 overflow-y-auto">
+                            <For each={allStepsFromAllMessages()}>
+                              {(part) => {
+                                const summary = props.summarizeStep(part);
+                                return (
+                                  <div class="flex items-start gap-3 text-xs text-zinc-300">
+                                    <div class="mt-0.5 h-5 w-5 flex-shrink-0 rounded-full border border-zinc-700 flex items-center justify-center text-zinc-500">
+                                      {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+                                    </div>
+                                    <div class="min-w-0">
+                                      <div class="text-zinc-200">{summary.title}</div>
+                                      <Show when={summary.detail}>
+                                        <div class="mt-1 text-zinc-500 truncate">{summary.detail}</div>
+                                      </Show>
+                                      <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
+                                        <div class="mt-2 text-xs text-zinc-500">
+                                          <PartView
+                                            part={part}
+                                            developerMode={props.developerMode}
+                                            showThinking={props.showThinking}
+                                            tone="light"
+                                          />
+                                        </div>
+                                      </Show>
+                                    </div>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </div>
+                        </Show>
                       </div>
                     </Show>
-                  );
-                }}
-              </For>
+                  </>
+                );
+              })()}
 
               <Show when={showAnticipatoryCursor()}>
                 <div class="flex justify-start py-4 px-2">
@@ -468,24 +503,80 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
-              <For each={props.artifacts}>
-                {(artifact) => (
-                  <div class="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="h-10 w-10 rounded-xl bg-zinc-900 flex items-center justify-center">
-                        <FileText size={18} class="text-zinc-400" />
-                      </div>
-                      <div>
-                        <div class="text-sm text-zinc-100">{artifact.name}</div>
-                        <div class="text-xs text-zinc-500">Document</div>
-                      </div>
-                    </div>
-                    <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
-                      {artifactActionLabel()}
-                    </Button>
+              <Show when={props.artifacts.length > 0}>
+                <div class="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden">
+                  <div class="px-3 py-2 border-b border-zinc-800/60 flex items-center justify-between">
+                    <span class="text-xs font-medium text-zinc-400">
+                      {props.artifacts.length} file{props.artifacts.length !== 1 ? "s" : ""} changed
+                    </span>
                   </div>
-                )}
-              </For>
+                  <div class="divide-y divide-zinc-800/40">
+                    <For each={props.artifacts}>
+                      {(artifact) => {
+                        const getFileIcon = () => {
+                          const ext = artifact.name.split(".").pop()?.toLowerCase() || "";
+                          const codeExts = ["ts", "tsx", "js", "jsx", "py", "rs", "go", "rb", "java", "c", "cpp", "h"];
+                          const configExts = ["json", "yaml", "yml", "toml", "xml", "env"];
+                          const docExts = ["md", "mdx", "txt", "doc", "pdf"];
+                          if (codeExts.includes(ext)) return "code";
+                          if (configExts.includes(ext)) return "config";
+                          if (docExts.includes(ext)) return "doc";
+                          return "file";
+                        };
+                        const iconType = getFileIcon();
+                        const displayPath = () => {
+                          if (artifact.path) {
+                            const parts = artifact.path.split(/[\\/]/);
+                            if (parts.length > 3) {
+                              return `.../${parts.slice(-3).join("/")}`;
+                            }
+                            return artifact.path;
+                          }
+                          return artifact.name;
+                        };
+                        return (
+                          <div
+                            class="group flex items-center gap-2 px-3 py-2 hover:bg-zinc-800/30 transition-colors cursor-pointer"
+                            onClick={() => handleOpenArtifact(artifact)}
+                          >
+                            <div class="flex-shrink-0 w-5 h-5 flex items-center justify-center">
+                              <Show when={iconType === "code"}>
+                                <FileText size={14} class="text-blue-400" />
+                              </Show>
+                              <Show when={iconType === "config"}>
+                                <FileText size={14} class="text-amber-400" />
+                              </Show>
+                              <Show when={iconType === "doc"}>
+                                <FileText size={14} class="text-emerald-400" />
+                              </Show>
+                              <Show when={iconType === "file"}>
+                                <File size={14} class="text-zinc-400" />
+                              </Show>
+                            </div>
+                            <div class="flex-1 min-w-0 flex items-center gap-2">
+                              <span class="text-sm text-zinc-200 truncate">{artifact.name}</span>
+                              <Show when={artifact.path && artifact.path !== artifact.name}>
+                                <span class="text-xs text-zinc-500 truncate hidden sm:inline">
+                                  {displayPath()}
+                                </span>
+                              </Show>
+                            </div>
+                            <button
+                              class="flex-shrink-0 text-xs text-zinc-500 hover:text-zinc-200 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 rounded hover:bg-zinc-700/50"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenArtifact(artifact);
+                              }}
+                            >
+                              {artifactActionLabel()}
+                            </button>
+                          </div>
+                        );
+                      }}
+                    </For>
+                  </div>
+                </div>
+              </Show>
 
               <div ref={(el) => (messagesEndEl = el)} />
             </div>
@@ -546,23 +637,50 @@ export default function SessionView(props: SessionViewProps) {
                   />
                 </button>
                 <Show when={props.expandedSidebarSections.artifacts}>
-                  <div class="px-4 pb-4 pt-1 space-y-3">
+                  <div class="px-3 pb-3 pt-1">
                     <Show
                       when={props.artifacts.length}
                       fallback={<div class="text-xs text-zinc-600">No artifacts yet.</div>}
                     >
-                      <For each={props.artifacts}>
-                        {(artifact) => (
-                          <div class="flex items-center gap-3 text-sm text-zinc-300">
-                            <div class="h-8 w-8 rounded-lg bg-zinc-900 flex items-center justify-center">
-                              <FileText size={16} class="text-zinc-500" />
-                            </div>
-                            <div class="min-w-0">
-                              <div class="truncate text-zinc-200">{artifact.name}</div>
-                            </div>
-                          </div>
-                        )}
-                      </For>
+                      <div class="space-y-0.5">
+                        <For each={props.artifacts}>
+                          {(artifact) => {
+                            const getFileIcon = () => {
+                              const ext = artifact.name.split(".").pop()?.toLowerCase() || "";
+                              const codeExts = ["ts", "tsx", "js", "jsx", "py", "rs", "go", "rb", "java", "c", "cpp", "h"];
+                              const configExts = ["json", "yaml", "yml", "toml", "xml", "env"];
+                              const docExts = ["md", "mdx", "txt", "doc", "pdf"];
+                              if (codeExts.includes(ext)) return "code";
+                              if (configExts.includes(ext)) return "config";
+                              if (docExts.includes(ext)) return "doc";
+                              return "file";
+                            };
+                            const iconType = getFileIcon();
+                            return (
+                              <div
+                                class="group flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-zinc-800/50 transition-colors cursor-pointer"
+                                onClick={() => handleOpenArtifact(artifact)}
+                              >
+                                <div class="flex-shrink-0">
+                                  <Show when={iconType === "code"}>
+                                    <FileText size={12} class="text-blue-400" />
+                                  </Show>
+                                  <Show when={iconType === "config"}>
+                                    <FileText size={12} class="text-amber-400" />
+                                  </Show>
+                                  <Show when={iconType === "doc"}>
+                                    <FileText size={12} class="text-emerald-400" />
+                                  </Show>
+                                  <Show when={iconType === "file"}>
+                                    <File size={12} class="text-zinc-400" />
+                                  </Show>
+                                </div>
+                                <span class="text-xs text-zinc-300 truncate flex-1">{artifact.name}</span>
+                              </div>
+                            );
+                          }}
+                        </For>
+                      </div>
                     </Show>
                   </div>
                 </Show>
