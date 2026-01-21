@@ -97,7 +97,7 @@ jobs:
           - platform: ubuntu-22.04
             os_type: linux
             target: x86_64-unknown-linux-gnu
-            args: "--target x86_64-unknown-linux-gnu --bundles deb"
+            args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
           - platform: windows-2022
             os_type: windows
             target: x86_64-pc-windows-msvc
@@ -133,6 +133,7 @@ jobs:
             libsoup-3.0-dev \
             libwebkit2gtk-4.1-dev \
             libssl-dev \
+            rpm \
             libdbus-1-dev \
             librsvg2-dev
 

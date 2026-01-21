@@ -6,7 +6,7 @@ description: Core context and guardrails for OpenWork native app
 ## Quick Usage (Already Configured)
 
 ### Orientation
-- Read `AGENTS.md` and `design-prd.md` before changing behavior.
+- Read `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` before changing behavior.
 - Ensure `vendor/opencode` exists for self-reference.
 - Use the `tauri-solidjs` skill for stack-specific guidance.
 

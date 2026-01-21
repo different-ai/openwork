@@ -1,6 +1,6 @@
 import type { Message, Part, PermissionRequest as ApiPermissionRequest, Provider, Session } from "@opencode-ai/sdk/v2/client";
-import type { createClient } from "../lib/opencode";
-import type { OpencodeConfigFile, WorkspaceInfo } from "../lib/tauri";
+import type { createClient } from "./lib/opencode";
+import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/tauri";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -50,6 +50,7 @@ export type ArtifactItem = {
   path?: string;
   kind: "file" | "text";
   size?: string;
+  messageId?: string;
 };
 
 export type OpencodeEvent = {
@@ -222,3 +223,4 @@ export type UpdateHandle = {
   install: () => Promise<void>;
   downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
 };
+
