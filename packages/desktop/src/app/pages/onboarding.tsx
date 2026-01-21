@@ -91,11 +91,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-50" />
           <div class="z-10 flex flex-col items-center gap-6">
             <div class="relative">
-              <div class="w-16 h-16 rounded-full border-2 border-gray-6 flex items-center justify-center animate-spin-slow">
-                <div class="w-12 h-12 rounded-full border-2 border-t-gray-12 border-gray-6 animate-spin flex items-center justify-center bg-gray-1">
-                  <OpenWorkLogo size={20} class="text-gray-12" />
-                </div>
-              </div>
+              <OpenWorkLogo size={40} />
             </div>
             <div class="text-center">
               <h2 class="text-xl font-medium mb-2">
@@ -118,8 +114,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
           <div class="max-w-lg w-full z-10 space-y-6">
               <div class="text-center space-y-2">
-                <div class="w-12 h-12 bg-gray-2/80 border border-gray-6/70 rounded-2xl mx-auto flex items-center justify-center shadow-2xl shadow-gray-12/10 mb-6">
-                  <OpenWorkLogo size={18} />
+                <div class="">
+                  <OpenWorkLogo size={48} />
                 </div>
               <h2 class="text-2xl font-bold tracking-tight">
                 {props.workspaces.length <= 1 ? translate("onboarding.create_first_workspace") : translate("onboarding.create_workspace")}
@@ -444,8 +440,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-xl w-full z-10 space-y-12">
             <div class="text-center space-y-4">
               <div class="flex items-center justify-center gap-3 mb-6">
-                <div class="w-12 h-12 bg-gray-2/80 border border-gray-6/70 rounded-xl flex items-center justify-center">
-                  <OpenWorkLogo size={24} />
+                <div class="">
+                  <OpenWorkLogo size={48} />
                 </div>
                 <h1 class="text-3xl font-bold tracking-tight text-gray-12">OpenWork</h1>
               </div>
