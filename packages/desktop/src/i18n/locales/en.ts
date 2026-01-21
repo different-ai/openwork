@@ -612,6 +612,7 @@ export default {
   "status.loading_session": "Loading session",
   "status.creating_task": "Creating new task",
   "status.starting_engine": "Starting engine",
+  "status.restarting_engine": "Restarting engine",
   "status.installing_opencode": "Installing OpenCode",
   "status.disconnecting": "Disconnecting",
   "app.connection_lost": "Server connection lost. Please reload.",

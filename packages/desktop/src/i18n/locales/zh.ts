@@ -619,6 +619,7 @@ export default {
   "status.loading_session": "正在加载会话",
   "status.creating_task": "正在创建新任务",
   "status.starting_engine": "正在启动引擎",
+  "status.restarting_engine": "正在重启引擎",
   "status.installing_opencode": "正在安装 OpenCode",
   "status.disconnecting": "正在断开连接",
   "app.connection_lost": "服务器连接已断开。请重新加载。",
