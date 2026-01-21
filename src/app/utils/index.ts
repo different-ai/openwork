@@ -510,5 +510,17 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
 }
 
 export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
-  return items.map((item) => item.name).slice(0, 5);
+  const results: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of items) {
+    const rawKey = item.path ?? item.name;
+    const normalized = rawKey.trim().replace(/[\\/]+/g, "/").toLowerCase();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    results.push(item.name);
+    if (results.length >= 5) break;
+  }
+
+  return results;
 }
