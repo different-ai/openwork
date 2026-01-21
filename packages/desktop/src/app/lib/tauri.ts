@@ -189,6 +189,24 @@ export async function importSkill(
   });
 }
 
+export async function installSkillTemplate(
+  projectDir: string,
+  name: string,
+  content: string,
+  options?: { overwrite?: boolean },
+): Promise<ExecResult> {
+  return invoke<ExecResult>("install_skill_template", {
+    projectDir,
+    name,
+    content,
+    overwrite: options?.overwrite ?? false,
+  });
+}
+
+export async function importSkillsFromRepo(projectDir: string, repo: string): Promise<ExecResult> {
+  return invoke<ExecResult>("import_skills_from_repo", { projectDir, repo });
+}
+
 export type OpencodeConfigFile = {
   path: string;
   exists: boolean;

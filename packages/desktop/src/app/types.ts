@@ -100,14 +100,6 @@ export type SkillCard = {
   description?: string;
 };
 
-export type CuratedPackage = {
-  name: string;
-  source: string;
-  description: string;
-  tags: string[];
-  installable: boolean;
-};
-
 export type PluginInstallStep = {
   title: string;
   description: string;
@@ -223,4 +215,3 @@ export type UpdateHandle = {
   install: () => Promise<void>;
   downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
 };
-

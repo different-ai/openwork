@@ -1,4 +1,4 @@
-import type { CuratedPackage, ModelRef, SuggestedPlugin } from "./types";
+import type { ModelRef, SuggestedPlugin } from "./types";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
 export const THINKING_PREF_KEY = "openwork.showThinking";
@@ -11,16 +11,6 @@ export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
   modelID: "big-pickle",
 };
-
-export const CURATED_PACKAGES: CuratedPackage[] = [
-  {
-    name: "Notion CRM Enrichment Skills",
-    source: "https://github.com/different-ai/notion-crm-enrichment/tree/main/.claude/skills",
-    description: "Enrich Notion CRM data with ready-made skills.",
-    tags: ["notion", "crm", "skills"],
-    installable: false,
-  },
-];
 
 export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
   {

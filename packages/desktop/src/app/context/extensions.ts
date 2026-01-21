@@ -1,10 +1,12 @@
 import { createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
+import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, CuratedPackage, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
-import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
+import type { Client, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
+import { addOpencodeCacheHint, isTauriRuntime, isWindowsPlatform } from "../utils";
+import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
   isPluginInstalled,
   loadPluginsFromConfig as loadPluginsFromConfigHelpers,
@@ -12,14 +14,12 @@ import {
   stripPluginVersion,
 } from "../utils/plugins";
 import {
-  importSkill,
-  opkgInstall,
-  pickDirectory,
+  importSkillsFromRepo as importSkillsFromRepoCommand,
+  installSkillTemplate,
   readOpencodeConfig,
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../lib/tauri";
-import { unwrap } from "../lib/opencode";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
@@ -40,8 +40,7 @@ export function createExtensionsStore(options: {
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
-  const [openPackageSource, setOpenPackageSource] = createSignal("");
-  const [packageSearch, setPackageSearch] = createSignal("");
+  const [skillRepoSource, setSkillRepoSource] = createSignal("");
 
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
@@ -286,91 +285,28 @@ export function createExtensionsStore(options: {
     }
   }
 
-  async function installFromOpenPackage(sourceOverride?: string) {
+  async function installSkillCreator() {
     if (options.mode() !== "host" || !isTauriRuntime()) {
-      options.setError(translate("skills.opackage_install_host_only"));
+      options.setError(translate("skills.host_only_error"));
       return;
     }
 
-    const targetDir = options.projectDir().trim();
-    const pkg = (sourceOverride ?? openPackageSource()).trim();
-    const isNotionSkillInstall = pkg.toLowerCase().includes("manage-crm-notion");
-
+    const targetDir = options.activeWorkspaceRoot().trim();
     if (!targetDir) {
-      options.setError(translate("skills.pick_project_first"));
-      return;
-    }
-
-    if (!pkg) {
-      options.setError(translate("skills.enter_opackage_source"));
-      return;
-    }
-
-    setOpenPackageSource(pkg);
-    options.setBusy(true);
-    options.setError(null);
-    setSkillsStatus(translate("skills.installing_opackage"));
-
-    try {
-      const result = await opkgInstall(targetDir, pkg);
-      if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
-      } else {
-        setSkillsStatus(result.stdout || translate("skills.install_complete"));
-        options.markReloadRequired("skills");
-        if (isNotionSkillInstall) {
-          options.onNotionSkillInstalled?.();
-        }
-      }
-
-      await refreshSkills({ force: true });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      options.setError(addOpencodeCacheHint(message));
-    } finally {
-      options.setBusy(false);
-    }
-  }
-
-  async function useCuratedPackage(pkg: CuratedPackage) {
-    if (pkg.installable) {
-      await installFromOpenPackage(pkg.source);
-      return;
-    }
-
-    setOpenPackageSource(pkg.source);
-    setSkillsStatus(translate("skills.curated_list_notice"));
-  }
-
-  async function importLocalSkill() {
-    if (options.mode() !== "host" || !isTauriRuntime()) {
-      options.setError(translate("skills.import_host_only"));
-      return;
-    }
-
-    const targetDir = options.projectDir().trim();
-    if (!targetDir) {
-      options.setError(translate("skills.pick_project_first"));
+      options.setError(translate("skills.pick_workspace_first"));
       return;
     }
 
     options.setBusy(true);
     options.setError(null);
-    setSkillsStatus(null);
+    setSkillsStatus(translate("skills.installing_skill_creator"));
 
     try {
-      const selection = await pickDirectory({ title: translate("skills.select_skill_folder") });
-      const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
-
-      if (!sourceDir) {
-        return;
-      }
-
-      const result = await importSkill(targetDir, sourceDir, { overwrite: false });
+      const result = await installSkillTemplate(targetDir, "skill-creator", skillCreatorTemplate, { overwrite: false });
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || translate("skills.import_failed").replace("{status}", String(result.status)));
+        setSkillsStatus(result.stderr || result.stdout || translate("skills.install_failed"));
       } else {
-        setSkillsStatus(result.stdout || translate("skills.imported"));
+        setSkillsStatus(result.stdout || translate("skills.skill_creator_installed"));
         options.markReloadRequired("skills");
       }
 
@@ -383,6 +319,71 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function importSkillsFromRepo() {
+    if (options.mode() !== "host" || !isTauriRuntime()) {
+      options.setError(translate("skills.host_only_error"));
+      return;
+    }
+
+    const targetDir = options.activeWorkspaceRoot().trim();
+    if (!targetDir) {
+      options.setError(translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    const repoSource = skillRepoSource().trim();
+    if (!repoSource) {
+      options.setError(translate("skills.repo_required"));
+      return;
+    }
+
+    setSkillRepoSource(repoSource);
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(translate("skills.importing_repo"));
+
+    try {
+      const result = await importSkillsFromRepoCommand(targetDir, repoSource);
+      if (!result.ok) {
+        setSkillsStatus(result.stderr || result.stdout || translate("skills.import_failed"));
+      } else {
+        setSkillsStatus(result.stdout || translate("skills.import_complete"));
+        options.markReloadRequired("skills");
+      }
+
+      await refreshSkills({ force: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
+  async function revealSkillsFolder() {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    const root = options.activeWorkspaceRoot().trim();
+    if (!root) {
+      setSkillsStatus(translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    try {
+      const target = await join(root, ".opencode", "skill");
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      if (isWindowsPlatform()) {
+        await openPath(target);
+      } else {
+        await revealItemInDir(target);
+      }
+    } catch (e) {
+      setSkillsStatus(e instanceof Error ? e.message : translate("skills.reveal_failed"));
+    }
+  }
+
   function abortRefreshes() {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
@@ -391,10 +392,8 @@ export function createExtensionsStore(options: {
   return {
     skills,
     skillsStatus,
-    openPackageSource,
-    setOpenPackageSource,
-    packageSearch,
-    setPackageSearch,
+    skillRepoSource,
+    setSkillRepoSource,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -410,9 +409,9 @@ export function createExtensionsStore(options: {
     refreshSkills,
     refreshPlugins,
     addPlugin,
-    installFromOpenPackage,
-    useCuratedPackage,
-    importLocalSkill,
+    installSkillCreator,
+    importSkillsFromRepo,
+    revealSkillsFolder,
     abortRefreshes,
   };
 }

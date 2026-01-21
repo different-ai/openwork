@@ -1,6 +1,5 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type {
-  CuratedPackage,
   DashboardTab,
   McpServerEntry,
   McpStatusMap,
@@ -85,14 +84,11 @@ export type DashboardViewProps = {
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
-  openPackageSource: string;
-  setOpenPackageSource: (value: string) => void;
-  installFromOpenPackage: () => void;
-  importLocalSkill: () => void;
-  packageSearch: string;
-  setPackageSearch: (value: string) => void;
-  filteredPackages: CuratedPackage[];
-  useCuratedPackage: (pkg: CuratedPackage) => void;
+  skillRepoSource: string;
+  setSkillRepoSource: (value: string) => void;
+  installSkillCreator: () => void;
+  importSkillsFromRepo: () => void;
+  revealSkillsFolder: () => void;
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
@@ -675,14 +671,12 @@ export default function DashboardView(props: DashboardViewProps) {
                 refreshSkills={props.refreshSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
-                openPackageSource={props.openPackageSource}
-                setOpenPackageSource={props.setOpenPackageSource}
-                installFromOpenPackage={props.installFromOpenPackage}
-                importLocalSkill={props.importLocalSkill}
-                packageSearch={props.packageSearch}
-                setPackageSearch={props.setPackageSearch}
-                filteredPackages={props.filteredPackages}
-                useCuratedPackage={props.useCuratedPackage}
+                skillRepoSource={props.skillRepoSource}
+                setSkillRepoSource={props.setSkillRepoSource}
+                installSkillCreator={props.installSkillCreator}
+                importSkillsFromRepo={props.importSkillsFromRepo}
+                revealSkillsFolder={props.revealSkillsFolder}
+                createSessionAndOpen={props.createSessionAndOpen}
               />
             </Match>
 
