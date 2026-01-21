@@ -30,59 +30,72 @@ export default function SkillsView(props: SkillsViewProps) {
   const uninstallOpen = createMemo(() => uninstallTarget() != null);
 
   return (
-    <section class="space-y-6">
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">{translate("skills.title")}</h3>
+    <section class="space-y-8">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-semibold text-gray-12">{translate("skills.title")}</h3>
+          <p class="text-sm text-gray-10 mt-1">{translate("skills.subtitle")}</p>
+        </div>
         <Button variant="secondary" onClick={() => props.refreshSkills({ force: true })} disabled={props.busy}>
           {translate("skills.refresh")}
         </Button>
       </div>
 
-      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-        <div class="flex items-center justify-between gap-3">
-          <div class="text-sm font-medium text-gray-12">{translate("skills.add_title")}</div>
+      <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 overflow-hidden">
+        <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-6/60 bg-gray-2/40">
+          <div>
+            <div class="text-xs font-semibold text-gray-11 uppercase tracking-wider">{translate("skills.add_title")}</div>
+            <div class="text-sm text-gray-10 mt-2">{translate("skills.add_description")}</div>
+          </div>
           <Show when={props.mode !== "host"}>
             <div class="text-xs text-gray-10">{translate("skills.host_mode_only")}</div>
           </Show>
         </div>
 
-        <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-          <div class="text-sm font-medium text-gray-12">{translate("skills.install_skill_creator")}</div>
-          <Button
-            variant={skillCreatorInstalled() ? "outline" : "secondary"}
-            onClick={() => {
-              if (skillCreatorInstalled()) return;
-              props.installSkillCreator();
-            }}
-            disabled={props.busy || skillCreatorInstalled()}
-          >
-            <Package size={16} />
-            {skillCreatorInstalled() ? translate("skills.installed_label") : translate("skills.install")}
-          </Button>
-        </div>
+        <div class="divide-y divide-gray-6/60">
+          <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div>
+              <div class="text-sm font-medium text-gray-12">{translate("skills.install_skill_creator")}</div>
+              <div class="text-xs text-gray-10 mt-1">{translate("skills.install_skill_creator_hint")}</div>
+            </div>
+            <Button
+              variant={skillCreatorInstalled() ? "outline" : "secondary"}
+              onClick={() => {
+                if (skillCreatorInstalled()) return;
+                props.installSkillCreator();
+              }}
+              disabled={props.busy || skillCreatorInstalled()}
+            >
+              <Package size={16} />
+              {skillCreatorInstalled() ? translate("skills.installed_label") : translate("skills.install")}
+            </Button>
+          </div>
 
-        <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-          <div class="text-sm font-medium text-gray-12">{translate("skills.import_local")}</div>
-          <Button
-            variant="secondary"
-            onClick={props.importLocalSkill}
-            disabled={props.busy}
-          >
-            <Upload size={16} />
-            {translate("skills.import")}
-          </Button>
-        </div>
+          <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div>
+              <div class="text-sm font-medium text-gray-12">{translate("skills.import_local")}</div>
+              <div class="text-xs text-gray-10 mt-1">{translate("skills.import_local_hint")}</div>
+            </div>
+            <Button variant="secondary" onClick={props.importLocalSkill} disabled={props.busy}>
+              <Upload size={16} />
+              {translate("skills.import")}
+            </Button>
+          </div>
 
-        <div class="flex items-center justify-between gap-3 pt-2 border-t border-zinc-800/60">
-          <div class="text-sm font-medium text-gray-12">{translate("skills.reveal_folder")}</div>
-          <Button variant="secondary" onClick={props.revealSkillsFolder} disabled={props.busy}>
-            <FolderOpen size={16} />
-            {translate("skills.reveal_button")}
-          </Button>
+          <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+            <div>
+              <div class="text-sm font-medium text-gray-12">{translate("skills.reveal_folder")}</div>
+              <div class="text-xs text-gray-10 mt-1">{translate("skills.reveal_folder_hint")}</div>
+            </div>
+            <Button variant="secondary" onClick={props.revealSkillsFolder} disabled={props.busy}>
+              <FolderOpen size={16} />
+              {translate("skills.reveal_button")}
+            </Button>
+          </div>
         </div>
 
         <Show when={props.skillsStatus}>
-          <div class="rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11 whitespace-pre-wrap break-words">
+          <div class="border-t border-gray-6/60 px-5 py-3 text-xs text-gray-11 whitespace-pre-wrap break-words">
             {props.skillsStatus}
           </div>
         </Show>
@@ -90,26 +103,35 @@ export default function SkillsView(props: SkillsViewProps) {
 
       <div>
         <div class="flex items-center justify-between mb-3">
-          <div class="text-sm font-medium text-gray-12">{translate("skills.installed")}</div>
+          <div>
+            <div class="text-sm font-semibold text-gray-12">{translate("skills.installed")}</div>
+            <div class="text-xs text-gray-10 mt-1">{translate("skills.installed_description")}</div>
+          </div>
           <div class="text-xs text-gray-10">{props.skills.length}</div>
         </div>
 
         <Show
           when={props.skills.length}
           fallback={
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-6 text-sm text-zinc-500">
+            <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 px-5 py-6 text-sm text-zinc-500">
               {translate("skills.no_skills")}
             </div>
           }
         >
-          <div class="grid gap-3">
+          <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 divide-y divide-gray-6/60">
             <For each={props.skills}>
               {(s) => (
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5">
-                  <div class="flex items-start justify-between gap-3">
-                    <div class="flex items-center gap-2">
-                      <Package size={16} class="text-gray-11" />
-                      <div class="font-medium text-gray-12">{s.name}</div>
+                <div class="px-5 py-4">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-2">
+                        <Package size={16} class="text-gray-11" />
+                        <div class="font-medium text-gray-12">{s.name}</div>
+                      </div>
+                      <Show when={s.description}>
+                        <div class="text-sm text-gray-10">{s.description}</div>
+                      </Show>
+                      <div class="text-xs text-gray-7 font-mono">{s.path}</div>
                     </div>
                     <Button
                       variant="danger"
@@ -121,10 +143,6 @@ export default function SkillsView(props: SkillsViewProps) {
                       {translate("skills.uninstall")}
                     </Button>
                   </div>
-                  <Show when={s.description}>
-                    <div class="mt-1 text-sm text-gray-10">{s.description}</div>
-                  </Show>
-                  <div class="mt-2 text-xs text-gray-7 font-mono">{s.path}</div>
                 </div>
               )}
             </For>
