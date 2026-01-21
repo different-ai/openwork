@@ -87,6 +87,7 @@ export type DashboardViewProps = {
   importLocalSkill: () => void;
   installSkillCreator: () => void;
   revealSkillsFolder: () => void;
+  uninstallSkill: (name: string) => void;
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
@@ -672,6 +673,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
                 revealSkillsFolder={props.revealSkillsFolder}
+                uninstallSkill={props.uninstallSkill}
               />
             </Match>
 

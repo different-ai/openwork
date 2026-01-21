@@ -16,7 +16,7 @@ use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
 use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
 use commands::opkg::{import_skill, opkg_install};
-use commands::skills::{install_skill_template, list_local_skills};
+use commands::skills::{install_skill_template, list_local_skills, uninstall_skill};
 use commands::updater::updater_environment;
 use commands::workspace::{
   workspace_add_authorized_root,
@@ -60,6 +60,7 @@ pub fn run() {
       import_skill,
       install_skill_template,
       list_local_skills,
+      uninstall_skill,
       read_opencode_config,
       write_opencode_config,
       updater_environment,

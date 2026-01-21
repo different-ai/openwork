@@ -365,6 +365,7 @@ export default function App() {
     importLocalSkill,
     installSkillCreator,
     revealSkillsFolder,
+    uninstallSkill,
     abortRefreshes,
   } = extensionsStore;
 
@@ -1637,6 +1638,7 @@ export default function App() {
     importLocalSkill,
     installSkillCreator,
     revealSkillsFolder,
+    uninstallSkill,
     pluginScope: pluginScope(),
     setPluginScope,
     pluginConfigPath: pluginConfig()?.path ?? null,

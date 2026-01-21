@@ -213,6 +213,10 @@ export async function listLocalSkills(projectDir: string): Promise<LocalSkillCar
   return invoke<LocalSkillCard[]>("list_local_skills", { projectDir });
 }
 
+export async function uninstallSkill(projectDir: string, name: string): Promise<ExecResult> {
+  return invoke<ExecResult>("uninstall_skill", { projectDir, name });
+}
+
 export type OpencodeConfigFile = {
   path: string;
   exists: boolean;

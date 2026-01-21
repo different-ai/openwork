@@ -17,6 +17,7 @@ import {
   importSkill,
   installSkillTemplate,
   listLocalSkills,
+  uninstallSkill as uninstallSkillCommand,
   pickDirectory,
   readOpencodeConfig,
   writeOpencodeConfig,
@@ -452,6 +453,50 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function uninstallSkill(name: string) {
+    if (!isTauriRuntime()) {
+      setSkillsStatus(translate("skills.desktop_required"));
+      return;
+    }
+
+    if (options.mode() !== "host") {
+      options.setError(translate("skills.host_only_error"));
+      return;
+    }
+
+    const root = options.activeWorkspaceRoot().trim();
+    if (!root) {
+      setSkillsStatus(translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const result = await uninstallSkillCommand(root, trimmed);
+      if (!result.ok) {
+        setSkillsStatus(result.stderr || result.stdout || translate("skills.uninstall_failed"));
+      } else {
+        setSkillsStatus(result.stdout || translate("skills.uninstalled"));
+        options.markReloadRequired("skills");
+      }
+
+      await refreshSkills({ force: true });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+    }
+  }
+
   function abortRefreshes() {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
@@ -478,6 +523,7 @@ export function createExtensionsStore(options: {
     importLocalSkill,
     installSkillCreator,
     revealSkillsFolder,
+    uninstallSkill,
     abortRefreshes,
   };
 }

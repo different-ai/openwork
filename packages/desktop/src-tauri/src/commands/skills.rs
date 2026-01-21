@@ -183,3 +183,34 @@ pub fn install_skill_template(
     stderr: String::new(),
   })
 }
+
+#[tauri::command]
+pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, String> {
+  let project_dir = project_dir.trim();
+  if project_dir.is_empty() {
+    return Err("projectDir is required".to_string());
+  }
+
+  let name = validate_skill_name(&name)?;
+  let skill_root = resolve_skill_root(project_dir)?;
+  let dest = skill_root.join(&name);
+
+  if !dest.exists() {
+    return Ok(ExecResult {
+      ok: false,
+      status: 1,
+      stdout: String::new(),
+      stderr: format!("Skill not found at {}", dest.display()),
+    });
+  }
+
+  fs::remove_dir_all(&dest)
+    .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
+
+  Ok(ExecResult {
+    ok: true,
+    status: 0,
+    stdout: format!("Removed skill {}", name),
+    stderr: String::new(),
+  })
+}

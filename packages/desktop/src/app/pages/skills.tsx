@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { SkillCard } from "../types";
 
@@ -15,6 +15,7 @@ export type SkillsViewProps = {
   importLocalSkill: () => void;
   installSkillCreator: () => void;
   revealSkillsFolder: () => void;
+  uninstallSkill: (name: string) => void;
 };
 
 export default function SkillsView(props: SkillsViewProps) {
@@ -24,6 +25,9 @@ export default function SkillsView(props: SkillsViewProps) {
   const skillCreatorInstalled = createMemo(() =>
     props.skills.some((skill) => skill.name === "skill-creator")
   );
+
+  const [uninstallTarget, setUninstallTarget] = createSignal<SkillCard | null>(null);
+  const uninstallOpen = createMemo(() => uninstallTarget() != null);
 
   return (
     <section class="space-y-6">
@@ -102,9 +106,20 @@ export default function SkillsView(props: SkillsViewProps) {
             <For each={props.skills}>
               {(s) => (
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5">
-                  <div class="flex items-center gap-2">
-                    <Package size={16} class="text-gray-11" />
-                    <div class="font-medium text-gray-12">{s.name}</div>
+                  <div class="flex items-start justify-between gap-3">
+                    <div class="flex items-center gap-2">
+                      <Package size={16} class="text-gray-11" />
+                      <div class="font-medium text-gray-12">{s.name}</div>
+                    </div>
+                    <Button
+                      variant="danger"
+                      class="!px-3 !py-2 text-xs"
+                      onClick={() => setUninstallTarget(s)}
+                      disabled={props.busy}
+                      title={translate("skills.uninstall")}
+                    >
+                      {translate("skills.uninstall")}
+                    </Button>
                   </div>
                   <Show when={s.description}>
                     <div class="mt-1 text-sm text-gray-10">{s.description}</div>
@@ -116,6 +131,45 @@ export default function SkillsView(props: SkillsViewProps) {
           </div>
         </Show>
       </div>
+
+      <Show when={uninstallOpen()}>
+        <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div class="bg-gray-2 border border-gray-6/70 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+            <div class="p-6">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <h3 class="text-lg font-semibold text-gray-12">{translate("skills.uninstall_title")}</h3>
+                  <p class="text-sm text-gray-11 mt-1">
+                    {translate("skills.uninstall_warning").replace("{name}", uninstallTarget()?.name ?? "")}
+                  </p>
+                </div>
+              </div>
+
+              <div class="mt-4 rounded-xl bg-gray-1/20 border border-gray-6 p-3 text-xs text-gray-11 font-mono break-all">
+                {uninstallTarget()?.path}
+              </div>
+
+              <div class="mt-6 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setUninstallTarget(null)} disabled={props.busy}>
+                  {translate("common.cancel")}
+                </Button>
+                <Button
+                  variant="danger"
+                  onClick={() => {
+                    const target = uninstallTarget();
+                    setUninstallTarget(null);
+                    if (!target) return;
+                    props.uninstallSkill(target.name);
+                  }}
+                  disabled={props.busy}
+                >
+                  {translate("skills.uninstall")}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
     </section>
   );
 }
