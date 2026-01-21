@@ -1,6 +1,7 @@
 import { For, Show } from "solid-js";
 
 import { CheckCircle2, Circle, Search, X } from "lucide-solid";
+import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
 import { modelEquals } from "../utils";
@@ -19,6 +20,8 @@ export type ModelPickerModalProps = {
 };
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
+  const translate = (key: string) => t(key, currentLocale());
+
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
@@ -27,12 +30,10 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-semibold text-gray-12">
-                  {props.target === "default" ? "Default model" : "Model"}
+                  {props.target === "default" ? translate("settings.default_model") : translate("settings.session_model")}
                 </h3>
                 <p class="text-sm text-gray-11 mt-1">
-                  Choose from your configured providers. This selection {props.target === "default"
-                    ? "will be used for new sessions"
-                    : "applies to your next message"}.
+                  {props.target === "default" ? translate("settings.model_description_default") : translate("settings.model_description_session")}
                 </p>
               </div>
               <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
@@ -47,13 +48,13 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                   type="text"
                   value={props.query}
                   onInput={(e) => props.setQuery(e.currentTarget.value)}
-                  placeholder="Search models…"
+                  placeholder={translate("settings.search_models")}
                   class="w-full bg-gray-1/40 border border-gray-6 rounded-xl py-2.5 pl-9 pr-3 text-sm text-gray-12 placeholder-gray-6 focus:outline-none focus:ring-1 focus:ring-gray-8 focus:border-gray-8"
                 />
               </div>
               <Show when={props.query.trim()}>
                 <div class="mt-2 text-xs text-gray-10">
-                  Showing {props.filteredOptions.length} of {props.options.length}
+                  {translate("settings.showing_models").replace("{count}", String(props.filteredOptions.length)).replace("{total}", String(props.options.length))}
                 </div>
               </Show>
             </div>
@@ -111,7 +112,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
             <div class="mt-5 flex justify-end shrink-0">
               <Button variant="outline" onClick={props.onClose}>
-                Done
+                {translate("settings.done")}
               </Button>
             </div>
           </div>

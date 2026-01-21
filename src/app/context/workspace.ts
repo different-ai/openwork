@@ -29,6 +29,7 @@ import {
 } from "../lib/tauri";
 import { waitForHealthy, createClient } from "../lib/opencode";
 import type { Provider } from "@opencode-ai/sdk/v2/client";
+import { t, currentLocale } from "../../i18n";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -200,7 +201,7 @@ export function createWorkspaceStore(options: {
   async function connectToServer(nextBaseUrl: string, directory?: string) {
     options.setError(null);
     options.setBusy(true);
-    options.setBusyLabel("Connecting");
+    options.setBusyLabel("status.connecting");
     options.setBusyStartedAt(Date.now());
     options.setSseConnected(false);
 
@@ -264,24 +265,24 @@ export function createWorkspaceStore(options: {
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
     if (!isTauriRuntime()) {
-      options.setError("Workspace creation requires the Tauri app runtime.");
+      options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
 
     if (!folder) {
-      options.setError("Choose a folder to create the workspace.");
+      options.setError(t("app.error.choose_folder", currentLocale()));
       return;
     }
 
     options.setBusy(true);
-    options.setBusyLabel("Creating workspace");
+    options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
 
     try {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
-        options.setError("Choose a folder to create the workspace.");
+        options.setError(t("app.error.choose_folder", currentLocale()));
         return;
       }
 
@@ -314,12 +315,12 @@ export function createWorkspaceStore(options: {
 
   async function pickWorkspaceFolder() {
     if (!isTauriRuntime()) {
-      options.setError("Workspace creation requires the Tauri app runtime.");
+      options.setError(t("app.error.tauri_required", currentLocale()));
       return null;
     }
 
     try {
-      const selection = await pickDirectory({ title: "Choose workspace folder" });
+      const selection = await pickDirectory({ title: t("onboarding.choose_workspace_folder", currentLocale()) });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
@@ -333,13 +334,13 @@ export function createWorkspaceStore(options: {
 
   async function startHost(optionsOverride?: { workspacePath?: string }) {
     if (!isTauriRuntime()) {
-      options.setError("Host mode requires the Tauri app runtime. Use `pnpm dev`." );
+      options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
     }
 
     const dir = (optionsOverride?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
     if (!dir) {
-      options.setError("Pick a workspace folder to start OpenCode in.");
+      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return false;
     }
 
@@ -373,7 +374,7 @@ export function createWorkspaceStore(options: {
 
     options.setError(null);
     options.setBusy(true);
-    options.setBusyLabel("Starting engine");
+    options.setBusyLabel("status.starting_engine");
     options.setBusyStartedAt(Date.now());
 
     try {
@@ -384,7 +385,7 @@ export function createWorkspaceStore(options: {
 
       if (options.engineSource() === "sidecar" && options.isWindowsPlatform()) {
         options.setEngineSource("path");
-        options.setError("Sidecar OpenCode is not supported on Windows yet. Using PATH instead.");
+        options.setError(t("app.error.sidecar_unsupported_windows", currentLocale()));
       }
 
       const info = await engineStart(dir, { preferSidecar: options.engineSource() === "sidecar" });
@@ -411,7 +412,7 @@ export function createWorkspaceStore(options: {
   async function stopHost() {
     options.setError(null);
     options.setBusy(true);
-    options.setBusyLabel("Disconnecting");
+    options.setBusyLabel("status.disconnecting");
     options.setBusyStartedAt(Date.now());
 
     try {
@@ -456,7 +457,7 @@ export function createWorkspaceStore(options: {
     options.setError(null);
     setEngineInstallLogs(null);
     options.setBusy(true);
-    options.setBusyLabel("Installing OpenCode");
+    options.setBusyLabel("status.installing_opencode");
     options.setBusyStartedAt(Date.now());
 
     try {
@@ -465,7 +466,7 @@ export function createWorkspaceStore(options: {
       setEngineInstallLogs(combined || null);
 
       if (!result.ok) {
-        options.setError(result.stderr.trim() || "OpenCode install failed. See logs above.");
+        options.setError(result.stderr.trim() || t("app.error.install_failed", currentLocale()));
       }
 
       await refreshEngineDoctor();
@@ -559,7 +560,7 @@ export function createWorkspaceStore(options: {
     if (!isTauriRuntime()) return;
 
     try {
-      const selection = await pickDirectory({ title: "Authorize folder" });
+      const selection = await pickDirectory({ title: t("onboarding.authorize_folder", currentLocale()) });
       const folder =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
       if (!folder) return;

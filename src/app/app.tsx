@@ -66,6 +66,9 @@ import {
   formatRelativeTime,
   groupMessageParts,
   isTauriRuntime,
+} from "./utils";
+import { currentLocale, setLocale, t, type Language } from "../i18n";
+import {
   isWindowsPlatform,
   lastUserModelFromMessages,
   parseModelRef,
@@ -245,7 +248,7 @@ export default function App() {
     if (!c || !sessionID) return;
 
     setBusy(true);
-    setBusyLabel("Running");
+    setBusyLabel("status.running");
     setBusyStartedAt(Date.now());
     setError(null);
 
@@ -589,14 +592,14 @@ export default function App() {
 
     const label = busyLabel();
     // Allow creating a new session even while a run is in progress.
-    if (busy() && label === "Running") return false;
+    if (busy() && label === "status.running") return false;
 
     // Otherwise, block during engine / connection transitions.
     if (
       busy() &&
-      (label === "Connecting" ||
-        label === "Starting engine" ||
-        label === "Disconnecting")
+      (label === "status.connecting" ||
+        label === "status.starting_engine" ||
+        label === "status.disconnecting")
     ) {
       return true;
     }
@@ -666,7 +669,7 @@ export default function App() {
           modelID: DEFAULT_MODEL.modelID,
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
-          footer: "Fallback",
+          footer: t("settings.model_fallback", currentLocale()),
           isFree: true,
           isConnected: false,
         },
@@ -699,9 +702,9 @@ export default function App() {
       for (const model of models) {
         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
         const footerBits: string[] = [];
-        if (defaultModelID === model.id) footerBits.push("Default");
-        if (isFree) footerBits.push("Free");
-        if (model.capabilities?.reasoning) footerBits.push("Reasoning");
+        if (defaultModelID === model.id) footerBits.push(t("settings.model_default", currentLocale()));
+        if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
+        if (model.capabilities?.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
         next.push({
           providerID: provider.id,
@@ -817,7 +820,7 @@ export default function App() {
     setNotionBusy(true);
     setNotionError(null);
     setNotionStatus("connecting");
-    setNotionStatusDetail("Reload required");
+    setNotionStatusDetail(t("settings.reload_required", currentLocale()));
     setNotionSkillInstalled(false);
 
     try {
@@ -843,10 +846,10 @@ export default function App() {
       }
 
       markReloadRequired("mcp");
-      setNotionStatusDetail("Reload required");
+      setNotionStatusDetail(t("settings.reload_required", currentLocale()));
       try {
         window.localStorage.setItem("openwork.notionStatus", "connecting");
-        window.localStorage.setItem("openwork.notionStatusDetail", "Reload required");
+        window.localStorage.setItem("openwork.notionStatusDetail", t("settings.reload_required", currentLocale()));
         window.localStorage.setItem("openwork.notionSkillInstalled", "0");
       } catch {
         // ignore
@@ -915,7 +918,7 @@ export default function App() {
 
     if (mode() !== "host") {
       console.log("[connectMcp] ❌ mode is not host, mode=", mode());
-      setMcpStatus("MCP connections are only available in Host mode.");
+      setMcpStatus(t("mcp.host_mode_only", currentLocale()));
       return;
     }
 
@@ -923,13 +926,13 @@ export default function App() {
     console.log("[connectMcp] projectDir:", projectDir);
     if (!projectDir) {
       console.log("[connectMcp] ❌ no projectDir");
-      setMcpStatus("Pick a workspace folder first.");
+      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
       return;
     }
 
     if (!isTauriRuntime()) {
       console.log("[connectMcp] ❌ not Tauri runtime");
-      setMcpStatus("MCP connections require the desktop app.");
+      setMcpStatus(t("mcp.desktop_required", currentLocale()));
       return;
     }
     console.log("[connectMcp] ✓ is Tauri runtime");
@@ -938,7 +941,7 @@ export default function App() {
     console.log("[connectMcp] activeClient:", activeClient ? "exists" : "null");
     if (!activeClient) {
       console.log("[connectMcp] ❌ no activeClient");
-      setMcpStatus("Connect to the OpenCode server first.");
+      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
       return;
     }
 
@@ -1026,7 +1029,7 @@ export default function App() {
         setMcpAuthEntry(entry);
         setMcpAuthModalOpen(true);
       } else {
-        setMcpStatus("Reload required to activate the new MCP.");
+        setMcpStatus(t("mcp.reload_required_after_add", currentLocale()));
       }
 
       markReloadRequired("mcp");
@@ -1036,7 +1039,7 @@ export default function App() {
       console.log("[connectMcp] ✓ done");
     } catch (e) {
       console.error("[connectMcp] ❌ error:", e);
-      setMcpStatus(e instanceof Error ? e.message : "Failed to connect MCP.");
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
     } finally {
       setMcpConnectingName(null);
       console.log("[connectMcp] finally block, connecting name cleared");
@@ -1069,7 +1072,7 @@ export default function App() {
     console.log("[DEBUG] client found");
     setBusy(true);
     console.log("[DEBUG] busy set");
-    setBusyLabel("Creating new task");
+    setBusyLabel("status.creating_task");
     console.log("[DEBUG] busy label set");
     setBusyStartedAt(Date.now());
     console.log("[DEBUG] busy started at set");
@@ -1126,7 +1129,7 @@ export default function App() {
         mark("health ok", healthResult);
       } catch (healthErr) {
         mark("health FAILED", healthErr);
-        throw new Error("Server connection lost. Please reload.");
+        throw new Error(t("app.connection_lost", currentLocale()));
       }
 
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
@@ -1144,7 +1147,7 @@ export default function App() {
       const session = unwrap(rawResult);
       mark("session unwrapped");
       // Set selectedSessionId BEFORE switching view to avoid "No session selected" flash
-      setBusyLabel("Loading session");
+      setBusyLabel("status.loading_session");
       await withTimeout(
         loadSessions(workspaceStore.activeWorkspaceRoot().trim()),
         12_000,
@@ -1159,7 +1162,7 @@ export default function App() {
       setView("session");
     } catch (e) {
       mark("error caught", e);
-      const message = e instanceof Error ? e.message : "Unknown error";
+      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       setError(addOpencodeCacheHint(message));
     } finally {
       setCreatingSession(false);
@@ -1445,6 +1448,8 @@ export default function App() {
     }
   });
 
+
+
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -1493,16 +1498,17 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !connectedVersion()) return "Disconnected";
-    const bits = [`Connected · ${connectedVersion()}`];
-    if (sseConnected()) bits.push("Live");
+    if (!client() || !connectedVersion()) return t("status.disconnected", currentLocale());
+    const bits = [`${t("status.connected", currentLocale())} · ${connectedVersion()}`];
+    if (sseConnected()) bits.push(t("status.live", currentLocale()));
     return bits.join(" · ");
   });
 
   const busyHint = createMemo(() => {
     if (!busy() || !busyLabel()) return null;
     const seconds = busySeconds();
-    return seconds > 0 ? `${busyLabel()} · ${seconds}s` : busyLabel();
+    const label = t(busyLabel()!, currentLocale());
+    return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
   const localHostLabel = createMemo(() => {
@@ -1667,10 +1673,10 @@ export default function App() {
     openDefaultModelPicker,
     showThinking: showThinking(),
     toggleShowThinking: () => setShowThinking((v) => !v),
-    modelVariantLabel: modelVariant() ?? "(default)",
+    modelVariantLabel: modelVariant() ?? t("common.default_parens", currentLocale()),
     editModelVariant: () => {
       const next = window.prompt(
-        "Model variant (provider-specific, e.g. high/max/minimal). Leave blank to clear.",
+        t("settings.model_variant_prompt", currentLocale()),
         modelVariant() ?? ""
       );
       if (next == null) return;
@@ -1724,6 +1730,8 @@ export default function App() {
     refreshMcpServers,
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
     reloadMcpEngine: () => reloadEngineInstance(),
+    language: currentLocale(),
+    setLanguage: setLocale,
   });
 
   return (
@@ -1821,6 +1829,7 @@ export default function App() {
           resetModalText().trim().toUpperCase() === "RESET"
         }
         hasActiveRuns={anyActiveRuns()}
+        language={currentLocale()}
         onClose={() => setResetModalOpen(false)}
         onConfirm={confirmReset}
         onTextChange={setResetModalText}
@@ -1831,6 +1840,7 @@ export default function App() {
         client={client()}
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
+        language={currentLocale()}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
@@ -1839,7 +1849,7 @@ export default function App() {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
           markReloadRequired("mcp");
-          setMcpStatus("OAuth completed. Reload the engine to activate the MCP.");
+          setMcpStatus(t("mcp.auth.oauth_completed_reload", currentLocale()));
         }}
         onReloadEngine={() => reloadEngineInstance()}
       />
