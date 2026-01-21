@@ -24,6 +24,7 @@ export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
+  baseUrl: () => string;
   mode: () => Mode | null;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
@@ -101,19 +102,23 @@ export function createExtensionsStore(options: {
 
       if (refreshSkillsAborted) return;
 
-      const rawClient = c as unknown as { _client?: { get: (input: { url: string }) => Promise<any> } };
-      if (!rawClient._client) {
-        throw new Error("OpenCode client unavailable.");
+      // Get baseUrl from options
+      const baseUrl = options.baseUrl().trim();
+      if (!baseUrl) {
+        throw new Error("OpenCode server not connected.");
       }
 
-      const result = await rawClient._client.get({ url: "/skill" });
-      if (result?.data === undefined) {
-        const err = result?.error;
-        const message =
-          err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to load skills";
-        throw new Error(message);
+      // Fetch skills directly via HTTP
+      const response = await fetch(`${baseUrl}/skill`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load skills: ${response.status} ${response.statusText}`);
       }
-      const data = result.data as Array<{
+
+      const data = (await response.json()) as Array<{
         name: string;
         description: string;
         location: string;

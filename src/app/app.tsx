@@ -322,6 +322,7 @@ export default function App() {
 
   const extensionsStore = createExtensionsStore({
     client,
+    baseUrl,
     mode,
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
