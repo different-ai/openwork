@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { formatRelativeTime } from "../utils";
+import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -551,8 +551,9 @@ export default function DashboardView(props: DashboardViewProps) {
                               </span>
                               <Show
                                 when={
-                                  props.activeWorkspaceRoot &&
-                                  s.directory === props.activeWorkspaceRoot
+                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
+                                  normalizeDirectoryPath(s.directory) ===
+                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
                                 }
                               >
                                 <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
@@ -617,8 +618,9 @@ export default function DashboardView(props: DashboardViewProps) {
                               </span>
                               <Show
                                 when={
-                                  props.activeWorkspaceRoot &&
-                                  s.directory === props.activeWorkspaceRoot
+                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
+                                  normalizeDirectoryPath(s.directory) ===
+                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
                                 }
                               >
                                 <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">

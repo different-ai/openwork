@@ -388,8 +388,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handlePromptKeyDown = (event: KeyboardEvent) => {
-    if (event.isComposing) return;
     if (event.key === "Enter" && event.shiftKey) return;
+    if (event.isComposing && event.key !== "Enter") return;
 
     const menuOpen = commandMenuOpen();
     const matches = commandMatches();

@@ -169,6 +169,15 @@ export function formatBytes(bytes: number) {
   return `${rounded} ${units[idx]}`;
 }
 
+export function normalizeDirectoryPath(input?: string | null) {
+  const trimmed = (input ?? "").trim();
+  if (!trimmed) return "";
+  const unified = trimmed.replace(/\\/g, "/");
+  const withoutTrailing = unified.replace(/\/+$/, "");
+  const normalized = withoutTrailing || "/";
+  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+}
+
 export function normalizeEvent(raw: unknown): OpencodeEvent | null {
   if (!raw || typeof raw !== "object") {
     return null;

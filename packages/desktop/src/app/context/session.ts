@@ -13,7 +13,13 @@ import type {
   PlaceholderAssistantMessage,
   TodoItem,
 } from "../types";
-import { addOpencodeCacheHint, modelFromUserMessage, normalizeEvent, normalizeSessionStatus } from "../utils";
+import {
+  addOpencodeCacheHint,
+  modelFromUserMessage,
+  normalizeDirectoryPath,
+  normalizeEvent,
+  normalizeSessionStatus,
+} from "../utils";
 import { unwrap } from "../lib/opencode";
 
 export type SessionModelState = {
@@ -158,8 +164,10 @@ export function createSessionStore(options: {
     const c = options.client();
     if (!c) return;
     const list = unwrap(await c.session.list());
-    const root = (scopeRoot ?? "").trim();
-    const filtered = root ? list.filter((session) => session.directory === root) : list;
+    const root = normalizeDirectoryPath(scopeRoot);
+    const filtered = root
+      ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
+      : list;
     setStore("sessions", reconcile(sortById(filtered), { key: "id" }));
   }
 

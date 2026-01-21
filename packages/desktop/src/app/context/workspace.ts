@@ -162,6 +162,7 @@ export function createWorkspaceStore(options: {
 
     const wasHostMode = options.mode() === "host" && options.client();
     const oldWorkspacePath = projectDir();
+    const workspaceChanged = oldWorkspacePath !== next.path;
 
     syncActiveWorkspaceId(id);
     setProjectDir(next.path);
@@ -200,8 +201,17 @@ export function createWorkspaceStore(options: {
 
     await options.loadWorkspaceTemplates({ workspaceRoot: next.path }).catch(() => undefined);
 
+    if (workspaceChanged && options.client() && !wasHostMode) {
+      options.setSelectedSessionId(null);
+      options.setMessages([]);
+      options.setTodos([]);
+      options.setPendingPermissions([]);
+      options.setSessionStatusById({});
+      await options.loadSessions(next.path).catch(() => undefined);
+    }
+
     // In Host mode, restart the engine when workspace changes
-    if (wasHostMode && oldWorkspacePath !== next.path) {
+    if (wasHostMode && workspaceChanged) {
       options.setError(null);
       options.setBusy(true);
       options.setBusyLabel("status.restarting_engine");
