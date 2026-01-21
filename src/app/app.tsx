@@ -661,6 +661,7 @@ export default function App() {
   const modelOptions = createMemo<ModelOption[]>(() => {
     const allProviders = providers();
     const defaults = providerDefaults();
+    const currentDefault = defaultModel();
 
     if (!allProviders.length) {
       return [
@@ -701,8 +702,12 @@ export default function App() {
 
       for (const model of models) {
         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
+        const isDefault =
+          provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
         const footerBits: string[] = [];
-        if (defaultModelID === model.id) footerBits.push(t("settings.model_default", currentLocale()));
+        if (defaultModelID === model.id || isDefault) {
+          footerBits.push(t("settings.model_default", currentLocale()));
+        }
         if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
         if (model.capabilities?.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
