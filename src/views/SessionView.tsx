@@ -85,21 +85,20 @@ export type SessionViewProps = {
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
-
-  const [selectedRecentIndex, setSelectedRecentIndex] = createSignal(0);
   let recentsListRef: HTMLDivElement | undefined;
-  const [hasInitialized, setHasInitialized] = createSignal(false);
 
   const handleRecentsKeyNav = (e: KeyboardEvent) => {
     const sessions = props.sessions.slice(0, 8);
     if (sessions.length === 0) return;
-    const current = selectedRecentIndex();
+
+    const currentIndex = sessions.findIndex(s => s.id === props.selectedSessionId);
+    
     if (e.key === "ArrowDown") {
       e.preventDefault();
-
-      const newIndex = Math.min(current + 1, sessions.length - 1);
-      setSelectedRecentIndex(newIndex);
-
+      const newIndex = Math.min(
+        currentIndex === -1 ? 0 : currentIndex + 1, 
+        sessions.length - 1
+      );
       const session = sessions[newIndex];
       if (session) {
         void props.selectSession(session.id);
@@ -108,10 +107,10 @@ export default function SessionView(props: SessionViewProps) {
       }
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-
-      const newIndex = Math.max(current - 1, 0);
-      setSelectedRecentIndex(newIndex);
-
+      const newIndex = Math.max(
+        currentIndex === -1 ? 0 : currentIndex - 1, 
+        0
+      );
       const session = sessions[newIndex];
       if (session) {
         void props.selectSession(session.id);
@@ -122,16 +121,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   createEffect(() => {
-    if (props.selectedSessionId) {
-      const sessions = props.sessions.slice(0, 8);
-      const index = sessions.findIndex(s => s.id === props.selectedSessionId);
-      if (index !== -1) {
-        setSelectedRecentIndex(index);
-      }
-      if (!hasInitialized()) {
-        setHasInitialized(true);
-        recentsListRef?.focus();
-      }
+    if (props.selectedSessionId && recentsListRef) {
+      setTimeout(() => recentsListRef?.focus(), 0);
     }
   });
 
@@ -365,18 +356,16 @@ export default function SessionView(props: SessionViewProps) {
                 onKeyDown={handleRecentsKeyNav}
               >
                 <For each={props.sessions.slice(0, 8)}>
-                  {(session, idx) => {
-                    const isKeyboardSelected = () => idx() === selectedRecentIndex();
+                  {(session) => {
+                    const isSelected = () => session.id === props.selectedSessionId;
                     return (
                       <button
                         class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                          isKeyboardSelected()
+                          isSelected()
                             ? "bg-zinc-800 text-zinc-100"
                             : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50"
                         }`}
-                        onMouseEnter={() => setSelectedRecentIndex(idx())}
                         onClick={async () => {
-                          setSelectedRecentIndex(idx());
                           await props.selectSession(session.id);
                           props.setView("session");
                           props.setTab("sessions");
