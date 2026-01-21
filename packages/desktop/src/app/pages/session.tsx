@@ -126,10 +126,12 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   createEffect(() => {
+    props.selectedSessionId;
+    props.sessions.length;
     if (props.selectedSessionId && recentsListRef) {
-      setTimeout(() => {
+      requestAnimationFrame(() => {
         recentsListRef?.focus();
-      }, 0);
+      });
     }
   });
 
