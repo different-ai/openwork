@@ -128,6 +128,7 @@ export default {
   "session.model_standard": "Standard",
   "session.run_button_title": "Run",
   // ==================== Templates ====================
+  "templates.title": "Templates",
   "templates.new": "New",
   "templates.empty_state": "Starter templates will appear here. Create one or save from a session.",
   "templates.workspace": "Workspace",
@@ -565,6 +566,16 @@ export default {
   "onboarding.authorize_folder": "Authorize folder",
   "onboarding.choose_workspace_folder": "Choose workspace folder",
 
+  // ==================== Navigation ====================
+  "nav.home": "Home",
+  "nav.dashboard": "Dashboard",
+  "nav.sessions": "Sessions",
+  "nav.templates": "Templates",
+  "nav.skills": "Skills",
+  "nav.plugins": "Plugins",
+  "nav.mcp": "MCPs",
+  "nav.settings": "Settings",
+
   // ==================== Common ====================
   "common.alpha": "Alpha",
   "common.change": "Change",
@@ -593,6 +604,8 @@ export default {
   "status.running": "Running",
   "status.live": "Live",
   "status.connecting": "Connecting",
+  "status.completed": "Completed",
+  "status.failed": "Failed",
   "status.creating_workspace": "Creating workspace",
   "status.deleting_template": "Deleting template",
   "status.saving_workspace_template": "Saving workspace template",
