@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { For, Show, createEffect } from "solid-js";
 
 import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
@@ -20,7 +20,18 @@ export type ModelPickerModalProps = {
 };
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
+  let searchInputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
+
+  createEffect(() => {
+    if (!props.open) return;
+    requestAnimationFrame(() => {
+      searchInputRef?.focus();
+      if (searchInputRef?.value) {
+        searchInputRef.select();
+      }
+    });
+  });
 
   return (
     <Show when={props.open}>
@@ -45,6 +56,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               <div class="relative">
                 <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-10" />
                 <input
+                  ref={(el) => (searchInputRef = el)}
                   type="text"
                   value={props.query}
                   onInput={(e) => props.setQuery(e.currentTarget.value)}

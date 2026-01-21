@@ -104,12 +104,33 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
+  const [commandToast, setCommandToast] = createSignal<string | null>(null);
+  const [commandIndex, setCommandIndex] = createSignal(0);
+
+  let promptInputEl: HTMLTextAreaElement | undefined;
 
   createEffect(() => {
     if (!artifactToast()) return;
     const id = window.setTimeout(() => setArtifactToast(null), 3000);
     return () => window.clearTimeout(id);
   });
+
+  createEffect(() => {
+    if (!commandToast()) return;
+    const id = window.setTimeout(() => setCommandToast(null), 2400);
+    return () => window.clearTimeout(id);
+  });
+
+  const maxPromptHeight = 160;
+
+  const syncPromptHeight = () => {
+    if (!promptInputEl) return;
+    promptInputEl.style.height = "auto";
+    const nextHeight = Math.min(promptInputEl.scrollHeight, maxPromptHeight);
+    promptInputEl.style.height = `${nextHeight}px`;
+    promptInputEl.style.overflowY =
+      promptInputEl.scrollHeight > maxPromptHeight ? "auto" : "hidden";
+  };
 
   const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
 
@@ -255,6 +276,131 @@ export default function SessionView(props: SessionViewProps) {
     if (props.busyLabel !== "Running" && props.sessionStatus !== "running") return false;
     return !hasAssistantTextAfterLastUser();
   });
+
+  const clearPrompt = () => {
+    props.setPrompt("");
+    queueMicrotask(syncPromptHeight);
+  };
+
+  const commandList = createMemo(() => [
+    {
+      id: "models",
+      label: "Models",
+      description: "Choose a model",
+      run: () => {
+        props.openSessionModelPicker();
+        clearPrompt();
+      },
+    },
+    {
+      id: "help",
+      label: "Help",
+      description: "Show available commands",
+      run: () => {
+        setCommandToast("Commands: /models, /help, /clear");
+        clearPrompt();
+      },
+    },
+    {
+      id: "clear",
+      label: "Clear",
+      description: "Clear the input",
+      run: () => clearPrompt(),
+    },
+  ]);
+
+  const commandInput = createMemo(() => {
+    const value = props.prompt;
+    if (!value.startsWith("/")) return null;
+    return value.slice(1);
+  });
+
+  const commandToken = createMemo(() => {
+    const value = commandInput();
+    if (value == null) return null;
+    const token = value.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+    return token;
+  });
+
+  const commandMatches = createMemo(() => {
+    const token = commandToken();
+    if (token == null) return [];
+    const list = commandList();
+    if (!token) return list;
+    return list.filter((command) => command.id.startsWith(token));
+  });
+
+  const commandMenuOpen = createMemo(() => commandInput() !== null && !props.busy);
+
+  createEffect(() => {
+    const matches = commandMatches();
+    if (!matches.length) {
+      setCommandIndex(0);
+      return;
+    }
+    setCommandIndex((current) => Math.min(current, matches.length - 1));
+  });
+
+  createEffect(() => {
+    props.prompt;
+    syncPromptHeight();
+  });
+
+  const runCommand = (commandId?: string) => {
+    if (!commandId) {
+      setCommandToast("Unknown command");
+      return;
+    }
+    const command = commandList().find((entry) => entry.id === commandId);
+    if (!command) {
+      setCommandToast("Unknown command");
+      return;
+    }
+    command.run();
+  };
+
+  const handlePrimaryAction = () => {
+    if (commandMenuOpen()) {
+      const matches = commandMatches();
+      const active = matches[commandIndex()];
+      runCommand(active?.id);
+      return;
+    }
+    props.sendPromptAsync().catch(() => undefined);
+  };
+
+  const handlePromptKeyDown = (event: KeyboardEvent) => {
+    if (event.isComposing) return;
+    if (event.key === "Enter" && event.shiftKey) return;
+
+    const menuOpen = commandMenuOpen();
+    const matches = commandMatches();
+
+    if (menuOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        if (!matches.length) return;
+        setCommandIndex((current) => Math.min(current + 1, matches.length - 1));
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (!matches.length) return;
+        setCommandIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        clearPrompt();
+        return;
+      }
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      handlePrimaryAction();
+    }
+  };
 
   return (
     <Show
@@ -410,11 +556,12 @@ export default function SessionView(props: SessionViewProps) {
                             {(group, idx) => (
                               <div class={idx() === groups().length - 1 ? "" : groupSpacing()}>
                                 <Show when={group.kind === "text"}>
-                                    <PartView
+                                  <PartView
                                       part={(group as { kind: "text"; part: Part }).part}
                                       developerMode={props.developerMode}
                                       showThinking={props.showThinking}
                                       tone={isUser() ? "dark" : "light"}
+                                      renderMarkdown={!isUser()}
                                     />
                                 </Show>
                                 <Show when={group.kind === "steps"}>
@@ -723,29 +870,78 @@ export default function SessionView(props: SessionViewProps) {
                   </button>
                 </Show>
 
-                <div class="relative flex items-center">
-                  <input
-                    type="text"
-                    disabled={props.busy}
-                    value={props.prompt}
-                    onInput={(e) => props.setPrompt(e.currentTarget.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        props.sendPromptAsync().catch(() => undefined);
-                      }
-                    }}
-                    placeholder="Ask OpenWork..."
-                    class="flex-1 bg-transparent border-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed"
-                  />
+                <div class="relative">
+                  <Show when={commandMenuOpen()}>
+                    <div class="absolute bottom-full left-0 right-0 mb-2 z-20">
+                      <div class="rounded-2xl border border-gray-6/70 bg-gray-1/95 shadow-xl backdrop-blur-sm">
+                        <div class="px-3 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8">
+                          Commands
+                        </div>
+                        <div class="space-y-1 px-2 pb-2">
+                          <Show
+                            when={commandMatches().length}
+                            fallback={
+                              <div class="px-3 py-2 text-xs text-gray-9">
+                                No commands found.
+                              </div>
+                            }
+                          >
+                            <For each={commandMatches()}>
+                              {(command, idx) => (
+                                <button
+                                  type="button"
+                                  class={`w-full flex items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
+                                    idx() === commandIndex()
+                                      ? "bg-gray-12/10 text-gray-12"
+                                      : "text-gray-11 hover:bg-gray-12/5"
+                                  }`}
+                                  onMouseDown={(event) => {
+                                    event.preventDefault();
+                                    runCommand(command.id);
+                                  }}
+                                  onMouseEnter={() => setCommandIndex(idx())}
+                                >
+                                  <div class="text-xs font-semibold text-gray-12">/{command.id}</div>
+                                  <div class="text-[11px] text-gray-9">{command.description}</div>
+                                </button>
+                              )}
+                            </For>
+                          </Show>
+                        </div>
+                      </div>
+                    </div>
+                  </Show>
 
-                  <button
-                    disabled={!props.prompt.trim() || props.busy}
-                    onClick={() => props.sendPromptAsync().catch(() => undefined)}
-                    class="p-1.5 bg-gray-12 text-gray-12 rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 ml-2"
-                    title="Run"
-                  >
-                    <ArrowRight size={18} />
-                  </button>
+                  <Show when={commandToast()}>
+                    <div class="absolute bottom-full right-0 mb-2 z-20 rounded-xl border border-gray-6 bg-gray-1/90 px-3 py-2 text-xs text-gray-11 shadow-lg">
+                      {commandToast()}
+                    </div>
+                  </Show>
+
+                  <div class="relative flex items-end gap-2">
+                    <textarea
+                      ref={(el) => (promptInputEl = el)}
+                      rows={1}
+                      disabled={props.busy}
+                      value={props.prompt}
+                      onInput={(e) => {
+                        props.setPrompt(e.currentTarget.value);
+                        syncPromptHeight();
+                      }}
+                      onKeyDown={handlePromptKeyDown}
+                      placeholder="Ask OpenWork..."
+                      class="flex-1 bg-transparent border-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-[160px]"
+                    />
+
+                    <button
+                      disabled={!props.prompt.trim() || props.busy}
+                      onClick={handlePrimaryAction}
+                      class="p-1.5 bg-gray-12 text-gray-12 rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0"
+                      title="Run"
+                    >
+                      <ArrowRight size={18} />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
