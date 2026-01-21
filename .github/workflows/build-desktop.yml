@@ -93,5 +93,8 @@ jobs:
           cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
           chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
 
+      - name: Run Rust tests (engine + sidecar resolution)
+        run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml --locked
+
       - name: Build desktop app
         run: pnpm --filter @different-ai/openwork exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb
