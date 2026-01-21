@@ -86,6 +86,53 @@ export type SessionViewProps = {
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
 
+  let recentsListRef: HTMLDivElement | undefined;
+
+  const handleRecentsKeyNav = (e: KeyboardEvent) => {
+    const sessions = props.sessions.slice(0, 8);
+    if (sessions.length === 0) return;
+
+    const currentIndex = sessions.findIndex(
+      (s) => s.id === props.selectedSessionId
+    );
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      const newIndex = Math.min(
+        currentIndex === -1 ? 0 : currentIndex + 1,
+        sessions.length - 1
+      );
+
+      const session = sessions[newIndex];
+      if (session) {
+        void props.selectSession(session.id);
+        props.setView("session");
+        props.setTab("sessions");
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      const newIndex = Math.max(
+        currentIndex === -1 ? 0 : currentIndex - 1,
+        0
+      );
+
+      const session = sessions[newIndex];
+      if (session) {
+        void props.selectSession(session.id);
+        props.setView("session");
+        props.setTab("sessions");
+      }
+    }
+  };
+
+  createEffect(() => {
+    if (props.selectedSessionId && recentsListRef) {
+      setTimeout(() => {
+        recentsListRef?.focus();
+      }, 0);
+    }
+  });
+
   createEffect(() => {
     props.messages.length;
     props.todos.length;
@@ -474,28 +521,38 @@ export default function SessionView(props: SessionViewProps) {
 
             <div class="flex-1 overflow-y-auto px-4 py-4">
               <div class="text-xs text-gray-10 uppercase tracking-wide mb-3">Recents</div>
-              <div class="space-y-2">
-                <For each={props.sessions.slice(0, 8)}>
-                  {(session) => (
-                    <button
-                      class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                        session.id === props.selectedSessionId
-                          ? "bg-gray-2 text-gray-12"
-                          : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/50"
-                      }`}
-                      onClick={async () => {
-                        await props.selectSession(session.id);
-                        props.setView("session");
-                        props.setTab("sessions");
-                      }}
-                    >
-                      <div class="flex items-center justify-between gap-2">
-                        <span class="truncate">{session.title}</span>
-                      </div>
-                    </button>
-                  )}
-                </For>
-              </div>
+                <div
+                  ref={recentsListRef}
+                  class="space-y-2 focus:outline-none"
+                  tabIndex={0}
+                  onKeyDown={handleRecentsKeyNav}
+                >
+                  <For each={props.sessions.slice(0, 8)}>
+                    {(session) => {
+                      const isSelected = () =>
+                        session.id === props.selectedSessionId;
+
+                      return (
+                        <button
+                          class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                            isSelected()
+                              ? "bg-gray-2 text-gray-12"
+                              : "text-gray-11 hover:text-gray-12 hover:bg-gray-2/50"
+                          }`}
+                          onClick={async () => {
+                            await props.selectSession(session.id);
+                            props.setView("session");
+                            props.setTab("sessions");
+                          }}
+                        >
+                          <div class="flex items-center justify-between gap-2">
+                            <span class="truncate">{session.title}</span>
+                          </div>
+                        </button>
+                      );
+                    }}
+                  </For>
+                </div>
               <div class="mt-6 text-xs text-gray-10">
                 These tasks run locally and aren't synced across devices.
               </div>
