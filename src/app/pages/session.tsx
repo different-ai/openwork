@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -28,6 +28,7 @@ import {
 import Button from "../components/button";
 import PartView from "../components/part-view";
 import WorkspaceChip from "../components/workspace-chip";
+import { isTauriRuntime, isWindowsPlatform } from "../utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -102,6 +103,59 @@ export default function SessionView(props: SessionViewProps) {
     return Array.from({ length: total }, (_, idx) => idx < completed);
   });
 
+  const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (!artifactToast()) return;
+    const id = window.setTimeout(() => setArtifactToast(null), 3000);
+    return () => window.clearTimeout(id);
+  });
+
+  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
+
+  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
+
+  const resolveArtifactPath = (artifact: ArtifactItem) => {
+    const rawPath = artifact.path?.trim();
+    if (!rawPath) return null;
+    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\/)/.test(rawPath)) {
+      return rawPath;
+    }
+
+    const root = props.activeWorkspaceDisplay.path?.trim();
+    if (!root) return rawPath;
+
+    const separator = root.includes("\\") ? "\\" : "/";
+    const trimmedRoot = root.replace(/[\\/]+$/, "");
+    const trimmedPath = rawPath.replace(/^[\\/]+/, "");
+    return `${trimmedRoot}${separator}${trimmedPath}`;
+  };
+
+  const handleOpenArtifact = async (artifact: ArtifactItem) => {
+    const resolvedPath = resolveArtifactPath(artifact);
+    if (!resolvedPath) {
+      setArtifactToast("Artifact path missing.");
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setArtifactToast("Open is only available in the desktop app.");
+      return;
+    }
+
+    try {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      if (isWindowsPlatform()) {
+        await openPath(resolvedPath);
+      } else {
+        await revealItemInDir(resolvedPath);
+      }
+      setArtifactToast(artifactActionToast());
+    } catch (error) {
+      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
+    }
+  };
+
 
   const humanizePlugin = (name: string) => {
     const cleaned = name
@@ -132,6 +186,23 @@ export default function SessionView(props: SessionViewProps) {
   const toggleSidebar = (key: "progress" | "artifacts" | "context") => {
     props.setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
   };
+
+  const artifactsByMessage = createMemo(() => {
+    const map = new Map<string, ArtifactItem[]>();
+    for (const artifact of props.artifacts) {
+      const key = artifact.messageId?.trim();
+      if (!key) continue;
+      const current = map.get(key);
+      if (current) {
+        current.push(artifact);
+      } else {
+        map.set(key, [artifact]);
+      }
+    }
+    return map;
+  });
+
+  const unlinkedArtifacts = createMemo(() => props.artifacts.filter((artifact) => !artifact.messageId));
 
 
   const modelLabelParts = createMemo(() => {
@@ -322,6 +393,8 @@ export default function SessionView(props: SessionViewProps) {
                   const groups = () =>
                     props.groupMessageParts(renderableParts(), String((msg.info as any).id ?? "message"));
                   const groupSpacing = () => (isUser() ? "mb-3" : "mb-4");
+                  const messageId = () => String((msg.info as any).id ?? "");
+                  const messageArtifacts = () => artifactsByMessage().get(messageId()) ?? [];
 
                   return (
                     <Show when={renderableParts().length > 0}>
@@ -403,6 +476,29 @@ export default function SessionView(props: SessionViewProps) {
                               </div>
                             )}
                           </For>
+                          <Show when={messageArtifacts().length}>
+                            <div class={`mt-4 space-y-2 ${isUser() ? "text-gray-12" : ""}`.trim()}>
+                              <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
+                              <For each={messageArtifacts()}>
+                                {(artifact) => (
+                                  <div class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between">
+                                    <div class="flex items-center gap-3">
+                                      <div class="h-9 w-9 rounded-lg bg-gray-2 flex items-center justify-center">
+                                        <FileText size={16} class="text-gray-10" />
+                                      </div>
+                                      <div>
+                                        <div class="text-sm text-gray-12">{artifact.name}</div>
+                                        <div class="text-xs text-gray-10">Document</div>
+                                      </div>
+                                    </div>
+                                    <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
+                                      {artifactActionLabel()}
+                                    </Button>
+                                  </div>
+                                )}
+                              </For>
+                            </div>
+                          </Show>
                         </div>
                       </div>
                     </Show>
@@ -416,9 +512,39 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
+              <Show when={unlinkedArtifacts().length}>
+                <div class="mt-6 space-y-2">
+                  <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
+                  <For each={unlinkedArtifacts()}>
+                    {(artifact) => (
+                      <div class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                          <div class="h-9 w-9 rounded-lg bg-gray-2 flex items-center justify-center">
+                            <FileText size={16} class="text-gray-10" />
+                          </div>
+                          <div>
+                            <div class="text-sm text-gray-12">{artifact.name}</div>
+                            <div class="text-xs text-gray-10">Document</div>
+                          </div>
+                        </div>
+                        <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
+                          {artifactActionLabel()}
+                        </Button>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </Show>
+
               <div ref={(el) => (messagesEndEl = el)} />
             </div>
           </div>
+
+          <Show when={artifactToast()}>
+            <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-gray-2 border border-gray-6 px-4 py-2 text-xs text-gray-11 shadow-lg">
+              {artifactToast()}
+            </div>
+          </Show>
 
           <aside class="hidden lg:flex w-80 border-l border-gray-6 bg-gray-1 flex-col">
             <div class="p-4 space-y-4 overflow-y-auto flex-1">

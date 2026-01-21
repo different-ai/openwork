@@ -50,6 +50,7 @@ export type ArtifactItem = {
   path?: string;
   kind: "file" | "text";
   size?: string;
+  messageId?: string;
 };
 
 export type OpencodeEvent = {
