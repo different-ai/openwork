@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenWork",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "identifier": "com.differentai.openwork",
   "build": {
     "beforeDevCommand": "pnpm dev:web",
@@ -24,6 +24,9 @@
   },
   "bundle": {
     "createUpdaterArtifacts": true,
+    "macOS": {
+      "entitlements": "./entitlements.plist"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
