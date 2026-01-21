@@ -4,6 +4,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime } from "../app/utils";
 
 import Button from "../components/Button";
 import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
+import { useI18n } from "../i18n";
 
 export type SettingsViewProps = {
   mode: "host" | "client" | null;
@@ -62,6 +63,7 @@ export type SettingsViewProps = {
 };
 
 export default function SettingsView(props: SettingsViewProps) {
+  const [t, { locale }] = useI18n();
   const updateState = () => props.updateStatus?.state ?? "idle";
   const updateNotes = () => props.updateStatus?.notes ?? null;
   const updateVersion = () => props.updateStatus?.version ?? null;
@@ -74,13 +76,13 @@ export default function SettingsView(props: SettingsViewProps) {
   const notionStatusLabel = () => {
     switch (props.notionStatus) {
       case "connected":
-        return "Connected";
+        return t("common.connected");
       case "connecting":
-        return "Reload required";
+        return t("common.connecting");
       case "error":
-        return "Connection failed";
+        return t("settings.connection.disconnect"); // Or a specific error key if preferred, using disconnect for now as per previous logic logic seems to map to failed
       default:
-        return "Not connected";
+        return t("common.disconnected");
     }
   };
 
@@ -101,50 +103,75 @@ export default function SettingsView(props: SettingsViewProps) {
   return (
     <section class="space-y-6">
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
-        <div class="text-sm font-medium text-white">Connection</div>
+        <div class="text-sm font-medium text-white">{t("settings.general.title")}</div>
+        <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+          <div class="min-w-0">
+            <div class="text-sm text-zinc-200">{t("settings.general.language")}</div>
+            <div class="text-xs text-zinc-600">{t("settings.general.language_desc")}</div>
+          </div>
+          <div class="relative">
+            <select
+              value={locale()}
+              onInput={(e) => locale(e.currentTarget.value as any)}
+              class="appearance-none bg-zinc-950 border border-zinc-800 rounded-lg py-1.5 pl-3 pr-8 text-xs text-zinc-200 focus:outline-none focus:ring-1 focus:ring-zinc-700"
+            >
+              <option value="en">English</option>
+              <option value="zh">中文</option>
+            </select>
+            <div class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-500">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m6 9 6 6 6-6" />
+              </svg>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
+        <div class="text-sm font-medium text-white">{t("settings.connection.title")}</div>
         <div class="text-xs text-zinc-500">{props.headerStatus}</div>
         <div class="text-xs text-zinc-600 font-mono">{props.baseUrl}</div>
         <div class="pt-2 flex flex-wrap gap-2">
           <Button variant="secondary" onClick={props.toggleDeveloperMode}>
             <Shield size={16} />
-            {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}
+            {props.developerMode ? t("settings.connection.disable_dev_mode") : t("settings.connection.enable_dev_mode")}
           </Button>
           <Show when={props.mode === "host"}>
             <Button variant="danger" onClick={props.stopHost} disabled={props.busy}>
-              Stop engine
+              {t("settings.connection.stop_engine")}
             </Button>
           </Show>
           <Show when={props.mode === "client"}>
             <Button variant="outline" onClick={props.stopHost} disabled={props.busy}>
-              Disconnect
+              {t("settings.connection.disconnect")}
             </Button>
           </Show>
         </div>
 
         <Show when={isTauriRuntime() && props.mode === "host"}>
           <div class="pt-4 border-t border-zinc-800/60 space-y-3">
-            <div class="text-xs text-zinc-500">Engine source</div>
+            <div class="text-xs text-zinc-500">{t("settings.connection.engine_source")}</div>
             <div class="grid grid-cols-2 gap-2">
               <Button
                 variant={props.engineSource === "path" ? "secondary" : "outline"}
                 onClick={() => props.setEngineSource("path")}
                 disabled={props.busy}
               >
-                PATH
+                {t("settings.connection.path")}
               </Button>
               <Button
                 variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
                 onClick={() => props.setEngineSource("sidecar")}
                 disabled={props.busy || props.isWindows}
-                title={props.isWindows ? "Sidecar is not supported on Windows yet" : ""}
+                title={props.isWindows ? t("settings.connection.sidecar_not_supported") : ""}
               >
-                Sidecar
+                {t("settings.connection.sidecar")}
               </Button>
             </div>
             <div class="text-[11px] text-zinc-600">
-              PATH uses your installed OpenCode (default). Sidecar will use a bundled binary when available.
+              {t("settings.connection.path_desc")}
               <Show when={props.isWindows}>
-                <span class="text-zinc-500"> Sidecar is currently unavailable on Windows.</span>
+                <span class="text-zinc-500"> {t("settings.connection.sidecar_unavailable")}</span>
               </Show>
             </div>
           </div>
@@ -154,8 +181,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Model</div>
-          <div class="text-xs text-zinc-500">Defaults + thinking controls for runs.</div>
+          <div class="text-sm font-medium text-white">{t("settings.model.title")}</div>
+          <div class="text-xs text-zinc-500">{t("settings.model.subtitle")}</div>
         </div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
@@ -169,14 +196,14 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={props.openDefaultModelPicker}
             disabled={props.busy}
           >
-            Change
+            {t("settings.model.change")}
           </Button>
         </div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Thinking</div>
-            <div class="text-xs text-zinc-600">Show thinking parts (Developer mode only).</div>
+            <div class="text-sm text-zinc-200">{t("settings.model.thinking")}</div>
+            <div class="text-xs text-zinc-600">{t("settings.model.thinking_desc")}</div>
           </div>
           <Button
             variant="outline"
@@ -190,7 +217,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Model variant</div>
+            <div class="text-sm text-zinc-200">{t("settings.model.model_variant")}</div>
             <div class="text-xs text-zinc-600 font-mono truncate">{props.modelVariantLabel}</div>
           </div>
           <Button
@@ -199,21 +226,21 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={props.editModelVariant}
             disabled={props.busy}
           >
-            Edit
+            {t("settings.model.edit")}
           </Button>
         </div>
       </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Demo mode</div>
-          <div class="text-xs text-zinc-500">Lightweight scripted states for recording and review.</div>
+          <div class="text-sm font-medium text-white">{t("settings.demo_mode.title")}</div>
+          <div class="text-xs text-zinc-500">{t("settings.demo_mode.subtitle")}</div>
         </div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Enable demo mode</div>
-            <div class="text-xs text-zinc-600">Replaces live data with demo sequences.</div>
+            <div class="text-sm text-zinc-200">{t("settings.demo_mode.enable")}</div>
+            <div class="text-xs text-zinc-600">{t("settings.demo_mode.enable_desc")}</div>
           </div>
           <Button
             variant={props.demoMode ? "secondary" : "outline"}
@@ -232,7 +259,7 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={() => props.setDemoSequence("cold-open")}
             disabled={props.busy || !props.demoMode}
           >
-            Cold open
+            {t("settings.demo_mode.sequences.cold_open")}
           </Button>
           <Button
             variant={props.demoSequence === "scheduler" ? "secondary" : "outline"}
@@ -240,7 +267,7 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={() => props.setDemoSequence("scheduler")}
             disabled={props.busy || !props.demoMode}
           >
-            Scheduler
+            {t("settings.demo_mode.sequences.scheduler")}
           </Button>
           <Button
             variant={props.demoSequence === "summaries" ? "secondary" : "outline"}
@@ -248,7 +275,7 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={() => props.setDemoSequence("summaries")}
             disabled={props.busy || !props.demoMode}
           >
-            Summaries
+            {t("settings.demo_mode.sequences.summaries")}
           </Button>
           <Button
             variant={props.demoSequence === "groceries" ? "secondary" : "outline"}
@@ -256,20 +283,20 @@ export default function SettingsView(props: SettingsViewProps) {
             onClick={() => props.setDemoSequence("groceries")}
             disabled={props.busy || !props.demoMode}
           >
-            Groceries
+            {t("settings.demo_mode.sequences.groceries")}
           </Button>
         </div>
 
         <div class="text-xs text-zinc-600">
-          Demo sequences swap in scripted sessions, artifacts, and workspace context.
+          {t("settings.demo_mode.footer")}
         </div>
       </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
         <div class="flex items-start justify-between gap-4">
           <div>
-            <div class="text-sm font-medium text-white">Updates</div>
-            <div class="text-xs text-zinc-500">Keep OpenWork up to date.</div>
+            <div class="text-sm font-medium text-white">{t("settings.updates.title")}</div>
+            <div class="text-xs text-zinc-500">{t("settings.updates.subtitle")}</div>
           </div>
           <div class="text-xs text-zinc-600 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
         </div>
@@ -283,15 +310,14 @@ export default function SettingsView(props: SettingsViewProps) {
                 <>
                   <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
                     <div class="space-y-0.5">
-                      <div class="text-sm text-white">Automatic checks</div>
-                      <div class="text-xs text-zinc-600">Once per day (quiet)</div>
+                      <div class="text-sm text-white">{t("settings.updates.auto_check")}</div>
+                      <div class="text-xs text-zinc-600">{t("settings.updates.auto_check_desc")}</div>
                     </div>
                     <button
-                      class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                        props.updateAutoCheck
-                          ? "bg-white/10 text-white border-white/20"
-                          : "text-zinc-500 border-zinc-800 hover:text-white"
-                      }`}
+                      class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${props.updateAutoCheck
+                        ? "bg-white/10 text-white border-white/20"
+                        : "text-zinc-500 border-zinc-800 hover:text-white"
+                        }`}
                       onClick={props.toggleUpdateAutoCheck}
                     >
                       {props.updateAutoCheck ? "On" : "Off"}
@@ -302,21 +328,21 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="space-y-0.5">
                       <div class="text-sm text-white">
                         <Switch>
-                          <Match when={updateState() === "checking"}>Checking...</Match>
-                          <Match when={updateState() === "available"}>Update available: v{updateVersion()}</Match>
-                          <Match when={updateState() === "downloading"}>Downloading...</Match>
-                          <Match when={updateState() === "ready"}>Ready to install: v{updateVersion()}</Match>
-                          <Match when={updateState() === "error"}>Update check failed</Match>
-                          <Match when={true}>Up to date</Match>
+                          <Match when={updateState() === "checking"}>{t("settings.updates.checking")}</Match>
+                          <Match when={updateState() === "available"}>{t("settings.updates.available")}{updateVersion()}</Match>
+                          <Match when={updateState() === "downloading"}>{t("settings.updates.downloading")}</Match>
+                          <Match when={updateState() === "ready"}>{t("settings.updates.ready")}{updateVersion()}</Match>
+                          <Match when={updateState() === "error"}>{t("settings.updates.failed")}</Match>
+                          <Match when={true}>{t("settings.updates.up_to_date")}</Match>
                         </Switch>
                       </div>
                       <Show when={updateState() === "idle" && updateLastCheckedAt()}>
                         <div class="text-xs text-zinc-600">
-                          Last checked {formatRelativeTime(updateLastCheckedAt() as number)}
+                          {t("settings.updates.last_checked")} {formatRelativeTime(updateLastCheckedAt() as number)}
                         </div>
                       </Show>
                       <Show when={updateState() === "available" && updateDate()}>
-                        <div class="text-xs text-zinc-600">Published {updateDate()}</div>
+                        <div class="text-xs text-zinc-600">{t("settings.updates.published")} {updateDate()}</div>
                       </Show>
                       <Show when={updateState() === "downloading"}>
                         <div class="text-xs text-zinc-600">
@@ -338,7 +364,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         onClick={props.checkForUpdates}
                         disabled={props.busy || updateState() === "checking" || updateState() === "downloading"}
                       >
-                        Check
+                        {t("settings.updates.check")}
                       </Button>
 
                       <Show when={updateState() === "available"}>
@@ -348,7 +374,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           onClick={props.downloadUpdate}
                           disabled={props.busy || updateState() === "downloading"}
                         >
-                          Download
+                          {t("settings.updates.download")}
                         </Button>
                       </Show>
 
@@ -358,9 +384,9 @@ export default function SettingsView(props: SettingsViewProps) {
                           class="text-xs h-8 py-0 px-3"
                           onClick={props.installUpdateAndRestart}
                           disabled={props.busy || props.anyActiveRuns}
-                          title={props.anyActiveRuns ? "Stop active runs to update" : ""}
+                          title={props.anyActiveRuns ? t("settings.updates.stop_runs") : ""}
                         >
-                          Install & Restart
+                          {t("settings.updates.install_restart")}
                         </Button>
                       </Show>
                     </div>
@@ -375,101 +401,100 @@ export default function SettingsView(props: SettingsViewProps) {
               }
             >
               <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
-                {props.updateEnv?.reason ?? "Updates are not supported in this environment."}
+                {props.updateEnv?.reason ?? t("settings.updates.unsupported")}
               </div>
             </Show>
           }
         >
           <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 text-sm text-zinc-400">
-            Updates are only available in the desktop app.
+            {t("settings.updates.desktop_only")}
           </div>
         </Show>
       </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-3">
-        <div class="text-sm font-medium text-white">Startup</div>
+        <div class="text-sm font-medium text-white">{t("settings.startup.title")}</div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800">
           <div class="flex items-center gap-3">
             <div
-              class={`p-2 rounded-lg ${
-                props.mode === "host" ? "bg-indigo-500/10 text-indigo-400" : "bg-emerald-500/10 text-emerald-400"
-              }`}
+              class={`p-2 rounded-lg ${props.mode === "host" ? "bg-indigo-500/10 text-indigo-400" : "bg-emerald-500/10 text-emerald-400"
+                }`}
             >
               <Show when={props.mode === "host"} fallback={<Smartphone size={18} />}>
                 <HardDrive size={18} />
               </Show>
             </div>
-            <span class="capitalize text-sm font-medium text-white">{props.mode} mode</span>
+            <span class="capitalize text-sm font-medium text-white">{props.mode} {t("settings.startup.mode")}</span>
           </div>
           <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={props.stopHost} disabled={props.busy}>
-            Switch
+            {t("settings.startup.switch")}
           </Button>
         </div>
 
         <Button variant="secondary" class="w-full justify-between group" onClick={props.onResetStartupPreference}>
-          <span class="text-zinc-300">Reset default startup mode</span>
+          <span class="text-zinc-300">{t("settings.startup.reset")}</span>
           <RefreshCcw size={14} class="text-zinc-500 group-hover:rotate-180 transition-transform" />
         </Button>
 
         <p class="text-xs text-zinc-600">
-          This clears your saved preference and shows mode selection on next launch.
+          {t("settings.startup.reset_desc")}
         </p>
       </div>
 
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-white">Advanced</div>
-          <div class="text-xs text-zinc-500">Reset OpenWork local state to retest onboarding.</div>
+          <div class="text-sm font-medium text-white">{t("settings.advanced.title")}</div>
+          <div class="text-xs text-zinc-500">{t("settings.advanced.subtitle")}</div>
         </div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Reset onboarding</div>
-            <div class="text-xs text-zinc-600">Clears OpenWork preferences and restarts the app.</div>
+            <div class="text-sm text-zinc-200">{t("settings.advanced.reset_onboarding")}</div>
+            <div class="text-xs text-zinc-600">{t("settings.advanced.reset_onboarding_desc")}</div>
           </div>
           <Button
             variant="outline"
             class="text-xs h-8 py-0 px-3 shrink-0"
             onClick={() => props.openResetModal("onboarding")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-            title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+            title={props.anyActiveRuns ? t("settings.advanced.stop_runs_msg") : ""}
           >
-            Reset
+            {t("settings.advanced.reset")}
           </Button>
         </div>
 
         <div class="flex items-center justify-between bg-zinc-950 p-3 rounded-xl border border-zinc-800 gap-3">
           <div class="min-w-0">
-            <div class="text-sm text-zinc-200">Reset app data</div>
-            <div class="text-xs text-zinc-600">More aggressive. Clears OpenWork cache + app data.</div>
+            <div class="text-sm text-zinc-200">{t("settings.advanced.reset_app_data")}</div>
+            <div class="text-xs text-zinc-600">{t("settings.advanced.reset_app_data_desc")}</div>
           </div>
           <Button
             variant="danger"
             class="text-xs h-8 py-0 px-3 shrink-0"
             onClick={() => props.openResetModal("all")}
             disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-            title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+            title={props.anyActiveRuns ? t("settings.advanced.stop_runs_msg") : ""}
           >
-            Reset
+            {t("settings.advanced.reset")}
           </Button>
         </div>
 
         <div class="text-xs text-zinc-600">
-          Requires typing <span class="font-mono text-zinc-400">RESET</span> and will restart the app.
+          {t("settings.advanced.reset_warning")}
         </div>
       </div>
 
       <Show when={props.developerMode}>
         <section>
-          <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">Developer</h3>
+          <h3 class="text-sm font-medium text-zinc-400 uppercase tracking-wider mb-4">{t("settings.developer.title")}</h3>
 
           <div class="space-y-4">
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div class="min-w-0">
-                <div class="text-sm text-zinc-200">OpenCode cache</div>
+                <div class="text-sm text-zinc-200">{t("settings.developer.cache")}</div>
                 <div class="text-xs text-zinc-600">
-                  Repairs cached data used to start the engine. Safe to run.
+                  {t("settings.developer.cache_desc")}
                 </div>
                 <Show when={props.cacheRepairResult}>
                   <div class="text-xs text-zinc-400 mt-2">{props.cacheRepairResult}</div>
@@ -480,21 +505,21 @@ export default function SettingsView(props: SettingsViewProps) {
                 class="text-xs h-8 py-0 px-3 shrink-0"
                 onClick={props.repairOpencodeCache}
                 disabled={props.cacheRepairBusy || !isTauriRuntime()}
-                title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
+                title={isTauriRuntime() ? "" : t("settings.developer.desktop_only")}
               >
-                {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                {props.cacheRepairBusy ? t("settings.developer.repairing") : t("settings.developer.repair")}
               </Button>
             </div>
 
             <div class="grid md:grid-cols-2 gap-4">
               <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                <div class="text-xs text-zinc-500 mb-2">Pending permissions</div>
+                <div class="text-xs text-zinc-500 mb-2">{t("settings.developer.pending_permissions")}</div>
                 <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                   {props.safeStringify(props.pendingPermissions)}
                 </pre>
               </div>
               <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-4">
-                <div class="text-xs text-zinc-500 mb-2">Recent events</div>
+                <div class="text-xs text-zinc-500 mb-2">{t("settings.developer.recent_events")}</div>
                 <pre class="text-xs text-zinc-200 whitespace-pre-wrap break-words max-h-64 overflow-auto">
                   {props.safeStringify(props.events)}
                 </pre>

@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createSignal } from "solid-js";
+import { useI18n } from "../i18n";
 
 import { CheckCircle2, FolderPlus, Loader2 } from "lucide-solid";
 
@@ -9,6 +10,7 @@ export default function OnboardingWorkspaceSelector(props: {
   onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
 }) {
+  const [t] = useI18n();
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal(props.defaultPath);
   const [pickingFolder, setPickingFolder] = createSignal(false);
@@ -16,13 +18,13 @@ export default function OnboardingWorkspaceSelector(props: {
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter workspace",
-      desc: "Preconfigured to show you how to use plugins, templates, and skills.",
+      name: t("components.onboarding_workspace_selector.presets.starter_name"),
+      desc: t("components.onboarding_workspace_selector.presets.starter_desc"),
     },
     {
       id: "minimal" as const,
-      name: "Empty workspace",
-      desc: "Start with a blank folder and add what you need.",
+      name: t("components.onboarding_workspace_selector.presets.minimal_name"),
+      desc: t("components.onboarding_workspace_selector.presets.minimal_desc"),
     },
   ];
 
@@ -54,13 +56,12 @@ export default function OnboardingWorkspaceSelector(props: {
         <div class="space-y-4">
           <div class="flex items-center gap-3 text-sm font-medium text-white">
             <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">1</div>
-            Select Folder
+            {t("components.onboarding_workspace_selector.steps.select_folder")}
           </div>
           <div class="ml-9">
             <div
-              class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${
-                pickingFolder() ? "opacity-70" : "hover:border-zinc-500"
-              }`.trim()}
+              class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${pickingFolder() ? "opacity-70" : "hover:border-zinc-500"
+                }`.trim()}
             >
               <div class="flex items-center gap-3 text-zinc-200">
                 <FolderPlus size={20} class="text-zinc-400" />
@@ -78,11 +79,11 @@ export default function OnboardingWorkspaceSelector(props: {
                 >
                   <Show
                     when={pickingFolder()}
-                    fallback={<span>Choose</span>}
+                    fallback={<span>{t("components.onboarding_workspace_selector.choose")}</span>}
                   >
                     <span class="inline-flex items-center gap-2">
                       <Loader2 size={12} class="animate-spin" />
-                      Opening...
+                      {t("components.onboarding_workspace_selector.opening")}
                     </span>
                   </Show>
                 </button>
@@ -94,7 +95,7 @@ export default function OnboardingWorkspaceSelector(props: {
         <div class="space-y-4">
           <div class="flex items-center gap-3 text-sm font-medium text-white">
             <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">2</div>
-            Choose Preset
+            {t("components.onboarding_workspace_selector.steps.choose_preset")}
           </div>
           <div class={`ml-9 grid gap-3 ${!canContinue() ? "opacity-50" : ""}`.trim()}>
             <For each={options()}>
@@ -104,18 +105,16 @@ export default function OnboardingWorkspaceSelector(props: {
                     if (!canContinue()) return;
                     setPreset(opt.id);
                   }}
-                  class={`p-4 rounded-xl border cursor-pointer transition-all ${
-                    preset() === opt.id
+                  class={`p-4 rounded-xl border cursor-pointer transition-all ${preset() === opt.id
                       ? "bg-indigo-500/10 border-indigo-500/50"
                       : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
-                  } ${!canContinue() ? "pointer-events-none" : ""}`.trim()}
+                    } ${!canContinue() ? "pointer-events-none" : ""}`.trim()}
                 >
                   <div class="flex justify-between items-start">
                     <div>
                       <div
-                        class={`font-medium text-sm ${
-                          preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
-                        }`}
+                        class={`font-medium text-sm ${preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
+                          }`}
                       >
                         {opt.name}
                       </div>

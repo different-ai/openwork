@@ -2,6 +2,7 @@ import { For, Show } from "solid-js";
 
 import type { PluginScope } from "../app/types";
 import { isTauriRuntime } from "../app/utils";
+import { useI18n } from "../i18n";
 
 import Button from "../components/Button";
 import TextInput from "../components/TextInput";
@@ -41,54 +42,53 @@ export type PluginsViewProps = {
 };
 
 export default function PluginsView(props: PluginsViewProps) {
+  const [t] = useI18n();
   return (
     <section class="space-y-6">
       <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
         <div class="flex items-start justify-between gap-4">
           <div class="space-y-1">
-            <div class="text-sm font-medium text-white">OpenCode plugins</div>
-            <div class="text-xs text-zinc-500">Manage `opencode.json` for your project or global OpenCode plugins.</div>
+            <div class="text-sm font-medium text-white">{t("plugins.title")}</div>
+            <div class="text-xs text-zinc-500">{t("plugins.desc")}</div>
           </div>
           <div class="flex items-center gap-2">
             <button
-              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                props.pluginScope === "project"
+              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${props.pluginScope === "project"
                   ? "bg-white/10 text-white border-white/20"
                   : "text-zinc-500 border-zinc-800 hover:text-white"
-              }`}
+                }`}
               onClick={() => {
                 props.setPluginScope("project");
                 props.refreshPlugins("project");
               }}
             >
-              Project
+              {t("plugins.scope.project")}
             </button>
             <button
-              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                props.pluginScope === "global"
+              class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${props.pluginScope === "global"
                   ? "bg-white/10 text-white border-white/20"
                   : "text-zinc-500 border-zinc-800 hover:text-white"
-              }`}
+                }`}
               onClick={() => {
                 props.setPluginScope("global");
                 props.refreshPlugins("global");
               }}
             >
-              Global
+              {t("plugins.scope.global")}
             </button>
             <Button variant="ghost" onClick={() => props.refreshPlugins()}>
-              Refresh
+              {t("plugins.scope.refresh")}
             </Button>
           </div>
         </div>
 
         <div class="flex flex-col gap-1 text-xs text-zinc-500">
-          <div>Config</div>
-          <div class="text-zinc-600 font-mono truncate">{props.pluginConfigPath ?? "Not loaded yet"}</div>
+          <div>{t("plugins.config")}</div>
+          <div class="text-zinc-600 font-mono truncate">{props.pluginConfigPath ?? t("plugins.not_loaded")}</div>
         </div>
 
         <div class="space-y-3">
-          <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">Suggested plugins</div>
+          <div class="text-xs font-medium text-zinc-400 uppercase tracking-wider">{t("plugins.suggested")}</div>
           <div class="grid gap-3">
             <For each={props.suggestedPlugins}>
               {(plugin) => {
@@ -112,7 +112,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             variant="ghost"
                             onClick={() => props.setActivePluginGuide(isGuideOpen() ? null : plugin.packageName)}
                           >
-                            {isGuideOpen() ? "Hide setup" : "Setup"}
+                            {isGuideOpen() ? t("plugins.actions.hide_setup") : t("plugins.actions.setup")}
                           </Button>
                         </Show>
                         <Button
@@ -125,7 +125,7 @@ export default function PluginsView(props: PluginsViewProps) {
                             (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim())
                           }
                         >
-                          {isInstalled() ? "Added" : "Add"}
+                          {isInstalled() ? t("plugins.actions.added") : t("plugins.actions.add")}
                         </Button>
                       </div>
                     </div>
@@ -157,12 +157,12 @@ export default function PluginsView(props: PluginsViewProps) {
                               </Show>
                               <Show when={step.url}>
                                 <div class="text-xs text-zinc-500">
-                                  Open: <span class="font-mono text-zinc-400">{step.url}</span>
+                                  {t("plugins.steps.open")} <span class="font-mono text-zinc-400">{step.url}</span>
                                 </div>
                               </Show>
                               <Show when={step.path}>
                                 <div class="text-xs text-zinc-500">
-                                  Path: <span class="font-mono text-zinc-400">{step.path}</span>
+                                  {t("plugins.steps.path")} <span class="font-mono text-zinc-400">{step.path}</span>
                                 </div>
                               </Show>
                             </div>
@@ -181,7 +181,7 @@ export default function PluginsView(props: PluginsViewProps) {
           when={props.pluginList.length}
           fallback={
             <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-500">
-              No plugins configured yet.
+              {t("plugins.empty")}
             </div>
           }
         >
@@ -190,7 +190,7 @@ export default function PluginsView(props: PluginsViewProps) {
               {(pluginName) => (
                 <div class="flex items-center justify-between rounded-xl border border-zinc-800/60 bg-zinc-950/40 px-4 py-2.5">
                   <div class="text-sm text-zinc-200 font-mono">{pluginName}</div>
-                  <div class="text-[10px] uppercase tracking-wide text-zinc-500">Enabled</div>
+                  <div class="text-[10px] uppercase tracking-wide text-zinc-500">{t("plugins.enabled")}</div>
                 </div>
               )}
             </For>
@@ -201,11 +201,11 @@ export default function PluginsView(props: PluginsViewProps) {
           <div class="flex flex-col md:flex-row gap-3">
             <div class="flex-1">
               <TextInput
-                label="Add plugin"
+                label={t("plugins.add.label")}
                 placeholder="opencode-wakatime"
                 value={props.pluginInput}
                 onInput={(e) => props.setPluginInput(e.currentTarget.value)}
-                hint="Add npm package names, e.g. opencode-wakatime"
+                hint={t("plugins.add.hint")}
               />
             </div>
             <Button
@@ -214,7 +214,7 @@ export default function PluginsView(props: PluginsViewProps) {
               disabled={props.busy || !props.pluginInput.trim()}
               class="md:mt-6"
             >
-              Add
+              {t("plugins.add.btn")}
             </Button>
           </div>
           <Show when={props.pluginStatus}>

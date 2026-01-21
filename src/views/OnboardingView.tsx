@@ -7,6 +7,7 @@ import Button from "../components/Button";
 import OnboardingWorkspaceSelector from "../components/OnboardingWorkspaceSelector";
 import OpenWorkLogo from "../components/OpenWorkLogo";
 import TextInput from "../components/TextInput";
+import { useI18n } from "../i18n";
 
 export type OnboardingViewProps = {
   mode: Mode | null;
@@ -54,6 +55,7 @@ export type OnboardingViewProps = {
 };
 
 export default function OnboardingView(props: OnboardingViewProps) {
+  const [t, { locale }] = useI18n();
   const [showAdvanced, setShowAdvanced] = createSignal(false);
 
   const engineDoctorAvailable = () =>
@@ -61,12 +63,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
   const engineStatusLabel = () => {
     if (props.engineDoctorFound == null || props.engineDoctorSupportsServe == null) {
-      return "Checking OpenCode CLI...";
+      return t("onboarding.host.checking");
     }
-    if (!props.engineDoctorFound) return "OpenCode CLI not found.";
-    if (!props.engineDoctorSupportsServe) return "OpenCode CLI needs an update for serve.";
+    if (!props.engineDoctorFound) return t("onboarding.host.not_found");
+    if (!props.engineDoctorSupportsServe) return t("onboarding.host.update_needed");
     if (props.engineDoctorVersion) return `OpenCode ${props.engineDoctorVersion}`;
-    return "OpenCode CLI ready.";
+    return t("onboarding.host.ready");
   };
 
   const serveHelpOutput = () => {
@@ -92,12 +94,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
             <div class="text-center">
               <h2 class="text-xl font-medium mb-2">
-                {props.mode === "host" ? "Starting OpenWork..." : "Searching for Host..."}
+                {props.mode === "host" ? t("onboarding.connecting.starting") : t("onboarding.connecting.searching")}
               </h2>
               <p class="text-zinc-500 text-sm">
                 {props.mode === "host"
-                  ? "Getting everything ready"
-                  : "Verifying secure handshake"}
+                  ? t("onboarding.connecting.getting_ready")
+                  : t("onboarding.connecting.verifying")}
               </p>
 
             </div>
@@ -115,10 +117,10 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 <OpenWorkLogo size={18} class="text-black" />
               </div>
               <h2 class="text-2xl font-bold tracking-tight">
-                {props.workspaces.length <= 1 ? "Create your first workspace" : "Create a workspace"}
+                {props.workspaces.length <= 1 ? t("onboarding.host.create_first") : t("onboarding.host.create")}
               </h2>
               <p class="text-zinc-400 text-sm leading-relaxed">
-                Choose a folder and preset to set up your workspace.
+                {t("onboarding.host.desc")}
               </p>
             </div>
 
@@ -127,12 +129,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
               onConfirm={props.onCreateWorkspace}
               onPickFolder={props.onPickWorkspaceFolder}
             />
-              <Button onClick={props.onStartHost} disabled={props.busy || !props.activeWorkspacePath.trim()} class="w-full py-3 text-base">
-              Start OpenWork
+            <Button onClick={props.onStartHost} disabled={props.busy || !props.activeWorkspacePath.trim()} class="w-full py-3 text-base">
+              {t("onboarding.host.start")}
             </Button>
 
             <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
-              Back
+              {t("onboarding.host.back")}
             </Button>
 
             <div class="pt-2">
@@ -145,21 +147,21 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   class="transition-transform duration-200"
                   classList={{ "rotate-90": showAdvanced() }}
                 />
-                Advanced settings
+                {t("onboarding.host.advanced")}
               </button>
 
               <Show when={showAdvanced()}>
                 <div class="mt-3 space-y-3">
                   <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-4 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-white">OpenCode engine</div>
+                      <div class="text-sm font-medium text-white">{t("onboarding.host.engine_title")}</div>
                       <Button
                         variant="outline"
                         class="text-xs h-8 py-0 px-3"
                         onClick={props.onRefreshEngineDoctor}
                         disabled={props.busy}
                       >
-                        Refresh
+                        {t("onboarding.host.refresh")}
                       </Button>
                     </div>
                     <div class="text-xs text-zinc-500">{engineStatusLabel()}</div>
@@ -167,31 +169,31 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     <Show when={!engineDoctorAvailable()}>
                       <div class="text-xs text-zinc-500">
                         {props.isWindows
-                          ? "Install OpenCode for Windows, then restart OpenWork. Ensure opencode.exe is on PATH."
-                          : "Install OpenCode to enable host mode (no terminal required)."}
+                          ? t("onboarding.host.install_windows")
+                          : t("onboarding.host.install_mac")}
                       </div>
                       <div class="flex flex-wrap gap-2">
                         <Button
                           variant="secondary"
                           onClick={props.onInstallEngine}
                           disabled={props.busy || props.isWindows}
-                          title={props.isWindows ? "OpenCode install is manual on Windows." : ""}
+                          title={props.isWindows ? t("onboarding.host.install_manual") : ""}
                         >
-                          Install OpenCode
+                          {t("onboarding.host.install_btn")}
                         </Button>
                         <Button
                           variant="outline"
                           onClick={props.onRefreshEngineDoctor}
                           disabled={props.busy}
                         >
-                          Re-check
+                          {t("onboarding.host.recheck")}
                         </Button>
                       </div>
                     </Show>
 
                     <Show when={engineDoctorAvailable()}>
                       <div class="text-xs text-zinc-600">
-                        OpenCode is ready to start in host mode.
+                        {t("onboarding.host.ready_host")}
                       </div>
                     </Show>
 
@@ -206,19 +208,19 @@ export default function OnboardingView(props: OnboardingViewProps) {
                       <div class="rounded-xl bg-black/20 border border-zinc-800 p-3 space-y-3 text-xs text-zinc-400">
                         <Show when={props.engineDoctorResolvedPath}>
                           <div>
-                            <div class="text-[11px] text-zinc-500">Resolved path</div>
+                            <div class="text-[11px] text-zinc-500">{t("onboarding.host.resolved_path")}</div>
                             <div class="font-mono break-all">{props.engineDoctorResolvedPath}</div>
                           </div>
                         </Show>
                         <Show when={props.engineDoctorVersion}>
                           <div>
-                            <div class="text-[11px] text-zinc-500">Version</div>
+                            <div class="text-[11px] text-zinc-500">{t("onboarding.host.version")}</div>
                             <div class="font-mono">{props.engineDoctorVersion}</div>
                           </div>
                         </Show>
                         <Show when={props.engineDoctorNotes.length}>
                           <div>
-                            <div class="text-[11px] text-zinc-500">Search notes</div>
+                            <div class="text-[11px] text-zinc-500">{t("onboarding.host.search_notes")}</div>
                             <pre class="whitespace-pre-wrap break-words text-xs text-zinc-400">
                               {props.engineDoctorNotes.join("\n")}
                             </pre>
@@ -245,7 +247,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </Show>
             </div>
 
-           
+
 
             <Show when={props.error}>
               <div class="rounded-2xl bg-red-950/40 px-5 py-4 text-sm text-red-200 border border-red-500/20">
@@ -261,37 +263,37 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-zinc-900 to-transparent opacity-20 pointer-events-none" />
 
           <div class="max-w-md w-full z-10 space-y-8">
-              <div class="text-center space-y-2">
-                <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
-                  <ArrowLeftRight size={20} class="text-zinc-400" />
-                </div>
-                <h2 class="text-2xl font-bold tracking-tight">Connect to Host</h2>
+            <div class="text-center space-y-2">
+              <div class="w-12 h-12 bg-zinc-900 rounded-2xl mx-auto flex items-center justify-center border border-zinc-800 mb-6">
+                <ArrowLeftRight size={20} class="text-zinc-400" />
+              </div>
+              <h2 class="text-2xl font-bold tracking-tight">{t("onboarding.client.title")}</h2>
               <p class="text-zinc-400 text-sm leading-relaxed">
-                Pair with an existing OpenCode server (LAN or tunnel).
+                {t("onboarding.client.desc")}
               </p>
             </div>
 
             <div class="space-y-4">
               <TextInput
-                label="Server URL"
+                label={t("onboarding.client.server_url")}
                 placeholder="http://127.0.0.1:4096"
                 value={props.baseUrl}
                 onInput={(e) => props.onBaseUrlChange(e.currentTarget.value)}
               />
               <TextInput
-                label="Directory (optional)"
+                label={t("onboarding.client.directory")}
                 placeholder="/path/to/project"
                 value={props.clientDirectory}
                 onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
-                hint="Use if your host runs multiple workspaces."
+                hint={t("onboarding.client.hint")}
               />
 
               <Button onClick={props.onConnectClient} disabled={props.busy || !props.baseUrl.trim()} class="w-full py-3 text-base">
-                Connect
+                {t("onboarding.client.connect")}
               </Button>
 
               <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
-                Back
+                {t("onboarding.client.back")}
               </Button>
 
               <Show when={props.error}>
@@ -308,15 +310,33 @@ export default function OnboardingView(props: OnboardingViewProps) {
         <div class="min-h-screen flex flex-col items-center justify-center bg-black text-white p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-zinc-900 to-transparent opacity-20 pointer-events-none" />
 
+          <div class="absolute top-6 right-6 z-20">
+            <div class="relative group">
+              <select
+                value={locale()}
+                onInput={(e) => locale(e.currentTarget.value as any)}
+                class="appearance-none bg-transparent hover:bg-zinc-900 border border-transparent hover:border-zinc-800 rounded-lg py-1.5 pl-3 pr-8 text-xs text-zinc-500 hover:text-zinc-300 focus:outline-none focus:ring-1 focus:ring-zinc-700 transition-all cursor-pointer"
+              >
+                <option value="en">English</option>
+                <option value="zh">中文</option>
+              </select>
+              <div class="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-zinc-600 group-hover:text-zinc-400 transition-colors">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
           <div class="max-w-xl w-full z-10 space-y-12">
             <div class="text-center space-y-4">
-              <div class="flex items-center justify-center gap-3 mb-6">
+              <div class="flex flex-col items-center justify-center gap-3 mb-6">
                 <div class="w-12 h-12 bg-white rounded-xl flex items-center justify-center">
                   <OpenWorkLogo size={24} class="text-black" />
                 </div>
                 <h1 class="text-3xl font-bold tracking-tight">OpenWork</h1>
               </div>
-              <h2 class="text-xl text-zinc-400 font-light">How would you like to run OpenWork today?</h2>
+              <h2 class="text-xl text-zinc-400 font-light">{t("onboarding.welcome.title")}</h2>
             </div>
 
             <div class="space-y-4">
@@ -328,9 +348,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   <Circle size={18} class="text-indigo-400" />
                 </div>
                 <div>
-                  <h3 class="text-xl font-medium text-white mb-2">Run on this computer</h3>
+                  <h3 class="text-xl font-medium text-white mb-2">{t("onboarding.welcome.host_card.title")}</h3>
                   <p class="text-zinc-500 text-sm leading-relaxed mb-4">
-                    OpenWork runs OpenCode locally and keeps your work private.
+                    {t("onboarding.welcome.host_card.desc")}
                   </p>
                   <Show when={props.developerMode}>
                     <div class="flex items-center gap-2 text-xs font-mono text-indigo-400/80 bg-indigo-900/10 w-fit px-2 py-1 rounded border border-indigo-500/10">
@@ -344,8 +364,8 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <Show when={props.engineRunning && props.engineBaseUrl}>
                 <div class="rounded-2xl bg-zinc-900/40 border border-zinc-800 p-5 flex items-center justify-between">
                   <div>
-                    <div class="text-sm text-white font-medium">Engine already running</div>
-                    <div class="text-xs text-zinc-500">Attach to the existing session on this device.</div>
+                    <div class="text-sm text-white font-medium">{t("onboarding.welcome.engine_running.title")}</div>
+                    <div class="text-xs text-zinc-500">{t("onboarding.welcome.engine_running.desc")}</div>
                     <Show when={props.developerMode}>
                       <div class="text-xs text-zinc-500 font-mono truncate max-w-[14rem] md:max-w-[22rem]">
                         {props.engineBaseUrl}
@@ -353,7 +373,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     </Show>
                   </div>
                   <Button variant="secondary" onClick={props.onAttachHost} disabled={props.busy}>
-                    Attach
+                    {t("onboarding.welcome.engine_running.attach")}
                   </Button>
                 </div>
               </Show>
@@ -364,17 +384,16 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   class="flex items-center gap-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors group"
                 >
                   <div
-                    class={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                      props.rememberModeChoice
-                        ? "bg-indigo-500 border-indigo-500 text-black"
-                        : "border-zinc-700 bg-transparent group-hover:border-zinc-500"
-                    }`}
+                    class={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${props.rememberModeChoice
+                      ? "bg-indigo-500 border-indigo-500 text-black"
+                      : "border-zinc-700 bg-transparent group-hover:border-zinc-500"
+                      }`}
                   >
                     <Show when={props.rememberModeChoice}>
                       <CheckCircle2 size={10} />
                     </Show>
                   </div>
-                  Remember my choice for next time
+                  {t("onboarding.welcome.remember")}
                 </button>
               </div>
 
@@ -383,7 +402,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   onClick={() => props.onModeSelect("client")}
                   class="text-zinc-600 hover:text-zinc-400 text-sm font-medium transition-colors flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-zinc-900/50"
                 >
-                  Connect as a Client (Remote Pairing)
+                  {t("onboarding.welcome.client_link")}
                 </button>
               </div>
 

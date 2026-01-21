@@ -1,4 +1,5 @@
 import { Match, Show, Switch } from "solid-js";
+import { useI18n } from "../i18n";
 
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
@@ -53,6 +54,7 @@ function clampText(text: string, max = 800) {
 }
 
 export default function PartView(props: Props) {
+  const [t] = useI18n();
   const p = () => props.part;
   const developerMode = () => props.developerMode ?? false;
   const tone = () => props.tone ?? "light";
@@ -80,11 +82,10 @@ export default function PartView(props: Props) {
           }
         >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Thinking</summary>
+            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{t("components.part_view.thinking")}</summary>
             <pre
-              class={`mt-2 whitespace-pre-wrap break-words text-xs ${
-                tone() === "dark" ? "text-black" : "text-neutral-200"
-              }`.trim()}
+              class={`mt-2 whitespace-pre-wrap break-words text-xs ${tone() === "dark" ? "text-black" : "text-neutral-200"
+                }`.trim()}
             >
               {clampText(String((p() as any).text), 2000)}
             </pre>
@@ -99,20 +100,19 @@ export default function PartView(props: Props) {
               <div
                 class={`text-xs font-medium ${tone() === "dark" ? "text-black" : "text-neutral-200"}`.trim()}
               >
-                Tool · {String((p() as any).tool)}
+                {t("components.part_view.tool")} · {String((p() as any).tool)}
               </div>
               <div
-                class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  (p() as any).state?.status === "completed"
+                class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${(p() as any).state?.status === "completed"
                     ? "bg-emerald-500/15 text-emerald-200"
                     : (p() as any).state?.status === "running"
                       ? "bg-blue-500/15 text-blue-200"
                       : (p() as any).state?.status === "error"
                         ? "bg-red-500/15 text-red-200"
                         : "bg-white/10 text-neutral-200"
-                }`}
+                  }`}
               >
-                {String((p() as any).state?.status ?? "unknown")}
+                {String((p() as any).state?.status ?? t("components.part_view.unknown"))}
               </div>
             </div>
 
@@ -122,9 +122,8 @@ export default function PartView(props: Props) {
 
             <Show when={showToolOutput() && (p() as any).state?.output && typeof (p() as any).state.output === "string"}>
               <pre
-                class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${
-                  tone() === "dark" ? "text-black" : "text-neutral-200"
-                }`.trim()}
+                class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${tone() === "dark" ? "text-black" : "text-neutral-200"
+                  }`.trim()}
               >
                 {clampText(String((p() as any).state.output))}
               </pre>
@@ -138,11 +137,10 @@ export default function PartView(props: Props) {
 
             <Show when={showToolOutput() && (p() as any).state?.input != null}>
               <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{t("components.part_view.input")}</summary>
                 <pre
-                  class={`mt-2 whitespace-pre-wrap break-words text-xs ${
-                    tone() === "dark" ? "text-black" : "text-neutral-200"
-                  }`.trim()}
+                  class={`mt-2 whitespace-pre-wrap break-words text-xs ${tone() === "dark" ? "text-black" : "text-neutral-200"
+                    }`.trim()}
                 >
                   {safeStringify((p() as any).state.input)}
                 </pre>
@@ -154,7 +152,7 @@ export default function PartView(props: Props) {
 
       <Match when={p().type === "step-start" || p().type === "step-finish"}>
         <div class={`text-xs ${subtleTextClass()}`.trim()}>
-          {p().type === "step-start" ? "Step started" : "Step finished"}
+          {p().type === "step-start" ? t("components.part_view.step_started") : t("components.part_view.step_finished")}
           <Show when={(p() as any).reason}>
             <span class={tone() === "dark" ? "text-black/80" : "text-neutral-300"}>
               {" "}· {String((p() as any).reason)}
@@ -166,9 +164,8 @@ export default function PartView(props: Props) {
       <Match when={true}>
         <Show when={developerMode()}>
           <pre
-            class={`whitespace-pre-wrap break-words text-xs ${
-              tone() === "dark" ? "text-black" : "text-neutral-200"
-            }`.trim()}
+            class={`whitespace-pre-wrap break-words text-xs ${tone() === "dark" ? "text-black" : "text-neutral-200"
+              }`.trim()}
           >
             {safeStringify(p())}
           </pre>

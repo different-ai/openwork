@@ -1,4 +1,5 @@
 import { For, Show } from "solid-js";
+import { useI18n } from "../i18n";
 
 import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 
@@ -19,6 +20,7 @@ export type ModelPickerModalProps = {
 };
 
 export default function ModelPickerModal(props: ModelPickerModalProps) {
+  const [t] = useI18n();
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
@@ -27,12 +29,12 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <div class="flex items-start justify-between gap-4">
               <div>
                 <h3 class="text-lg font-semibold text-white">
-                  {props.target === "default" ? "Default model" : "Model"}
+                  {props.target === "default" ? t("settings.model_picker.title_default") : t("settings.model_picker.title_session")}
                 </h3>
                 <p class="text-sm text-zinc-400 mt-1">
-                  Choose from your configured providers. This selection {props.target === "default"
-                    ? "will be used for new sessions"
-                    : "applies to your next message"}.
+                  {t("settings.model_picker.desc_prefix")} {props.target === "default"
+                    ? t("settings.model_picker.desc_default")
+                    : t("settings.model_picker.desc_session")}.
                 </p>
               </div>
               <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
@@ -47,13 +49,13 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                   type="text"
                   value={props.query}
                   onInput={(e) => props.setQuery(e.currentTarget.value)}
-                  placeholder="Search models…"
+                  placeholder={t("settings.model_picker.search_placeholder")}
                   class="w-full bg-zinc-950/40 border border-zinc-800 rounded-xl py-2.5 pl-9 pr-3 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-zinc-600 focus:border-zinc-600"
                 />
               </div>
               <Show when={props.query.trim()}>
                 <div class="mt-2 text-xs text-zinc-500">
-                  Showing {props.filteredOptions.length} of {props.options.length}
+                  {t("settings.model_picker.showing")} {props.filteredOptions.length} {t("settings.model_picker.of")} {props.options.length}
                 </div>
               </Show>
             </div>
@@ -69,11 +71,10 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
                   return (
                     <button
-                      class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                        active()
-                          ? "border-white/20 bg-white/5"
-                          : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
-                      }`}
+                      class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${active()
+                        ? "border-white/20 bg-white/5"
+                        : "border-zinc-800/70 bg-zinc-950/40 hover:bg-zinc-950/60"
+                        }`}
                       onClick={() =>
                         props.onSelect({
                           providerID: opt.providerID,
@@ -111,7 +112,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
 
             <div class="mt-5 flex justify-end shrink-0">
               <Button variant="outline" onClick={props.onClose}>
-                Done
+                {t("settings.model_picker.done")}
               </Button>
             </div>
           </div>

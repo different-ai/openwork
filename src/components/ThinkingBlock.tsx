@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
+import { useI18n } from "../i18n";
 
 import { CheckCircle2, ChevronRight, Circle, RefreshCcw, X, Zap } from "lucide-solid";
 
@@ -11,6 +12,7 @@ export default function ThinkingBlock(props: {
   steps: ThinkingStep[];
   maxWidthClass?: string;
 }) {
+  const [t] = useI18n();
   const [expanded, setExpanded] = createSignal(false);
 
   const activeStep = createMemo(() => {
@@ -29,7 +31,7 @@ export default function ThinkingBlock(props: {
           <div class="p-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-500">
             <Zap size={12} />
           </div>
-          <span class="truncate">{activeStep()?.text ?? "Working…"}</span>
+          <span class="truncate">{activeStep()?.text ?? t("components.thinking_block.working")}</span>
           <ChevronRight
             size={12}
             class={`text-zinc-600 transition-transform ${expanded() ? "rotate-90" : ""}`}

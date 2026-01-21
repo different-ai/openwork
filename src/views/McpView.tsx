@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { McpServerEntry, McpStatusMap } from "../app/types";
 import type { McpDirectoryInfo } from "../app/constants";
 import { formatRelativeTime, isTauriRuntime } from "../app/utils";
+import { useI18n } from "../i18n";
 
 import Button from "../components/Button";
 import TextInput from "../components/TextInput";
@@ -53,24 +54,25 @@ const statusBadge = (status: "connected" | "needs_auth" | "needs_client_registra
   }
 };
 
-const statusLabel = (status: "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected") => {
+const statusLabel = (status: "connected" | "needs_auth" | "needs_client_registration" | "failed" | "disabled" | "disconnected", t: any) => {
   switch (status) {
     case "connected":
-      return "Connected";
+      return t("mcp.status.connected");
     case "needs_auth":
-      return "Needs auth";
+      return t("mcp.status.needs_auth");
     case "needs_client_registration":
-      return "Register client";
+      return t("mcp.status.needs_reg");
     case "disabled":
-      return "Disabled";
+      return t("mcp.status.disabled");
     case "disconnected":
-      return "Disconnected";
+      return t("mcp.status.disconnected");
     default:
-      return "Failed";
+      return t("mcp.status.failed");
   }
 };
 
 export default function McpView(props: McpViewProps) {
+  const [t] = useI18n();
   const [advancedOpen, setAdvancedOpen] = createSignal(false);
   const [showDangerousContent, setShowDangerousContent] = createSignal(true);
 
@@ -108,9 +110,9 @@ export default function McpView(props: McpViewProps) {
     <section class="space-y-6">
       <div class="space-y-4">
         <div class="space-y-1">
-          <h2 class="text-lg font-semibold text-white">MCP (Alpha)</h2>
+          <h2 class="text-lg font-semibold text-white">{t("mcp.title")}</h2>
           <p class="text-sm text-zinc-400">
-            MCP servers let you connect services with your own credentials.
+            {t("mcp.desc")}
           </p>
         </div>
 
@@ -119,7 +121,7 @@ export default function McpView(props: McpViewProps) {
             <TriangleAlert size={20} class="text-amber-400 shrink-0 mt-0.5" />
             <div class="space-y-3">
               <div class="text-sm font-medium text-amber-200">
-                MCP is in alpha while we harden OAuth with OpenCode.
+                {t("mcp.alpha_warning.title")}
               </div>
               <div class="flex flex-col gap-2">
                 <a
@@ -129,10 +131,10 @@ export default function McpView(props: McpViewProps) {
                   class="inline-flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-400 underline decoration-amber-400/30 underline-offset-4 transition-colors"
                 >
                   <ExternalLink size={12} />
-                  View issue #9510 on GitHub
+                  {t("mcp.alpha_warning.link_text")}
                 </a>
                 <p class="text-xs text-zinc-400 leading-relaxed">
-                  If you want to help, open a PR and include a short video showing the OAuth flow works end to end.
+                  {t("mcp.alpha_warning.help")}
                 </p>
               </div>
             </div>
@@ -147,7 +149,7 @@ export default function McpView(props: McpViewProps) {
           <Show when={showDangerousContent()} fallback={<ChevronRight size={14} class="group-hover:translate-x-0.5 transition-transform" />}>
             <ChevronDown size={14} />
           </Show>
-          {showDangerousContent() ? "Hide advanced settings" : "Show advanced settings"}
+          {showDangerousContent() ? t("mcp.toggle_advanced.hide") : t("mcp.toggle_advanced.show")}
         </button>
       </div>
 
@@ -157,15 +159,15 @@ export default function McpView(props: McpViewProps) {
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <div class="text-sm font-medium text-white">MCPs</div>
+                  <div class="text-sm font-medium text-white">{t("mcp.list.title")}</div>
                   <div class="text-xs text-zinc-500">
-                    Connect MCP servers to expand what OpenWork can do.
+                    {t("mcp.list.desc")}
                   </div>
                 </div>
                 <div class="text-xs text-zinc-500 text-right">
-                  <div>{props.mcpServers.length} configured</div>
+                  <div>{props.mcpServers.length} {t("mcp.list.configured")}</div>
                   <Show when={props.mcpLastUpdatedAt}>
-                    <div>Updated {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}</div>
+                    <div>{t("mcp.list.updated")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}</div>
                   </Show>
                 </div>
               </div>
@@ -177,21 +179,21 @@ export default function McpView(props: McpViewProps) {
             <Show when={props.showMcpReloadBanner}>
               <div class="bg-zinc-900/60 border border-zinc-800/70 rounded-2xl px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                 <div>
-                  <div class="text-sm font-medium text-white">Reload required</div>
+                  <div class="text-sm font-medium text-white">{t("mcp.reload.title")}</div>
                   <div class="text-xs text-zinc-500">
-                    Changes need a quick reload to activate MCP tools.
+                    {t("mcp.reload.desc")}
                   </div>
                 </div>
                 <Button variant="secondary" onClick={() => props.reloadMcpEngine()}>
-                  Reload Engine
+                  {t("mcp.reload.btn")}
                 </Button>
               </div>
             </Show>
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between">
-                <div class="text-sm font-medium text-white">Quick connect</div>
-                <div class="text-[11px] text-zinc-500">OAuth-only</div>
+                <div class="text-sm font-medium text-white">{t("mcp.quick.title")}</div>
+                <div class="text-[11px] text-zinc-500">{t("mcp.quick.subtitle")}</div>
               </div>
               <div class="grid gap-3">
                 <For each={quickConnectList()}>
@@ -209,7 +211,7 @@ export default function McpView(props: McpViewProps) {
                             fallback={
                               <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
                                 <CheckCircle2 size={16} class="text-emerald-400" />
-                                <span class="text-sm text-emerald-300">Connected</span>
+                                <span class="text-sm text-emerald-300">{t("mcp.status.connected")}</span>
                               </div>
                             }
                           >
@@ -221,12 +223,12 @@ export default function McpView(props: McpViewProps) {
                               {props.mcpConnectingName === entry.name ? (
                                 <>
                                   <Loader2 size={16} class="animate-spin" />
-                                  Connecting
+                                  {t("mcp.quick.connecting")}
                                 </>
                               ) : (
                                 <>
                                   <PlugZap size={16} />
-                                  Connect
+                                  {t("mcp.quick.connect")}
                                 </>
                               )}
                             </Button>
@@ -235,14 +237,14 @@ export default function McpView(props: McpViewProps) {
                             {(status) => (
                               <Show when={status().status !== "connected"}>
                                 <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status().status)}`}>
-                                  {statusLabel(status().status)}
+                                  {statusLabel(status().status, t)}
                                 </div>
                               </Show>
                             )}
                           </Show>
                         </div>
                       </div>
-                      <div class="text-[11px] text-zinc-500">No environment variables required.</div>
+                      <div class="text-[11px] text-zinc-500">{t("mcp.quick.no_env")}</div>
                     </div>
                   )}
                 </For>
@@ -251,14 +253,14 @@ export default function McpView(props: McpViewProps) {
 
             <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4">
               <div class="flex items-center justify-between">
-                <div class="text-sm font-medium text-white">Connected</div>
-                <div class="text-[11px] text-zinc-500">From opencode.json</div>
+                <div class="text-sm font-medium text-white">{t("mcp.connected.title")}</div>
+                <div class="text-[11px] text-zinc-500">{t("mcp.connected.subtitle")}</div>
               </div>
               <Show
                 when={props.mcpServers.length}
                 fallback={
                   <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-500">
-                    No MCP servers configured yet.
+                    {t("mcp.connected.empty")}
                   </div>
                 }
               >
@@ -275,11 +277,10 @@ export default function McpView(props: McpViewProps) {
                       return (
                         <button
                           type="button"
-                          class={`text-left rounded-2xl border px-4 py-3 transition-all ${
-                            props.selectedMcp === entry.name
+                          class={`text-left rounded-2xl border px-4 py-3 transition-all ${props.selectedMcp === entry.name
                               ? "border-zinc-600 bg-zinc-900/70"
                               : "border-zinc-800/70 bg-zinc-950/40 hover:border-zinc-700"
-                          }`}
+                            }`}
                           onClick={() => props.setSelectedMcp(entry.name)}
                         >
                           <div class="flex items-center justify-between gap-3">
@@ -290,7 +291,7 @@ export default function McpView(props: McpViewProps) {
                               </div>
                             </div>
                             <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
-                              {statusLabel(status)}
+                              {statusLabel(status, t)}
                             </div>
                           </div>
                         </button>
@@ -307,23 +308,23 @@ export default function McpView(props: McpViewProps) {
                 onClick={() => setAdvancedOpen((prev) => !prev)}
               >
                 <div>
-                  <div class="text-sm font-medium text-white">Advanced</div>
-                  <div class="text-xs text-zinc-500">Manual setup for custom servers.</div>
+                  <div class="text-sm font-medium text-white">{t("mcp.advanced.title")}</div>
+                  <div class="text-xs text-zinc-500">{t("mcp.advanced.desc")}</div>
                 </div>
-                <div class="text-xs text-zinc-500">{advancedOpen() ? "Hide" : "Show"}</div>
+                <div class="text-xs text-zinc-500">{advancedOpen() ? t("mcp.advanced.hide") : t("mcp.advanced.show")}</div>
               </button>
 
               <Show when={advancedOpen()}>
                 <div class="space-y-4">
                   <div class="grid gap-3 md:grid-cols-2">
                     <TextInput
-                      label="Server name"
+                      label={t("mcp.advanced.name_label")}
                       placeholder="sentry"
                       value={props.advancedName}
                       onInput={(e) => props.setAdvancedName(e.currentTarget.value)}
                     />
                     <TextInput
-                      label="Server URL"
+                      label={t("mcp.advanced.url_label")}
                       placeholder="https://mcp.sentry.dev/mcp"
                       value={props.advancedUrl}
                       onInput={(e) => props.setAdvancedUrl(e.currentTarget.value)}
@@ -334,19 +335,19 @@ export default function McpView(props: McpViewProps) {
                       variant={props.advancedOAuth ? "secondary" : "outline"}
                       onClick={() => props.setAdvancedOAuth(true)}
                     >
-                      OAuth
+                      {t("mcp.advanced.oauth")}
                     </Button>
                     <Button
                       variant={!props.advancedOAuth ? "secondary" : "outline"}
                       onClick={() => props.setAdvancedOAuth(false)}
                     >
-                      API key
+                      {t("mcp.advanced.api_key")}
                     </Button>
                     <Button
                       variant={props.advancedEnabled ? "secondary" : "outline"}
                       onClick={() => props.setAdvancedEnabled(!props.advancedEnabled)}
                     >
-                      {props.advancedEnabled ? "Enabled" : "Disabled"}
+                      {props.advancedEnabled ? t("mcp.advanced.enabled") : t("mcp.advanced.disabled")}
                     </Button>
                   </div>
                   <div class="flex flex-col md:flex-row md:items-end gap-3">
@@ -356,7 +357,7 @@ export default function McpView(props: McpViewProps) {
                       disabled={!advancedReady() || props.busy}
                     >
                       <Server size={16} />
-                      Add MCP
+                      {t("mcp.advanced.add_btn")}
                     </Button>
                     <Button
                       variant="ghost"
@@ -364,11 +365,11 @@ export default function McpView(props: McpViewProps) {
                       disabled={!advancedReady() || props.busy}
                     >
                       <RefreshCcw size={16} />
-                      Verify connection
+                      {t("mcp.advanced.verify_btn")}
                     </Button>
                   </div>
                   <div class="space-y-2">
-                    <div class="text-xs text-zinc-500">CLI guidance (run from your workspace)</div>
+                    <div class="text-xs text-zinc-500">{t("mcp.advanced.cli_guidance")}</div>
                     <div class="rounded-xl bg-zinc-950/70 border border-zinc-800/70 px-3 py-2 text-xs font-mono text-zinc-200 flex items-center justify-between gap-2">
                       <span class="truncate">{advancedCommand()}</span>
                       <button
@@ -390,7 +391,7 @@ export default function McpView(props: McpViewProps) {
                       </button>
                     </div>
                     <div class="text-[11px] text-zinc-600">
-                      Config can live in opencode.json, opencode.jsonc, or .opencode/opencode.json.
+                      {t("mcp.advanced.config_note")}
                     </div>
                   </div>
                 </div>
@@ -400,15 +401,15 @@ export default function McpView(props: McpViewProps) {
 
           <div class="bg-zinc-900/30 border border-zinc-800/50 rounded-2xl p-5 space-y-4 lg:sticky lg:top-6 self-start">
             <div class="flex items-center justify-between">
-              <div class="text-sm font-medium text-white">Details</div>
-              <div class="text-xs text-zinc-500">{selectedEntry()?.name ?? "Select a server"}</div>
+              <div class="text-sm font-medium text-white">{t("mcp.details.title")}</div>
+              <div class="text-xs text-zinc-500">{selectedEntry()?.name ?? t("mcp.details.select")}</div>
             </div>
 
             <Show
               when={selectedEntry()}
               fallback={
                 <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-500">
-                  Select a server to review status and config.
+                  {t("mcp.details.empty")}
                 </div>
               }
             >
@@ -433,7 +434,7 @@ export default function McpView(props: McpViewProps) {
                               : "disconnected";
                         return (
                           <span class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
-                            {statusLabel(status)}
+                            {statusLabel(status, t)}
                           </span>
                         );
                       })()}
@@ -441,36 +442,36 @@ export default function McpView(props: McpViewProps) {
                   </div>
 
                   <div class="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-4 space-y-2">
-                    <div class="text-xs text-zinc-400 uppercase tracking-wider">Capabilities</div>
+                    <div class="text-xs text-zinc-400 uppercase tracking-wider">{t("mcp.details.capabilities")}</div>
                     <div class="flex flex-wrap gap-2">
                       <span class="text-[10px] uppercase tracking-wide bg-zinc-800/70 text-zinc-400 px-2 py-0.5 rounded-full">
-                        Tools enabled
+                        {t("mcp.details.tools_enabled")}
                       </span>
                       <span class="text-[10px] uppercase tracking-wide bg-zinc-800/70 text-zinc-400 px-2 py-0.5 rounded-full">
-                        OAuth ready
+                        {t("mcp.details.oauth_ready")}
                       </span>
                     </div>
                     <div class="text-xs text-zinc-500">
-                      Use the MCP server name in prompts to target its tools.
+                      {t("mcp.details.tools_desc")}
                     </div>
                   </div>
 
                   <div class="rounded-xl border border-zinc-800/70 bg-zinc-950/40 p-4 space-y-2">
-                    <div class="text-xs text-zinc-400 uppercase tracking-wider">Next steps</div>
+                    <div class="text-xs text-zinc-400 uppercase tracking-wider">{t("mcp.details.next_steps")}</div>
                     <div class="flex items-center gap-2 text-xs text-zinc-500">
                       <CheckCircle2 size={14} />
-                      Reload the engine after adding a server.
+                      {t("mcp.details.reload_note")}
                     </div>
                     <div class="flex items-center gap-2 text-xs text-zinc-500">
                       <CircleAlert size={14} />
-                      Run opencode mcp auth for OAuth servers if prompted.
+                      {t("mcp.details.auth_note")}
                     </div>
                     {(() => {
                       const status = props.mcpStatuses[entry().name];
                       if (!status || status.status !== "failed") return null;
                       return (
                         <div class="text-xs text-red-300">
-                          {"error" in status ? status.error : "Connection failed"}
+                          {"error" in status ? status.error : t("mcp.details.error_label")}
                         </div>
                       );
                     })()}

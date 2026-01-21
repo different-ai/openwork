@@ -35,6 +35,7 @@ import {
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./app/constants";
+import { useI18n } from "./i18n";
 import { parseMcpServersFromContent } from "./app/mcp";
 import type {
   Client,
@@ -89,6 +90,8 @@ import {
 } from "./lib/tauri";
 
 export default function App() {
+  const [t, { locale }] = useI18n();
+  const toggleLanguage = () => locale((l: string) => l === 'en' ? 'zh' : 'en');
   const [view, _setView] = createSignal<View>("onboarding");
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
@@ -226,7 +229,7 @@ export default function App() {
     if (!c || !sessionID) return;
 
     setBusy(true);
-    setBusyLabel("Running");
+    setBusyLabel("common.running");
     setBusyStartedAt(Date.now());
     setError(null);
 
@@ -311,7 +314,7 @@ export default function App() {
 
 
 
-  let markReloadRequiredRef: (reason: ReloadReason) => void = () => {};
+  let markReloadRequiredRef: (reason: ReloadReason) => void = () => { };
 
   const extensionsStore = createExtensionsStore({
     client,
@@ -382,7 +385,7 @@ export default function App() {
   const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
-  let loadWorkspaceTemplatesRef: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void> = async () => {};
+  let loadWorkspaceTemplatesRef: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void> = async () => { };
 
   const workspaceStore = createWorkspaceStore({
     mode,
@@ -578,13 +581,16 @@ export default function App() {
   const newTaskDisabled = createMemo(() => {
     const label = busyLabel();
     // Allow creating a new session even while a run is in progress.
-    if (busy() && label === "Running") return false;
+    if (busy() && (label === "Running" || label === "common.running")) return false;
 
     // Otherwise, block during engine / connection transitions.
     if (
       busy() &&
-      (label === "Connecting" ||
+      (label === "common.connecting" ||
+        label === "Connecting" ||
+        label === "common.starting_engine" ||
         label === "Starting engine" ||
+        label === "common.disconnecting" ||
         label === "Disconnecting")
     ) {
       return true;
@@ -645,7 +651,7 @@ export default function App() {
           modelID: DEFAULT_MODEL.modelID,
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
-          footer: "Fallback",
+          footer: t("common.fallback"),
           isFree: true,
           isConnected: false,
         },
@@ -678,9 +684,9 @@ export default function App() {
       for (const model of models) {
         const isFree = model.cost?.input === 0 && model.cost?.output === 0;
         const footerBits: string[] = [];
-        if (defaultModelID === model.id) footerBits.push("Default");
-        if (isFree) footerBits.push("Free");
-        if (model.capabilities?.reasoning) footerBits.push("Reasoning");
+        if (defaultModelID === model.id) footerBits.push(t("common.default"));
+        if (isFree) footerBits.push(t("common.free"));
+        if (model.capabilities?.reasoning) footerBits.push(t("common.reasoning"));
 
         next.push({
           providerID: provider.id,
@@ -1116,7 +1122,7 @@ export default function App() {
     console.log("[DEBUG] client found");
     setBusy(true);
     console.log("[DEBUG] busy set");
-    setBusyLabel("Creating new task");
+    setBusyLabel("session.creating");
     console.log("[DEBUG] busy label set");
     setBusyStartedAt(Date.now());
     console.log("[DEBUG] busy started at set");
@@ -1191,7 +1197,7 @@ export default function App() {
       const session = unwrap(rawResult);
       mark("session unwrapped");
       // Set selectedSessionId BEFORE switching view to avoid "No session selected" flash
-      setBusyLabel("Loading session");
+      setBusyLabel("session.loading");
       await withTimeout(
         loadSessions(workspaceStore.activeWorkspaceRoot().trim()),
         12_000,
@@ -1525,16 +1531,16 @@ export default function App() {
   });
 
   const headerStatus = createMemo(() => {
-    if (!client() || !connectedVersion()) return "Disconnected";
-    const bits = [`Connected · ${connectedVersion()}`];
-    if (sseConnected()) bits.push("Live");
+    if (!client() || !connectedVersion()) return t("common.disconnected");
+    const bits = [`${t("common.connected")} · ${connectedVersion()}`];
+    if (sseConnected()) bits.push(t("common.live"));
     return bits.join(" · ");
   });
 
   const busyHint = createMemo(() => {
     if (!busy() || !busyLabel()) return null;
     const seconds = busySeconds();
-    return seconds > 0 ? `${busyLabel()} · ${seconds}s` : busyLabel();
+    return seconds > 0 ? `${t(busyLabel())} · ${seconds}s` : t(busyLabel());
   });
 
   const localHostLabel = createMemo(() => {
@@ -1778,62 +1784,62 @@ export default function App() {
           </Match>
           <Match when={view() === "session"}>
             <SessionView
-                selectedSessionId={activeSessionId()}
-                setView={setView}
-                setTab={setTab}
-                activeWorkspaceDisplay={activeWorkspaceDisplay()}
-                setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
-                setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
-                headerStatus={headerStatus()}
-                busyHint={busyHint()}
-                selectedSessionModelLabel={selectedSessionModelLabel()}
-                openSessionModelPicker={openSessionModelPicker}
-                activePlugins={sidebarPluginList()}
-                activePluginStatus={sidebarPluginStatus()}
-                createSessionAndOpen={createSessionAndOpen}
-                sendPromptAsync={sendPrompt}
-                newTaskDisabled={newTaskDisabled()}
-                sessions={activeSessions().map((session) => ({
-                  id: session.id,
-                  title: session.title,
-                  slug: session.slug,
-                }))}
-                selectSession={isDemoMode() ? selectDemoSession : selectSession}
-                messages={activeMessages()}
-                todos={activeTodos()}
-                busyLabel={busyLabel()}
-                developerMode={developerMode()}
-                showThinking={showThinking()}
-                groupMessageParts={groupMessageParts}
-                summarizeStep={summarizeStep}
-                expandedStepIds={expandedStepIds()}
-                setExpandedStepIds={setExpandedStepIds}
-                expandedSidebarSections={expandedSidebarSections()}
-                setExpandedSidebarSections={setExpandedSidebarSections}
-                artifacts={activeArtifacts()}
-                workingFiles={activeWorkingFiles()}
-                authorizedDirs={activeAuthorizedDirs()}
-                busy={busy()}
-                prompt={prompt()}
-                setPrompt={setPrompt}
-                sendPrompt={sendPrompt}
-                activePermission={activePermissionMemo()}
-                permissionReplyBusy={permissionReplyBusy()}
-                respondPermission={respondPermission}
-                respondPermissionAndRemember={respondPermissionAndRemember}
-                safeStringify={safeStringify}
-                showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
-                onTryNotionPrompt={() => {
-                  setPrompt("setup my crm");
-                  setTryNotionPromptVisible(false);
-                  setNotionSkillInstalled(true);
-                  try {
-                    window.localStorage.setItem("openwork.notionSkillInstalled", "1");
-                  } catch {
-                    // ignore
-                  }
-                }}
-                sessionStatus={selectedSessionStatus()}
+              selectedSessionId={activeSessionId()}
+              setView={setView}
+              setTab={setTab}
+              activeWorkspaceDisplay={activeWorkspaceDisplay()}
+              setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
+              setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
+              headerStatus={headerStatus()}
+              busyHint={busyHint()}
+              selectedSessionModelLabel={selectedSessionModelLabel()}
+              openSessionModelPicker={openSessionModelPicker}
+              activePlugins={sidebarPluginList()}
+              activePluginStatus={sidebarPluginStatus()}
+              createSessionAndOpen={createSessionAndOpen}
+              sendPromptAsync={sendPrompt}
+              newTaskDisabled={newTaskDisabled()}
+              sessions={activeSessions().map((session) => ({
+                id: session.id,
+                title: session.title,
+                slug: session.slug,
+              }))}
+              selectSession={isDemoMode() ? selectDemoSession : selectSession}
+              messages={activeMessages()}
+              todos={activeTodos()}
+              busyLabel={busyLabel()}
+              developerMode={developerMode()}
+              showThinking={showThinking()}
+              groupMessageParts={groupMessageParts}
+              summarizeStep={summarizeStep}
+              expandedStepIds={expandedStepIds()}
+              setExpandedStepIds={setExpandedStepIds}
+              expandedSidebarSections={expandedSidebarSections()}
+              setExpandedSidebarSections={setExpandedSidebarSections}
+              artifacts={activeArtifacts()}
+              workingFiles={activeWorkingFiles()}
+              authorizedDirs={activeAuthorizedDirs()}
+              busy={busy()}
+              prompt={prompt()}
+              setPrompt={setPrompt}
+              sendPrompt={sendPrompt}
+              activePermission={activePermissionMemo()}
+              permissionReplyBusy={permissionReplyBusy()}
+              respondPermission={respondPermission}
+              respondPermissionAndRemember={respondPermissionAndRemember}
+              safeStringify={safeStringify}
+              showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
+              onTryNotionPrompt={() => {
+                setPrompt("setup my crm");
+                setTryNotionPromptVisible(false);
+                setNotionSkillInstalled(true);
+                try {
+                  window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+                } catch {
+                  // ignore
+                }
+              }}
+              sessionStatus={selectedSessionStatus()}
               error={error()}
             />
           </Match>
@@ -1922,6 +1928,7 @@ export default function App() {
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
       />
+
     </>
   );
 }

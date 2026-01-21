@@ -29,6 +29,7 @@ import Button from "../components/Button";
 import PartView from "../components/PartView";
 import WorkspaceChip from "../components/WorkspaceChip";
 import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
+import { useI18n } from "../i18n";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -84,6 +85,7 @@ export type SessionViewProps = {
 };
 
 export default function SessionView(props: SessionViewProps) {
+  const [t] = useI18n();
   let messagesEndEl: HTMLDivElement | undefined;
 
   createEffect(() => {
@@ -141,9 +143,9 @@ export default function SessionView(props: SessionViewProps) {
     props.setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
   };
 
-  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
+  const artifactActionLabel = () => (isWindowsPlatform() ? t("session.open") : t("session.reveal"));
 
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
+  const artifactActionToast = () => (isWindowsPlatform() ? t("session.open_toast") : t("session.reveal_toast"));
 
   const resolveArtifactPath = (artifact: ArtifactItem) => {
     const rawPath = artifact.path?.trim();
@@ -169,7 +171,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (!isTauriRuntime()) {
-      setArtifactToast("Open is only available in the desktop app.");
+      setArtifactToast(t("session.open_error"));
       return;
     }
 
@@ -243,14 +245,14 @@ export default function SessionView(props: SessionViewProps) {
       fallback={
         <div class="min-h-screen flex items-center justify-center bg-zinc-950 text-white p-6">
           <div class="text-center space-y-4">
-            <div class="text-lg font-medium">No session selected</div>
+            <div class="text-lg font-medium">{t("session.no_session")}</div>
             <Button
               onClick={() => {
                 props.setView("dashboard");
                 props.setTab("sessions");
               }}
             >
-              Back to dashboard
+              {t("session.back_to_dashboard")}
             </Button>
           </div>
         </div>
@@ -269,19 +271,19 @@ export default function SessionView(props: SessionViewProps) {
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
             </Button>
-             <WorkspaceChip
-               workspace={props.activeWorkspaceDisplay}
-               onClick={() => {
-                 props.setWorkspaceSearch("");
-                 props.setWorkspacePickerOpen(true);
-               }}
-             />
-             <Show when={props.developerMode}>
-               <span class="text-xs text-zinc-600">{props.headerStatus}</span>
-             </Show>
-             <Show when={props.busyHint}>
-               <span class="text-xs text-zinc-500">· {props.busyHint}</span>
-             </Show>
+            <WorkspaceChip
+              workspace={props.activeWorkspaceDisplay}
+              onClick={() => {
+                props.setWorkspaceSearch("");
+                props.setWorkspacePickerOpen(true);
+              }}
+            />
+            <Show when={props.developerMode}>
+              <span class="text-xs text-zinc-600">{props.headerStatus}</span>
+            </Show>
+            <Show when={props.busyHint}>
+              <span class="text-xs text-zinc-500">· {props.busyHint}</span>
+            </Show>
 
           </div>
         </header>
@@ -303,21 +305,20 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.newTaskDisabled}
               >
                 <Plus size={16} />
-                New task
+                {t("session.new_task")}
               </button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-4 py-4">
-              <div class="text-xs text-zinc-500 uppercase tracking-wide mb-3">Recents</div>
+              <div class="text-xs text-zinc-500 uppercase tracking-wide mb-3">{t("session.recents")}</div>
               <div class="space-y-2">
                 <For each={props.sessions.slice(0, 8)}>
                   {(session) => (
                     <button
-                      class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                        session.id === props.selectedSessionId
+                      class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${session.id === props.selectedSessionId
                           ? "bg-zinc-900 text-zinc-100"
                           : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50"
-                      }`}
+                        }`}
                       onClick={async () => {
                         await props.selectSession(session.id);
                         props.setView("session");
@@ -332,7 +333,7 @@ export default function SessionView(props: SessionViewProps) {
                 </For>
               </div>
               <div class="mt-6 text-xs text-zinc-500">
-                These tasks run locally and aren't synced across devices.
+                {t("session.recents_desc")}
               </div>
             </div>
           </aside>
@@ -344,9 +345,9 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="w-16 h-16 bg-zinc-900 rounded-3xl mx-auto flex items-center justify-center border border-zinc-800">
                     <Zap class="text-zinc-600" />
                   </div>
-                  <h3 class="text-xl font-medium">Ready to work</h3>
+                  <h3 class="text-xl font-medium">{t("session.ready")}</h3>
                   <p class="text-zinc-500 text-sm max-w-xs mx-auto">
-                    Describe a task. I'll show progress and ask for permissions when needed.
+                    {t("session.ready_desc")}
                   </p>
                 </div>
               </Show>
@@ -379,33 +380,31 @@ export default function SessionView(props: SessionViewProps) {
                     <Show when={renderableParts().length > 0}>
                       <div class={`flex ${isUser() ? "justify-end" : "justify-start"}`.trim()}>
                         <div
-                          class={`w-full ${
-                            isUser()
+                          class={`w-full ${isUser()
                               ? "max-w-[520px] rounded-2xl bg-white text-black shadow-xl shadow-white/5 p-4 text-sm leading-relaxed"
                               : "max-w-[68ch] text-[15px] leading-7 text-zinc-200"
-                          }`}
+                            }`}
                         >
                           <For each={groups()}>
                             {(group, idx) => (
                               <div class={idx() === groups().length - 1 ? "" : groupSpacing()}>
                                 <Show when={group.kind === "text"}>
-                                    <PartView
-                                      part={(group as { kind: "text"; part: Part }).part}
-                                      developerMode={props.developerMode}
-                                      showThinking={props.showThinking}
-                                      tone={isUser() ? "dark" : "light"}
-                                    />
+                                  <PartView
+                                    part={(group as { kind: "text"; part: Part }).part}
+                                    developerMode={props.developerMode}
+                                    showThinking={props.showThinking}
+                                    tone={isUser() ? "dark" : "light"}
+                                  />
                                 </Show>
                                 <Show when={group.kind === "steps"}>
                                   <div class={isUser() ? "mt-2" : "mt-3 border-t border-zinc-800/60 pt-3"}>
                                     <button
-                                      class={`flex items-center gap-2 text-xs ${
-                                        isUser() ? "text-zinc-500 hover:text-zinc-300" : "text-zinc-500 hover:text-zinc-200"
-                                      }`}
+                                      class={`flex items-center gap-2 text-xs ${isUser() ? "text-zinc-500 hover:text-zinc-300" : "text-zinc-500 hover:text-zinc-200"
+                                        }`}
                                       onClick={() => toggleSteps((group as any).id)}
                                     >
                                       <span>
-                                        {props.expandedStepIds.has((group as any).id) ? "Hide steps" : "View steps"}
+                                        {props.expandedStepIds.has((group as any).id) ? t("session.hide_steps") : t("session.view_steps")}
                                       </span>
                                       <ChevronDown
                                         size={14}
@@ -414,11 +413,10 @@ export default function SessionView(props: SessionViewProps) {
                                     </button>
                                     <Show when={props.expandedStepIds.has((group as any).id)}>
                                       <div
-                                        class={`mt-3 space-y-3 rounded-xl border p-3 ${
-                                          isUser()
+                                        class={`mt-3 space-y-3 rounded-xl border p-3 ${isUser()
                                             ? "border-zinc-800 bg-zinc-950/60"
                                             : "border-zinc-800/70 bg-zinc-900/40"
-                                        }`}
+                                          }`}
                                       >
                                         <For each={(group as any).parts as Part[]}>
                                           {(part) => {
@@ -505,7 +503,7 @@ export default function SessionView(props: SessionViewProps) {
                     class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                     onClick={() => toggleSidebar("progress")}
                   >
-                    <span>Progress</span>
+                    <span>{t("session.progress")}</span>
                     <ChevronDown
                       size={16}
                       class={`transition-transform ${props.expandedSidebarSections.progress ? "rotate-180" : ""}`.trim()}
@@ -517,9 +515,8 @@ export default function SessionView(props: SessionViewProps) {
                         <For each={progressDots()}>
                           {(done) => (
                             <div
-                              class={`h-6 w-6 rounded-full border flex items-center justify-center ${
-                                done ? "border-emerald-400 text-emerald-400" : "border-zinc-700 text-zinc-700"
-                              }`}
+                              class={`h-6 w-6 rounded-full border flex items-center justify-center ${done ? "border-emerald-400 text-emerald-400" : "border-zinc-700 text-zinc-700"
+                                }`}
                             >
                               <Show when={done}>
                                 <Check size={14} />
@@ -528,7 +525,7 @@ export default function SessionView(props: SessionViewProps) {
                           )}
                         </For>
                       </div>
-                      <div class="mt-2 text-xs text-zinc-500">Steps will show as the task unfolds.</div>
+                      <div class="mt-2 text-xs text-zinc-500">{t("session.steps_desc")}</div>
                     </div>
                   </Show>
                 </div>
@@ -539,7 +536,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                   onClick={() => toggleSidebar("artifacts")}
                 >
-                  <span>Artifacts</span>
+                  <span>{t("session.artifacts")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.artifacts ? "rotate-180" : ""}`.trim()}
@@ -549,7 +546,7 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="px-4 pb-4 pt-1 space-y-3">
                     <Show
                       when={props.artifacts.length}
-                      fallback={<div class="text-xs text-zinc-600">No artifacts yet.</div>}
+                      fallback={<div class="text-xs text-zinc-600">{t("session.no_artifacts")}</div>}
                     >
                       <For each={props.artifacts}>
                         {(artifact) => (
@@ -573,7 +570,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-zinc-200"
                   onClick={() => toggleSidebar("context")}
                 >
-                  <span>Context</span>
+                  <span>{t("session.context")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.context ? "rotate-180" : ""}`.trim()}
@@ -584,14 +581,14 @@ export default function SessionView(props: SessionViewProps) {
                     <Show when={props.activePlugins.length || props.activePluginStatus}>
                       <div>
                         <div class="flex items-center justify-between text-xs text-zinc-500">
-                          <span>Active plugins</span>
+                          <span>{t("session.active_plugins")}</span>
                           <span>{props.activePlugins.length}</span>
                         </div>
                         <div class="mt-2 space-y-2">
                           <Show
                             when={props.activePlugins.length}
                             fallback={
-                              <div class="text-xs text-zinc-600">{props.activePluginStatus ?? "No plugins loaded."}</div>
+                              <div class="text-xs text-zinc-600">{props.activePluginStatus ?? t("session.no_plugins")}</div>
                             }
                           >
                             <For each={props.activePlugins}>
@@ -609,7 +606,7 @@ export default function SessionView(props: SessionViewProps) {
 
                     <div>
                       <div class="flex items-center justify-between text-xs text-zinc-500">
-                        <span>Selected folders</span>
+                        <span>{t("session.selected_folders")}</span>
                         <span>{props.authorizedDirs.length}</span>
                       </div>
                       <div class="mt-2 space-y-2">
@@ -625,7 +622,7 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
 
                     <div>
-                      <div class="text-xs text-zinc-500">Working files</div>
+                      <div class="text-xs text-zinc-500">{t("session.working_files")}</div>
                       <div class="mt-2 space-y-2">
                         <Show
                           when={props.workingFiles.length}
@@ -659,7 +656,7 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.busy}
               >
                 <Zap size={10} class="text-zinc-600 group-hover:text-amber-400 transition-colors" />
-                <span>{isModelUnknown() ? "Standard" : modelLabelParts().model}</span>
+                <span>{isModelUnknown() ? t("session.standard") : modelLabelParts().model}</span>
               </button>
 
               <div class="p-2 pt-6 pb-3 px-4">
@@ -669,8 +666,8 @@ export default function SessionView(props: SessionViewProps) {
                     class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-left text-sm text-emerald-100 transition-colors hover:bg-emerald-500/15"
                     onClick={() => props.onTryNotionPrompt()}
                   >
-                    <span>Try it now: set up my CRM in Notion</span>
-                    <span class="text-xs text-emerald-200 font-medium">Insert prompt</span>
+                    <span>{t("session.try_notion")}</span>
+                    <span class="text-xs text-emerald-200 font-medium">{t("session.insert_prompt")}</span>
                   </button>
                 </Show>
 
@@ -685,7 +682,7 @@ export default function SessionView(props: SessionViewProps) {
                         props.sendPromptAsync().catch(() => undefined);
                       }
                     }}
-                    placeholder="Ask OpenWork..."
+                    placeholder={t("session.input_placeholder")}
                     class="flex-1 bg-transparent border-none p-0 text-zinc-100 placeholder-zinc-500 focus:ring-0 text-[15px] leading-relaxed"
                   />
 
@@ -693,7 +690,7 @@ export default function SessionView(props: SessionViewProps) {
                     disabled={!props.prompt.trim() || props.busy}
                     onClick={() => props.sendPromptAsync().catch(() => undefined)}
                     class="p-1.5 bg-white text-black rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 ml-2"
-                    title="Run"
+                    title={t("session.run")}
                   >
                     <ArrowRight size={18} />
                   </button>
@@ -712,16 +709,16 @@ export default function SessionView(props: SessionViewProps) {
                     <Shield size={24} />
                   </div>
                   <div>
-                    <h3 class="text-lg font-semibold text-white">Permission Required</h3>
-                    <p class="text-sm text-zinc-400 mt-1">OpenCode is requesting permission to continue.</p>
+                    <h3 class="text-lg font-semibold text-white">{t("permissions.title")}</h3>
+                    <p class="text-sm text-zinc-400 mt-1">{t("permissions.subtitle")}</p>
                   </div>
                 </div>
 
                 <div class="bg-zinc-950/50 rounded-xl p-4 border border-zinc-800 mb-6">
-                  <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">Permission</div>
+                  <div class="text-xs text-zinc-500 uppercase tracking-wider mb-2 font-semibold">{t("permissions.permission")}</div>
                   <div class="text-sm text-zinc-200 font-mono">{props.activePermission?.permission}</div>
 
-                  <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">Scope</div>
+                  <div class="text-xs text-zinc-500 uppercase tracking-wider mt-4 mb-2 font-semibold">{t("permissions.scope")}</div>
                   <div class="flex items-center gap-2 text-sm font-mono text-amber-200 bg-amber-950/30 px-2 py-1 rounded border border-amber-500/20">
                     <HardDrive size={12} />
                     {props.activePermission?.patterns.join(", ")}
@@ -729,7 +726,7 @@ export default function SessionView(props: SessionViewProps) {
 
                   <Show when={Object.keys(props.activePermission?.metadata ?? {}).length > 0}>
                     <details class="mt-4 rounded-lg bg-black/20 p-2">
-                      <summary class="cursor-pointer text-xs text-zinc-400">Details</summary>
+                      <summary class="cursor-pointer text-xs text-zinc-400">{t("permissions.details")}</summary>
                       <pre class="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-200">
                         {props.safeStringify(props.activePermission?.metadata)}
                       </pre>
@@ -738,16 +735,16 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
-                    <Button
-                      variant="outline"
-                      class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
-                      onClick={() =>
-                        props.activePermission && props.respondPermission(props.activePermission.id, "reject")
-                      }
-                      disabled={props.permissionReplyBusy}
-                    >
+                  <Button
+                    variant="outline"
+                    class="w-full border-red-500/20 text-red-400 hover:bg-red-950/30"
+                    onClick={() =>
+                      props.activePermission && props.respondPermission(props.activePermission.id, "reject")
+                    }
+                    disabled={props.permissionReplyBusy}
+                  >
 
-                    Deny
+                    {t("permissions.deny")}
                   </Button>
                   <div class="grid grid-cols-2 gap-2">
                     <Button
@@ -756,7 +753,7 @@ export default function SessionView(props: SessionViewProps) {
                       onClick={() => props.activePermission && props.respondPermission(props.activePermission.id, "once")}
                       disabled={props.permissionReplyBusy}
                     >
-                      Once
+                      {t("permissions.once")}
                     </Button>
                     <Button
                       variant="primary"
@@ -767,7 +764,7 @@ export default function SessionView(props: SessionViewProps) {
                       }
                       disabled={props.permissionReplyBusy}
                     >
-                      Allow for session
+                      {t("permissions.allow_session")}
                     </Button>
                   </div>
                 </div>

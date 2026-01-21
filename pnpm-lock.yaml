@@ -11,6 +11,9 @@ importers:
       '@opencode-ai/sdk':
         specifier: ^1.1.19
         version: 1.1.20
+      '@solid-primitives/i18n':
+        specifier: ^2.2.1
+        version: 2.2.1(solid-js@1.9.10)
       '@tauri-apps/api':
         specifier: ^2.0.0
         version: 2.9.1
@@ -456,6 +459,11 @@ packages:
     resolution: {integrity: sha512-SPEpaL6DX4rmcXtnhdrQYgzQ5W2uW3SCJch88lB2zImhJRhIIK44fkUrgIV/Q8yUNfw5oyZ5vkeQsZLhCb06lw==}
     cpu: [x64]
     os: [win32]
+
+  '@solid-primitives/i18n@2.2.1':
+    resolution: {integrity: sha512-TnTnE2Ku11MGYZ1JzhJ8pYscwg1fr9MteoYxPwsfxWfh9Jp5K7RRJncJn9BhOHvNLwROjqOHZ46PT7sPHqbcXw==}
+    peerDependencies:
+      solid-js: ^1.6.12
 
   '@tauri-apps/api@2.9.1':
     resolution: {integrity: sha512-IGlhP6EivjXHepbBic618GOmiWe4URJiIeZFlB7x3czM0yDHHYviH1Xvoiv4FefdkQtn6v7TuwWCRfOGdnVUGw==}
@@ -1342,6 +1350,10 @@ snapshots:
 
   '@rollup/rollup-win32-x64-msvc@4.55.1':
     optional: true
+
+  '@solid-primitives/i18n@2.2.1(solid-js@1.9.10)':
+    dependencies:
+      solid-js: 1.9.10
 
   '@tauri-apps/api@2.9.1': {}
 

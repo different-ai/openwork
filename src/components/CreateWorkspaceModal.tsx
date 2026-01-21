@@ -1,4 +1,5 @@
 import { For, Show, createSignal } from "solid-js";
+import { useI18n } from "../i18n";
 
 import { CheckCircle2, FolderPlus, Loader2, X } from "lucide-solid";
 
@@ -15,6 +16,7 @@ export default function CreateWorkspaceModal(props: {
   subtitle?: string;
   confirmLabel?: string;
 }) {
+  const [t] = useI18n();
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);
   const [pickingFolder, setPickingFolder] = createSignal(false);
@@ -22,26 +24,26 @@ export default function CreateWorkspaceModal(props: {
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter workspace",
-      desc: "Preconfigured to show you how to use plugins, templates, and skills.",
+      name: t("components.create_workspace.presets.starter_name"),
+      desc: t("components.create_workspace.presets.starter_desc"),
     },
     {
       id: "minimal" as const,
-      name: "Empty workspace",
-      desc: "Start with a blank folder and add what you need.",
+      name: t("components.create_workspace.presets.minimal_name"),
+      desc: t("components.create_workspace.presets.minimal_desc"),
     },
   ];
 
   const folderLabel = () => {
     const folder = selectedFolder();
-    if (!folder) return "Choose a folder";
+    if (!folder) return t("components.create_workspace.folder.label_default");
     const parts = folder.replace(/\\/g, "/").split("/").filter(Boolean);
     return parts[parts.length - 1] ?? folder;
   };
 
   const folderSubLabel = () => {
     const folder = selectedFolder();
-    if (!folder) return "You will choose a directory next.";
+    if (!folder) return t("components.create_workspace.folder.sublabel_default");
     return folder;
   };
 
@@ -60,9 +62,9 @@ export default function CreateWorkspaceModal(props: {
   };
 
   const showClose = () => props.showClose ?? true;
-  const title = () => props.title ?? "Create Workspace";
-  const subtitle = () => props.subtitle ?? "Initialize a new folder-based workspace.";
-  const confirmLabel = () => props.confirmLabel ?? "Create Workspace";
+  const title = () => props.title ?? t("components.create_workspace.title");
+  const subtitle = () => props.subtitle ?? t("components.create_workspace.subtitle");
+  const confirmLabel = () => props.confirmLabel ?? t("components.create_workspace.actions.create");
   const isInline = () => props.inline ?? false;
 
   const content = (
@@ -79,90 +81,87 @@ export default function CreateWorkspaceModal(props: {
         </Show>
       </div>
 
-          <div class="p-6 flex-1 overflow-y-auto space-y-8">
-            <div class="space-y-4">
-              <div class="flex items-center gap-3 text-sm font-medium text-white">
-                <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
-                  1
+      <div class="p-6 flex-1 overflow-y-auto space-y-8">
+        <div class="space-y-4">
+          <div class="flex items-center gap-3 text-sm font-medium text-white">
+            <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
+              1
+            </div>
+            {t("components.create_workspace.steps.select_folder")}
+          </div>
+          <div class="ml-9">
+            <button
+              type="button"
+              onClick={handlePickFolder}
+              disabled={pickingFolder()}
+              class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${pickingFolder() ? "opacity-70 cursor-wait" : "hover:border-zinc-500"
+                }`.trim()}
+            >
+              <div class="flex items-center gap-3 text-zinc-200">
+                <FolderPlus size={20} class="text-zinc-400" />
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-zinc-100 truncate">{folderLabel()}</div>
+                  <div class="text-xs text-zinc-500 font-mono truncate mt-1">{folderSubLabel()}</div>
                 </div>
-                Select Folder
-              </div>
-              <div class="ml-9">
-                <button
-                  type="button"
-                  onClick={handlePickFolder}
-                  disabled={pickingFolder()}
-                  class={`w-full border border-dashed border-zinc-700 bg-zinc-900/50 rounded-xl p-4 text-left transition ${
-                    pickingFolder() ? "opacity-70 cursor-wait" : "hover:border-zinc-500"
-                  }`.trim()}
+                <Show
+                  when={pickingFolder()}
+                  fallback={<span class="text-xs text-zinc-500">{t("components.create_workspace.folder.change")}</span>}
                 >
-                  <div class="flex items-center gap-3 text-zinc-200">
-                    <FolderPlus size={20} class="text-zinc-400" />
-                    <div class="flex-1 min-w-0">
-                      <div class="text-sm font-medium text-zinc-100 truncate">{folderLabel()}</div>
-                      <div class="text-xs text-zinc-500 font-mono truncate mt-1">{folderSubLabel()}</div>
+                  <span class="flex items-center gap-2 text-xs text-zinc-500">
+                    <Loader2 size={12} class="animate-spin" />
+                    {t("components.create_workspace.folder.opening")}
+                  </span>
+                </Show>
+              </div>
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <div class="flex items-center gap-3 text-sm font-medium text-white">
+            <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
+              2
+            </div>
+            {t("components.create_workspace.steps.choose_preset")}
+          </div>
+          <div class={`ml-9 grid gap-3 ${!selectedFolder() ? "opacity-50" : ""}`.trim()}>
+            <For each={options()}>
+              {(opt) => (
+                <div
+                  onClick={() => {
+                    if (!selectedFolder()) return;
+                    setPreset(opt.id);
+                  }}
+                  class={`p-4 rounded-xl border cursor-pointer transition-all ${preset() === opt.id
+                      ? "bg-indigo-500/10 border-indigo-500/50"
+                      : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
+                    } ${!selectedFolder() ? "pointer-events-none" : ""}`.trim()}
+                >
+                  <div class="flex justify-between items-start">
+                    <div>
+                      <div
+                        class={`font-medium text-sm ${preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
+                          }`}
+                      >
+                        {opt.name}
+                      </div>
+                      <div class="text-xs text-zinc-500 mt-1">{opt.desc}</div>
                     </div>
-                    <Show
-                      when={pickingFolder()}
-                      fallback={<span class="text-xs text-zinc-500">Change</span>}
-                    >
-                      <span class="flex items-center gap-2 text-xs text-zinc-500">
-                        <Loader2 size={12} class="animate-spin" />
-                        Opening...
-                      </span>
+                    <Show when={preset() === opt.id}>
+                      <CheckCircle2 size={16} class="text-indigo-500" />
                     </Show>
                   </div>
-                </button>
-              </div>
-            </div>
-
-            <div class="space-y-4">
-              <div class="flex items-center gap-3 text-sm font-medium text-white">
-                <div class="w-6 h-6 rounded-full bg-zinc-800 flex items-center justify-center text-xs">
-                  2
                 </div>
-                Choose Preset
-              </div>
-              <div class={`ml-9 grid gap-3 ${!selectedFolder() ? "opacity-50" : ""}`.trim()}>
-                <For each={options()}>
-                  {(opt) => (
-                    <div
-                      onClick={() => {
-                        if (!selectedFolder()) return;
-                        setPreset(opt.id);
-                      }}
-                      class={`p-4 rounded-xl border cursor-pointer transition-all ${
-                        preset() === opt.id
-                          ? "bg-indigo-500/10 border-indigo-500/50"
-                          : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
-                      } ${!selectedFolder() ? "pointer-events-none" : ""}`.trim()}
-                    >
-                      <div class="flex justify-between items-start">
-                        <div>
-                          <div
-                            class={`font-medium text-sm ${
-                              preset() === opt.id ? "text-indigo-400" : "text-zinc-200"
-                            }`}
-                          >
-                            {opt.name}
-                          </div>
-                          <div class="text-xs text-zinc-500 mt-1">{opt.desc}</div>
-                        </div>
-                        <Show when={preset() === opt.id}>
-                          <CheckCircle2 size={16} class="text-indigo-500" />
-                        </Show>
-                      </div>
-                    </div>
-                  )}
-                </For>
-              </div>
-            </div>
+              )}
+            </For>
           </div>
+        </div>
+      </div>
 
       <div class="p-6 border-t border-zinc-800 bg-zinc-950 flex justify-end gap-3">
         <Show when={showClose()}>
           <Button variant="ghost" onClick={props.onClose}>
-            Cancel
+            {t("components.create_workspace.actions.cancel")}
           </Button>
         </Show>
         <Button

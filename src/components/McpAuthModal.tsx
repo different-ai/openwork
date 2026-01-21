@@ -1,4 +1,5 @@
 import { Show, createEffect, createSignal, on } from "solid-js";
+import { useI18n } from "../i18n";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
 import Button from "./Button";
 import type { Client } from "../app/types";
@@ -16,6 +17,7 @@ export type McpAuthModalProps = {
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
+  const [t] = useI18n();
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [needsReload, setNeedsReload] = createSignal(false);
@@ -165,9 +167,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
             <div>
               <h2 class="text-lg font-semibold text-white">
-                Connect {serverName()}
+                {t("components.mcp_auth.connect")} {serverName()}
               </h2>
-              <p class="text-sm text-zinc-400">We’ll open your browser to finish sign-in.</p>
+              <p class="text-sm text-zinc-400">{t("components.mcp_auth.subtitle")}</p>
             </div>
             <button
               type="button"
@@ -193,15 +195,14 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-emerald-400" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Already Connected</p>
+                    <p class="text-sm font-medium text-white">{t("components.mcp_auth.already_connected.title")}</p>
                     <p class="text-xs text-zinc-400">
-                      {serverName()} is already authenticated and ready to use.
+                      {serverName()} {t("components.mcp_auth.already_connected.desc")}
                     </p>
                   </div>
                 </div>
                 <p class="text-xs text-zinc-500">
-                  The MCP may have been configured globally or in a previous session. 
-                  You can close this modal and start using the MCP tools right away.
+                  {t("components.mcp_auth.already_connected.note")}
                 </p>
               </div>
             </Show>
@@ -209,25 +210,25 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={error()}>
               <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-4 space-y-3">
                 <p class="text-sm text-red-300">{error()}</p>
-                
+
                 <Show when={needsReload()}>
                   <div class="flex flex-wrap gap-2 pt-2">
                     <Show when={props.onReloadEngine}>
                       <Button variant="secondary" onClick={handleReloadAndRetry}>
                         <RefreshCcw size={14} />
-                        Reload engine and retry
+                        {t("components.mcp_auth.actions.reload_retry")}
                       </Button>
                     </Show>
                     <Button variant="ghost" onClick={handleRetry}>
-                      Retry Now
+                      {t("components.mcp_auth.actions.retry_now")}
                     </Button>
                   </div>
                 </Show>
-                
+
                 <Show when={!needsReload()}>
                   <div class="pt-2">
                     <Button variant="ghost" onClick={handleRetry}>
-                      Retry
+                      {t("components.mcp_auth.actions.retry")}
                     </Button>
                   </div>
                 </Show>
@@ -241,9 +242,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Opening your browser</p>
+                    <p class="text-sm font-medium text-white">{t("components.mcp_auth.steps.open_browser")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      We’ll launch {serverName()}’s sign-in flow automatically.
+                      {t("components.mcp_auth.steps.open_browser_desc").replace("{name}", serverName())}
                     </p>
                   </div>
                 </div>
@@ -253,9 +254,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Authorize OpenWork</p>
+                    <p class="text-sm font-medium text-white">{t("components.mcp_auth.steps.authorize")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      Sign in and approve access when prompted.
+                      {t("components.mcp_auth.steps.authorize_desc")}
                     </p>
                   </div>
                 </div>
@@ -265,16 +266,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-white">Return here when you're done</p>
+                    <p class="text-sm font-medium text-white">{t("components.mcp_auth.steps.return")}</p>
                     <p class="text-xs text-zinc-500 mt-1">
-                      We'll finish connecting as soon as authorization completes.
+                      {t("components.mcp_auth.steps.return_desc")}
                     </p>
                   </div>
                 </div>
               </div>
 
               <div class="rounded-xl border border-zinc-800/60 bg-zinc-950/40 p-4 text-sm text-zinc-400">
-                Waiting for authorization to complete in your browser...
+                {t("components.mcp_auth.status.waiting")}
               </div>
             </Show>
           </div>
@@ -284,16 +285,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
             <Show when={alreadyConnected()}>
               <Button variant="primary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                Done
+                {t("components.mcp_auth.actions.done")}
               </Button>
             </Show>
             <Show when={!alreadyConnected()}>
               <Button variant="ghost" onClick={handleClose}>
-                Cancel
+                {t("components.mcp_auth.actions.cancel")}
               </Button>
               <Button variant="secondary" onClick={handleComplete}>
                 <CheckCircle2 size={16} />
-                I'm done
+                {t("components.mcp_auth.actions.im_done")}
               </Button>
             </Show>
           </div>
