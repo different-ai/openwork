@@ -6,21 +6,25 @@ use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
 
 fn main() {
-  // Always create sidecar for production builds
+  // Only create sidecar for production builds
   let profile = env::var("PROFILE").unwrap_or_default();
   if profile == "release" {
-    ensure_opencode_sidecar();
+    if let Err(e) = ensure_opencode_sidecar() {
+      eprintln!("Error: {}", e);
+      eprintln!("Install OpenCode or set OPENCODE_BIN_PATH.");
+      std::process::exit(1);
+    }
   }
   tauri_build::build();
 }
 
-fn ensure_opencode_sidecar() {
+fn ensure_opencode_sidecar() -> Result<(), String> {
   let target = env::var("CARGO_CFG_TARGET_TRIPLE")
     .or_else(|_| env::var("TARGET"))
     .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
     .unwrap_or_default();
   if target.is_empty() {
-    return;
+    return Ok(());
   }
 
   let manifest_dir = env::var("CARGO_MANIFEST_DIR")
@@ -35,7 +39,7 @@ fn ensure_opencode_sidecar() {
   let dest_path = sidecar_dir.join(file_name);
 
   if dest_path.exists() {
-    return;
+    return Ok(());
   }
 
   let source_path = env::var("OPENCODE_BIN_PATH")
@@ -44,20 +48,14 @@ fn ensure_opencode_sidecar() {
     .filter(|path| path.is_file())
     .or_else(|| find_in_path(if target.contains("windows") { "opencode.exe" } else { "opencode" }));
 
-  let profile = env::var("PROFILE").unwrap_or_default();
-
   let Some(source_path) = source_path else {
-    println!(
-      "cargo:warning=OpenCode sidecar missing at {} (set OPENCODE_BIN_PATH or install OpenCode)",
-      dest_path.display()
-    );
-
-    create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
-    return;
+    return Err(format!(
+      "OpenCode not found. Install OpenCode or set OPENCODE_BIN_PATH."
+    ));
   };
 
   if fs::create_dir_all(&sidecar_dir).is_err() {
-    return;
+    return Err(format!("Failed to create directory: {}", sidecar_dir.display()));
   }
 
   let mut copied = fs::copy(&source_path, &dest_path).is_ok();
@@ -81,13 +79,13 @@ fn ensure_opencode_sidecar() {
     {
       let _ = fs::set_permissions(&dest_path, fs::Permissions::from_mode(0o755));
     }
+    Ok(())
   } else {
-    println!(
-      "cargo:warning=Failed to copy OpenCode sidecar from {} to {}",
+    Err(format!(
+      "Failed to copy OpenCode from {} to {}",
       source_path.display(),
       dest_path.display()
-    );
-    create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
+    ))
   }
 }
 
@@ -101,30 +99,4 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
       None
     }
   })
-}
-
-fn create_debug_stub(dest_path: &PathBuf, sidecar_dir: &PathBuf, profile: &str, target: &str) {
-  if profile != "debug" || target.contains("windows") {
-    return;
-  }
-
-  if fs::create_dir_all(sidecar_dir).is_err() {
-    return;
-  }
-
-  let stub = format!("#!/usr/bin/env bash\n\
-echo 'ERROR: This is a stub file, not a real OpenCode binary.'\n\
-echo ''\n\
-echo 'To fix this issue:'\n\
-echo \"  1. Delete: sidecars/opencode-{}\"\n\
-echo \"  2. Delete: target/{}/opencode\"\n\
-echo \"  3. Run: pnpm dev\"\n\
-echo ''\n\
-echo 'For development, OpenWork uses opencode from your PATH.'\n\
-echo 'Install OpenCode or set OPENCODE_BIN_PATH.'\n\
-exit 1\n", target, profile);
-  if fs::write(dest_path, stub).is_ok() {
-    #[cfg(unix)]
-    let _ = fs::set_permissions(dest_path, fs::Permissions::from_mode(0o755));
-  }
 }
