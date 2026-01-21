@@ -6,14 +6,11 @@ use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
 
 fn main() {
-  // Only create sidecar for production builds
-  let profile = env::var("PROFILE").unwrap_or_default();
-  if profile == "release" {
-    if let Err(e) = ensure_opencode_sidecar() {
-      eprintln!("Error: {}", e);
-      eprintln!("Install OpenCode or set OPENCODE_BIN_PATH.");
-      std::process::exit(1);
-    }
+  // Ensure sidecar exists in all builds (debug and release)
+  if let Err(e) = ensure_opencode_sidecar() {
+    eprintln!("Error: {}", e);
+    eprintln!("Install OpenCode or set OPENCODE_BIN_PATH.");
+    std::process::exit(1);
   }
   tauri_build::build();
 }
