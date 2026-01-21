@@ -6,7 +6,11 @@ use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
 
 fn main() {
-  ensure_opencode_sidecar();
+  // Always create sidecar for production builds
+  let profile = env::var("PROFILE").unwrap_or_default();
+  if profile == "release" {
+    ensure_opencode_sidecar();
+  }
   tauri_build::build();
 }
 
@@ -108,9 +112,17 @@ fn create_debug_stub(dest_path: &PathBuf, sidecar_dir: &PathBuf, profile: &str, 
     return;
   }
 
-  let stub = "#!/usr/bin/env bash\n\
-echo 'OpenCode sidecar missing. Install OpenCode or set OPENCODE_BIN_PATH.'\n\
-exit 1\n";
+  let stub = format!("#!/usr/bin/env bash\n\
+echo 'ERROR: This is a stub file, not a real OpenCode binary.'\n\
+echo ''\n\
+echo 'To fix this issue:'\n\
+echo \"  1. Delete: sidecars/opencode-{}\"\n\
+echo \"  2. Delete: target/{}/opencode\"\n\
+echo \"  3. Run: pnpm dev\"\n\
+echo ''\n\
+echo 'For development, OpenWork uses opencode from your PATH.'\n\
+echo 'Install OpenCode or set OPENCODE_BIN_PATH.'\n\
+exit 1\n", target, profile);
   if fs::write(dest_path, stub).is_ok() {
     #[cfg(unix)]
     let _ = fs::set_permissions(dest_path, fs::Permissions::from_mode(0o755));
