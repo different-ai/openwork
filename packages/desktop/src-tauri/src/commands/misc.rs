@@ -133,7 +133,11 @@ pub fn opencode_mcp_auth(
   }
 
   let resource_dir = app.path().resource_dir().ok();
-  let (program, _in_path, notes) = resolve_engine_path(true, resource_dir.as_deref());
+  let current_bin_dir = tauri::process::current_binary(&app.env())
+    .ok()
+    .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+  let (program, _in_path, notes) =
+    resolve_engine_path(true, resource_dir.as_deref(), current_bin_dir.as_deref());
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(

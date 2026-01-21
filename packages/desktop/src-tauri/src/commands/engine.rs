@@ -24,7 +24,12 @@ pub fn engine_doctor(app: AppHandle, prefer_sidecar: Option<bool>) -> EngineDoct
   let prefer_sidecar = prefer_sidecar.unwrap_or(false);
   let resource_dir = app.path().resource_dir().ok();
 
-  let (resolved, in_path, notes) = resolve_engine_path(prefer_sidecar, resource_dir.as_deref());
+  let current_bin_dir = tauri::process::current_binary(&app.env())
+    .ok()
+    .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+
+  let (resolved, in_path, notes) =
+    resolve_engine_path(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
 
   let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
     match resolved.as_ref() {
@@ -115,8 +120,11 @@ pub fn engine_start(
   EngineManager::stop_locked(&mut state);
 
   let resource_dir = app.path().resource_dir().ok();
+  let current_bin_dir = tauri::process::current_binary(&app.env())
+    .ok()
+    .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
   let (program, _in_path, notes) =
-    resolve_engine_path(prefer_sidecar.unwrap_or(false), resource_dir.as_deref());
+    resolve_engine_path(prefer_sidecar.unwrap_or(false), resource_dir.as_deref(), current_bin_dir.as_deref());
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(
