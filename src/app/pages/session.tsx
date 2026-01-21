@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -28,7 +28,6 @@ import {
 import Button from "../components/button";
 import PartView from "../components/part-view";
 import WorkspaceChip from "../components/workspace-chip";
-import { isTauriRuntime, isWindowsPlatform } from "../utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -103,13 +102,6 @@ export default function SessionView(props: SessionViewProps) {
     return Array.from({ length: total }, (_, idx) => idx < completed);
   });
 
-  const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
-
-  createEffect(() => {
-    if (!artifactToast()) return;
-    const id = window.setTimeout(() => setArtifactToast(null), 3000);
-    return () => window.clearTimeout(id);
-  });
 
   const humanizePlugin = (name: string) => {
     const cleaned = name
@@ -141,50 +133,6 @@ export default function SessionView(props: SessionViewProps) {
     props.setExpandedSidebarSections((current) => ({ ...current, [key]: !current[key] }));
   };
 
-  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
-
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
-
-  const resolveArtifactPath = (artifact: ArtifactItem) => {
-    const rawPath = artifact.path?.trim();
-    if (!rawPath) return null;
-    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\/)/.test(rawPath)) {
-      return rawPath;
-    }
-
-    const root = props.activeWorkspaceDisplay.path?.trim();
-    if (!root) return rawPath;
-
-    const separator = root.includes("\\") ? "\\" : "/";
-    const trimmedRoot = root.replace(/[\\/]+$/, "");
-    const trimmedPath = rawPath.replace(/^[\\/]+/, "");
-    return `${trimmedRoot}${separator}${trimmedPath}`;
-  };
-
-  const handleOpenArtifact = async (artifact: ArtifactItem) => {
-    const resolvedPath = resolveArtifactPath(artifact);
-    if (!resolvedPath) {
-      setArtifactToast("Artifact path missing.");
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setArtifactToast("Open is only available in the desktop app.");
-      return;
-    }
-
-    try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      if (isWindowsPlatform()) {
-        await openPath(resolvedPath);
-      } else {
-        await revealItemInDir(resolvedPath);
-      }
-      setArtifactToast(artifactActionToast());
-    } catch (error) {
-      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
-    }
-  };
 
   const modelLabelParts = createMemo(() => {
     const label = props.selectedSessionModelLabel || "Model";
@@ -468,34 +416,9 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
-              <For each={props.artifacts}>
-                {(artifact) => (
-                  <div class="rounded-2xl border border-gray-6 bg-gray-1/60 p-4 flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                      <div class="h-10 w-10 rounded-xl bg-gray-2 flex items-center justify-center">
-                        <FileText size={18} class="text-gray-11" />
-                      </div>
-                      <div>
-                        <div class="text-sm text-gray-12">{artifact.name}</div>
-                        <div class="text-xs text-gray-10">Document</div>
-                      </div>
-                    </div>
-                    <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
-                      {artifactActionLabel()}
-                    </Button>
-                  </div>
-                )}
-              </For>
-
               <div ref={(el) => (messagesEndEl = el)} />
             </div>
           </div>
-
-          <Show when={artifactToast()}>
-            <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-gray-2 border border-gray-6 px-4 py-2 text-xs text-gray-11 shadow-lg">
-              {artifactToast()}
-            </div>
-          </Show>
 
           <aside class="hidden lg:flex w-80 border-l border-gray-6 bg-gray-1 flex-col">
             <div class="p-4 space-y-4 overflow-y-auto flex-1">
