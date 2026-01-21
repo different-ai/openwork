@@ -60,7 +60,7 @@ export default function PartView(props: Props) {
 
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
-  const panelBgClass = () => (tone() === "dark" ? "bg-gray-1/10" : "bg-gray-1/30");
+  const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
   const toolOnly = () => developerMode();
   const showToolOutput = () => developerMode();
 
@@ -83,7 +83,7 @@ export default function PartView(props: Props) {
             <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Thinking</summary>
             <pre
               class={`mt-2 whitespace-pre-wrap break-words text-xs ${
-                tone() === "dark" ? "text-gray-12" : "text-gray-12"
+                tone() === "dark" ? "text-gray-1" : "text-gray-12"
               }`.trim()}
             >
               {clampText(String((p() as any).text), 2000)}
@@ -97,19 +97,19 @@ export default function PartView(props: Props) {
           <div class="grid gap-2">
             <div class="flex items-center justify-between gap-3">
               <div
-                class={`text-xs font-medium ${tone() === "dark" ? "text-gray-12" : "text-gray-12"}`.trim()}
+                class={`text-xs font-medium ${tone() === "dark" ? "text-gray-1" : "text-gray-12"}`.trim()}
               >
                 Tool · {String((p() as any).tool)}
               </div>
               <div
                 class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
                   (p() as any).state?.status === "completed"
-                    ? "bg-green-7/15 text-green-12"
+                    ? "bg-green-3/15 text-green-12"
                     : (p() as any).state?.status === "running"
-                      ? "bg-blue-7/15 text-blue-12"
+                      ? "bg-blue-3/15 text-blue-12"
                       : (p() as any).state?.status === "error"
-                        ? "bg-red-7/15 text-red-12"
-                        : "bg-gray-12/10 text-gray-12"
+                        ? "bg-red-3/15 text-red-12"
+                        : "bg-gray-2/10 text-gray-1"
                 }`}
               >
                 {String((p() as any).state?.status ?? "unknown")}
@@ -123,7 +123,7 @@ export default function PartView(props: Props) {
             <Show when={showToolOutput() && (p() as any).state?.output && typeof (p() as any).state.output === "string"}>
               <pre
                 class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${
-                  tone() === "dark" ? "text-gray-12" : "text-gray-12"
+                  tone() === "dark" ? "text-gray-12" : "text-gray-1"
                 }`.trim()}
               >
                 {clampText(String((p() as any).state.output))}
@@ -141,7 +141,7 @@ export default function PartView(props: Props) {
                 <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
                 <pre
                   class={`mt-2 whitespace-pre-wrap break-words text-xs ${
-                    tone() === "dark" ? "text-gray-12" : "text-gray-12"
+                    tone() === "dark" ? "text-gray-12" : "text-gray-1"
                   }`.trim()}
                 >
                   {safeStringify((p() as any).state.input)}
@@ -167,7 +167,7 @@ export default function PartView(props: Props) {
         <Show when={developerMode()}>
           <pre
             class={`whitespace-pre-wrap break-words text-xs ${
-              tone() === "dark" ? "text-gray-12" : "text-gray-12"
+              tone() === "dark" ? "text-gray-12" : "text-gray-1"
             }`.trim()}
           >
             {safeStringify(p())}
