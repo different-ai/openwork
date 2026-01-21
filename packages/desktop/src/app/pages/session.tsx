@@ -29,6 +29,7 @@ import Button from "../components/button";
 import PartView from "../components/part-view";
 import WorkspaceChip from "../components/workspace-chip";
 import { isTauriRuntime, isWindowsPlatform } from "../utils";
+import { t, currentLocale } from "../../i18n";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -84,6 +85,8 @@ export type SessionViewProps = {
 };
 
 export default function SessionView(props: SessionViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
+
   let messagesEndEl: HTMLDivElement | undefined;
 
   createEffect(() => {
@@ -150,9 +153,9 @@ export default function SessionView(props: SessionViewProps) {
       promptInputEl.scrollHeight > maxPromptHeight ? "auto" : "hidden";
   };
 
-  const artifactActionLabel = () => (isWindowsPlatform() ? "Open" : "Reveal");
+  const artifactActionLabel = () => (isWindowsPlatform() ? translate("session.open") : translate("session.reveal"));
 
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
+  const artifactActionToast = () => (isWindowsPlatform() ? translate("session.opened_toast") : translate("session.revealed_toast"));
 
   const resolveArtifactPath = (artifact: ArtifactItem) => {
     const rawPath = artifact.path?.trim();
@@ -291,7 +294,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showAnticipatoryCursor = createMemo(() => {
-    if (props.busyLabel !== "Running" && props.sessionStatus !== "running") return false;
+    if (props.busyLabel !== translate("status.running") && props.sessionStatus !== "running") return false;
     return !hasAssistantTextAfterLastUser();
   });
 
@@ -426,14 +429,14 @@ export default function SessionView(props: SessionViewProps) {
       fallback={
         <div class="min-h-screen flex items-center justify-center bg-gray-1 text-gray-12 p-6">
           <div class="text-center space-y-4">
-            <div class="text-lg font-medium">No session selected</div>
+            <div class="text-lg font-medium">{translate("session.no_selected")}</div>
             <Button
               onClick={() => {
                 props.setView("dashboard");
                 props.setTab("sessions");
               }}
             >
-              Back to dashboard
+              {translate("session.back_to_dashboard")}
             </Button>
           </div>
         </div>
@@ -486,12 +489,12 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.newTaskDisabled}
               >
                 <Plus size={16} />
-                New task
+                {translate("dashboard.new_task")}
               </button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-4 py-4">
-              <div class="text-xs text-gray-10 uppercase tracking-wide mb-3">Recents</div>
+              <div class="text-xs text-gray-10 uppercase tracking-wide mb-3">{translate("session.recents")}</div>
               <div class="space-y-2">
                 <For each={props.sessions.slice(0, 8)}>
                   {(session) => (
@@ -527,9 +530,9 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
                     <Zap class="text-gray-7" />
                   </div>
-                  <h3 class="text-xl font-medium">Ready to work</h3>
+                  <h3 class="text-xl font-medium">{translate("session.ready_to_work_title")}</h3>
                   <p class="text-gray-10 text-sm max-w-xs mx-auto">
-                    Describe a task. I'll show progress and ask for permissions when needed.
+                    {translate("session.ready_to_work_description")}
                   </p>
                 </div>
               </Show>
@@ -643,7 +646,7 @@ export default function SessionView(props: SessionViewProps) {
                           </For>
                           <Show when={messageArtifacts().length}>
                             <div class={`mt-4 space-y-2 ${isUser() ? "text-gray-12" : ""}`.trim()}>
-                              <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
+                              <div class="text-[11px] uppercase tracking-wide text-gray-9">{translate("session.artifacts")}</div>
                               <For each={messageArtifacts()}>
                                 {(artifact) => (
                                   <div class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between">
@@ -653,7 +656,7 @@ export default function SessionView(props: SessionViewProps) {
                                       </div>
                                       <div>
                                         <div class="text-sm text-gray-12">{artifact.name}</div>
-                                        <div class="text-xs text-gray-10">Document</div>
+                                        <div class="text-xs text-gray-10">{translate("session.document_label")}</div>
                                       </div>
                                     </div>
                                     <Button variant="outline" class="text-xs" onClick={() => handleOpenArtifact(artifact)}>
@@ -719,7 +722,7 @@ export default function SessionView(props: SessionViewProps) {
                     class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                     onClick={() => toggleSidebar("progress")}
                   >
-                    <span>Progress</span>
+                    <span>{translate("session.progress")}</span>
                     <ChevronDown
                       size={16}
                       class={`transition-transform ${props.expandedSidebarSections.progress ? "rotate-180" : ""}`.trim()}
@@ -753,7 +756,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                   onClick={() => toggleSidebar("artifacts")}
                 >
-                  <span>Artifacts</span>
+                  <span>{translate("session.artifacts")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.artifacts ? "rotate-180" : ""}`.trim()}
@@ -787,7 +790,7 @@ export default function SessionView(props: SessionViewProps) {
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                   onClick={() => toggleSidebar("context")}
                 >
-                  <span>Context</span>
+                  <span>{translate("session.context")}</span>
                   <ChevronDown
                     size={16}
                     class={`transition-transform ${props.expandedSidebarSections.context ? "rotate-180" : ""}`.trim()}
@@ -798,14 +801,14 @@ export default function SessionView(props: SessionViewProps) {
                     <Show when={props.activePlugins.length || props.activePluginStatus}>
                       <div>
                         <div class="flex items-center justify-between text-xs text-gray-10">
-                          <span>Active plugins</span>
+                          <span>{translate("session.active_plugins_label")}</span>
                           <span>{props.activePlugins.length}</span>
                         </div>
                         <div class="mt-2 space-y-2">
                           <Show
                             when={props.activePlugins.length}
                             fallback={
-                              <div class="text-xs text-gray-7">{props.activePluginStatus ?? "No plugins loaded."}</div>
+                              <div class="text-xs text-gray-7">{props.activePluginStatus ?? translate("session.no_plugins")}</div>
                             }
                           >
                             <For each={props.activePlugins}>
@@ -823,7 +826,7 @@ export default function SessionView(props: SessionViewProps) {
 
                     <div>
                       <div class="flex items-center justify-between text-xs text-gray-10">
-                        <span>Selected folders</span>
+                        <span>{translate("session.selected_folders_label")}</span>
                         <span>{props.authorizedDirs.length}</span>
                       </div>
                       <div class="mt-2 space-y-2">
@@ -839,11 +842,11 @@ export default function SessionView(props: SessionViewProps) {
                     </div>
 
                     <div>
-                      <div class="text-xs text-gray-10">Working files</div>
+                      <div class="text-xs text-gray-10">{translate("session.working_files_label")}</div>
                       <div class="mt-2 space-y-2">
                         <Show
                           when={props.workingFiles.length}
-                          fallback={<div class="text-xs text-gray-7">None yet.</div>}
+                          fallback={<div class="text-xs text-gray-7">{translate("session.none_yet_label")}</div>}
                         >
                           <For each={props.workingFiles}>
                             {(file) => (
@@ -947,7 +950,7 @@ export default function SessionView(props: SessionViewProps) {
                         syncPromptHeight();
                       }}
                       onKeyDown={handlePromptKeyDown}
-                      placeholder="Ask OpenWork..."
+                      placeholder={translate("session.placeholder")}
                       class="flex-1 bg-transparent border-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] max-h-[160px]"
                     />
 
@@ -955,7 +958,7 @@ export default function SessionView(props: SessionViewProps) {
                       disabled={!props.prompt.trim() || props.busy}
                       onClick={handlePrimaryAction}
                       class="p-1.5 bg-gray-12 text-gray-1 rounded-lg hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0"
-                      title="Run"
+                      title={translate("session.run")}
                     >
                       <ArrowRight size={18} />
                     </button>
@@ -1009,9 +1012,8 @@ export default function SessionView(props: SessionViewProps) {
                       }
                       disabled={props.permissionReplyBusy}
                     >
-
-                    Deny
-                  </Button>
+                      {translate("session.deny")}
+                    </Button>
                   <div class="grid grid-cols-2 gap-2">
                     <Button
                       variant="secondary"
@@ -1019,7 +1021,7 @@ export default function SessionView(props: SessionViewProps) {
                       onClick={() => props.activePermission && props.respondPermission(props.activePermission.id, "once")}
                       disabled={props.permissionReplyBusy}
                     >
-                      Once
+                      {translate("session.once")}
                     </Button>
                     <Button
                       variant="primary"
@@ -1030,7 +1032,7 @@ export default function SessionView(props: SessionViewProps) {
                       }
                       disabled={props.permissionReplyBusy}
                     >
-                      Allow for session
+                      {translate("session.allow_for_session")}
                     </Button>
                   </div>
                 </div>

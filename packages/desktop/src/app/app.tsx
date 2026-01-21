@@ -20,6 +20,7 @@ import TemplateModal from "./components/template-modal";
 import WorkspacePicker from "./components/workspace-picker";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import LanguagePickerModal from "./components/language-picker-modal";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -67,7 +68,7 @@ import {
   groupMessageParts,
   isTauriRuntime,
 } from "./utils";
-import { currentLocale, setLocale, t, type Language } from "../i18n";
+import { currentLocale, setLocale, t, type Language, initLocale } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
@@ -129,6 +130,7 @@ export default function App() {
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [tab, setTab] = createSignal<DashboardTab>("home");
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
+  const [languagePickerOpen, setLanguagePickerOpen] = createSignal(false);
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
     isTauriRuntime() ? "sidecar" : "path"
@@ -767,6 +769,19 @@ export default function App() {
     setModelPickerOpen(true);
   }
 
+  function openLanguagePicker() {
+    setLanguagePickerOpen(true);
+  }
+
+  function closeLanguagePicker() {
+    setLanguagePickerOpen(false);
+  }
+
+  function handleLanguageSelect(language: Language) {
+    setLocale(language);
+    setLanguagePickerOpen(false);
+  }
+
   function applyModelSelection(next: ModelRef) {
     if (modelPickerTarget() === "default") {
       setDefaultModel(next);
@@ -1183,6 +1198,9 @@ export default function App() {
 
 
   onMount(async () => {
+    // Initialize i18n locale from localStorage
+    initLocale();
+
     const modePref = readModePreference();
     if (modePref) {
       setRememberModeChoice(true);
@@ -1718,6 +1736,11 @@ export default function App() {
     onResetStartupPreference: () => clearModePreference(),
     themeMode: themeMode(),
     setThemeMode,
+    currentLanguage: currentLocale(),
+    languagePickerOpen: languagePickerOpen(),
+    openLanguagePicker,
+    closeLanguagePicker,
+    handleLanguageSelect,
     pendingPermissions: pendingPermissions(),
     events: events(),
     safeStringify,
@@ -1877,6 +1900,13 @@ export default function App() {
         onDescriptionChange={setTemplateDraftDescription}
         onPromptChange={setTemplateDraftPrompt}
         onScopeChange={setTemplateDraftScope}
+      />
+
+      <LanguagePickerModal
+        open={languagePickerOpen()}
+        currentLanguage={currentLocale()}
+        onSelect={handleLanguageSelect}
+        onClose={closeLanguagePicker}
       />
 
       <WorkspacePicker
