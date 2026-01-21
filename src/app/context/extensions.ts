@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
+import { currentLocale, t } from "../../i18n";
 
 import type { Client, CuratedPackage, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
@@ -34,6 +35,9 @@ export function createExtensionsStore(options: {
   markReloadRequired: (reason: ReloadReason) => void;
   onNotionSkillInstalled?: () => void;
 }) {
+  // Translation helper that uses current language from i18n
+  const translate = (key: string) => t(key, currentLocale());
+
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
   const [openPackageSource, setOpenPackageSource] = createSignal("");
@@ -70,14 +74,14 @@ export function createExtensionsStore(options: {
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus("Connect to a host to load skills.");
+      setSkillsStatus(translate("skills.connect_host_to_load"));
       return;
     }
 
     const root = options.activeWorkspaceRoot().trim();
     if (!root) {
       setSkills([]);
-      setSkillsStatus("Pick a workspace folder first.");
+      setSkillsStatus(translate("skills.pick_workspace_first"));
       return;
     }
 
@@ -110,7 +114,7 @@ export function createExtensionsStore(options: {
       if (result?.data === undefined) {
         const err = result?.error;
         const message =
-          err instanceof Error ? err.message : typeof err === "string" ? err : "Failed to load skills";
+          err instanceof Error ? err.message : typeof err === "string" ? err : translate("skills.failed_to_load");
         throw new Error(message);
       }
       const data = result.data as Array<{
@@ -131,14 +135,14 @@ export function createExtensionsStore(options: {
 
       setSkills(next);
       if (!next.length) {
-        setSkillsStatus("No skills found yet.");
+        setSkillsStatus(translate("skills.no_skills_found"));
       }
       skillsLoaded = true;
       skillsRoot = root;
     } catch (e) {
       if (refreshSkillsAborted) return;
       setSkills([]);
-      setSkillsStatus(e instanceof Error ? e.message : "Failed to load skills");
+      setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
     } finally {
       refreshSkillsInFlight = false;
     }
@@ -146,9 +150,9 @@ export function createExtensionsStore(options: {
 
   async function refreshPlugins(scopeOverride?: PluginScope) {
     if (!isTauriRuntime()) {
-      setPluginStatus("Plugin management is only available in Host mode.");
+      setPluginStatus(translate("skills.plugin_management_host_only"));
       setPluginList([]);
-      setSidebarPluginStatus("Plugins are only available in Host mode.");
+      setSidebarPluginStatus(translate("skills.plugins_host_only"));
       setSidebarPluginList([]);
       return;
     }
@@ -165,9 +169,9 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope === "project" && !targetDir) {
-      setPluginStatus("Pick a project folder to manage project plugins.");
+      setPluginStatus(translate("skills.pick_project_for_plugins"));
       setPluginList([]);
-      setSidebarPluginStatus("Pick a project folder to load active plugins.");
+      setSidebarPluginStatus(translate("skills.pick_project_for_active"));
       setSidebarPluginList([]);
       refreshPluginsInFlight = false;
       return;
@@ -187,9 +191,9 @@ export function createExtensionsStore(options: {
 
       if (!config.exists) {
         setPluginList([]);
-        setPluginStatus("No opencode.json found yet. Add a plugin to create one.");
+        setPluginStatus(translate("skills.no_opencode_found"));
         setSidebarPluginList([]);
-        setSidebarPluginStatus("No opencode.json in this workspace yet.");
+        setSidebarPluginStatus(translate("skills.no_opencode_workspace"));
         return;
       }
 
@@ -198,7 +202,7 @@ export function createExtensionsStore(options: {
         setSidebarPluginList(next);
       } catch {
         setSidebarPluginList([]);
-        setSidebarPluginStatus("Failed to parse opencode.json");
+        setSidebarPluginStatus(translate("skills.failed_parse_opencode"));
       }
 
       loadPluginsFromConfig(config);
@@ -206,8 +210,8 @@ export function createExtensionsStore(options: {
       if (refreshPluginsAborted) return;
       setPluginConfig(null);
       setPluginList([]);
-      setPluginStatus(e instanceof Error ? e.message : "Failed to load opencode.json");
-      setSidebarPluginStatus("Failed to load active plugins.");
+      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
+      setSidebarPluginStatus(translate("skills.failed_load_active"));
       setSidebarPluginList([]);
     } finally {
       refreshPluginsInFlight = false;
@@ -216,7 +220,7 @@ export function createExtensionsStore(options: {
 
   async function addPlugin(pluginNameOverride?: string) {
     if (!isTauriRuntime()) {
-      setPluginStatus("Plugin management is only available in Host mode.");
+      setPluginStatus(translate("skills.plugin_management_host_only"));
       return;
     }
 
@@ -225,7 +229,7 @@ export function createExtensionsStore(options: {
 
     if (!pluginName) {
       if (isManualInput) {
-        setPluginStatus("Enter a plugin package name.");
+        setPluginStatus(translate("skills.enter_plugin_name"));
       }
       return;
     }
@@ -234,7 +238,7 @@ export function createExtensionsStore(options: {
     const targetDir = options.projectDir().trim();
 
     if (scope === "project" && !targetDir) {
-      setPluginStatus("Pick a project folder to manage project plugins.");
+      setPluginStatus(translate("skills.pick_project_for_plugins"));
       return;
     }
 
@@ -261,7 +265,7 @@ export function createExtensionsStore(options: {
 
       const desired = stripPluginVersion(pluginName).toLowerCase();
       if (plugins.some((entry) => stripPluginVersion(entry).toLowerCase() === desired)) {
-        setPluginStatus("Plugin already listed in opencode.json.");
+        setPluginStatus(translate("skills.plugin_already_listed"));
         return;
       }
 
@@ -278,13 +282,13 @@ export function createExtensionsStore(options: {
       }
       await refreshPlugins(scope);
     } catch (e) {
-      setPluginStatus(e instanceof Error ? e.message : "Failed to update opencode.json");
+      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_update_opencode"));
     }
   }
 
   async function installFromOpenPackage(sourceOverride?: string) {
     if (options.mode() !== "host" || !isTauriRuntime()) {
-      options.setError("OpenPackage installs are only available in Host mode.");
+      options.setError(translate("skills.opackage_install_host_only"));
       return;
     }
 
@@ -293,26 +297,26 @@ export function createExtensionsStore(options: {
     const isNotionSkillInstall = pkg.toLowerCase().includes("manage-crm-notion");
 
     if (!targetDir) {
-      options.setError("Pick a project folder first.");
+      options.setError(translate("skills.pick_project_first"));
       return;
     }
 
     if (!pkg) {
-      options.setError("Enter an OpenPackage source (e.g. github:anthropics/claude-code).");
+      options.setError(translate("skills.enter_opackage_source"));
       return;
     }
 
     setOpenPackageSource(pkg);
     options.setBusy(true);
     options.setError(null);
-    setSkillsStatus("Installing OpenPackage...");
+    setSkillsStatus(translate("skills.installing_opackage"));
 
     try {
       const result = await opkgInstall(targetDir, pkg);
       if (!result.ok) {
         setSkillsStatus(result.stderr || result.stdout || `opkg failed (${result.status})`);
       } else {
-        setSkillsStatus(result.stdout || "Installed.");
+        setSkillsStatus(result.stdout || translate("skills.install_complete"));
         options.markReloadRequired("skills");
         if (isNotionSkillInstall) {
           options.onNotionSkillInstalled?.();
@@ -335,20 +339,18 @@ export function createExtensionsStore(options: {
     }
 
     setOpenPackageSource(pkg.source);
-    setSkillsStatus(
-      "This is a curated list, not an OpenPackage yet. Copy the link or watch the PRD for planned registry search integration.",
-    );
+    setSkillsStatus(translate("skills.curated_list_notice"));
   }
 
   async function importLocalSkill() {
     if (options.mode() !== "host" || !isTauriRuntime()) {
-      options.setError("Skill import is only available in Host mode.");
+      options.setError(translate("skills.import_host_only"));
       return;
     }
 
     const targetDir = options.projectDir().trim();
     if (!targetDir) {
-      options.setError("Pick a project folder first.");
+      options.setError(translate("skills.pick_project_first"));
       return;
     }
 
@@ -357,7 +359,7 @@ export function createExtensionsStore(options: {
     setSkillsStatus(null);
 
     try {
-      const selection = await pickDirectory({ title: "Select skill folder" });
+      const selection = await pickDirectory({ title: translate("skills.select_skill_folder") });
       const sourceDir = typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
 
       if (!sourceDir) {
@@ -366,15 +368,15 @@ export function createExtensionsStore(options: {
 
       const result = await importSkill(targetDir, sourceDir, { overwrite: false });
       if (!result.ok) {
-        setSkillsStatus(result.stderr || result.stdout || `Import failed (${result.status})`);
+        setSkillsStatus(result.stderr || result.stdout || translate("skills.import_failed").replace("{status}", String(result.status)));
       } else {
-        setSkillsStatus(result.stdout || "Imported.");
+        setSkillsStatus(result.stdout || translate("skills.imported"));
         options.markReloadRequired("skills");
       }
 
       await refreshSkills({ force: true });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Unknown error";
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);

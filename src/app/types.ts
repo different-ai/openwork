@@ -223,3 +223,4 @@ export type UpdateHandle = {
   install: () => Promise<void>;
   downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
 };
+
