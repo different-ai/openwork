@@ -17,7 +17,7 @@ Examples:
 ## Why
 
 - Keeps PRDs discoverable and consistently named.
-- Avoids bloating `design-prd.md` with long, evolving drafts.
+- Avoids bloating `MOTIVATIONS-PHILOSOPHY.md` with long, evolving drafts.
 - Makes it easy to link a PR/branch to a single PRD doc.
 
 ## PRD Template (Recommended)

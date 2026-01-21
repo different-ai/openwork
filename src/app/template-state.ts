@@ -1,10 +1,11 @@
 import { createMemo, createSignal, type Accessor } from "solid-js";
 
 import type { Client, ModelRef, WorkspaceTemplate } from "./types";
-import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./templates";
+import { buildTemplateDraft, createTemplateRecord, resetTemplateDraft } from "./utils/templates";
 import { addOpencodeCacheHint, isTauriRuntime, parseTemplateFrontmatter, safeParseJson, safeStringify } from "./utils";
-import { workspaceTemplateDelete, workspaceTemplateWrite } from "../lib/tauri";
-import { unwrap } from "../lib/opencode";
+import { workspaceTemplateDelete, workspaceTemplateWrite } from "./lib/tauri";
+import { unwrap } from "./lib/opencode";
+import { t, currentLocale } from "../i18n";
 
 export function createTemplateState(options: {
   client: Accessor<Client | null>;
@@ -64,23 +65,23 @@ export function createTemplateState(options: {
     draft.prompt = templateDraftPrompt().trim();
 
     if (!draft.title || !draft.prompt) {
-      options.setError("Template title and prompt are required.");
+      options.setError(t("app.error.title_prompt_required", currentLocale()));
       return;
     }
 
     if (draft.scope === "workspace") {
       if (!isTauriRuntime()) {
-        options.setError("Workspace templates require the desktop app.");
+        options.setError(t("app.error.workspace_templates_desktop", currentLocale()));
         return;
       }
       if (!options.activeWorkspaceRoot().trim()) {
-        options.setError("Pick a workspace folder first.");
+        options.setError(t("app.error.pick_workspace_folder", currentLocale()));
         return;
       }
     }
 
     options.setBusy(true);
-    options.setBusyLabel(draft.scope === "workspace" ? "Saving workspace template" : "Saving template");
+    options.setBusyLabel(draft.scope === "workspace" ? "status.saving_workspace_template" : "status.saving_template");
     options.setBusyStartedAt(Date.now());
     options.setError(null);
 
@@ -116,7 +117,7 @@ export function createTemplateState(options: {
       if (!workspaceRoot) return;
 
       options.setBusy(true);
-      options.setBusyLabel("Deleting template");
+      options.setBusyLabel("status.deleting_template");
       options.setBusyStartedAt(Date.now());
       options.setError(null);
 
@@ -173,7 +174,7 @@ export function createTemplateState(options: {
         [session.id]: model,
       }));
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Unknown error";
+      const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       options.setError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
@@ -205,7 +206,7 @@ export function createTemplateState(options: {
         const parsedFrontmatter = parseTemplateFrontmatter(raw);
         if (parsedFrontmatter) {
           const meta = parsedFrontmatter.data;
-          const title = typeof meta.title === "string" ? meta.title : "Untitled";
+          const title = typeof meta.title === "string" ? meta.title : t("common.untitled", currentLocale());
           const promptText = parsedFrontmatter.body ?? "";
           if (!promptText.trim()) return false;
 
@@ -224,7 +225,7 @@ export function createTemplateState(options: {
         const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(raw);
         if (!parsed) return false;
 
-        const title = typeof parsed.title === "string" ? parsed.title : "Untitled";
+        const title = typeof parsed.title === "string" ? parsed.title : t("common.untitled", currentLocale());
         const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
         if (!promptText.trim()) return false;
 

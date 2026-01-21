@@ -1,16 +1,14 @@
-import type { Config } from "tailwindcss";
-
+import { radixColors, tailwindSafelist } from './src/styles/tailwind-colors';
 export default {
-  content: ["./index.html", "./src/**/*.{ts,tsx}"] ,
+  content: ["./index.html", "./src/**/*.{ts,tsx}"],
+darkMode: 'class',
+safelist: [
+    tailwindSafelist
+  ],
   theme: {
-    extend: {
-      colors: {
-        glass: {
-          900: "rgba(10, 10, 10, 0.65)",
-          700: "rgba(17, 17, 17, 0.45)",
-        },
-      },
-    },
-  },
-  plugins: [],
-} satisfies Config;
+    // OVERRIDE the base theme completely instead of extending it
+    colors: {
+      ...radixColors,
+    }
+  }
+};

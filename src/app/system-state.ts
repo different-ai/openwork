@@ -7,9 +7,9 @@ import { relaunch } from "@tauri-apps/plugin-process";
 
 import type { Client, Mode, PluginScope, ReloadReason, ResetOpenworkMode, UpdateHandle } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
-import { createUpdaterState } from "./updater";
-import { resetOpenworkState, resetOpencodeCache } from "../lib/tauri";
-import { unwrap, waitForHealthy } from "../lib/opencode";
+import { createUpdaterState } from "./context/updater";
+import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
+import { unwrap, waitForHealthy } from "./lib/opencode";
 
 export type NotionState = {
   status: Accessor<"disconnected" | "connecting" | "connected" | "error">;

@@ -102,6 +102,12 @@ pub fn engine_start(
     return Err("projectDir is required".to_string());
   }
 
+  // OpenCode is spawned with `current_dir(project_dir)`. If the user selected a
+  // workspace path that doesn't exist yet (common during onboarding), spawning
+  // fails with `os error 2`.
+  std::fs::create_dir_all(&project_dir)
+    .map_err(|e| format!("Failed to create projectDir directory: {e}"))?;
+
   let hostname = "127.0.0.1".to_string();
   let port = find_free_port()?;
 
