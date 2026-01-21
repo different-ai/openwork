@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "node scripts/prepare-release.mjs && tauri build && node scripts/restore-config.mjs",
+    "build": "tauri build",
     "dev:web": "vite",
     "build:web": "vite build",
     "preview": "vite preview",
