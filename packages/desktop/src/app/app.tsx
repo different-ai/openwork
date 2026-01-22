@@ -129,7 +129,8 @@ export default function App() {
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
-    isTauriRuntime() ? "sidecar" : "path"
+    // Use PATH in development, sidecar in production (when bundled)
+    isTauriRuntime() && import.meta.env.PROD ? "sidecar" : "path"
   );
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
