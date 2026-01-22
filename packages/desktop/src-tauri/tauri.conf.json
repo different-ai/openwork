@@ -4,10 +4,10 @@
   "version": "0.3.0",
   "identifier": "com.differentai.openwork",
   "build": {
-    "beforeDevCommand": "pnpm dev:web",
-    "beforeBuildCommand": "pnpm build:web",
+    "beforeDevCommand": "pnpm -w dev:ui",
+    "beforeBuildCommand": "pnpm -w build:ui",
     "devUrl": "http://localhost:5173",
-    "frontendDist": "../dist"
+    "frontendDist": "../../app/dist"
   },
   "app": {
     "windows": [

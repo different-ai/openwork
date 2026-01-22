@@ -47,7 +47,7 @@
     "Templates UI exists (create/save/run) backed by localStorage.",
     "Skills UI exists: list installed `.opencode/skill` and install/import via OpenPackage + local folder import (Host mode).",
     "Redacts sensitive metadata keys (e.g. reasoningEncryptedContent) from UI to prevent leaks.",
-    "`pnpm typecheck` and `pnpm build:web` succeed.",
+    "`pnpm typecheck` and `pnpm build:ui` succeed.",
     "Permissions entrypoint exists, but permission prompts may not appear without agent-driven tool calls."
   ],
   "lastUpdated": "2026-01-14"

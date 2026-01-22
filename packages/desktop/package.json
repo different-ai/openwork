@@ -5,46 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "tauri dev",
-    "build": "tauri build",
-    "dev:web": "vite",
-    "build:web": "vite build",
-    "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:health": "node scripts/health.mjs",
-    "test:sessions": "node scripts/sessions.mjs",
-    "test:refactor": "pnpm typecheck && pnpm test:health && pnpm test:sessions",
-    "test:events": "node scripts/events.mjs",
-    "test:todos": "node scripts/todos.mjs",
-    "test:permissions": "node scripts/permissions.mjs",
-    "test:session-switch": "node scripts/session-switch.mjs",
-    "test:fs-engine": "node scripts/fs-engine.mjs",
-    "test:e2e": "node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs",
-    "bump:patch": "node scripts/bump-version.mjs patch",
-    "bump:minor": "node scripts/bump-version.mjs minor",
-    "bump:major": "node scripts/bump-version.mjs major",
-    "bump:set": "node scripts/bump-version.mjs --set"
-  },
-  "dependencies": {
-    "@opencode-ai/sdk": "^1.1.19",
-    "@radix-ui/colors": "^3.0.0",
-    "@solid-primitives/event-bus": "^1.1.2",
-    "@solid-primitives/storage": "^4.3.3",
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-dialog": "~2.6.0",
-    "@tauri-apps/plugin-opener": "^2.5.3",
-    "@tauri-apps/plugin-process": "~2.3.1",
-    "@tauri-apps/plugin-updater": "~2.9.0",
-    "jsonc-parser": "^3.2.1",
-    "lucide-solid": "^0.562.0",
-    "solid-js": "^1.9.0"
+    "build": "tauri build"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.18",
-    "@tauri-apps/cli": "^2.0.0",
-    "tailwindcss": "^4.1.18",
-    "typescript": "^5.6.3",
-    "vite": "^6.0.1",
-    "vite-plugin-solid": "^2.11.0"
+    "@tauri-apps/cli": "^2.0.0"
   },
   "packageManager": "pnpm@10.27.0"
 }

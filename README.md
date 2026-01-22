@@ -60,7 +60,8 @@ OpenWork is designed to be:
 ### Requirements
 
 - Node.js + `pnpm`
-- Rust toolchain (for Tauri): `cargo`, `rustc`
+- Rust toolchain (for Tauri): install via `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- Tauri CLI: `cargo install tauri-cli`
 - OpenCode CLI installed and available on PATH: `opencode`
 
 ### Install
@@ -69,7 +70,7 @@ OpenWork is designed to be:
 pnpm install
 ```
 
-OpenWork now lives in `packages/desktop`. Root scripts forward to that package.
+OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell).
 
 ### Run (Desktop)
 
@@ -80,7 +81,7 @@ pnpm dev
 ### Run (Web UI only)
 
 ```bash
-pnpm dev:web
+pnpm dev:ui
 ```
 
 ## Architecture (high-level)
@@ -129,8 +130,11 @@ You can still edit `opencode.json` manually; OpenWork uses the same format as th
 ## Useful Commands
 
 ```bash
+pnpm dev
+pnpm dev:ui
 pnpm typecheck
-pnpm build:web
+pnpm build
+pnpm build:ui
 pnpm test:e2e
 ```
 
@@ -144,7 +148,7 @@ pnpm test:e2e
 - Review `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
-- Add new PRDs to `packages/desktop/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## License
 
