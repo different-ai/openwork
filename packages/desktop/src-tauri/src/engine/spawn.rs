@@ -38,11 +38,20 @@ pub fn build_engine_command(program: &Path, hostname: &str, port: u16, project_d
     command.env("XDG_DATA_HOME", xdg_data_home);
   }
 
-  if let Some(xdg_config_home) = maybe_infer_xdg_home(
+  let xdg_config_home = maybe_infer_xdg_home(
     "XDG_CONFIG_HOME",
     candidate_xdg_config_dirs(),
-    Path::new("opencode/opencode.json"),
-  ) {
+    Path::new("opencode/opencode.jsonc"),
+  )
+  .or_else(|| {
+    maybe_infer_xdg_home(
+      "XDG_CONFIG_HOME",
+      candidate_xdg_config_dirs(),
+      Path::new("opencode/opencode.json"),
+    )
+  });
+
+  if let Some(xdg_config_home) = xdg_config_home {
     command.env("XDG_CONFIG_HOME", xdg_config_home);
   }
 

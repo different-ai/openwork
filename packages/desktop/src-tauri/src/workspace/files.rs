@@ -158,11 +158,22 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     .map_err(|e| format!("Failed to create .openwork/templates: {e}"))?;
   seed_templates(&templates_dir)?;
 
-  let config_path = root.join("opencode.json");
-  let mut config: serde_json::Value = if config_path.exists() {
+  let config_path_jsonc = root.join("opencode.jsonc");
+  let config_path_json = root.join("opencode.json");
+  let config_path = if config_path_jsonc.exists() {
+    config_path_jsonc
+  } else if config_path_json.exists() {
+    config_path_json
+  } else {
+    config_path_jsonc
+  };
+
+  let config_exists = config_path.exists();
+  let mut config_changed = !config_exists;
+  let mut config: serde_json::Value = if config_exists {
     let raw = fs::read_to_string(&config_path)
       .map_err(|e| format!("Failed to read {}: {e}", config_path.display()))?;
-    serde_json::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
+    json5::from_str(&raw).unwrap_or_else(|_| serde_json::json!({}))
   } else {
     serde_json::json!({
       "$schema": "https://opencode.ai/config.json"
@@ -173,6 +184,7 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     config = serde_json::json!({
       "$schema": "https://opencode.ai/config.json"
     });
+    config_changed = true;
   }
 
   let required_plugins: Vec<&str> = match preset {
@@ -196,7 +208,10 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
       _ => vec![],
     };
 
-    let merged = merge_plugins(existing_plugins, &required_plugins);
+    let merged = merge_plugins(existing_plugins.clone(), &required_plugins);
+    if merged != existing_plugins {
+      config_changed = true;
+    }
     if let Some(obj) = config.as_object_mut() {
       obj.insert(
         "plugin".to_string(),
@@ -205,8 +220,10 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     }
   }
 
-  fs::write(&config_path, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?)
-    .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+  if config_changed {
+    fs::write(&config_path, serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?)
+      .map_err(|e| format!("Failed to write {}: {e}", config_path.display()))?;
+  }
 
   let openwork_path = root.join(".opencode").join("openwork.json");
   if !openwork_path.exists() {
