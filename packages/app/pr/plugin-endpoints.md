@@ -11,7 +11,7 @@ OpenWork manages plugins by editing `opencode.json`, but OpenCode does not expos
 ## Define goals
 - Provide list and add endpoints for plugins
 - Keep behavior aligned with `opencode.json` rules
-- Support both project and global scopes
+- Support project scope, with optional global scope
 
 ---
 
@@ -23,53 +23,40 @@ OpenWork manages plugins by editing `opencode.json`, but OpenCode does not expos
 ---
 
 ## Design API
-GET `/plugin` returns merged plugins for the active workspace and global scope.
+GET `/plugin` returns the resolved plugin list for the active workspace.
 
 ```json
 {
-  "plugins": [
-    {
-      "name": "opencode-wakatime",
-      "scope": "project",
-      "source": "npm"
-    }
-  ]
+  "plugins": ["opencode-wakatime", "file:///path/to/plugin.js"]
 }
 ```
 
-POST `/plugin` adds a plugin to the requested scope and returns the updated list.
+POST `/plugin` adds a plugin to the requested scope (default: project) and returns the updated list.
 
 ```json
 {
-  "name": "opencode-wakatime",
-  "scope": "global",
-  "source": "npm"
+  "plugin": "opencode-wakatime",
+  "scope": "global"
 }
 ```
 
 ```json
 {
-  "plugins": [
-    {
-      "name": "opencode-wakatime",
-      "scope": "global",
-      "source": "npm"
-    }
-  ]
+  "plugins": ["opencode-wakatime"]
 }
 ```
 
 ---
 
 ## Shape data
-Plugin records include `name`, `scope`, `source`, and optional `version` plus `enabled` flags.
-Scope values are `project` or `global`, and responses always include resolved scope per entry.
+The plugin list is the same array of string specifiers used in config (`config.plugin`).
+No derived metadata is returned in this minimal phase.
 
 ---
 
 ## Persist config
-Project scope writes to `<workspace>/opencode.json` and creates it if missing.
-Global scope writes to `~/.config/opencode/opencode.json` or `$XDG_CONFIG_HOME/opencode/opencode.json`.
+Project scope uses existing `Config.update()` behavior.
+Global scope uses `Config.updateGlobal()`.
 
 ---
 
