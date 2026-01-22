@@ -49,10 +49,11 @@ export type DashboardViewProps = {
   setWorkspaceSearch: (value: string) => void;
   workspacePickerOpen: boolean;
   setWorkspacePickerOpen: (open: boolean) => void;
+  connectingWorkspaceId: string | null;
   workspaces: WorkspaceInfo[];
   filteredWorkspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
-  activateWorkspace: (id: string) => void;
+  activateWorkspace: (id: string) => Promise<boolean> | boolean;
   createWorkspaceOpen: boolean;
   setCreateWorkspaceOpen: (open: boolean) => void;
   createWorkspaceFlow: (
@@ -403,6 +404,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <div class="flex items-center gap-3">
             <WorkspaceChip
               workspace={props.activeWorkspaceDisplay}
+              connecting={props.connectingWorkspaceId === props.activeWorkspaceDisplay.id}
               onClick={() => {
                 props.setWorkspaceSearch("");
                 props.setWorkspacePickerOpen(true);

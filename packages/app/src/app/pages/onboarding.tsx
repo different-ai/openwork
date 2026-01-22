@@ -1,7 +1,7 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
 import type { Mode, OnboardingStep } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { ArrowLeftRight, CheckCircle2, Circle, ChevronDown } from "lucide-solid";
+import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
 
 import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
@@ -404,31 +404,31 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-md w-full z-10 space-y-8">
               <div class="text-center space-y-2">
                 <div class="w-12 h-12 bg-gray-2 rounded-2xl mx-auto flex items-center justify-center border border-gray-6 mb-6">
-                  <ArrowLeftRight size={20} class="text-gray-11" />
+                  <Globe size={20} class="text-gray-11" />
                 </div>
-                <h2 class="text-2xl font-bold tracking-tight">{translate("onboarding.connect_host")}</h2>
+                <h2 class="text-2xl font-bold tracking-tight">{translate("onboarding.remote_workspace_title")}</h2>
               <p class="text-gray-11 text-sm leading-relaxed">
-                  {translate("onboarding.connect_description")}
+                  {translate("onboarding.remote_workspace_description")}
               </p>
             </div>
 
             <div class="space-y-4">
               <TextInput
-                label={translate("onboarding.server_url")}
-                placeholder={translate("onboarding.server_url_placeholder")}
+                label={translate("dashboard.remote_base_url_label")}
+                placeholder={translate("dashboard.remote_base_url_placeholder")}
                 value={props.baseUrl}
                 onInput={(e) => props.onBaseUrlChange(e.currentTarget.value)}
               />
               <TextInput
-                label={translate("onboarding.directory")}
-                placeholder={translate("onboarding.directory_placeholder")}
+                label={translate("dashboard.remote_directory_label")}
+                placeholder={translate("dashboard.remote_directory_placeholder")}
                 value={props.clientDirectory}
                 onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
-                hint={translate("onboarding.directory_hint")}
+                hint={translate("dashboard.remote_directory_hint")}
               />
 
               <Button onClick={props.onConnectClient} disabled={props.busy || !props.baseUrl.trim()} class="w-full py-3 text-base">
-                {translate("onboarding.connect")}
+                {translate("onboarding.remote_workspace_action")}
               </Button>
 
               <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
@@ -499,6 +499,23 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 </div>
               </Show>
 
+              <button
+                onClick={() => props.onModeSelect("client")}
+                class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-gray-12/10 hover:-translate-y-0.5 flex items-start gap-6"
+              >
+                <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-gray-7/20 to-gray-5/10 flex items-center justify-center border border-gray-6 group-hover:border-gray-7 transition-colors">
+                  <Globe size={18} class="text-gray-11" />
+                </div>
+                <div>
+                  <h3 class="text-xl font-medium text-gray-12 mb-2">
+                    {translate("onboarding.remote_workspace_card_title")}
+                  </h3>
+                  <p class="text-gray-10 text-sm leading-relaxed mb-4">
+                    {translate("onboarding.remote_workspace_card_description")}
+                  </p>
+                </div>
+              </button>
+
               <div class="flex items-center gap-2 px-2 py-1">
                 <button
                   onClick={props.onRememberModeToggle}
@@ -516,15 +533,6 @@ export default function OnboardingView(props: OnboardingViewProps) {
                     </Show>
                   </div>
                   {translate("onboarding.remember_choice")}
-                </button>
-              </div>
-
-              <div class="pt-6 border-t border-gray-6 flex justify-center">
-                <button
-                  onClick={() => props.onModeSelect("client")}
-                  class="text-gray-7 hover:text-gray-11 text-sm font-medium transition-colors flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-gray-2/50"
-                >
-                  {translate("onboarding.client_mode")}
                 </button>
               </div>
 
