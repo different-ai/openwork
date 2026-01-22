@@ -74,17 +74,24 @@ pub fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
     }
   }
 
+  #[cfg(windows)]
+  {
+    // Windows: Skip target/debug  artifacts for .exe
+    if let Some(path) = resolve_in_path(OPENCODE_CMD) {
+      let path_str = path.to_string_lossy();
+      if !path_str.contains("\\target\\debug") && !path_str.contains("/target/debug") {
+        notes.push(format!("Found in PATH: {}", path.display()));
+        return (Some(path), true, notes);
+      } else {
+        eprintln!("[DEBUG] Skipping target artifact: {:?}", path);
+        notes.push(format!("Skipped build artifact: {}", path.display()));
+      }
+    }
+  }
+
   if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
     notes.push(format!("Found in PATH: {}", path.display()));
     return (Some(path), true, notes);
-  }
-
-  #[cfg(windows)]
-  {
-    if let Some(path) = resolve_in_path(OPENCODE_CMD) {
-      notes.push(format!("Found in PATH: {}", path.display()));
-      return (Some(path), true, notes);
-    }
   }
 
   notes.push("Not found on PATH".to_string());

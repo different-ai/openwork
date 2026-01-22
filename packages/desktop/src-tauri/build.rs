@@ -30,6 +30,19 @@ fn ensure_opencode_sidecar() {
   }
   let dest_path = sidecar_dir.join(file_name);
 
+  // On Windows, sidecar is not used - opencode is found via PATH at runtime
+  // Create a minimal stub to satisfy Tauri's externalBin requirement
+  if target.contains("windows") {
+    if !dest_path.exists() {
+      if fs::create_dir_all(&sidecar_dir).is_ok() {
+        // Create a minimal Windows executable stub that just exits
+        // This is never actually executed - OpenWork finds opencode via PATH
+        let _ = fs::write(&dest_path, b"MZ\x90\x00"); // Minimal PE header stub
+      }
+    }
+    return;
+  }
+
   if dest_path.exists() {
     return;
   }
@@ -38,7 +51,7 @@ fn ensure_opencode_sidecar() {
     .ok()
     .map(PathBuf::from)
     .filter(|path| path.is_file())
-    .or_else(|| find_in_path(if target.contains("windows") { "opencode.exe" } else { "opencode" }));
+    .or_else(|| find_in_path("opencode"));
 
   let profile = env::var("PROFILE").unwrap_or_default();
 
