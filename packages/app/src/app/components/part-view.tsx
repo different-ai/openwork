@@ -1,6 +1,7 @@
-import { For, Match, Show, Switch } from "solid-js";
-
+import { Match, Show, Switch, createMemo } from "solid-js";
+import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
+import { safeStringify } from "../utils";
 
 type Props = {
   part: Part;
@@ -10,90 +11,84 @@ type Props = {
   renderMarkdown?: boolean;
 };
 
-type MarkdownSegment =
-  | { type: "text"; text: string }
-  | { type: "code"; text: string; language: string };
-
-function safeStringify(value: unknown) {
-  const seen = new WeakSet<object>();
-
-  try {
-    return JSON.stringify(
-      value,
-      (key, val) => {
-        if (val && typeof val === "object") {
-          if (seen.has(val as object)) {
-            return "<circular>";
-          }
-          seen.add(val as object);
-        }
-
-        const lowerKey = key.toLowerCase();
-        if (
-          lowerKey === "reasoningencryptedcontent" ||
-          lowerKey.includes("api_key") ||
-          lowerKey.includes("apikey") ||
-          lowerKey.includes("access_token") ||
-          lowerKey.includes("refresh_token") ||
-          lowerKey.includes("token") ||
-          lowerKey.includes("authorization") ||
-          lowerKey.includes("cookie") ||
-          lowerKey.includes("secret")
-        ) {
-          return "[redacted]";
-        }
-
-        return val;
-      },
-      2,
-    );
-  } catch {
-    return "<unserializable>";
-  }
-}
-
 function clampText(text: string, max = 800) {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n… (truncated)`;
 }
 
-function parseMarkdownSegments(text: string): MarkdownSegment[] {
-  if (!text.includes("```")) {
-    return [{ type: "text", text }];
-  }
+function createCustomRenderer(tone: "light" | "dark") {
+  const renderer = new marked.Renderer();
+  const codeBlockClass =
+    tone === "dark"
+      ? "bg-gray-12/10 border-gray-11/20 text-gray-12"
+      : "bg-gray-1/80 border-gray-6/70 text-gray-12";
+  const inlineCodeClass =
+    tone === "dark"
+      ? "bg-gray-12/15 text-gray-12"
+      : "bg-gray-2/70 text-gray-12";
+  
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
-  const segments: MarkdownSegment[] = [];
-  const regex = /```(\w+)?\n([\s\S]*?)```/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null = null;
+  const isSafeUrl = (url: string) => {
+    const protocol = (url || "").trim().toLowerCase();
+    return !protocol.startsWith("javascript:") && !protocol.startsWith("data:");
+  };
 
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push({ type: "text", text: text.slice(lastIndex, match.index) });
-    }
+  renderer.html = ({ text }) => escapeHtml(text);
 
-    const language = match[1]?.trim() ?? "";
-    const code = match[2]?.replace(/\n$/, "") ?? "";
-    segments.push({ type: "code", text: code, language });
-    lastIndex = regex.lastIndex;
-  }
+  renderer.code = ({ text, lang }) => {
+    const language = lang || "";
+    return `
+      <div class="rounded-2xl border px-4 py-3 my-4 ${codeBlockClass}">
+        ${
+          language
+            ? `<div class="text-[10px] uppercase tracking-[0.2em] text-gray-9 mb-2">${escapeHtml(language)}</div>`
+            : ""
+        }
+        <pre class="overflow-x-auto whitespace-pre text-[13px] leading-relaxed font-mono"><code>${escapeHtml(
+          text
+        )}</code></pre>
+      </div>
+    `;
+  };
 
-  if (lastIndex < text.length) {
-    segments.push({ type: "text", text: text.slice(lastIndex) });
-  }
+  renderer.codespan = ({ text }) => {
+    return `<code class="rounded-md px-1.5 py-0.5 text-[13px] font-mono ${inlineCodeClass}">${escapeHtml(
+      text
+    )}</code>`;
+  };
 
-  return segments.length ? segments : [{ type: "text", text }];
-}
+  renderer.link = ({ href, title, text }) => {
+    const safeHref = isSafeUrl(href) ? escapeHtml(href ?? "#") : "#";
+    const safeTitle = title ? escapeHtml(title) : "";
+    return `
+      <a
+        href="${safeHref}"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="underline underline-offset-2 text-blue-600 hover:text-blue-700"
+        ${safeTitle ? `title="${safeTitle}"` : ""}
+      >
+        ${text}
+      </a>
+    `;
+  };
 
-function parseInlineCode(text: string) {
-  if (!text.includes("`")) return [{ type: "text", text }];
-  const parts = text.split(/(`[^`]+`)/g).filter(Boolean);
-  return parts.map((part) => {
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return { type: "code", text: part.slice(1, -1) };
-    }
-    return { type: "text", text: part };
-  });
+  renderer.image = ({ href, title, text }) => {
+    const safeHref = isSafeUrl(href) ? escapeHtml(href ?? "") : "";
+    const safeTitle = title ? escapeHtml(title) : "";
+    return `
+      <img
+        src="${safeHref}"
+        alt="${escapeHtml(text || "")}"
+        ${safeTitle ? `title="${safeTitle}"` : ""}
+        class="max-w-full h-auto rounded-lg my-4"
+      />
+    `;
+  };
+
+  return renderer;
 }
 
 export default function PartView(props: Props) {
@@ -106,16 +101,28 @@ export default function PartView(props: Props) {
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
-  const inlineCodeClass = () =>
-    tone() === "dark"
-      ? "bg-gray-12/15 text-gray-12"
-      : "bg-gray-2/70 text-gray-12";
-  const codeBlockClass = () =>
-    tone() === "dark"
-      ? "bg-gray-12/10 border-gray-11/20 text-gray-12"
-      : "bg-gray-1/80 border-gray-6/70 text-gray-12";
   const toolOnly = () => developerMode();
   const showToolOutput = () => developerMode();
+  const renderedMarkdown = createMemo(() => {
+    if (!renderMarkdown() || p().type !== "text") return null;
+    const text = "text" in p() ? String((p() as { text: string }).text ?? "") : "";
+    if (!text.trim()) return "";
+    
+    try {
+      const renderer = createCustomRenderer(tone());
+      const result = marked.parse(text, { 
+        breaks: true, 
+        gfm: true,
+        renderer,
+        async: false
+      });
+      
+      return typeof result === 'string' ? result : '';
+    } catch (error) {
+      console.error('Markdown parsing error:', error);
+      return null;
+    }
+  });
 
   return (
     <Switch>
@@ -123,39 +130,36 @@ export default function PartView(props: Props) {
         <Show
           when={renderMarkdown()}
           fallback={
-            <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>{(p() as any).text}</div>
+            <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
+              {"text" in p() ? (p() as { text: string }).text : ""}
+            </div>
           }
         >
-          <div class="space-y-3">
-            <For each={parseMarkdownSegments(String((p() as any).text ?? ""))}>
-              {(segment) =>
-                segment.type === "code" ? (
-                  <div class={`rounded-2xl border px-4 py-3 ${codeBlockClass()}`.trim()}>
-                    <Show when={segment.language}>
-                      <div class="text-[10px] uppercase tracking-[0.2em] text-gray-9 mb-2">
-                        {segment.language}
-                      </div>
-                    </Show>
-                    <pre class="overflow-x-auto whitespace-pre text-[13px] leading-relaxed font-mono">
-                      {segment.text}
-                    </pre>
-                  </div>
-                ) : (
-                  <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
-                    {parseInlineCode(segment.text).map((part) =>
-                      part.type === "code" ? (
-                        <code class={`rounded-md px-1.5 py-0.5 text-[13px] font-mono ${inlineCodeClass()}`.trim()}>
-                          {part.text}
-                        </code>
-                      ) : (
-                        part.text
-                      ),
-                    )}
-                  </div>
-                )
-              }
-            </For>
-          </div>
+          <Show
+            when={renderedMarkdown()}
+            fallback={
+              <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
+                {"text" in p() ? (p() as { text: string }).text : ""}
+              </div>
+            }
+          >
+            <div
+              class={`markdown-content max-w-none ${textClass()}
+                [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
+                [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
+                [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
+                [&_p]:my-3 [&_p]:leading-relaxed
+                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
+                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
+                [&_li]:my-1
+                [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
+                [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
+                [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50
+                [&_td]:border [&_td]:border-gray-300 [&_td]:p-2
+              `.trim()}
+              innerHTML={renderedMarkdown()!}
+            />
+          </Show>
         </Show>
       </Match>
 
@@ -164,8 +168,9 @@ export default function PartView(props: Props) {
           when={
             showThinking() &&
             developerMode() &&
-            typeof (p() as any).text === "string" &&
-            (p() as any).text.trim()
+            "text" in p() &&
+            typeof (p() as { text: string }).text === "string" &&
+            (p() as { text: string }).text.trim()
           }
         >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
@@ -175,7 +180,7 @@ export default function PartView(props: Props) {
                 tone() === "dark" ? "text-gray-1" : "text-gray-12"
               }`.trim()}
             >
-              {clampText(String((p() as any).text), 2000)}
+              {clampText(String((p() as { text: string }).text), 2000)}
             </pre>
           </details>
         </Show>
@@ -188,24 +193,24 @@ export default function PartView(props: Props) {
               <div
                 class={`text-xs font-medium ${tone() === "dark" ? "text-gray-1" : "text-gray-12"}`.trim()}
               >
-                Tool · {String((p() as any).tool)}
+                Tool · {("tool" in p() ? String((p() as { tool: string }).tool) : "unknown")}
               </div>
               <div
                 class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  (p() as any).state?.status === "completed"
+                  "state" in p() && (p() as any).state?.status === "completed"
                     ? "bg-green-3/15 text-green-12"
-                    : (p() as any).state?.status === "running"
+                    : "state" in p() && (p() as any).state?.status === "running"
                       ? "bg-blue-3/15 text-blue-12"
-                      : (p() as any).state?.status === "error"
+                      : "state" in p() && (p() as any).state?.status === "error"
                         ? "bg-red-3/15 text-red-12"
                         : "bg-gray-2/10 text-gray-1"
                 }`}
               >
-                {String((p() as any).state?.status ?? "unknown")}
+                {("state" in p() ? String((p() as any).state?.status ?? "unknown") : "unknown")}
               </div>
             </div>
 
-            <Show when={(p() as any).state?.title}>
+            <Show when={"state" in p() && (p() as any).state?.title}>
               <div class={`text-xs ${subtleTextClass()}`.trim()}>{String((p() as any).state.title)}</div>
             </Show>
 
@@ -244,7 +249,7 @@ export default function PartView(props: Props) {
       <Match when={p().type === "step-start" || p().type === "step-finish"}>
         <div class={`text-xs ${subtleTextClass()}`.trim()}>
           {p().type === "step-start" ? "Step started" : "Step finished"}
-          <Show when={(p() as any).reason}>
+          <Show when={"reason" in p() && (p() as any).reason}>
             <span class={tone() === "dark" ? "text-gray-12/80" : "text-gray-11"}>
               {" "}· {String((p() as any).reason)}
             </span>
