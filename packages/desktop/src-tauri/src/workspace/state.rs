@@ -1,5 +1,6 @@
 use std::fs;
 use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 use tauri::Manager;
@@ -23,12 +24,22 @@ pub fn openwork_state_paths(app: &tauri::AppHandle) -> Result<(PathBuf, PathBuf)
 
 pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, String> {
     let (_, path) = openwork_state_paths(app)?;
-    if !path.exists() {
-        return Ok(WorkspaceState::default());
-    }
+    let mut file = match fs::OpenOptions::new().read(true).open(&path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(WorkspaceState::default());
+        }
+        Err(e) => return Err(format!("Failed to read {}: {e}", path.display())),
+    };
 
-    let raw =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+    fs2::FileExt::lock_shared(&file)
+        .map_err(|e| format!("Failed to lock {}: {e}", path.display()))?;
+
+    let mut raw = String::new();
+    file
+        .read_to_string(&mut raw)
+        .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
+
     let mut state: WorkspaceState = serde_json::from_str(&raw)
         .map_err(|e| format!("Failed to parse {}: {e}", path.display()))?;
 
@@ -42,12 +53,27 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
 pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> Result<(), String> {
     let (dir, path) = openwork_state_paths(app)?;
     fs::create_dir_all(&dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
-    fs::write(
-        &path,
-        serde_json::to_string_pretty(state).map_err(|e| e.to_string())?,
-    )
-    .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+
+    fs2::FileExt::lock_exclusive(&file)
+        .map_err(|e| format!("Failed to lock {}: {e}", path.display()))?;
+    file
+        .set_len(0)
+        .map_err(|e| format!("Failed to truncate {}: {e}", path.display()))?;
+
+    let payload = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
+    file
+        .write_all(payload.as_bytes())
+        .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
+    file
+        .sync_all()
+        .map_err(|e| format!("Failed to sync {}: {e}", path.display()))?;
     Ok(())
+}
 }
 
 pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {

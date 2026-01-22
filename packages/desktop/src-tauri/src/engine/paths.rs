@@ -59,6 +59,15 @@ pub fn candidate_opencode_paths() -> Vec<PathBuf> {
   candidates
 }
 
+fn resolve_executable_candidate(candidate: &PathBuf) -> Option<PathBuf> {
+  let resolved = candidate.canonicalize().ok()?;
+  if resolved.is_file() {
+    Some(resolved)
+  } else {
+    None
+  }
+}
+
 pub fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
   let mut notes = Vec::new();
 
@@ -66,33 +75,39 @@ pub fn resolve_opencode_executable() -> (Option<PathBuf>, bool, Vec<String>) {
     let custom = custom.trim();
     if !custom.is_empty() {
       let candidate = PathBuf::from(custom);
-      if candidate.is_file() {
-        notes.push(format!("Using OPENCODE_BIN_PATH: {}", candidate.display()));
-        return (Some(candidate), false, notes);
+      if let Some(resolved) = resolve_executable_candidate(&candidate) {
+        notes.push(format!("Using OPENCODE_BIN_PATH: {}", resolved.display()));
+        return (Some(resolved), false, notes);
       }
       notes.push(format!("OPENCODE_BIN_PATH set but missing: {}", candidate.display()));
     }
   }
 
   if let Some(path) = resolve_in_path(OPENCODE_EXECUTABLE) {
-    notes.push(format!("Found in PATH: {}", path.display()));
-    return (Some(path), true, notes);
+    if let Some(resolved) = resolve_executable_candidate(&path) {
+      notes.push(format!("Found in PATH: {}", resolved.display()));
+      return (Some(resolved), true, notes);
+    }
+    notes.push(format!("Found in PATH but missing: {}", path.display()));
   }
 
   #[cfg(windows)]
   {
     if let Some(path) = resolve_in_path(OPENCODE_CMD) {
-      notes.push(format!("Found in PATH: {}", path.display()));
-      return (Some(path), true, notes);
+      if let Some(resolved) = resolve_executable_candidate(&path) {
+        notes.push(format!("Found in PATH: {}", resolved.display()));
+        return (Some(resolved), true, notes);
+      }
+      notes.push(format!("Found in PATH but missing: {}", path.display()));
     }
   }
 
   notes.push("Not found on PATH".to_string());
 
   for candidate in candidate_opencode_paths() {
-    if candidate.is_file() {
-      notes.push(format!("Found at {}", candidate.display()));
-      return (Some(candidate), false, notes);
+    if let Some(resolved) = resolve_executable_candidate(&candidate) {
+      notes.push(format!("Found at {}", resolved.display()));
+      return (Some(resolved), false, notes);
     }
 
     notes.push(format!("Missing: {}", candidate.display()));

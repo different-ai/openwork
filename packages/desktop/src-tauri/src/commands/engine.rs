@@ -78,19 +78,58 @@ pub fn engine_install() -> Result<ExecResult, String> {
       .join(".opencode")
       .join("bin");
 
-    let output = std::process::Command::new("bash")
-      .arg("-lc")
-      .arg("curl -fsSL https://opencode.ai/install | bash")
-      .env("OPENCODE_INSTALL_DIR", install_dir)
+    let curl_output = std::process::Command::new("curl")
+      .arg("-fsSL")
+      .arg("https://opencode.ai/install")
       .output()
+      .map_err(|e| format!("Failed to download installer: {e}"))?;
+
+    if !curl_output.status.success() {
+      let status = curl_output.status.code().unwrap_or(-1);
+      return Ok(ExecResult {
+        ok: false,
+        status,
+        stdout: String::from_utf8_lossy(&curl_output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&curl_output.stderr).to_string(),
+      });
+    }
+
+    let mut bash = std::process::Command::new("bash")
+      .arg("-s")
+      .env("OPENCODE_INSTALL_DIR", install_dir)
+      .stdin(std::process::Stdio::piped())
+      .stdout(std::process::Stdio::piped())
+      .stderr(std::process::Stdio::piped())
+      .spawn()
+      .map_err(|e| format!("Failed to run installer: {e}"))?;
+
+    if let Some(mut stdin) = bash.stdin.take() {
+      use std::io::Write;
+      stdin
+        .write_all(&curl_output.stdout)
+        .map_err(|e| format!("Failed to pipe installer: {e}"))?;
+    }
+
+    let output = bash
+      .wait_with_output()
       .map_err(|e| format!("Failed to run installer: {e}"))?;
 
     let status = output.status.code().unwrap_or(-1);
+    let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let curl_stderr = String::from_utf8_lossy(&curl_output.stderr).to_string();
+    if !curl_stderr.trim().is_empty() {
+      if !stderr.trim().is_empty() {
+        stderr.push_str("\n\n");
+      }
+      stderr.push_str("curl stderr:\n");
+      stderr.push_str(curl_stderr.trim());
+    }
+
     Ok(ExecResult {
       ok: output.status.success(),
       status,
       stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-      stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+      stderr,
     })
   }
 }

@@ -6,14 +6,22 @@ const MACOS_APP_SUPPORT_DIR: &str = "Library/Application Support";
 
 pub fn home_dir() -> Option<PathBuf> {
   if let Ok(home) = env::var("HOME") {
-    if !home.trim().is_empty() {
-      return Some(PathBuf::from(home));
+    let trimmed = home.trim();
+    if !trimmed.is_empty() {
+      let path = PathBuf::from(trimmed);
+      if path.is_absolute() {
+        return Some(path);
+      }
     }
   }
 
   if let Ok(profile) = env::var("USERPROFILE") {
-    if !profile.trim().is_empty() {
-      return Some(PathBuf::from(profile));
+    let trimmed = profile.trim();
+    if !trimmed.is_empty() {
+      let path = PathBuf::from(trimmed);
+      if path.is_absolute() {
+        return Some(path);
+      }
     }
   }
 
@@ -58,8 +66,10 @@ pub fn maybe_infer_xdg_home(
   candidates: Vec<PathBuf>,
   relative_marker: &Path,
 ) -> Option<String> {
-  if env::var_os(var_name).is_some() {
-    return None;
+  if let Some(value) = env::var_os(var_name) {
+    if !value.to_string_lossy().trim().is_empty() {
+      return None;
+    }
   }
 
   for base in candidates {

@@ -104,6 +104,10 @@ fn validate_skill_name(name: &str) -> Result<String, String> {
     return Err("skill name is required".to_string());
   }
 
+  if trimmed.len() > 100 {
+    return Err("skill name must be 1-100 characters".to_string());
+  }
+
   if !trimmed
     .chars()
     .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
