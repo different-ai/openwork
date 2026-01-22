@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 
-import { Check, Plus, Search } from "lucide-solid";
+import { Check, Globe, Loader2, Plus, Search, Trash2 } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -12,16 +12,25 @@ export default function WorkspacePicker(props: {
   search: string;
   onSearch: (value: string) => void;
   onClose: () => void;
-  onSelect: (workspaceId: string) => void;
-  onCreateNew: () => void;
+  onSelect: (workspaceId: string) => Promise<boolean> | boolean | void;
+  onCreateLocal: () => void;
+  onCreateRemote: () => void;
+  onForget: (workspaceId: string) => void;
+  connectingWorkspaceId?: string | null;
 }) {
   const translate = (key: string) => t(key, currentLocale());
 
   const filtered = createMemo(() => {
     const query = props.search.trim().toLowerCase();
     if (!query) return props.workspaces;
-    return props.workspaces.filter((w) => `${w.name} ${w.path}`.toLowerCase().includes(query));
+    return props.workspaces.filter((w) =>
+      `${w.name} ${w.path} ${w.baseUrl ?? ""} ${w.displayName ?? ""} ${w.directory ?? ""}`
+        .toLowerCase()
+        .includes(query)
+    );
   });
+
+  const totalCount = createMemo(() => props.workspaces.length);
 
   return (
     <Show when={props.open}>
@@ -48,47 +57,94 @@ export default function WorkspacePicker(props: {
 
           <div class="max-h-64 overflow-y-auto p-1">
             <div class="px-3 py-2 text-[10px] font-semibold text-gray-10 uppercase tracking-wider">
-              {translate("dashboard.workspaces")}
+              {translate("dashboard.workspaces")} ({totalCount()})
             </div>
 
             <For each={filtered()}>
               {(ws) => (
-                <button
-                  onClick={() => {
-                    props.onSelect(ws.id);
-                    props.onClose();
-                  }}
+                <div
                   class={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
                     props.activeWorkspaceId === ws.id
                       ? "bg-gray-4 text-gray-12"
                       : "text-gray-11 hover:text-gray-12 hover:bg-gray-4/50"
                   }`}
                 >
-                  <div class="flex-1 text-left min-w-0">
-                    <div class="font-medium truncate">{ws.name}</div>
-                    <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
-                      {ws.path}
+                  <button
+                    onClick={() => {
+                      const result = props.onSelect(ws.id);
+                      if (result instanceof Promise) {
+                        result.then((ok) => {
+                          if (ok !== false) props.onClose();
+                        });
+                        return;
+                      }
+                      if (result !== false) props.onClose();
+                    }}
+                    class="flex-1 text-left min-w-0"
+                  >
+                    <div class="flex items-center gap-2">
+                      <div class="font-medium truncate">{ws.name}</div>
+                      <Show when={ws.workspaceType === "remote"}>
+                        <span class="inline-flex items-center gap-1 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
+                          <Globe size={10} />
+                          {translate("dashboard.remote")}
+                        </span>
+                      </Show>
                     </div>
-                  </div>
+                    <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
+                      {ws.workspaceType === "remote" ? ws.baseUrl ?? ws.path : ws.path}
+                    </div>
+                    <Show when={ws.workspaceType === "remote" && ws.directory}>
+                      <div class="text-[10px] text-gray-8 truncate max-w-[200px]">
+                        {ws.directory}
+                      </div>
+                    </Show>
+                  </button>
                   <Show when={props.activeWorkspaceId === ws.id}>
                     <Check size={14} class="text-indigo-11" />
                   </Show>
-                </button>
+                  <Show when={props.connectingWorkspaceId === ws.id}>
+                    <Loader2 size={14} class="text-gray-10 animate-spin" />
+                  </Show>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onForget(ws.id);
+                    }}
+                    class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                    title={translate("dashboard.forget_workspace")}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               )}
             </For>
           </div>
 
           <div class="p-2 border-t border-gray-6 bg-gray-2">
-            <button
-              onClick={() => {
-                props.onCreateNew();
-                props.onClose();
-              }}
-              class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors"
-            >
-              <Plus size={16} />
-              {translate("dashboard.new_workspace")}
-            </button>
+            <div class="grid gap-2">
+              <button
+                onClick={() => {
+                  props.onCreateLocal();
+                  props.onClose();
+                }}
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors"
+              >
+                <Plus size={16} />
+                {translate("dashboard.new_workspace")}
+              </button>
+              <button
+                onClick={() => {
+                  props.onCreateRemote();
+                  props.onClose();
+                }}
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors"
+              >
+                <Globe size={16} />
+                {translate("dashboard.new_remote_workspace")}
+              </button>
+            </div>
           </div>
         </div>
       </div>

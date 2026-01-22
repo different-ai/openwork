@@ -18,6 +18,7 @@ import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import TemplateModal from "./components/template-modal";
 import WorkspacePicker from "./components/workspace-picker";
+import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -1600,6 +1601,7 @@ export default function App() {
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
     workspacePickerOpen: workspaceStore.workspacePickerOpen(),
     setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
+    connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
     workspaces: workspaceStore.workspaces(),
     filteredWorkspaces: workspaceStore.filteredWorkspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -1860,13 +1862,16 @@ export default function App() {
 
       <WorkspacePicker
         open={workspaceStore.workspacePickerOpen()}
-        workspaces={workspaceStore.filteredWorkspaces()}
+        workspaces={workspaceStore.workspaces()}
         activeWorkspaceId={workspaceStore.activeWorkspaceId()}
         search={workspaceStore.workspaceSearch()}
         onSearch={workspaceStore.setWorkspaceSearch}
         onClose={() => workspaceStore.setWorkspacePickerOpen(false)}
         onSelect={workspaceStore.activateWorkspace}
-        onCreateNew={() => workspaceStore.setCreateWorkspaceOpen(true)}
+        onCreateLocal={() => workspaceStore.setCreateWorkspaceOpen(true)}
+        onCreateRemote={() => workspaceStore.setCreateRemoteWorkspaceOpen(true)}
+        onForget={workspaceStore.forgetWorkspace}
+        connectingWorkspaceId={workspaceStore.connectingWorkspaceId()}
       />
 
       <CreateWorkspaceModal
@@ -1876,7 +1881,17 @@ export default function App() {
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
-        submitting={busy() && busyLabel() === "Creating workspace"}
+        submitting={busy() && busyLabel() === "status.creating_workspace"}
+      />
+
+      <CreateRemoteWorkspaceModal
+        open={workspaceStore.createRemoteWorkspaceOpen()}
+        onClose={() => workspaceStore.setCreateRemoteWorkspaceOpen(false)}
+        onConfirm={(input) => workspaceStore.createRemoteWorkspaceFlow(input)}
+        submitting={
+          busy() &&
+          (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
+        }
       />
     </>
   );

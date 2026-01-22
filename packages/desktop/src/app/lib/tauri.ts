@@ -29,6 +29,10 @@ export type WorkspaceInfo = {
   name: string;
   path: string;
   preset: string;
+  workspaceType: "local" | "remote";
+  baseUrl?: string | null;
+  directory?: string | null;
+  displayName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -64,6 +68,36 @@ export async function workspaceCreate(input: {
     name: input.name,
     preset: input.preset,
   });
+}
+
+export async function workspaceCreateRemote(input: {
+  baseUrl: string;
+  directory?: string | null;
+  displayName?: string | null;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_create_remote", {
+    baseUrl: input.baseUrl,
+    directory: input.directory ?? null,
+    displayName: input.displayName ?? null,
+  });
+}
+
+export async function workspaceUpdateRemote(input: {
+  workspaceId: string;
+  baseUrl?: string | null;
+  directory?: string | null;
+  displayName?: string | null;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_update_remote", {
+    workspaceId: input.workspaceId,
+    baseUrl: input.baseUrl ?? null,
+    directory: input.directory ?? null,
+    displayName: input.displayName ?? null,
+  });
+}
+
+export async function workspaceForget(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_forget", { workspaceId });
 }
 
 export async function workspaceAddAuthorizedRoot(input: {
