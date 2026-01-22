@@ -399,7 +399,8 @@ export function createWorkspaceStore(options: {
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
-      if (context?.workspaceType === "remote" && targetRoot) {
+      // Load workspace templates for all workspace types (local and remote)
+      if (targetRoot) {
         await options
           .loadWorkspaceTemplates({ workspaceRoot: targetRoot, quiet: true })
           .catch(() => undefined);
