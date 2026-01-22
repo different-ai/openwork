@@ -1,48 +1,49 @@
 ---
-title: Plugin endpoints
-description: Expose listing and install endpoints for plugins
+title: Plugin config via API
+description: Use /config for short-term plugin listing and add
 ---
 
 ## Set context
-OpenWork manages plugins by editing `opencode.json`, but OpenCode does not expose a list/add API yet. A minimal service makes plugin management consistent across the CLI, SDK, and OpenWork.
+OpenWork manages plugins by editing `opencode.json`, but remote workspaces cannot read that file. OpenCode already exposes `/config` for reading and updating project config, so the short-term plan is to rely on `/config` for plugin listing and adds instead of introducing a new `/plugin` endpoint right away.
 
 ---
 
 ## Define goals
-- Provide list and add endpoints for plugins
-- Keep behavior aligned with `opencode.json` rules
-- Support project scope, with optional global scope
+- List configured plugins for remote workspaces using existing `/config`
+- Add plugins by updating the config API in project scope
+- Keep behavior aligned with current config merge rules
 
 ---
 
 ## Call out non-goals
+- No plugin status (loaded/failed) signal
 - No plugin removal or update endpoints in this phase
 - No automatic dependency resolution or npm install workflow
-- No UI changes beyond wiring existing surfaces
+- No new `/plugin` endpoints in this phase
+- No global scope add via API (requires new endpoint)
 
 ---
 
-## Design API
-GET `/plugin` returns the resolved plugin list for the active workspace.
+## Short-term API usage
+GET `/config` returns the resolved config for the active workspace.
 
 ```json
 {
-  "plugins": ["opencode-wakatime", "file:///path/to/plugin.js"]
+  "plugin": ["opencode-wakatime", "file:///path/to/plugin.js"]
 }
 ```
 
-POST `/plugin` adds a plugin to the requested scope (default: project) and returns the updated list.
+PATCH `/config` adds plugins by submitting the full plugin list.
 
 ```json
 {
-  "plugin": "opencode-wakatime",
-  "scope": "global"
+  "plugin": ["opencode-wakatime", "opencode-github"]
 }
 ```
 
 ```json
 {
-  "plugins": ["opencode-wakatime"]
+  "plugin": ["opencode-wakatime", "opencode-github"]
 }
 ```
 
@@ -50,32 +51,46 @@ POST `/plugin` adds a plugin to the requested scope (default: project) and retur
 
 ## Shape data
 The plugin list is the same array of string specifiers used in config (`config.plugin`).
-No derived metadata is returned in this minimal phase.
+OpenWork treats the config list as the source of truth for "installed" plugins.
 
 ---
 
 ## Persist config
-Project scope uses existing `Config.update()` behavior.
-Global scope uses `Config.updateGlobal()`.
+Project scope uses existing `Config.update()` behavior, which writes `<workspace>/config.json` and disposes the instance.
+Global scope updates are out of scope for this short-term plan.
+
+---
+
+## Edge cases
+- `Config.update()` merges config but replaces arrays; clients must read/merge/dedupe the full plugin list before PATCH.
+- Updating config writes `config.json`, even if the project uses `opencode.json` or `opencode.jsonc`.
+- The server disposes the instance on update; clients should handle reconnects without a `reloadRequired` signal.
 
 ---
 
 ## Update SDK
-Add `listPlugins()` and `addPlugin()` to the OpenCode SDK with typed payloads.
+Expose `config.get()` and `config.update()` in the SDK for remote plugin flows.
 
 ---
 
 ## Integrate UI
-Wire the Skills tab to call GET on load and POST on add.
+Use `GET /config` to populate the plugin list in remote mode.
+Use `PATCH /config` with a read/merge/write flow when adding plugins.
+Host/Tauri mode can keep using local `opencode.json` parsing.
+
+---
+
+## Related APIs
+Skills already have a dedicated endpoint (`GET /skill`), which OpenWork uses for remote listing.
 
 ---
 
 ## Log events
-Log `plugin.list` with scope and count, and `plugin.add` with name and scope.
+Log `config.get` and `config.update` when plugin changes are requested.
 Errors include file path, parse details, and API caller identity.
 
 ---
 
 ## Plan rollout
-Ship behind a `plugins_api` feature flag in OpenCode first.
-Enable by default after one release once OpenWork validates end-to-end flow.
+Document this as the short-term path for remote plugin support.
+Revisit a dedicated `/plugin` endpoint after OpenWork validates the config-based flow.
