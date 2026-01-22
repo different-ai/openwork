@@ -98,6 +98,8 @@ import {
 } from "./lib/tauri";
 
 export default function App() {
+  type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
+
   const initialView: View = (() => {
     if (typeof window === "undefined") return "onboarding";
     try {
@@ -158,6 +160,10 @@ export default function App() {
     Record<string, ModelRef>
   >({});
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
+  const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
+  const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
+  const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
+  const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
 
   const sessionStore = createSessionStore({
     client,
@@ -346,13 +352,12 @@ export default function App() {
       throw new Error("No providers available");
     }
 
-    let resolved = providerId?.trim() ?? "";
-    if (!resolved || !authMethods[resolved]) {
-      const suggested = providerIds.slice(0, 4).join(", ");
-      const promptLabel = `Provider ID${suggested ? ` (e.g. ${suggested})` : ""}`;
-      const candidate = window.prompt(promptLabel, providerIds[0]);
-      if (candidate == null) return "Auth cancelled";
-      resolved = candidate.trim();
+    const resolved = providerId?.trim() ?? "";
+    if (!resolved) {
+      throw new Error("Provider ID is required");
+    }
+    if (!authMethods[resolved]) {
+      throw new Error(`Unknown provider: ${resolved}`);
     }
 
     const methods = authMethods[resolved];
@@ -374,6 +379,32 @@ export default function App() {
     }
 
     return auth.instructions || `Opened ${resolved} auth in browser`;
+  }
+
+  async function openProviderAuthModal() {
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    setProviderAuthBusy(true);
+    setProviderAuthError(null);
+    try {
+      const methods = unwrap(await c.provider.auth());
+      setProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>);
+      setProviderAuthModalOpen(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load providers";
+      setProviderAuthError(message);
+      throw error;
+    } finally {
+      setProviderAuthBusy(false);
+    }
+  }
+
+  function closeProviderAuthModal() {
+    setProviderAuthModalOpen(false);
+    setProviderAuthError(null);
   }
 
   async function saveSessionExport(sessionID: string) {
@@ -1930,6 +1961,14 @@ export default function App() {
               showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
               openConnect={openConnectFlow}
               startProviderAuth={startProviderAuth}
+              openProviderAuthModal={openProviderAuthModal}
+              closeProviderAuthModal={closeProviderAuthModal}
+              providerAuthModalOpen={providerAuthModalOpen()}
+              providerAuthBusy={providerAuthBusy()}
+              providerAuthError={providerAuthError()}
+              providerAuthMethods={providerAuthMethods()}
+              providers={providers()}
+              providerConnectedIds={providerConnectedIds()}
               listAgents={listAgents}
               setSessionAgent={setSessionAgent}
               saveSession={saveSessionExport}

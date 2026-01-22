@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
+import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
@@ -28,6 +28,7 @@ import {
 import Button from "../components/button";
 import PartView from "../components/part-view";
 import WorkspaceChip from "../components/workspace-chip";
+import ProviderAuthModal from "../components/provider-auth-modal";
 import { isTauriRuntime, isWindowsPlatform } from "../utils";
 
 export type SessionViewProps = {
@@ -84,6 +85,14 @@ export type SessionViewProps = {
   renameSession: (sessionId: string, title: string) => Promise<void> | void;
   openConnect: () => void;
   startProviderAuth: (providerId?: string) => Promise<string>;
+  openProviderAuthModal: () => Promise<void>;
+  closeProviderAuthModal: () => void;
+  providerAuthModalOpen: boolean;
+  providerAuthBusy: boolean;
+  providerAuthError: string | null;
+  providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
+  providers: Provider[];
+  providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
@@ -112,6 +121,7 @@ export default function SessionView(props: SessionViewProps) {
   const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
   const [commandToast, setCommandToast] = createSignal<string | null>(null);
   const [commandIndex, setCommandIndex] = createSignal(0);
+  const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
 
   let promptInputEl: HTMLTextAreaElement | undefined;
 
@@ -315,6 +325,29 @@ export default function SessionView(props: SessionViewProps) {
     return body.slice(spaceIndex + 1).trim();
   };
 
+  const extractCommandRemainder = (raw: string) => {
+    if (!raw.startsWith("/")) return "";
+    const body = raw.slice(1);
+    const spaceIndex = body.search(/\s/);
+    if (spaceIndex === -1) return "";
+    return body.slice(spaceIndex);
+  };
+
+  const applyCommandCompletion = (commandId: string) => {
+    if (!commandId) return;
+    const remainder = extractCommandRemainder(props.prompt);
+    const next = `/${commandId}${remainder}`;
+    if (next === props.prompt) return;
+    props.setPrompt(next);
+    queueMicrotask(() => {
+      syncPromptHeight();
+      if (!promptInputEl) return;
+      const length = promptInputEl.value.length;
+      promptInputEl.focus();
+      promptInputEl.setSelectionRange(length, length);
+    });
+  };
+
   const requireSessionId = () => {
     const sessionId = props.selectedSessionId;
     if (!sessionId) {
@@ -336,6 +369,21 @@ export default function SessionView(props: SessionViewProps) {
     const entry = props.sessions.find((session) => session.id === selectedId);
     return entry?.title ?? "";
   });
+
+  const handleProviderAuthSelect = async (providerId: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      const message = await props.startProviderAuth(providerId);
+      setCommandToast(message || "Auth flow started");
+      props.closeProviderAuthModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Auth failed";
+      setCommandToast(message);
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
 
   const commandList = createMemo(() => [
     {
@@ -373,8 +421,15 @@ export default function SessionView(props: SessionViewProps) {
       run: async () => {
         try {
           const providerId = extractCommandArgs(props.prompt);
-          const message = await props.startProviderAuth(providerId || undefined);
-          setCommandToast(message || "Auth flow started");
+          if (providerId) {
+            const message = await props.startProviderAuth(providerId || undefined);
+            setCommandToast(message || "Auth flow started");
+            clearPrompt();
+            return;
+          }
+
+          await props.openProviderAuthModal();
+          setCommandToast("Select a provider to authenticate");
           clearPrompt();
         } catch (error) {
           const message = error instanceof Error ? error.message : "Auth failed";
@@ -559,6 +614,9 @@ export default function SessionView(props: SessionViewProps) {
     if (commandMenuOpen()) {
       const matches = commandMatches();
       const active = matches[commandIndex()];
+      if (active) {
+        applyCommandCompletion(active.id);
+      }
       runCommand(active?.id);
       return;
     }
@@ -576,19 +634,42 @@ export default function SessionView(props: SessionViewProps) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
         if (!matches.length) return;
-        setCommandIndex((current) => Math.min(current + 1, matches.length - 1));
+        setCommandIndex((current) => {
+          const next = Math.min(current + 1, matches.length - 1);
+          applyCommandCompletion(matches[next]?.id ?? "");
+          return next;
+        });
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         if (!matches.length) return;
-        setCommandIndex((current) => Math.max(current - 1, 0));
+        setCommandIndex((current) => {
+          const next = Math.max(current - 1, 0);
+          applyCommandCompletion(matches[next]?.id ?? "");
+          return next;
+        });
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        const active = matches[commandIndex()];
+        if (active) applyCommandCompletion(active.id);
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
         clearPrompt();
         return;
+      }
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const active = matches[commandIndex()];
+        if (active) {
+          applyCommandCompletion(active.id);
+          runCommand(active.id);
+          return;
+        }
       }
     }
 
@@ -1095,7 +1176,10 @@ export default function SessionView(props: SessionViewProps) {
                                     event.preventDefault();
                                     runCommand(command.id);
                                   }}
-                                  onMouseEnter={() => setCommandIndex(idx())}
+                                  onMouseEnter={() => {
+                                    setCommandIndex(idx());
+                                    applyCommandCompletion(command.id);
+                                  }}
                                 >
                                   <div class="text-xs font-semibold text-gray-12">/{command.id}</div>
                                   <div class="text-[11px] text-gray-9">{command.description}</div>
@@ -1143,6 +1227,18 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
         </div>
+
+        <ProviderAuthModal
+          open={props.providerAuthModalOpen}
+          loading={props.providerAuthBusy}
+          submitting={providerAuthActionBusy()}
+          error={props.providerAuthError}
+          providers={props.providers}
+          connectedProviderIds={props.providerConnectedIds}
+          authMethods={props.providerAuthMethods}
+          onSelect={handleProviderAuthSelect}
+          onClose={props.closeProviderAuthModal}
+        />
 
         <Show when={props.activePermission}>
           <div class="absolute inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
