@@ -62,6 +62,7 @@ function createCustomRenderer(tone: "light" | "dark") {
   renderer.link = ({ href, title, text }) => {
     const safeHref = isSafeUrl(href) ? escapeHtml(href ?? "#") : "#";
     const safeTitle = title ? escapeHtml(title) : "";
+    const safeText = escapeHtml(text || "");
     return `
       <a
         href="${safeHref}"
@@ -70,7 +71,7 @@ function createCustomRenderer(tone: "light" | "dark") {
         class="underline underline-offset-2 text-blue-600 hover:text-blue-700"
         ${safeTitle ? `title="${safeTitle}"` : ""}
       >
-        ${text}
+        ${safeText}
       </a>
     `;
   };
@@ -103,6 +104,25 @@ export default function PartView(props: Props) {
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
   const toolOnly = () => developerMode();
   const showToolOutput = () => developerMode();
+  const markdownContentClass = () => {
+    const blockquoteBorder = tone() === "dark" ? "border-gray-11/40" : "border-gray-300";
+    const tableBorder = tone() === "dark" ? "border-gray-11/30" : "border-gray-300";
+    const headerBg = tone() === "dark" ? "bg-gray-12/15" : "bg-gray-50";
+
+    return `markdown-content max-w-none ${textClass()}
+      [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
+      [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
+      [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
+      [&_p]:my-3 [&_p]:leading-relaxed
+      [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
+      [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
+      [&_li]:my-1
+      [&_blockquote]:border-l-4 [&_blockquote]:${blockquoteBorder} [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
+      [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
+      [&_th]:border [&_th]:${tableBorder} [&_th]:p-2 [&_th]:${headerBg}
+      [&_td]:border [&_td]:${tableBorder} [&_td]:p-2
+    `.trim();
+  };
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     const text = "text" in p() ? String((p() as { text: string }).text ?? "") : "";
@@ -144,19 +164,7 @@ export default function PartView(props: Props) {
             }
           >
             <div
-              class={`markdown-content max-w-none ${textClass()}
-                [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-3 [&_p]:leading-relaxed
-                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
-                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
-                [&_li]:my-1
-                [&_blockquote]:border-l-4 [&_blockquote]:border-gray-300 [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
-                [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
-                [&_th]:border [&_th]:border-gray-300 [&_th]:p-2 [&_th]:bg-gray-50
-                [&_td]:border [&_td]:border-gray-300 [&_td]:p-2
-              `.trim()}
+              class={markdownContentClass()}
               innerHTML={renderedMarkdown()!}
             />
           </Show>
