@@ -618,6 +618,7 @@ export default {
   "status.live": "Live",
   "status.connecting": "Connecting",
   "status.creating_workspace": "Creating workspace",
+  "status.updating_workspace": "Updating workspace",
   "status.deleting_template": "Deleting template",
   "status.saving_workspace_template": "Saving workspace template",
   "status.saving_template": "Saving template",

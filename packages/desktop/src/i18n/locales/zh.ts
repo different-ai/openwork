@@ -625,6 +625,7 @@ export default {
   "status.live": "实时",
   "status.connecting": "正在连接",
   "status.creating_workspace": "正在创建工作区",
+  "status.updating_workspace": "正在更新工作区",
   "status.deleting_template": "正在删除模板",
   "status.saving_workspace_template": "正在保存工作区模板",
   "status.saving_template": "正在保存模板",

@@ -1862,6 +1862,7 @@ export default function App() {
         onClose={() => workspaceStore.setWorkspacePickerOpen(false)}
         onSelect={workspaceStore.activateWorkspace}
         onCreateNew={() => workspaceStore.setCreateWorkspaceOpen(true)}
+        onRemove={workspaceStore.removeWorkspace}
       />
 
       <CreateWorkspaceModal

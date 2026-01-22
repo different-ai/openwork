@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 
-import { Check, Plus, Search } from "lucide-solid";
+import { Check, Plus, Search, Trash2 } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -14,6 +14,7 @@ export default function WorkspacePicker(props: {
   onClose: () => void;
   onSelect: (workspaceId: string) => void;
   onCreateNew: () => void;
+  onRemove: (workspaceId: string) => void;
 }) {
   const translate = (key: string) => t(key, currentLocale());
 
@@ -70,9 +71,24 @@ export default function WorkspacePicker(props: {
                       {ws.path}
                     </div>
                   </div>
-                  <Show when={props.activeWorkspaceId === ws.id}>
-                    <Check size={14} class="text-indigo-11" />
-                  </Show>
+                  <div class="flex items-center gap-2">
+                    <Show when={ws.preset !== "starter"}>
+                      <button
+                        type="button"
+                        title={translate("onboarding.remove")}
+                        class="p-1 rounded text-gray-9 hover:text-rose-9 hover:bg-rose-9/10 transition-colors"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          props.onRemove(ws.id);
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </Show>
+                    <Show when={props.activeWorkspaceId === ws.id}>
+                      <Check size={14} class="text-indigo-11" />
+                    </Show>
+                  </div>
                 </button>
               )}
             </For>

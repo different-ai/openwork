@@ -22,6 +22,7 @@ import {
   workspaceCreate,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
+  workspaceRemove,
   workspaceSetActive,
   type EngineDoctorResult,
   type EngineInfo,
@@ -245,6 +246,11 @@ export function createWorkspaceStore(options: {
   }
 
   async function connectToServer(nextBaseUrl: string, directory?: string) {
+    console.log("[connectToServer] starting", {
+      baseUrl: nextBaseUrl,
+      directory,
+      workspace: activeWorkspacePath(),
+    });
     options.setError(null);
     options.setBusy(true);
     options.setBusyLabel("status.connecting");
@@ -253,7 +259,9 @@ export function createWorkspaceStore(options: {
 
     try {
       const nextClient = createClient(nextBaseUrl, directory);
+      console.log("[connectToServer] client created");
       const health = await waitForHealthy(nextClient, { timeoutMs: 12_000 });
+      console.log("[connectToServer] healthy", { version: health.version });
 
       options.setClient(nextClient);
       options.setConnectedVersion(health.version);
@@ -295,8 +303,10 @@ export function createWorkspaceStore(options: {
       // If the user successfully connected, treat onboarding as complete so we
       // don't force the onboarding flow on subsequent launches.
       markOnboardingComplete();
+      console.log("[connectToServer] connected", { baseUrl: nextBaseUrl });
       return true;
     } catch (e) {
+      console.log("[connectToServer] failed", e);
       options.setClient(null);
       options.setConnectedVersion(null);
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -349,6 +359,37 @@ export function createWorkspaceStore(options: {
       options.setView("dashboard");
       options.setTab("home");
       markOnboardingComplete();
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
+  async function removeWorkspace(workspaceId: string) {
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    options.setBusy(true);
+    options.setBusyLabel("status.updating_workspace");
+    options.setBusyStartedAt(Date.now());
+    options.setError(null);
+
+    try {
+      const updated = await workspaceRemove(id);
+      setWorkspaces(updated.workspaces);
+
+      if (updated.activeId !== activeWorkspaceId()) {
+        await activateWorkspace(updated.activeId);
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
@@ -798,6 +839,10 @@ export function createWorkspaceStore(options: {
   }
 
   async function onAttachHost() {
+    console.log("[attachHost] start", {
+      baseUrl: engine()?.baseUrl,
+      projectDir: engine()?.projectDir,
+    });
     options.setMode("host");
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(engine()?.baseUrl ?? "", engine()?.projectDir ?? undefined);
@@ -808,6 +853,10 @@ export function createWorkspaceStore(options: {
   }
 
   async function onConnectClient() {
+    console.log("[connectClient] start", {
+      baseUrl: options.baseUrl(),
+      directory: options.clientDirectory(),
+    });
     options.setMode("client");
     options.setOnboardingStep("connecting");
     const ok = await connectToServer(
@@ -870,6 +919,7 @@ export function createWorkspaceStore(options: {
     activateWorkspace,
     connectToServer,
     createWorkspaceFlow,
+    removeWorkspace,
     pickWorkspaceFolder,
     startHost,
     stopHost,

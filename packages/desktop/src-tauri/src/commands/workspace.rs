@@ -102,6 +102,42 @@ pub fn workspace_create(
 }
 
 #[tauri::command]
+pub fn workspace_remove(app: tauri::AppHandle, workspace_id: String) -> Result<WorkspaceList, String> {
+  let mut state = load_workspace_state(&app)?;
+  let id = workspace_id.trim();
+
+  if id.is_empty() {
+    return Err("workspaceId is required".to_string());
+  }
+
+  let starter = ensure_starter_workspace(&app)?;
+  if id == starter.id {
+    return Err("Cannot remove starter workspace".to_string());
+  }
+
+  if !state.workspaces.iter().any(|w| w.id == id) {
+    return Err("Unknown workspaceId".to_string());
+  }
+
+  state.workspaces.retain(|w| w.id != id);
+
+  if !state.workspaces.iter().any(|w| w.id == starter.id) {
+    state.workspaces.push(starter.clone());
+  }
+
+  if state.active_id == id {
+    state.active_id = starter.id.clone();
+  }
+
+  save_workspace_state(&app, &state)?;
+
+  Ok(WorkspaceList {
+    active_id: state.active_id,
+    workspaces: state.workspaces,
+  })
+}
+
+#[tauri::command]
 pub fn workspace_add_authorized_root(
   _app: tauri::AppHandle,
   workspace_path: String,

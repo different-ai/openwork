@@ -65,6 +65,10 @@ export async function workspaceCreate(input: {
   });
 }
 
+export async function workspaceRemove(workspaceId: string): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_remove", { workspaceId });
+}
+
 export async function workspaceAddAuthorizedRoot(input: {
   workspacePath: string;
   folderPath: string;
