@@ -125,18 +125,22 @@ export default function SessionView(props: SessionViewProps) {
 
   let promptInputEl: HTMLTextAreaElement | undefined;
 
+  const focusPromptInput = () => {
+    if (props.busy) return;
+    const el = promptInputEl;
+    if (!el) return;
+    el.focus();
+    try {
+      const len = el.value.length;
+      el.setSelectionRange(len, len);
+    } catch {
+      // ignore
+    }
+  };
+
   createEffect(() => {
     const handler = () => {
-      if (props.busy) return;
-      const el = promptInputEl;
-      if (!el) return;
-      el.focus();
-      try {
-        const len = el.value.length;
-        el.setSelectionRange(len, len);
-      } catch {
-        // ignore
-      }
+      focusPromptInput();
     };
 
     window.addEventListener("openwork:focusPrompt", handler);
@@ -588,6 +592,23 @@ export default function SessionView(props: SessionViewProps) {
   const commandMenuOpen = createMemo(() => commandInput() !== null && !props.busy);
 
   createEffect(() => {
+    if (!commandMenuOpen()) return;
+    queueMicrotask(focusPromptInput);
+  });
+
+  const moveCommandIndex = (delta: number) => {
+    const matches = commandMatches();
+    if (!matches.length) return;
+    setCommandIndex((current) => {
+      const next = current + delta;
+      if (next < 0) return 0;
+      if (next >= matches.length) return matches.length - 1;
+      return next;
+    });
+  };
+
+
+  createEffect(() => {
     const matches = commandMatches();
     if (!matches.length) {
       setCommandIndex(0);
@@ -604,24 +625,34 @@ export default function SessionView(props: SessionViewProps) {
   const runCommand = (commandId?: string) => {
     if (!commandId) {
       setCommandToast("Unknown command");
-      return;
+      return null;
     }
     const command = commandList().find((entry) => entry.id === commandId);
     if (!command) {
       setCommandToast("Unknown command");
+      return null;
+    }
+    return command.run();
+  };
+
+  const selectCommand = (commandId?: string) => {
+    if (!commandId) {
+      setCommandToast("Unknown command");
       return;
     }
-    command.run();
+    applyCommandCompletion(commandId);
+    const result = runCommand(commandId);
+    if (result === null) return;
+    Promise.resolve(result).finally(() => {
+      clearPrompt();
+    });
   };
 
   const handlePrimaryAction = () => {
     if (commandMenuOpen()) {
       const matches = commandMatches();
-      const active = matches[commandIndex()];
-      if (active) {
-        applyCommandCompletion(active.id);
-      }
-      runCommand(active?.id);
+      const active = matches[commandIndex()] ?? matches[0];
+      selectCommand(active?.id);
       return;
     }
     props.sendPromptAsync().catch(() => undefined);
@@ -632,45 +663,33 @@ export default function SessionView(props: SessionViewProps) {
     if (event.isComposing && event.key !== "Enter") return;
 
     const menuOpen = commandMenuOpen();
-    const matches = commandMatches();
-
     if (menuOpen) {
+      const matches = commandMatches();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        handlePrimaryAction();
+      }
       if (event.key === "ArrowDown") {
         event.preventDefault();
         if (!matches.length) return;
-        setCommandIndex((current) => {
-          const next = Math.min(current + 1, matches.length - 1);
-          applyCommandCompletion(matches[next]?.id ?? "");
-          return next;
-        });
+        moveCommandIndex(1);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
         if (!matches.length) return;
-        setCommandIndex((current) => {
-          const next = Math.max(current - 1, 0);
-          applyCommandCompletion(matches[next]?.id ?? "");
-          return next;
-        });
+        moveCommandIndex(-1);
         return;
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        const active = matches[commandIndex()];
-        if (active) applyCommandCompletion(active.id);
         return;
       }
       if (event.key === "Escape") {
         event.preventDefault();
         clearPrompt();
-        return;
       }
-      if (event.key === "Enter") {
-        event.preventDefault();
-        handlePrimaryAction();
-        return;
-      }
+      return;
     }
 
     if (event.key === "Enter") {
@@ -1174,11 +1193,11 @@ export default function SessionView(props: SessionViewProps) {
                                   }`}
                                   onMouseDown={(event) => {
                                     event.preventDefault();
-                                    runCommand(command.id);
+                                    selectCommand(command.id);
                                   }}
                                   onMouseEnter={() => {
                                     setCommandIndex(idx());
-                                    applyCommandCompletion(command.id);
+                                    promptInputEl?.focus();
                                   }}
                                 >
                                   <div class="text-xs font-semibold text-gray-12">/{command.id}</div>

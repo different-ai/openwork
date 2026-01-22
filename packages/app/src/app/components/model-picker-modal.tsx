@@ -67,9 +67,8 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
   });
 
   createEffect(() => {
-    if (!props.open) return;
-
     const onKeyDown = (event: KeyboardEvent) => {
+      if (!props.open) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
