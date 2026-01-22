@@ -1,4 +1,4 @@
-https://discord.gg/VEhNQXxYMB
+[![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
 # OpenWork
 
