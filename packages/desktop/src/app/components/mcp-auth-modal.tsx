@@ -4,6 +4,7 @@ import Button from "./button";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
+import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
 
 export type McpAuthModalProps = {
@@ -40,7 +41,17 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     if (!entry || !client) return;
 
-    const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    let slug = "";
+    try {
+      const safeName = validateMcpServerName(entry.name);
+      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      setError(message);
+      setLoading(false);
+      setAuthInProgress(false);
+      return;
+    }
 
     if (!forceRetry && authInProgress()) {
       return;

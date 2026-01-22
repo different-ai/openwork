@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
@@ -267,5 +268,15 @@ export async function opencodeMcpAuth(
   projectDir: string,
   serverName: string,
 ): Promise<ExecResult> {
-  return invoke<ExecResult>("opencode_mcp_auth", { projectDir, serverName });
+  const safeProjectDir = projectDir.trim();
+  if (!safeProjectDir) {
+    throw new Error("project_dir is required");
+  }
+
+  const safeServerName = validateMcpServerName(serverName);
+
+  return invoke<ExecResult>("opencode_mcp_auth", {
+    projectDir: safeProjectDir,
+    serverName: safeServerName,
+  });
 }
