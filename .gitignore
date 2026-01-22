@@ -6,8 +6,8 @@ dist/
 packages/*/dist/
 
 # Tauri/Rust
-packages/tauri/src-tauri/target/
-packages/tauri/src-tauri/sidecars/
+packages/desktop/src-tauri/target/
+packages/desktop/src-tauri/sidecars/
 
 # Env
 .env

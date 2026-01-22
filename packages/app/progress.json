@@ -40,7 +40,7 @@
   "notes": [
     "Frontend uses @opencode-ai/sdk/v2/client to avoid bundling Node-only server code.",
     "Engine spawns `opencode serve` from Rust with a per-run working directory.",
-    "`cargo check` runs successfully; a placeholder icon exists at `packages/tauri/src-tauri/icons/icon.png`.",
+    "`cargo check` runs successfully; a placeholder icon exists at `packages/desktop/src-tauri/icons/icon.png`.",
     "OpenCode mirror cloned at `vendor/opencode` (gitignored).",
     "UI follows `design.ts` (ported to Solid + Tailwind) and is wired to real OpenCode v2 sessions/messages/todos/permissions.",
     "Folder picking uses Tauri dialog plugin (no manual path required in Host mode).",

@@ -55,7 +55,7 @@ const targetVersion = async () => {
 
 const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
-  const tauriPath = path.join(REPO_ROOT, "packages", "tauri", "package.json");
+  const tauriPath = path.join(REPO_ROOT, "packages", "desktop", "package.json");
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
   uiData.version = nextVersion;
@@ -67,7 +67,7 @@ const updatePackageJson = async (nextVersion) => {
 };
 
 const updateCargoToml = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "packages", "tauri", "src-tauri", "Cargo.toml");
+  const filePath = path.join(REPO_ROOT, "packages", "desktop", "src-tauri", "Cargo.toml");
   const raw = await readFile(filePath, "utf8");
   const updated = raw.replace(/\bversion\s*=\s*"[^"]+"/m, `version = "${nextVersion}"`);
   if (!isDryRun) {
@@ -76,7 +76,7 @@ const updateCargoToml = async (nextVersion) => {
 };
 
 const updateTauriConfig = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "packages", "tauri", "src-tauri", "tauri.conf.json");
+  const filePath = path.join(REPO_ROOT, "packages", "desktop", "src-tauri", "tauri.conf.json");
   const data = JSON.parse(await readFile(filePath, "utf8"));
   data.version = nextVersion;
   if (!isDryRun) {
@@ -104,10 +104,10 @@ const main = async () => {
         version: nextVersion,
         dryRun: isDryRun,
         files: [
-          "apps/desktop/package.json",
-          "packages/tauri/package.json",
-          "packages/tauri/src-tauri/Cargo.toml",
-          "packages/tauri/src-tauri/tauri.conf.json",
+          "packages/app/package.json",
+          "packages/desktop/package.json",
+          "packages/desktop/src-tauri/Cargo.toml",
+          "packages/desktop/src-tauri/tauri.conf.json",
         ],
       },
       null,

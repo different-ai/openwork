@@ -91,7 +91,7 @@ serde_json = "1"
 ## Tauri Commands (Rust -> JS)
 
 ```rust
-// packages/tauri/src-tauri/src/lib.rs
+// packages/desktop/src-tauri/src/lib.rs
 use tauri::Manager;
 
 #[tauri::command]

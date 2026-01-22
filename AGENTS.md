@@ -31,7 +31,7 @@ OpenWork is an open-source alternative to Claude Cowork.
 
 ## Repository Guidance
 
-- Write new PRDs under `apps/desktop/pr/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
+- Write new PRDs under `packages/app/pr/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
 - Use MOTIVATIONS-PHILOSOPHY.md to understand the "why" of OpenWork so you can guide your decisions.
 
 
@@ -43,15 +43,14 @@ openwork/
   MOTIVATIONS-PHILOSOPHY.md     # Exhaustive PRD and user flow map
   .gitignore                    # Ignores vendor/opencode, node_modules, etc.
   .opencode/
-  apps/
-    desktop/
+  packages/
+    app/
       src/
       public/
       pr/
       prd/
       package.json
-  packages/
-    tauri/
+    desktop/
       src-tauri/
       package.json
 ```
@@ -89,7 +88,7 @@ Key primitives to expose:
 
 ## Skill: SolidJS Patterns
 
-When editing SolidJS UI (`apps/desktop/src/**/*.tsx`), consult:
+When editing SolidJS UI (`packages/app/src/**/*.tsx`), consult:
 
 - `.opencode/skill/solidjs-patterns/SKILL.md`
 
@@ -103,10 +102,10 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 
 1. Ensure `main` is green and up to date.
 2. Bump versions (keep these in sync):
-- `apps/desktop/package.json` (`version`)
-- `packages/tauri/package.json` (`version`)
-- `packages/tauri/src-tauri/tauri.conf.json` (`version`)
-- `packages/tauri/src-tauri/Cargo.toml` (`version`)
+- `packages/app/package.json` (`version`)
+- `packages/desktop/package.json` (`version`)
+- `packages/desktop/src-tauri/tauri.conf.json` (`version`)
+- `packages/desktop/src-tauri/Cargo.toml` (`version`)
 
 You can bump all three non-interactively with:
 - `pnpm bump:patch`
