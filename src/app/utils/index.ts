@@ -491,7 +491,8 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
 
       matches.forEach((match) => {
         const name = match.split("/").pop() ?? match;
-        const id = `artifact-${record.id ?? name}`;
+        // Use full path as unique ID to avoid duplicates when multiple tool operations reference the same file
+        const id = `artifact-${match}`;
         if (seen.has(id)) return;
         seen.add(id);
 
