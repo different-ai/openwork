@@ -42,6 +42,18 @@ type StoreState = {
 const sortById = <T extends { id: string }>(list: T[]) =>
   list.slice().sort((a, b) => a.id.localeCompare(b.id));
 
+const sessionActivity = (session: Session) =>
+  session.time?.updated ?? session.time?.created ?? 0;
+
+const sortSessionsByActivity = (list: Session[]) =>
+  list
+    .slice()
+    .sort((a, b) => {
+      const delta = sessionActivity(b) - sessionActivity(a);
+      if (delta !== 0) return delta;
+      return a.id.localeCompare(b.id);
+    });
+
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
   sessionID: part.sessionID,
@@ -59,10 +71,10 @@ const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
 
 const upsertSession = (list: Session[], next: Session) => {
   const index = list.findIndex((session) => session.id === next.id);
-  if (index === -1) return sortById([...list, next]);
+  if (index === -1) return sortSessionsByActivity([...list, next]);
   const copy = list.slice();
   copy[index] = next;
-  return copy;
+  return sortSessionsByActivity(copy);
 };
 
 const removeSession = (list: Session[], sessionID: string) => list.filter((session) => session.id !== sessionID);
@@ -168,7 +180,18 @@ export function createSessionStore(options: {
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
-    setStore("sessions", reconcile(sortById(filtered), { key: "id" }));
+    setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
+  }
+
+  async function renameSession(sessionID: string, title: string) {
+    const c = options.client();
+    if (!c) return;
+    const trimmed = title.trim();
+    if (!trimmed) {
+      throw new Error("Session name is required");
+    }
+    const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
+    setStore("sessions", (current) => upsertSession(current, next));
   }
 
   async function refreshPendingPermissions() {
@@ -299,7 +322,7 @@ export function createSessionStore(options: {
   }
 
   const setSessions = (next: Session[]) => {
-    setStore("sessions", reconcile(sortById(next), { key: "id" }));
+    setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
   };
 
   const setSessionStatusById = (next: Record<string, string>) => {
@@ -597,6 +620,7 @@ export function createSessionStore(options: {
     loadSessions,
     refreshPendingPermissions,
     selectSession,
+    renameSession,
     respondPermission,
     setSessions,
     setSessionStatusById,

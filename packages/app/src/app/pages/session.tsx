@@ -81,6 +81,7 @@ export type SessionViewProps = {
   safeStringify: (value: unknown) => string;
   error: string | null;
   sessionStatus: string;
+  renameSession: (sessionId: string, title: string) => Promise<void> | void;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -300,6 +301,15 @@ export default function SessionView(props: SessionViewProps) {
     queueMicrotask(syncPromptHeight);
   };
 
+  const extractCommandArgs = (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed.startsWith("/")) return "";
+    const body = trimmed.slice(1).trim();
+    const spaceIndex = body.indexOf(" ");
+    if (spaceIndex === -1) return "";
+    return body.slice(spaceIndex + 1).trim();
+  };
+
   const commandList = createMemo(() => [
     {
       id: "models",
@@ -311,11 +321,38 @@ export default function SessionView(props: SessionViewProps) {
       },
     },
     {
+      id: "rename",
+      label: "Rename",
+      description: "Rename this session",
+      run: async () => {
+        const sessionId = props.selectedSessionId;
+        if (!sessionId) {
+          setCommandToast("No session selected");
+          return;
+        }
+
+        const nextTitle = extractCommandArgs(props.prompt);
+        if (!nextTitle) {
+          setCommandToast("Usage: /rename <title>");
+          return;
+        }
+
+        try {
+          await props.renameSession(sessionId, nextTitle);
+          setCommandToast("Session renamed");
+          clearPrompt();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Rename failed";
+          setCommandToast(message);
+        }
+      },
+    },
+    {
       id: "help",
       label: "Help",
       description: "Show available commands",
       run: () => {
-        setCommandToast("Commands: /models, /help, /clear");
+        setCommandToast("Commands: /models, /rename, /help, /clear");
         clearPrompt();
       },
     },

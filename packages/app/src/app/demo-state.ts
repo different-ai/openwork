@@ -237,7 +237,12 @@ export function createDemoState(options: {
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
 
   const activeSessionId = createMemo(() => (isDemoMode() ? demoSelectedSessionId() : options.selectedSessionId()));
-  const activeSessions = createMemo(() => (isDemoMode() ? demoSessions() : options.sessions()));
+  const activeSessions = createMemo(() => {
+    if (!isDemoMode()) return options.sessions();
+    return demoSessions()
+      .slice()
+      .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0) || a.id.localeCompare(b.id));
+  });
   const activeSessionStatusById = createMemo(() =>
     isDemoMode() ? demoSessionStatusById() : options.sessionStatusById(),
   );
@@ -248,6 +253,22 @@ export function createDemoState(options: {
 
   const selectDemoSession = (sessionId: string) => {
     setDemoSelectedSessionId(sessionId);
+  };
+
+  const renameDemoSession = (sessionId: string, title: string) => {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    setDemoSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              title: trimmed,
+              time: { ...session.time, updated: Date.now() },
+            }
+          : session,
+      ),
+    );
   };
 
   createEffect(() => {
@@ -271,6 +292,7 @@ export function createDemoState(options: {
     activeArtifacts,
     activeWorkingFiles,
     selectDemoSession,
+    renameDemoSession,
     setDemoSelectedSessionId,
     demoSelectedSessionId,
   };

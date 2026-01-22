@@ -195,6 +195,7 @@ export default function App() {
     loadSessions,
     refreshPendingPermissions,
     selectSession,
+    renameSession,
     respondPermission,
     setSessions,
     setSessionStatusById,
@@ -227,6 +228,7 @@ export default function App() {
     activeArtifacts,
     activeWorkingFiles,
     selectDemoSession,
+    renameDemoSession,
   } = demoState;
 
   const [prompt, setPrompt] = createSignal("");
@@ -287,6 +289,20 @@ export default function App() {
       setBusyLabel(null);
       setBusyStartedAt(null);
     }
+  }
+
+  async function renameSessionTitle(sessionID: string, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) {
+      throw new Error("Session name is required");
+    }
+
+    if (isDemoMode()) {
+      renameDemoSession(sessionID, trimmed);
+      return;
+    }
+
+    await renameSession(sessionID, trimmed);
   }
 
 
@@ -1790,6 +1806,7 @@ export default function App() {
                 }
               }}
               sessionStatus={selectedSessionStatus()}
+              renameSession={renameSessionTitle}
             error={error()}
           />
         </Match>
