@@ -1,0 +1,100 @@
+name: Build Desktop (Linux)
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Tauri Build (Linux)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.27.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libglib2.0-dev \
+            libayatana-appindicator3-dev \
+            libsoup-3.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            librsvg2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Create CI Tauri config (no updater artifacts)
+        run: |
+          node -e "const fs=require('fs'); const configPath='packages/tauri/src-tauri/tauri.conf.json'; const ciPath='packages/tauri/src-tauri/tauri.conf.ci.json'; const config=JSON.parse(fs.readFileSync(configPath,'utf8')); config.bundle={...config.bundle, createUpdaterArtifacts:false}; fs.writeFileSync(ciPath, JSON.stringify(config, null, 2));"
+
+      - name: Download OpenCode sidecar
+        shell: bash
+        env:
+          OPENCODE_VERSION: 1.1.25
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          version="${OPENCODE_VERSION}"
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            latest=$(curl -fsSL \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              https://api.github.com/repos/anomalyco/opencode/releases/latest \
+              | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
+            if [ -n "$latest" ]; then
+              version="$latest"
+            fi
+          fi
+
+          opencode_asset="opencode-linux-x64-baseline.tar.gz"
+          url="https://github.com/anomalyco/opencode/releases/download/v${version}/${opencode_asset}"
+          tmp_dir="$RUNNER_TEMP/opencode"
+          extract_dir="$tmp_dir/extracted"
+          rm -rf "$tmp_dir"
+          mkdir -p "$extract_dir"
+          curl -fsSL -o "$tmp_dir/$opencode_asset" "$url"
+          tar -xzf "$tmp_dir/$opencode_asset" -C "$extract_dir"
+
+          if [ -f "$extract_dir/opencode" ]; then
+            bin_path="$extract_dir/opencode"
+          else
+            echo "OpenCode binary not found in archive"
+            ls -la "$extract_dir"
+            exit 1
+          fi
+
+          target_name="opencode-x86_64-unknown-linux-gnu"
+          mkdir -p packages/tauri/src-tauri/sidecars
+          cp "$bin_path" "packages/tauri/src-tauri/sidecars/${target_name}"
+          chmod 755 "packages/tauri/src-tauri/sidecars/${target_name}"
+
+      - name: Run Rust tests (engine + sidecar resolution)
+        run: cargo test --manifest-path packages/tauri/src-tauri/Cargo.toml --locked
+
+      - name: Build desktop app
+        run: pnpm --filter @different-ai/openwork exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb
