@@ -213,7 +213,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <CheckCircle2 size={24} class="text-green-11" />
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Already Connected</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.already_connected_title")}</p>
                     <p class="text-xs text-gray-11">
                         {translate("mcp.auth.already_connected_description", { server: serverName() })}
                     </p>
@@ -260,7 +260,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     1
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Opening your browser</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step1_title")}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step1_description", { server: serverName() })}
                     </p>
@@ -272,7 +272,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     2
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Authorize OpenWork</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step2_title")}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step2_description")}
                     </p>
@@ -284,7 +284,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     3
                   </div>
                   <div>
-                    <p class="text-sm font-medium text-gray-12">Return here when you're done</p>
+                    <p class="text-sm font-medium text-gray-12">{translate("mcp.auth.step3_title")}</p>
                     <p class="text-xs text-gray-10 mt-1">
                         {translate("mcp.auth.step3_description")}
                     </p>

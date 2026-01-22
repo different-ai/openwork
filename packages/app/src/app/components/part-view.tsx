@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch } from "solid-js";
 
+import { t } from "../../i18n";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 
 type Props = {
@@ -169,7 +170,7 @@ export default function PartView(props: Props) {
           }
         >
           <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Thinking</summary>
+            <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{t("part.thinking")}</summary>
             <pre
               class={`mt-2 whitespace-pre-wrap break-words text-xs ${
                 tone() === "dark" ? "text-gray-1" : "text-gray-12"
@@ -188,7 +189,7 @@ export default function PartView(props: Props) {
               <div
                 class={`text-xs font-medium ${tone() === "dark" ? "text-gray-1" : "text-gray-12"}`.trim()}
               >
-                Tool · {String((p() as any).tool)}
+                {t("part.tool_label")} · {String((p() as any).tool)}
               </div>
               <div
                 class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
@@ -227,7 +228,7 @@ export default function PartView(props: Props) {
 
             <Show when={showToolOutput() && (p() as any).state?.input != null}>
               <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
-                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>{t("part.input")}</summary>
                 <pre
                   class={`mt-2 whitespace-pre-wrap break-words text-xs ${
                     tone() === "dark" ? "text-gray-12" : "text-gray-1"
