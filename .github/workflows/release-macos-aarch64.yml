@@ -313,9 +313,9 @@ jobs:
             target_name="${target_name}.exe"
           fi
 
-          mkdir -p packages/desktop/src-tauri/sidecars
-          cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
+          mkdir -p packages/tauri/src-tauri/sidecars
+          cp "$bin_path" "packages/tauri/src-tauri/sidecars/${target_name}"
+          chmod 755 "packages/tauri/src-tauri/sidecars/${target_name}"
 
       - name: Write notary API key
         if: matrix.os_type == 'macos'
@@ -355,7 +355,7 @@ jobs:
           releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.draft == 'true' }}
           prerelease: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.prerelease == 'true' }}
-          projectPath: packages/desktop
+          projectPath: packages/tauri
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3

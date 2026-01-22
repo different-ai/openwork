@@ -69,7 +69,7 @@ OpenWork is designed to be:
 pnpm install
 ```
 
-OpenWork now lives in `packages/desktop`. Root scripts forward to that package.
+OpenWork now lives in `apps/desktop` (UI) and `packages/tauri` (desktop shell).
 
 ### Run (Desktop)
 
@@ -80,7 +80,7 @@ pnpm dev
 ### Run (Web UI only)
 
 ```bash
-pnpm dev:web
+pnpm dev:ui
 ```
 
 ## Architecture (high-level)
@@ -99,7 +99,7 @@ pnpm dev:web
 
 The folder picker uses the Tauri dialog plugin.
 Capability permissions are defined in:
-- `packages/desktop/src-tauri/capabilities/default.json`
+- `packages/tauri/src-tauri/capabilities/default.json`
 
 ## OpenPackage Notes
 
@@ -130,7 +130,7 @@ You can still edit `opencode.json` manually; OpenWork uses the same format as th
 
 ```bash
 pnpm typecheck
-pnpm build:web
+pnpm build:ui
 pnpm test:e2e
 ```
 
@@ -144,7 +144,7 @@ pnpm test:e2e
 - Review `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
-- Add new PRDs to `packages/desktop/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+- Add new PRDs to `apps/desktop/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## License
 

@@ -1,11 +1,11 @@
 {
-  "name": "@different-ai/openwork",
+  "name": "@different-ai/openwork-ui",
   "private": true,
   "version": "0.3.0",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev",
-    "build": "tauri build",
+    "dev": "vite",
+    "build": "vite build",
     "dev:web": "vite",
     "build:web": "vite build",
     "preview": "vite preview",
@@ -40,7 +40,6 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
-    "@tauri-apps/cli": "^2.0.0",
     "tailwindcss": "^4.1.18",
     "typescript": "^5.6.3",
     "vite": "^6.0.1",

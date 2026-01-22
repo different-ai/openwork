@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const ROOT = process.cwd();
+const REPO_ROOT = path.resolve(ROOT, "../..");
 const args = process.argv.slice(2);
 
 const usage = () => {
@@ -53,16 +54,20 @@ const targetVersion = async () => {
 };
 
 const updatePackageJson = async (nextVersion) => {
-  const filePath = path.join(ROOT, "package.json");
-  const data = await readJson(filePath);
-  data.version = nextVersion;
+  const uiPath = path.join(ROOT, "package.json");
+  const tauriPath = path.join(REPO_ROOT, "packages", "tauri", "package.json");
+  const uiData = await readJson(uiPath);
+  const tauriData = await readJson(tauriPath);
+  uiData.version = nextVersion;
+  tauriData.version = nextVersion;
   if (!isDryRun) {
-    await writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
+    await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
+    await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
   }
 };
 
 const updateCargoToml = async (nextVersion) => {
-  const filePath = path.join(ROOT, "src-tauri", "Cargo.toml");
+  const filePath = path.join(REPO_ROOT, "packages", "tauri", "src-tauri", "Cargo.toml");
   const raw = await readFile(filePath, "utf8");
   const updated = raw.replace(/\bversion\s*=\s*"[^"]+"/m, `version = "${nextVersion}"`);
   if (!isDryRun) {
@@ -71,7 +76,7 @@ const updateCargoToml = async (nextVersion) => {
 };
 
 const updateTauriConfig = async (nextVersion) => {
-  const filePath = path.join(ROOT, "src-tauri", "tauri.conf.json");
+  const filePath = path.join(REPO_ROOT, "packages", "tauri", "src-tauri", "tauri.conf.json");
   const data = JSON.parse(await readFile(filePath, "utf8"));
   data.version = nextVersion;
   if (!isDryRun) {
@@ -99,9 +104,10 @@ const main = async () => {
         version: nextVersion,
         dryRun: isDryRun,
         files: [
-          "package.json",
-          "src-tauri/Cargo.toml",
-          "src-tauri/tauri.conf.json",
+          "apps/desktop/package.json",
+          "packages/tauri/package.json",
+          "packages/tauri/src-tauri/Cargo.toml",
+          "packages/tauri/src-tauri/tauri.conf.json",
         ],
       },
       null,
