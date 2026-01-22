@@ -60,7 +60,8 @@ OpenWork is designed to be:
 ### Requirements
 
 - Node.js + `pnpm`
-- Rust toolchain (for Tauri): `cargo`, `rustc`
+- Rust toolchain (for Tauri): install via `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+- Tauri CLI: `cargo install tauri-cli`
 - OpenCode CLI installed and available on PATH: `opencode`
 
 ### Install
@@ -129,7 +130,10 @@ You can still edit `opencode.json` manually; OpenWork uses the same format as th
 ## Useful Commands
 
 ```bash
+pnpm dev
+pnpm dev:ui
 pnpm typecheck
+pnpm build
 pnpm build:ui
 pnpm test:e2e
 ```
