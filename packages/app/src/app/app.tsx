@@ -18,6 +18,7 @@ import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import TemplateModal from "./components/template-modal";
 import WorkspacePicker from "./components/workspace-picker";
+import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
@@ -1680,6 +1681,36 @@ export default function App() {
     return seconds > 0 ? `${label} · ${seconds}s` : label;
   });
 
+  const workspaceSwitchWorkspace = createMemo(() => {
+    const switchingId = workspaceStore.connectingWorkspaceId();
+    if (switchingId) {
+      return workspaceStore.workspaces().find((ws) => ws.id === switchingId) ?? activeWorkspaceDisplay();
+    }
+    return activeWorkspaceDisplay();
+  });
+
+  const workspaceSwitchOpen = createMemo(() => {
+    if (workspaceStore.connectingWorkspaceId()) return true;
+    if (!busy() || !busyLabel()) return false;
+    const label = busyLabel();
+    return (
+      label === "status.connecting" ||
+      label === "status.starting_engine" ||
+      label === "status.restarting_engine"
+    );
+  });
+
+  const workspaceSwitchStatusKey = createMemo(() => {
+    const label = busyLabel();
+    if (label === "status.connecting") return "workspace.switching_status_connecting";
+    if (label === "status.starting_engine" || label === "status.restarting_engine") {
+      return "workspace.switching_status_preparing";
+    }
+    if (label === "status.loading_session") return "workspace.switching_status_loading";
+    if (workspaceStore.connectingWorkspaceId()) return "workspace.switching_status_loading";
+    return "workspace.switching_status_preparing";
+  });
+
   const localHostLabel = createMemo(() => {
     const info = engine();
     if (info?.hostname && info?.port) {
@@ -1991,6 +2022,12 @@ export default function App() {
           <DashboardView {...dashboardProps()} />
         </Match>
       </Switch>
+
+      <WorkspaceSwitchOverlay
+        open={workspaceSwitchOpen()}
+        workspace={workspaceSwitchWorkspace()}
+        statusKey={workspaceSwitchStatusKey()}
+      />
 
       <ModelPickerModal
         open={modelPickerOpen()}
