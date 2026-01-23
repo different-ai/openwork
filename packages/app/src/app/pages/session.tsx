@@ -192,13 +192,25 @@ export default function SessionView(props: SessionViewProps) {
   const [messageLines, setMessageLines] = createSignal<{ id: string; role: "user" | "assistant"; top: number; height: number }[]>([]);
   const [activeMessageId, setActiveMessageId] = createSignal<string | null>(null);
 
+  let copyTimeout: number | undefined;
+  let messageLinesRafId: number | null = null;
+  const pendingArtifactRafIds = new Set<number>();
+
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
-    window.addEventListener("resize", updateMessageLines);
+    window.addEventListener("resize", handleResize);
   });
 
   onCleanup(() => {
-    window.removeEventListener("resize", updateMessageLines);
+    window.removeEventListener("resize", handleResize);
+    if (copyTimeout !== undefined) {
+      window.clearTimeout(copyTimeout);
+    }
+    if (messageLinesRafId !== null) {
+      cancelAnimationFrame(messageLinesRafId);
+    }
+    pendingArtifactRafIds.forEach((id) => cancelAnimationFrame(id));
+    pendingArtifactRafIds.clear();
   });
 
   const updateMessageLines = () => {
@@ -252,16 +264,27 @@ export default function SessionView(props: SessionViewProps) {
     setActiveMessageId(closestId);
   };
 
-  // Debounced update on scroll
+  const scheduleMessageLinesUpdate = () => {
+    if (messageLinesRafId !== null) {
+      cancelAnimationFrame(messageLinesRafId);
+    }
+    messageLinesRafId = requestAnimationFrame(() => {
+      updateMessageLines();
+      messageLinesRafId = null;
+    });
+  };
+
   const handleScroll = () => {
-    requestAnimationFrame(updateMessageLines);
+    scheduleMessageLinesUpdate();
+  };
+
+  const handleResize = () => {
+    scheduleMessageLinesUpdate();
   };
 
   createEffect(() => {
-    // Re-calc lines when messages change
     props.messages.length;
-    // Wait for render
-    setTimeout(updateMessageLines, 100);
+    scheduleMessageLinesUpdate();
   });
 
   const triggerFlyout = (
@@ -315,11 +338,21 @@ export default function SessionView(props: SessionViewProps) {
     const prev = prevArtifactCount();
     if (count > prev && prev > 0) {
       const last = artifacts[artifacts.length - 1];
-      // Source: Find the artifact card
-      setTimeout(() => {
-         const card = document.querySelector(`[data-artifact-id="${last.id}"]`);
-         triggerFlyout(card, "sidebar-artifacts", last.name, "file");
-      }, 100);
+      const scheduleAttempt = (attempts: number) => {
+        const rafId = requestAnimationFrame(() => {
+          pendingArtifactRafIds.delete(rafId);
+          const card = document.querySelector(`[data-artifact-id="${last.id}"]`);
+          if (card) {
+            triggerFlyout(card, "sidebar-artifacts", last.name, "file");
+            return;
+          }
+          if (attempts > 0) {
+            scheduleAttempt(attempts - 1);
+          }
+        });
+        pendingArtifactRafIds.add(rafId);
+      };
+      scheduleAttempt(3);
     }
     setPrevArtifactCount(count);
   });
@@ -343,7 +376,13 @@ export default function SessionView(props: SessionViewProps) {
     try {
       await navigator.clipboard.writeText(text);
       setCopyingId(id);
-      setTimeout(() => setCopyingId(null), 2000);
+      if (copyTimeout !== undefined) {
+        window.clearTimeout(copyTimeout);
+      }
+      copyTimeout = window.setTimeout(() => {
+        setCopyingId(null);
+        copyTimeout = undefined;
+      }, 2000);
       setCommandToast("Copied to clipboard");
     } catch {
       setCommandToast("Failed to copy");
@@ -1286,9 +1325,12 @@ export default function SessionView(props: SessionViewProps) {
 
           <div class="hidden lg:flex w-5 bg-transparent flex-col items-center justify-start relative group/rail z-10 overflow-hidden py-1">
             <For each={messageLines()}>
-              {(line) => (
-                <div
-                  class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer
+              {(line, idx) => (
+                <button
+                  type="button"
+                  aria-label={`${line.role === "user" ? "User" : "Agent"} message ${idx() + 1}`}
+                  aria-current={line.id === activeMessageId() ? "true" : undefined}
+                  class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer appearance-none border-none p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-6/70 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-1
                     ${
                       line.id === activeMessageId()
                         ? "w-4 h-[3px] opacity-100 z-20 shadow-[0_0_8px_rgba(235,0,41,0.6)] dark:shadow-[0_0_8px_rgba(255,255,255,0.6)]"
@@ -1306,9 +1348,8 @@ export default function SessionView(props: SessionViewProps) {
                     el?.scrollIntoView({ behavior: "smooth", block: "center" });
                   }}
                 >
-                  {/* Invisible hit area for easier clicking */}
-                  <div class="absolute -inset-x-2 -inset-y-1 bg-transparent" />
-                </div>
+                  <span aria-hidden="true" class="absolute -inset-x-2 -inset-y-1" />
+                </button>
               )}
             </For>
             <style>
