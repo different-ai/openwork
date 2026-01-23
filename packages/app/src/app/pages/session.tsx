@@ -432,15 +432,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandList = createMemo(() => [
     {
-      id: "model",
-      label: "Model",
-      description: "Choose a model",
-      run: () => {
-        props.openSessionModelPicker();
-        clearPrompt();
-      },
-    },
-    {
       id: "models",
       label: "Models",
       description: "Choose a model",
@@ -452,11 +443,16 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "connect",
       label: "Connect",
-      description: "Connect to a server",
-      run: () => {
-        props.openConnect();
-        setCommandToast("Opening connection settings");
-        clearPrompt();
+      description: "Connect a provider",
+      run: async () => {
+        try {
+          await props.openProviderAuthModal();
+          setCommandToast("Select a provider to connect");
+          clearPrompt();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Connect failed";
+          setCommandToast(message);
+        }
       },
     },
     {
@@ -541,8 +537,8 @@ export default function SessionView(props: SessionViewProps) {
       },
     },
     {
-      id: "save",
-      label: "Save",
+      id: "export",
+      label: "Export",
       description: "Export session JSON",
       run: async () => {
         const sessionId = requireSessionId();
@@ -550,10 +546,10 @@ export default function SessionView(props: SessionViewProps) {
 
         try {
           const fileName = await props.saveSession(sessionId);
-          setCommandToast(`Saved ${fileName}`);
+          setCommandToast(`Exported ${fileName}`);
           clearPrompt();
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Save failed";
+          const message = error instanceof Error ? error.message : "Export failed";
           setCommandToast(message);
         }
       },
@@ -572,7 +568,7 @@ export default function SessionView(props: SessionViewProps) {
       label: "Help",
       description: "Show available commands",
       run: () => {
-        setCommandToast("Commands: /model, /models, /connect, /auth, /agent, /save, /rename, /help, /clear");
+        setCommandToast("Commands: /models, /connect, /auth, /agent, /export, /rename, /help, /clear");
         clearPrompt();
       },
     },
