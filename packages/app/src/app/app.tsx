@@ -1971,6 +1971,7 @@ export default function App() {
               listAgents={listAgents}
               setSessionAgent={setSessionAgent}
               saveSession={saveSessionExport}
+              sessionStatusById={activeSessionStatusById()}
               onTryNotionPrompt={() => {
                 setPrompt("setup my crm");
                 setTryNotionPromptVisible(false);

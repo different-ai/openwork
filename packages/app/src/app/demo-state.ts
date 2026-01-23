@@ -28,6 +28,7 @@ export function createDemoState(options: {
     name: "Demo",
     path: "~/OpenWork Demo",
     preset: "starter",
+    workspaceType: "local",
   });
 
   const isDemoMode = createMemo(() => demoMode());
@@ -106,6 +107,7 @@ export function createDemoState(options: {
         name: "Home",
         path: "~/OpenWork Demo",
         preset: "starter",
+        workspaceType: "local",
       });
       setDemoSessions([baseSession]);
       setDemoSessionStatusById({ [baseSession.id]: "completed" });
@@ -140,6 +142,7 @@ export function createDemoState(options: {
         name: "Finance",
         path: "~/OpenWork Demo/finance",
         preset: "starter",
+        workspaceType: "local",
       });
       setDemoSessions([{ ...baseSession, title: "Weekly finance recap" }]);
       setDemoSessionStatusById({ [baseSession.id]: "completed" });
@@ -183,6 +186,7 @@ export function createDemoState(options: {
         name: "Notes",
         path: "~/OpenWork Demo/notes",
         preset: "starter",
+        workspaceType: "local",
       });
       setDemoSessions([{ ...baseSession, title: "Notes summary" }]);
       setDemoSessionStatusById({ [baseSession.id]: "completed" });
@@ -217,6 +221,7 @@ export function createDemoState(options: {
       name: "Home",
       path: "~/OpenWork Demo/home",
       preset: "starter",
+      workspaceType: "local",
     });
     setDemoSessions([{ ...baseSession, title: "Grocery order" }]);
     setDemoSessionStatusById({ [baseSession.id]: "completed" });
