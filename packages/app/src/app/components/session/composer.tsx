@@ -119,11 +119,12 @@ export default function Composer(props: ComposerProps) {
     <div class="p-4 border-t border-gray-6 bg-gray-1 sticky bottom-0 z-20">
       <div class="max-w-2xl mx-auto">
         <div
-          class={`bg-gray-2 border border-gray-6 rounded-3xl overflow-visible transition-all shadow-2xl relative group/input ${
+          class={`bg-gray-2 border border-gray-6 rounded-3xl overflow-visible transition-all shadow-2xl relative group/input cursor-text ${
             commandMenuOpen()
               ? "rounded-t-none border-t-transparent"
               : "focus-within:ring-1 focus-within:ring-gray-7"
           }`}
+          onClick={() => textareaRef?.focus()}
         >
           <Show when={commandMenuOpen()}>
             <div class="absolute bottom-full left-[-1px] right-[-1px] z-30">
@@ -216,14 +217,14 @@ export default function Composer(props: ComposerProps) {
                     }, 100);
                   }}
                   placeholder="Ask OpenWork..."
-                  class="flex-1 bg-transparent border-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px]"
+                  class="flex-1 bg-transparent border-none outline-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px]"
                 />
 
                 <button
                   disabled={!props.prompt.trim() || props.busy}
                   onClick={props.onSend}
-                  class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
-                  title="Run"
+                  class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 disabled:pointer-events-none shadow-lg shrink-0 flex items-center justify-center"
+                  title={props.prompt.trim() ? "Run" : undefined}
                 >
                   <ArrowRight size={18} />
                 </button>
