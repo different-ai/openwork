@@ -649,7 +649,7 @@ export default function App() {
     openTemplateModal,
     saveTemplate,
     deleteTemplate,
-    runTemplate,
+    applyTemplate,
     loadWorkspaceTemplates,
   } = templateState;
 
@@ -1853,7 +1853,7 @@ export default function App() {
       setTemplateDraftScope(scope);
     },
     openTemplateModal,
-    runTemplate,
+    applyTemplate,
     deleteTemplate,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>

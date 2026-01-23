@@ -153,7 +153,7 @@ export default {
   "templates.empty_state": "初始模板将显示在这里。创建一个或从会话保存。",
   "templates.workspace": "工作区",
   "templates.global": "全局",
-  "templates.run": "运行",
+  "templates.apply": "应用",
   "templates.modal_title": "保存模板",
   "templates.modal_description": "一键重用工作流程。",
   "templates.title_label": "标题",

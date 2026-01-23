@@ -16,7 +16,7 @@ export type TemplatesViewProps = {
   setTemplateDraftScope: (value: "workspace" | "global") => void;
   openTemplateModal: () => void;
   resetTemplateDraft?: (scope?: "workspace" | "global") => void;
-  runTemplate: (template: WorkspaceTemplate) => void;
+  applyTemplate: (template: WorkspaceTemplate) => void;
   deleteTemplate: (templateId: string) => void;
 };
 
@@ -68,9 +68,9 @@ export default function TemplatesView(props: TemplatesViewProps) {
                       <div class="mt-2 text-xs text-gray-7 font-mono">{formatRelativeTime(t.createdAt)}</div>
                     </div>
                     <div class="shrink-0 flex gap-2">
-                      <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>
+                      <Button variant="secondary" onClick={() => props.applyTemplate(t)} disabled={props.busy}>
                         <Play size={16} />
-                        Run
+                        Apply
                       </Button>
                       <Button variant="danger" onClick={() => props.deleteTemplate(t.id)} disabled={props.busy}>
                         <Trash2 size={16} />
@@ -97,9 +97,9 @@ export default function TemplatesView(props: TemplatesViewProps) {
                       <div class="mt-2 text-xs text-gray-7 font-mono">{formatRelativeTime(t.createdAt)}</div>
                     </div>
                     <div class="shrink-0 flex gap-2">
-                      <Button variant="secondary" onClick={() => props.runTemplate(t)} disabled={props.busy}>
+                      <Button variant="secondary" onClick={() => props.applyTemplate(t)} disabled={props.busy}>
                         <Play size={16} />
-                        Run
+                        Apply
                       </Button>
                       <Button variant="danger" onClick={() => props.deleteTemplate(t.id)} disabled={props.busy}>
                         <Trash2 size={16} />

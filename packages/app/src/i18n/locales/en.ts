@@ -152,7 +152,7 @@ export default {
   "templates.empty_state": "Starter templates will appear here. Create one or save from a session.",
   "templates.workspace": "Workspace",
   "templates.global": "Global",
-  "templates.run": "Run",
+  "templates.apply": "Apply",
   "templates.modal_title": "Save Template",
   "templates.modal_description": "Reuse a workflow with one tap.",
   "templates.title_label": "Title",

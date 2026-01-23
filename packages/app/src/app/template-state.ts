@@ -143,7 +143,8 @@ export function createTemplateState(options: {
     setGlobalTemplatesLoaded(true);
   }
 
-  async function runTemplate(template: WorkspaceTemplate) {
+  // Apply a template to create a new session
+  async function applyTemplate(template: WorkspaceTemplate) {
     if (options.isDemoMode()) {
       options.setView("session");
       return;
@@ -154,6 +155,9 @@ export function createTemplateState(options: {
 
     // Check autoRun setting (default to true for backwards compatibility)
     const shouldAutoRun = template.autoRun !== false;
+
+    // Trim the prompt before using
+    const trimmedPrompt = template.prompt.trim();
 
     options.setBusy(true);
     options.setError(null);
@@ -173,7 +177,7 @@ export function createTemplateState(options: {
           sessionID: session.id,
           model,
           variant: options.modelVariant() ?? undefined,
-          parts: [{ type: "text", text: template.prompt }],
+          parts: [{ type: "text", text: trimmedPrompt }],
         });
 
         options.setSessionModelById((current) => ({
@@ -182,7 +186,7 @@ export function createTemplateState(options: {
         }));
       } else {
         // Don't auto-run: populate the prompt input and let user send manually
-        window.dispatchEvent(new CustomEvent("openwork:setPrompt", { detail: template.prompt }));
+        window.dispatchEvent(new CustomEvent("openwork:setPrompt", { detail: trimmedPrompt }));
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
@@ -350,7 +354,7 @@ export function createTemplateState(options: {
     openTemplateModal,
     saveTemplate,
     deleteTemplate,
-    runTemplate,
+    applyTemplate,
     loadWorkspaceTemplates,
   };
 }
