@@ -189,9 +189,78 @@ export default function SessionView(props: SessionViewProps) {
   const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
+  const [messageLines, setMessageLines] = createSignal<{ id: string; role: "user" | "assistant"; top: number; height: number }[]>([]);
+  const [activeMessageId, setActiveMessageId] = createSignal<string | null>(null);
 
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
+    window.addEventListener("resize", updateMessageLines);
+  });
+
+  onCleanup(() => {
+    window.removeEventListener("resize", updateMessageLines);
+  });
+
+  const updateMessageLines = () => {
+    if (!chatContainerEl) return;
+    const containerRect = chatContainerEl.getBoundingClientRect();
+    const scrollTop = chatContainerEl.scrollTop;
+    
+    // Find all message groups (bubbles)
+    const elements = Array.from(chatContainerEl.querySelectorAll('[data-message-role]'));
+    const lines = elements.map(el => {
+      const rect = el.getBoundingClientRect();
+      // Calculate relative top position inside the scrollable area
+      // This maps the message vertical position to the container height proportionally? 
+      // Actually for a scrollbar-like map, we need ratio:
+      
+      const relativeTop = rect.top - containerRect.top + scrollTop;
+      const scrollHeight = chatContainerEl!.scrollHeight;
+      const clientHeight = chatContainerEl!.clientHeight;
+      
+      // Map content position (0 to scrollHeight) to viewport position (0 to clientHeight)
+      // position = (relativeTop / scrollHeight) * clientHeight
+      // But we want it fixed? No, "minimap" style usually maps entire scrollHeight to viewport height.
+      
+      const mapTop = (relativeTop / scrollHeight) * clientHeight;
+      const mapHeight = Math.max(2, (rect.height / scrollHeight) * clientHeight);
+
+      return {
+        id: el.getAttribute('data-message-id') || "",
+        role: el.getAttribute('data-message-role') as "user" | "assistant",
+        top: mapTop,
+        height: mapHeight
+      };
+    });
+    
+    setMessageLines(lines);
+
+    // Update active message based on center
+    const center = containerRect.top + containerRect.height / 2;
+    let closestId = null;
+    let minDist = Infinity;
+    
+    elements.forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const dist = Math.abs((rect.top + rect.height / 2) - center);
+      if (dist < minDist) {
+        minDist = dist;
+        closestId = el.getAttribute('data-message-id');
+      }
+    });
+    setActiveMessageId(closestId);
+  };
+
+  // Debounced update on scroll
+  const handleScroll = () => {
+    requestAnimationFrame(updateMessageLines);
+  };
+
+  createEffect(() => {
+    // Re-calc lines when messages change
+    props.messages.length;
+    // Wait for render
+    setTimeout(updateMessageLines, 100);
   });
 
   const triggerFlyout = (
@@ -995,6 +1064,7 @@ export default function SessionView(props: SessionViewProps) {
           <div
             class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth relative"
             ref={(el) => (chatContainerEl = el)}
+            onScroll={handleScroll}
           >
             <div class="max-w-2xl mx-auto space-y-6 pb-32">
               <Show when={props.messages.length === 0}>
@@ -1040,6 +1110,7 @@ export default function SessionView(props: SessionViewProps) {
                       <div
                         class={`flex group ${isUser() ? "justify-end" : "justify-start"}`.trim()}
                         data-message-role={isUser() ? "user" : "assistant"}
+                        data-message-id={messageId()}
                       >
                         <div
                           class={`w-full relative ${
@@ -1201,17 +1272,41 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
 
-          <div class="hidden lg:flex w-3 bg-gray-1 border-l border-gray-6 flex-col items-center justify-center gap-3 select-none z-10">
-            <button
-              class="w-1.5 h-16 rounded-full bg-gray-12 dark:bg-gray-1 hover:w-2 transition-all cursor-pointer opacity-40 hover:opacity-100"
-              title="Next Agent"
-              onClick={() => jumpToRole("down", "assistant")}
-            />
-            <button
-              class="w-1.5 h-16 rounded-full bg-gradient-to-b from-[#F50514] to-[#FF9E0B] hover:w-2 transition-all cursor-pointer opacity-40 hover:opacity-100"
-              title="Next User"
-              onClick={() => jumpToRole("down", "user")}
-            />
+          <div class="hidden lg:flex w-3 bg-gray-1 border-l border-gray-6 flex-col items-center justify-start relative group/rail z-10 overflow-hidden">
+            <For each={messageLines()}>
+              {(line) => (
+                <div
+                  class={`absolute left-1/2 -translate-x-1/2 w-[1.5px] min-h-[4px] rounded-full transition-all duration-300 cursor-pointer
+                    group-hover/rail:w-[2px] group-hover/rail:scale-x-125
+                    ${
+                      line.id === activeMessageId()
+                        ? "w-[2.5px] scale-x-150 opacity-100 z-20"
+                        : "opacity-40 hover:opacity-100"
+                    }
+                  `}
+                  style={{
+                    top: `${line.top}px`,
+                    height: `${line.height}px`,
+                    "background-color": line.role === "user" ? "#EB0029" : "var(--rail-agent-color, currentColor)",
+                  }}
+                  title={line.role === "user" ? "User" : "Agent"}
+                  onClick={() => {
+                    const el = chatContainerEl?.querySelector(`[data-message-id="${line.id}"]`);
+                    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                  }}
+                />
+              )}
+            </For>
+            <style>
+              {`
+                :root { --rail-agent-color: #000; }
+                [data-theme="dark"] { --rail-agent-color: #fff; }
+                
+                .group\\/rail:hover .absolute {
+                   /* subtle scatter effect could go here if simple width change isn't enough */
+                }
+              `}
+            </style>
           </div>
 
           <Show when={artifactToast()}>
