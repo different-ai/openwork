@@ -97,6 +97,7 @@ export type SessionViewProps = {
   listAgents: () => Promise<Agent[]>;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
+  sessionStatusById: Record<string, string>;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -777,8 +778,20 @@ export default function SessionView(props: SessionViewProps) {
                         props.setTab("sessions");
                       }}
                     >
-                      <div class="flex items-center justify-between gap-2">
+                      <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
                         <span class="truncate">{session.title}</span>
+                        <Show when={props.sessionStatusById[session.id] && props.sessionStatusById[session.id] !== "idle"}>
+                          <span class={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
+                            props.sessionStatusById[session.id] === "running"
+                              ? "border-amber-7/50 text-amber-11 bg-amber-2/50"
+                              : "border-gray-7/50 text-gray-10 bg-gray-2/50"
+                          }`}>
+                            <div class={`w-1 h-1 rounded-full ${
+                              props.sessionStatusById[session.id] === "running" ? "bg-amber-9 animate-pulse" : "bg-gray-9"
+                            }`} />
+                            <span class="capitalize">{props.sessionStatusById[session.id]}</span>
+                          </span>
+                        </Show>
                       </div>
                     </button>
                   )}
