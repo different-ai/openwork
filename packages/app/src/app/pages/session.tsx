@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -13,9 +13,11 @@ import type {
 
 import {
   ArrowRight,
+  ArrowUp,
   Check,
   ChevronDown,
   Circle,
+  Copy,
   File,
   FileText,
   Folder,
@@ -100,6 +102,52 @@ export type SessionViewProps = {
   sessionStatusById: Record<string, string>;
 };
 
+function FlyoutItem(props: {
+  item: {
+    id: string;
+    rect: { top: number; left: number; width: number; height: number };
+    targetRect: { top: number; left: number; width: number; height: number };
+    label: string;
+    icon: "file" | "check" | "folder";
+  };
+}) {
+  const [active, setActive] = createSignal(false);
+  onMount(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setActive(true);
+      });
+    });
+  });
+
+  return (
+    <div
+      class="fixed z-[100] pointer-events-none transition-all duration-1000 ease-[cubic-bezier(0.16,1,0.3,1)] flex items-center gap-2 px-3 py-2 rounded-xl bg-gray-12 text-gray-1 shadow-xl border border-gray-11/20"
+      style={{
+        top: `${props.item.rect.top}px`,
+        left: `${props.item.rect.left}px`,
+        transform: active()
+          ? `translate(${props.item.targetRect.left - props.item.rect.left}px, ${
+              props.item.targetRect.top - props.item.rect.top
+            }px) scale(0.3)`
+          : "translate(0, 0) scale(1)",
+        opacity: active() ? 0 : 1,
+      }}
+    >
+      <Show when={props.item.icon === "check"}>
+        <Check size={14} />
+      </Show>
+      <Show when={props.item.icon === "file"}>
+        <FileText size={14} />
+      </Show>
+      <Show when={props.item.icon === "folder"}>
+        <Folder size={14} />
+      </Show>
+      <span class="text-xs font-medium truncate max-w-[120px]">{props.item.label}</span>
+    </div>
+  );
+}
+
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
 
@@ -127,8 +175,149 @@ export default function SessionView(props: SessionViewProps) {
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [copyingId, setCopyingId] = createSignal<string | null>(null);
+
+  type Flyout = {
+    id: string;
+    rect: { top: number; left: number; width: number; height: number };
+    targetRect: { top: number; left: number; width: number; height: number };
+    label: string;
+    icon: "file" | "check" | "folder";
+  };
+  const [flyouts, setFlyouts] = createSignal<Flyout[]>([]);
+  const [prevTodoCount, setPrevTodoCount] = createSignal(0);
+  const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
+  const [prevFileCount, setPrevFileCount] = createSignal(0);
+  const [isInitialLoad, setIsInitialLoad] = createSignal(true);
+
+  onMount(() => {
+    setTimeout(() => setIsInitialLoad(false), 2000);
+  });
+
+  const triggerFlyout = (
+    sourceEl: Element | null,
+    targetId: string,
+    label: string,
+    icon: Flyout["icon"]
+  ) => {
+    if (isInitialLoad() || !sourceEl) return;
+    const targetEl = document.getElementById(targetId);
+    if (!targetEl) return;
+
+    const rect = sourceEl.getBoundingClientRect();
+    const targetRect = targetEl.getBoundingClientRect();
+
+    const id = Math.random().toString(36);
+    setFlyouts((prev) => [
+      ...prev,
+      {
+        id,
+        rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height },
+        targetRect: { top: targetRect.top, left: targetRect.left, width: targetRect.width, height: targetRect.height },
+        label,
+        icon,
+      },
+    ]);
+
+    setTimeout(() => {
+      setFlyouts((prev) => prev.filter((f) => f.id !== id));
+    }, 1000);
+  };
+
+  createEffect(() => {
+    const todos = realTodos();
+    const count = todos.length;
+    const prev = prevTodoCount();
+    if (count > prev && prev > 0) {
+      // New todo added
+      // Source: Try to find the last message or just center screen?
+      // Ideally we find the text part that generated it, but that's hard.
+      // We'll fallback to the chat input or last message.
+      const lastMsg = chatContainerEl?.querySelector('[data-message-role="assistant"]:last-child');
+      triggerFlyout(lastMsg ?? null, "sidebar-progress", "New Task", "check");
+    }
+    setPrevTodoCount(count);
+  });
+
+  createEffect(() => {
+    const artifacts = props.artifacts;
+    const count = artifacts.length;
+    const prev = prevArtifactCount();
+    if (count > prev && prev > 0) {
+      const last = artifacts[artifacts.length - 1];
+      // Source: Find the artifact card
+      setTimeout(() => {
+         const card = document.querySelector(`[data-artifact-id="${last.id}"]`);
+         triggerFlyout(card, "sidebar-artifacts", last.name, "file");
+      }, 100);
+    }
+    setPrevArtifactCount(count);
+  });
+  
+  createEffect(() => {
+     const files = props.workingFiles;
+     const count = files.length;
+     const prev = prevFileCount();
+     if (count > prev && prev > 0) {
+        // Source: Last message
+        const lastMsg = chatContainerEl?.querySelector('[data-message-role="assistant"]:last-child');
+        triggerFlyout(lastMsg ?? null, "sidebar-context", "File Modified", "folder");
+     }
+     setPrevFileCount(count);
+  });
 
   let promptInputEl: HTMLTextAreaElement | undefined;
+  let chatContainerEl: HTMLDivElement | undefined;
+
+  const handleCopy = async (text: string, id: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyingId(id);
+      setTimeout(() => setCopyingId(null), 2000);
+      setCommandToast("Copied to clipboard");
+    } catch {
+      setCommandToast("Failed to copy");
+    }
+  };
+
+  const jumpToRole = (direction: "up" | "down", targetRole: "user" | "assistant") => {
+    if (!chatContainerEl) return;
+    
+    const messages = Array.from(chatContainerEl.querySelectorAll(`[data-message-role="${targetRole}"]`));
+    if (!messages.length) return;
+
+    const containerRect = chatContainerEl.getBoundingClientRect();
+    const currentScroll = chatContainerEl.scrollTop;
+    
+    // Find current visible message or closest one
+    // We want the one that is strictly below top edge for "down" or strictly above for "up"
+    // Or simpler: find all relative positions
+    
+    const candidates = messages.map(el => {
+      const rect = el.getBoundingClientRect();
+      // Relative to container top
+      const top = rect.top - containerRect.top + currentScroll;
+      return { el, top };
+    }).sort((a, b) => a.top - b.top);
+
+    const threshold = currentScroll + (direction === "down" ? 10 : -10);
+
+    let target;
+    if (direction === "down") {
+      target = candidates.find(c => c.top > threshold);
+    } else {
+      target = candidates.reverse().find(c => c.top < threshold);
+    }
+
+    if (target) {
+      target.el.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (direction === "down" && candidates.length) {
+       // If no next one, maybe wrap or just stay? Let's stay.
+    } else if (direction === "up" && candidates.length) {
+       // If no prev one, go to first?
+       candidates[candidates.length - 1].el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
 
   const focusPromptInput = () => {
     if (props.busy) return;
@@ -823,7 +1012,10 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </aside>
 
-          <div class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth">
+          <div
+            class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth relative"
+            ref={(el) => (chatContainerEl = el)}
+          >
             <div class="max-w-2xl mx-auto space-y-6 pb-32">
               <Show when={props.messages.length === 0}>
                 <div class="text-center py-20 space-y-4">
@@ -865,12 +1057,15 @@ export default function SessionView(props: SessionViewProps) {
 
                   return (
                     <Show when={renderableParts().length > 0}>
-                      <div class={`flex ${isUser() ? "justify-end" : "justify-start"}`.trim()}>
+                      <div
+                        class={`flex group ${isUser() ? "justify-end" : "justify-start"}`.trim()}
+                        data-message-role={isUser() ? "user" : "assistant"}
+                      >
                         <div
-                          class={`w-full ${
+                          class={`w-full relative ${
                             isUser()
                               ? "max-w-[520px] rounded-2xl bg-gray-4 text-gray-12 shadow-sm border-gray-5 border-1 shadow-gray-12/5 p-4 text-sm leading-relaxed rounded-br-none"
-                              : "max-w-[68ch] text-[15px] leading-7 text-gray-12"
+                              : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group"
                           }`}
                         >
                           <For each={groups()}>
@@ -949,7 +1144,10 @@ export default function SessionView(props: SessionViewProps) {
                               <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
                               <For each={messageArtifacts()}>
                                 {(artifact) => (
-                                  <div class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between">
+                                  <div
+                                    class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between"
+                                    data-artifact-id={artifact.id}
+                                  >
                                     <div class="flex items-center gap-3">
                                       <div class="h-9 w-9 rounded-lg bg-gray-2 flex items-center justify-center">
                                         <FileText size={16} class="text-gray-10" />
@@ -967,6 +1165,21 @@ export default function SessionView(props: SessionViewProps) {
                               </For>
                             </div>
                           </Show>
+                          
+                          <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
+                            <button
+                              class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                              title="Copy message"
+                              onClick={() => {
+                                const text = renderableParts().map(p => "text" in p ? (p as any).text : "").join("\n");
+                                handleCopy(text, messageId());
+                              }}
+                            >
+                              <Show when={copyingId() === messageId()} fallback={<Copy size={12} />}>
+                                <Check size={12} class="text-green-10" />
+                              </Show>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     </Show>
@@ -1008,17 +1221,30 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
 
+          <div class="hidden lg:flex w-3 bg-gray-1 border-l border-gray-6 flex-col items-center justify-center gap-3 select-none z-10">
+            <button
+              class="w-1.5 h-16 rounded-full bg-gray-12 dark:bg-gray-1 hover:w-2 transition-all cursor-pointer opacity-40 hover:opacity-100"
+              title="Next Agent"
+              onClick={() => jumpToRole("down", "assistant")}
+            />
+            <button
+              class="w-1.5 h-16 rounded-full bg-gradient-to-b from-[#F50514] to-[#FF9E0B] hover:w-2 transition-all cursor-pointer opacity-40 hover:opacity-100"
+              title="Next User"
+              onClick={() => jumpToRole("down", "user")}
+            />
+          </div>
+
           <Show when={artifactToast()}>
             <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-gray-2 border border-gray-6 px-4 py-2 text-xs text-gray-11 shadow-lg">
               {artifactToast()}
             </div>
           </Show>
 
-          <aside class="hidden lg:flex w-80 border-l border-gray-6 bg-gray-1 flex-col">
-            <div class="p-4 space-y-4 overflow-y-auto flex-1">
-              <Show when={realTodos().length > 0}>
-                <div class="rounded-2xl border border-gray-6 bg-gray-1/60">
-                  <button
+              <aside class="hidden lg:flex w-80 border-l border-gray-6 bg-gray-1 flex-col">
+                <div class="p-4 space-y-4 overflow-y-auto flex-1">
+                  <Show when={realTodos().length > 0}>
+                    <div class="rounded-2xl border border-gray-6 bg-gray-1/60" id="sidebar-progress">
+                      <button
                     class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                     onClick={() => toggleSidebar("progress")}
                   >
@@ -1051,7 +1277,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </Show>
 
-              <div class="rounded-2xl border border-gray-6 bg-gray-1/60">
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/60" id="sidebar-artifacts">
                 <button
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                   onClick={() => toggleSidebar("artifacts")}
@@ -1085,7 +1311,7 @@ export default function SessionView(props: SessionViewProps) {
                 </Show>
               </div>
 
-              <div class="rounded-2xl border border-gray-6 bg-gray-1/60">
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/60" id="sidebar-context">
                 <button
                   class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12"
                   onClick={() => toggleSidebar("context")}
@@ -1366,6 +1592,10 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
         </Show>
+
+        <For each={flyouts()}>
+          {(item) => <FlyoutItem item={item} />}
+        </For>
       </div>
     </Show>
   );
