@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, Circle, Copy, File, FileText } from "lucide-solid";
 
@@ -15,6 +16,7 @@ export type MessageListProps = {
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   onOpenArtifact: (artifact: ArtifactItem) => void;
+  footer?: JSX.Element;
 };
 
 export default function MessageList(props: MessageListProps) {
@@ -249,6 +251,7 @@ export default function MessageList(props: MessageListProps) {
           );
         }}
       </For>
+      <Show when={props.footer}>{props.footer}</Show>
     </div>
   );
 }
