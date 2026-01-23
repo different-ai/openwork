@@ -1,0 +1,24 @@
+# OpenWork AI Contributor Rules
+
+## Project Context
+- **Philosophy**: OpenWork is a premium, open-source "Claude Work" style system.
+- **Reference**: Always review `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` for context on product goals.
+
+## Technology Stack
+- **Dependencies**: Use `pnpm` exclusively. `npm` and `yarn` are forbidden.
+- **Frontend**: SolidJS + TailwindCSS.
+- **Desktop/Shell**: Tauri 2.x (Rust).
+
+## Development Workflow
+1. **Verification**: Before submitting changes, run:
+   - `pnpm typecheck`
+   - `pnpm test:e2e` (or relevant subset)
+2. **PRDs**: Create new Product Requirement Documents in `packages/app/pr/<name>.md` observing `.opencode/skill/prd-conventions/SKILL.md`.
+
+## Coding Guidelines
+- **UI Quality**: Prioritize a "premium feel" with smooth animations (60fps) and clear mobile-native layouts.
+- **SolidJS Patterns**: Follow reactivity patterns in `.opencode/skill/solidjs-patterns/SKILL.md`. Avoid global `busy()` deadlocks; use scoped async state.
+- **OpenCode Parity**: Ensure UI features map cleanly to OpenCode primitives or `opencode` CLI tools.
+
+## Release Process
+- Use `pnpm bump:patch`, `pnpm bump:minor`, etc. to ensure version synchronization across `package.json`, `tauri.conf.json`, and `Cargo.toml`.
