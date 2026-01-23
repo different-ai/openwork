@@ -755,26 +755,12 @@ export default function SessionView(props: SessionViewProps) {
       },
     },
     {
-      id: "auth",
-      label: "Auth",
-      description: "Authenticate a provider",
-      run: async () => {
-        try {
-          const providerId = extractCommandArgs(props.prompt);
-          if (providerId) {
-            const message = await props.startProviderAuth(providerId);
-            setCommandToast(message || "Auth flow started");
-            clearPrompt();
-            return;
-          }
-
-          await props.openProviderAuthModal();
-          setCommandToast("Select a provider to authenticate");
-          clearPrompt();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Auth failed";
-          setCommandToast(message);
-        }
+      id: "new",
+      label: "New",
+      description: "Start a new task",
+      run: () => {
+        props.createSessionAndOpen();
+        clearPrompt();
       },
     },
     {
@@ -867,15 +853,9 @@ export default function SessionView(props: SessionViewProps) {
       label: "Help",
       description: "Show available commands",
       run: () => {
-        setCommandToast("Commands: /models, /connect, /auth, /agent, /export, /rename, /help, /clear");
+        setCommandToast("Commands: /models, /connect, /new, /agent, /export, /rename, /help");
         clearPrompt();
       },
-    },
-    {
-      id: "clear",
-      label: "Clear",
-      description: "Clear the input",
-      run: () => clearPrompt(),
     },
   ]);
 
