@@ -1083,10 +1083,21 @@ export default function SessionView(props: SessionViewProps) {
           </aside>
 
           <div
-            class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth relative"
+            class="flex-1 overflow-y-auto p-6 md:p-10 scroll-smooth relative no-scrollbar"
             ref={(el) => (chatContainerEl = el)}
             onScroll={handleScroll}
           >
+            <style>
+              {`
+                .no-scrollbar::-webkit-scrollbar {
+                  display: none;
+                }
+                .no-scrollbar {
+                  -ms-overflow-style: none;
+                  scrollbar-width: none;
+                }
+              `}
+            </style>
             <div class="max-w-2xl mx-auto space-y-6 pb-32">
               <Show when={props.messages.length === 0}>
                 <div class="text-center py-20 space-y-4">
