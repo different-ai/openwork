@@ -2068,6 +2068,7 @@ export default function App() {
         language={currentLocale()}
         reloadRequired={reloadRequired() && reloadReasons().includes("mcp")}
         reloadBlocked={anyActiveRuns()}
+        isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);

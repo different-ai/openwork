@@ -16,6 +16,7 @@ export type McpAuthModalProps = {
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
   reloadBlocked?: boolean;
+  isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
@@ -463,7 +464,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
-            <Show when={!isBusy() && authorizationUrl() && !alreadyConnected()}>
+            <Show when={!isBusy() && authorizationUrl() && props.isRemoteWorkspace && !alreadyConnected()}>
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
                 <div class="text-xs font-medium text-gray-12">
                   {translate("mcp.auth.manual_finish_title")}
