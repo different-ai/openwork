@@ -1,17 +1,22 @@
-import { Show, createEffect, createSignal, on } from "solid-js";
+import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
 import Button from "./button";
+import TextInput from "./text-input";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
 import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
+import { isTauriRuntime } from "../utils";
 
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
-  onComplete: () => void;
-  onReloadEngine?: () => void;
+  onComplete: () => void | Promise<void>;
+  onReloadEngine?: () => void | Promise<void>;
+  reloadRequired?: boolean;
+  reloadBlocked?: boolean;
+  isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
@@ -34,6 +39,67 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const [needsReload, setNeedsReload] = createSignal(false);
   const [alreadyConnected, setAlreadyConnected] = createSignal(false);
   const [authInProgress, setAuthInProgress] = createSignal(false);
+  const [statusChecking, setStatusChecking] = createSignal(false);
+  const [reloadNotice, setReloadNotice] = createSignal<string | null>(null);
+  const [authorizationUrl, setAuthorizationUrl] = createSignal<string | null>(null);
+  const [callbackInput, setCallbackInput] = createSignal("");
+  const [manualAuthBusy, setManualAuthBusy] = createSignal(false);
+
+  let statusPoll: number | null = null;
+
+  const stopStatusPolling = () => {
+    if (statusPoll !== null) {
+      window.clearInterval(statusPoll);
+      statusPoll = null;
+    }
+  };
+
+  onCleanup(() => stopStatusPolling());
+
+  const openAuthorizationUrl = async (url: string) => {
+    if (isTauriRuntime()) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const fetchMcpStatus = async (slug: string) => {
+    const entry = props.entry;
+    const client = props.client;
+    if (!entry || !client) return null;
+
+    try {
+      const result = await client.mcp.status({ directory: props.projectDir });
+      const status = result.data?.[slug] as { status?: string; error?: string } | undefined;
+      return status ?? null;
+    } catch {
+      return null;
+    }
+  };
+
+  const startStatusPolling = (slug: string) => {
+    if (typeof window === "undefined") return;
+    stopStatusPolling();
+    let attempts = 0;
+    statusPoll = window.setInterval(async () => {
+      attempts += 1;
+      if (attempts > 20) {
+        stopStatusPolling();
+        return;
+      }
+
+      const status = await fetchMcpStatus(slug);
+      if (status?.status === "connected") {
+        setAlreadyConnected(true);
+        stopStatusPolling();
+      }
+    }, 2000);
+  };
 
   const startAuth = async (forceRetry = false) => {
     const entry = props.entry;
@@ -60,55 +126,60 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setError(null);
     setNeedsReload(false);
     setAlreadyConnected(false);
+    stopStatusPolling();
+    setAuthorizationUrl(null);
+    setCallbackInput("");
+    setReloadNotice(null);
     setLoading(true);
     setAuthInProgress(true);
 
     try {
-      let mcpStatus: string | null = null;
-
-      try {
-        const mcpStatusResult = await client.mcp.status({ directory: props.projectDir });
-        const mcpData = mcpStatusResult.data;
-        if (mcpData && mcpData[slug]) {
-          const statusEntry = mcpData[slug] as { status?: string };
-          mcpStatus = statusEntry.status ?? null;
-        }
-      } catch {
-        // Ignore status failures and attempt auth anyway.
-      }
-
-      if (mcpStatus === "connected") {
-        setAlreadyConnected(true);
-        setLoading(false);
+      if (props.reloadRequired) {
+        setNeedsReload(true);
+        setReloadNotice(
+          props.reloadBlocked
+            ? translate("mcp.auth.reload_blocked")
+            : translate("mcp.auth.reload_notice")
+        );
         return;
       }
 
-      const authResult = await client.mcp.auth.authenticate({
+      const statusEntry = await fetchMcpStatus(slug);
+      if (statusEntry?.status === "connected") {
+        setAlreadyConnected(true);
+        return;
+      }
+
+      const authResult = await client.mcp.auth.start({
         name: slug,
         directory: props.projectDir,
       });
-      const authStatus = unwrap(authResult);
+      const auth = unwrap(authResult) as { authorizationUrl?: string };
 
-      if (authStatus.status === "connected") {
+      if (!auth.authorizationUrl) {
         setAlreadyConnected(true);
-      } else if (authStatus.status === "needs_client_registration") {
-        setNeedsReload(true);
-        setError(authStatus.error ?? translate("mcp.auth.client_registration_required"));
-      } else if (authStatus.status === "disabled") {
-        setError(translate("mcp.auth.server_disabled"));
-      } else if (authStatus.status === "failed") {
-        setError(authStatus.error ?? translate("mcp.auth.oauth_failed"));
-      } else if (authStatus.status === "needs_auth") {
-        setError(translate("mcp.auth.authorization_still_required"));
+        return;
       }
+
+      setAuthorizationUrl(auth.authorizationUrl);
+      await openAuthorizationUrl(auth.authorizationUrl);
+      startStatusPolling(slug);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
 
       if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server";
-        setError(
-          `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
-        );
+        if (props.reloadRequired) {
+          setReloadNotice(
+            props.reloadBlocked
+              ? translate("mcp.auth.reload_blocked")
+              : translate("mcp.auth.reload_notice")
+          );
+        } else {
+          setError(
+            `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
+          );
+        }
         setNeedsReload(true);
       } else if (message.toLowerCase().includes("not found") || message.toLowerCase().includes("unknown")) {
         setNeedsReload(true);
@@ -142,12 +213,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   };
 
   const handleReloadAndRetry = async () => {
-    if (props.onReloadEngine) {
-      props.onReloadEngine();
-      setTimeout(() => {
-        startAuth(true);
-      }, 2000);
-    }
+    if (!props.onReloadEngine) return;
+    await props.onReloadEngine();
+    startAuth(true);
   };
 
   const handleClose = () => {
@@ -156,16 +224,131 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setAlreadyConnected(false);
     setNeedsReload(false);
     setAuthInProgress(false);
+    setStatusChecking(false);
+    setAuthorizationUrl(null);
+    setCallbackInput("");
+    setManualAuthBusy(false);
+    setReloadNotice(null);
+    stopStatusPolling();
     props.onClose();
   };
 
-  const handleComplete = () => {
+  const isBusy = () => loading() || statusChecking() || manualAuthBusy();
+
+  const parseAuthCode = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const match = trimmed.match(/[?&]code=([^&]+)/);
+    if (match) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return match[1];
+      }
+    }
+
+    if (/^https?:\/\//i.test(trimmed) || trimmed.includes("localhost") || trimmed.includes("127.0.0.1")) {
+      return null;
+    }
+
+    return trimmed;
+  };
+
+  const handleManualComplete = async () => {
+    const entry = props.entry;
+    const client = props.client;
+    if (!entry || !client) return;
+
+    let slug = "";
+    try {
+      const safeName = validateMcpServerName(entry.name);
+      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      setError(message);
+      return;
+    }
+
+    const code = parseAuthCode(callbackInput());
+    if (!code) {
+      setError(translate("mcp.auth.callback_invalid"));
+      return;
+    }
+
+    setManualAuthBusy(true);
     setError(null);
-    setLoading(false);
-    setAlreadyConnected(false);
-    setNeedsReload(false);
-    setAuthInProgress(false);
-    props.onComplete();
+    stopStatusPolling();
+
+    try {
+      const result = await client.mcp.auth.callback({
+        name: slug,
+        directory: props.projectDir,
+        code,
+      });
+      const status = unwrap(result) as { status?: string; error?: string };
+      if (status.status === "connected") {
+        setAlreadyConnected(true);
+        setManualAuthBusy(false);
+        await props.onComplete();
+        return;
+      }
+
+      if (status.status === "needs_client_registration") {
+        setError(status.error ?? translate("mcp.auth.client_registration_required"));
+      } else if (status.status === "disabled") {
+        setError(translate("mcp.auth.server_disabled"));
+      } else if (status.status === "failed") {
+        setError(status.error ?? translate("mcp.auth.oauth_failed"));
+      } else {
+        setError(translate("mcp.auth.authorization_still_required"));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.oauth_failed");
+      setError(message);
+    } finally {
+      setManualAuthBusy(false);
+    }
+  };
+
+  const handleComplete = async () => {
+    const entry = props.entry;
+    const client = props.client;
+    if (!entry || !client) return;
+
+    setError(null);
+    setStatusChecking(true);
+
+    let slug = "";
+    try {
+      const safeName = validateMcpServerName(entry.name);
+      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      setError(message);
+      setStatusChecking(false);
+      return;
+    }
+
+    const statusEntry = await fetchMcpStatus(slug);
+    if (statusEntry?.status === "connected") {
+      setAlreadyConnected(true);
+      setStatusChecking(false);
+      await props.onComplete();
+      return;
+    }
+
+    if (statusEntry?.status === "needs_client_registration") {
+      setError(statusEntry.error ?? translate("mcp.auth.client_registration_required"));
+    } else if (statusEntry?.status === "disabled") {
+      setError(translate("mcp.auth.server_disabled"));
+    } else if (statusEntry?.status === "failed") {
+      setError(statusEntry.error ?? translate("mcp.auth.oauth_failed"));
+    } else {
+      setError(translate("mcp.auth.authorization_still_required"));
+    }
+
+    setStatusChecking(false);
   };
 
   const serverName = () => props.entry?.name ?? "MCP Server";
@@ -200,13 +383,13 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
           {/* Content */}
           <div class="px-6 py-5 space-y-5">
-            <Show when={loading()}>
+            <Show when={isBusy()}>
               <div class="flex items-center justify-center py-8">
                 <Loader2 size={32} class="animate-spin text-gray-11" />
               </div>
             </Show>
 
-            <Show when={!loading() && alreadyConnected()}>
+            <Show when={!isBusy() && alreadyConnected()}>
               <div class="bg-green-7/10 border border-green-7/20 rounded-xl p-5 space-y-4">
                 <div class="flex items-center gap-3">
                   <div class="flex-shrink-0 w-10 h-10 rounded-full bg-green-7/20 flex items-center justify-center">
@@ -225,6 +408,29 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
+            <Show when={reloadNotice()}>
+              <div class="bg-gray-1/50 border border-gray-6/70 rounded-xl p-4 space-y-3">
+                <p class="text-sm text-gray-11">{reloadNotice()}</p>
+
+                <div class="flex flex-wrap gap-2 pt-1">
+                  <Show when={props.onReloadEngine}>
+                    <Button
+                      variant="secondary"
+                      onClick={handleReloadAndRetry}
+                      disabled={props.reloadBlocked}
+                      title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                    >
+                      <RefreshCcw size={14} />
+                      {translate("mcp.auth.reload_engine_retry")}
+                    </Button>
+                  </Show>
+                  <Button variant="ghost" onClick={handleRetry}>
+                    {translate("mcp.auth.retry_now")}
+                  </Button>
+                </div>
+              </div>
+            </Show>
+
             <Show when={error()}>
               <div class="bg-red-7/10 border border-red-7/20 rounded-xl p-4 space-y-3">
                 <p class="text-sm text-red-11">{error()}</p>
@@ -232,7 +438,12 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 <Show when={needsReload()}>
                   <div class="flex flex-wrap gap-2 pt-2">
                     <Show when={props.onReloadEngine}>
-                      <Button variant="secondary" onClick={handleReloadAndRetry}>
+                      <Button
+                        variant="secondary"
+                        onClick={handleReloadAndRetry}
+                        disabled={props.reloadBlocked}
+                        title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                      >
                         <RefreshCcw size={14} />
                         {translate("mcp.auth.reload_engine_retry")}
                       </Button>
@@ -253,7 +464,42 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
-            <Show when={!loading() && !error() && !alreadyConnected()}>
+            <Show when={!isBusy() && authorizationUrl() && props.isRemoteWorkspace && !alreadyConnected()}>
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                <div class="text-xs font-medium text-gray-12">
+                  {translate("mcp.auth.manual_finish_title")}
+                </div>
+                <div class="text-xs text-gray-10">
+                  {translate("mcp.auth.manual_finish_hint")}
+                </div>
+                <TextInput
+                  label={translate("mcp.auth.callback_label")}
+                  placeholder={translate("mcp.auth.callback_placeholder")}
+                  value={callbackInput()}
+                  onInput={(event) => setCallbackInput(event.currentTarget.value)}
+                />
+                <div class="text-[11px] text-gray-9">
+                  {translate("mcp.auth.port_forward_hint")}
+                </div>
+                <div class="flex justify-end">
+                  <Button
+                    variant="secondary"
+                    onClick={handleManualComplete}
+                    disabled={manualAuthBusy() || !callbackInput().trim()}
+                  >
+                    <Show
+                      when={manualAuthBusy()}
+                      fallback={translate("mcp.auth.complete_connection")}
+                    >
+                      <Loader2 size={14} class="animate-spin" />
+                      {translate("mcp.auth.complete_connection")}
+                    </Show>
+                  </Button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={!isBusy() && !error() && !reloadNotice() && !alreadyConnected()}>
               <div class="space-y-4">
                 <div class="flex items-start gap-3">
                   <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">

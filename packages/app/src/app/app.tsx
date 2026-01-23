@@ -7,6 +7,7 @@ import {
   createSignal,
   onCleanup,
   onMount,
+  untrack,
 } from "solid-js";
 
 import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
@@ -32,6 +33,7 @@ import {
   DEMO_SEQUENCE_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
+  SESSION_MODEL_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -66,6 +68,7 @@ import {
   formatRelativeTime,
   groupMessageParts,
   isTauriRuntime,
+  modelEquals,
 } from "./utils";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
 import {
@@ -160,6 +163,10 @@ export default function App() {
   const [sessionModelById, setSessionModelById] = createSignal<
     Record<string, ModelRef>
   >({});
+  const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
+  const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
+  const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
+  const [defaultModelExplicit, setDefaultModelExplicit] = createSignal(false);
   const [sessionAgentById, setSessionAgentById] = createSignal<Record<string, string>>({});
   const [providerAuthModalOpen, setProviderAuthModalOpen] = createSignal(false);
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
@@ -553,6 +560,79 @@ export default function App() {
   >([]);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
+  const sessionModelOverridesKey = (workspaceId: string) =>
+    `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
+
+  const parseSessionModelOverrides = (raw: string | null) => {
+    if (!raw) return {} as Record<string, ModelRef>;
+    try {
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return {} as Record<string, ModelRef>;
+      }
+      const next: Record<string, ModelRef> = {};
+      for (const [sessionId, value] of Object.entries(parsed)) {
+        if (typeof value === "string") {
+          const model = parseModelRef(value);
+          if (model) next[sessionId] = model;
+          continue;
+        }
+        if (!value || typeof value !== "object") continue;
+        const record = value as Record<string, unknown>;
+        if (typeof record.providerID === "string" && typeof record.modelID === "string") {
+          next[sessionId] = {
+            providerID: record.providerID,
+            modelID: record.modelID,
+          };
+        }
+      }
+      return next;
+    } catch {
+      return {} as Record<string, ModelRef>;
+    }
+  };
+
+  const serializeSessionModelOverrides = (overrides: Record<string, ModelRef>) => {
+    const entries = Object.entries(overrides);
+    if (!entries.length) return null;
+    const payload: Record<string, string> = {};
+    for (const [sessionId, model] of entries) {
+      payload[sessionId] = formatModelRef(model);
+    }
+    return JSON.stringify(payload);
+  };
+
+  const parseDefaultModelFromConfig = (content: string | null) => {
+    if (!content) return null;
+    try {
+      const parsed = parse(content) as Record<string, unknown> | undefined;
+      const rawModel = typeof parsed?.model === "string" ? parsed.model : null;
+      return parseModelRef(rawModel);
+    } catch {
+      return null;
+    }
+  };
+
+  const formatConfigWithDefaultModel = (content: string | null, model: ModelRef) => {
+    let config: Record<string, unknown> = {};
+    if (content?.trim()) {
+      try {
+        const parsed = parse(content) as Record<string, unknown> | undefined;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          config = { ...parsed };
+        }
+      } catch {
+        config = {};
+      }
+    }
+
+    if (!config["$schema"]) {
+      config["$schema"] = "https://opencode.ai/config.json";
+    }
+
+    config.model = formatModelRef(model);
+    return `${JSON.stringify(config, null, 2)}\n`;
+  };
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<
     "session" | "default"
@@ -662,6 +742,7 @@ export default function App() {
     sessionStatusById,
     refreshPlugins,
     refreshSkills,
+    refreshMcpServers,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -930,6 +1011,7 @@ export default function App() {
 
   function applyModelSelection(next: ModelRef) {
     if (modelPickerTarget() === "default") {
+      setDefaultModelExplicit(true);
       setDefaultModel(next);
       setModelPickerOpen(false);
       return;
@@ -942,6 +1024,8 @@ export default function App() {
     }
 
     setSessionModelOverrideById((current) => ({ ...current, [id]: next }));
+    setDefaultModelExplicit(true);
+    setDefaultModel(next);
     setModelPickerOpen(false);
 
     if (typeof window !== "undefined" && view() === "session") {
@@ -1396,8 +1480,10 @@ export default function App() {
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
         if (parsedDefaultModel) {
           setDefaultModel(parsedDefaultModel);
+          setLegacyDefaultModel(parsedDefaultModel);
         } else {
           setDefaultModel(DEFAULT_MODEL);
+          setLegacyDefaultModel(DEFAULT_MODEL);
           try {
             window.localStorage.setItem(
               MODEL_PREF_KEY,
@@ -1518,6 +1604,127 @@ export default function App() {
     }
 
     void workspaceStore.bootstrapOnboarding();
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const workspaceId = workspaceStore.activeWorkspaceId();
+    if (!workspaceId) return;
+
+    setSessionModelOverridesReady(false);
+    const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
+    setSessionModelOverrideById(parseSessionModelOverrides(raw));
+    setSessionModelOverridesReady(true);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!sessionModelOverridesReady()) return;
+    const workspaceId = workspaceStore.activeWorkspaceId();
+    if (!workspaceId) return;
+
+    const payload = serializeSessionModelOverrides(sessionModelOverrideById());
+    try {
+      if (payload) {
+        window.localStorage.setItem(sessionModelOverridesKey(workspaceId), payload);
+      } else {
+        window.localStorage.removeItem(sessionModelOverridesKey(workspaceId));
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const workspaceId = workspaceStore.activeWorkspaceId();
+    if (!workspaceId) return;
+
+    setWorkspaceDefaultModelReady(false);
+    const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
+    const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
+    const activeClient = client();
+
+    let cancelled = false;
+
+    const applyDefault = async () => {
+      let configDefault: ModelRef | null = null;
+
+      if (isTauriRuntime() && workspaceType === "local" && workspaceRoot) {
+        try {
+          const configFile = await readOpencodeConfig("project", workspaceRoot);
+          configDefault = parseDefaultModelFromConfig(configFile.content);
+        } catch {
+          // ignore
+        }
+      } else if (activeClient) {
+        try {
+          const config = unwrap(
+            await activeClient.config.get({ directory: workspaceRoot || undefined })
+          );
+          if (typeof config.model === "string") {
+            configDefault = parseModelRef(config.model);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setDefaultModelExplicit(Boolean(configDefault));
+      const nextDefault = configDefault ?? legacyDefaultModel();
+      const currentDefault = untrack(defaultModel);
+      if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
+        setDefaultModel(nextDefault);
+      }
+
+      if (!cancelled) {
+        setWorkspaceDefaultModelReady(true);
+      }
+    };
+
+    void applyDefault();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  createEffect(() => {
+    if (!workspaceDefaultModelReady()) return;
+    if (!isTauriRuntime()) return;
+    if (!defaultModelExplicit()) return;
+
+    const workspace = workspaceStore.activeWorkspaceDisplay();
+    if (workspace.workspaceType !== "local") return;
+
+    const root = workspaceStore.activeWorkspacePath().trim();
+    if (!root) return;
+    const nextModel = defaultModel();
+    let cancelled = false;
+
+    const writeConfig = async () => {
+      try {
+        const configFile = await readOpencodeConfig("project", root);
+        const existingModel = parseDefaultModelFromConfig(configFile.content);
+        if (existingModel && modelEquals(existingModel, nextModel)) return;
+
+        const content = formatConfigWithDefaultModel(configFile.content, nextModel);
+        const result = await writeOpencodeConfig("project", root, content);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        setError(addOpencodeCacheHint(message));
+      }
+    };
+
+    void writeConfig();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   createEffect(() => {
@@ -1940,6 +2147,7 @@ export default function App() {
     connectMcp,
     refreshMcpServers,
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
+    mcpReloadBlocked: anyActiveRuns(),
     reloadMcpEngine: () => reloadEngineInstance(),
     language: currentLocale(),
     setLanguage: setLocale,
@@ -2073,15 +2281,17 @@ export default function App() {
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
+        reloadRequired={reloadRequired() && reloadReasons().includes("mcp")}
+        reloadBlocked={anyActiveRuns()}
+        isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
         }}
-        onComplete={() => {
+        onComplete={async () => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
-          markReloadRequired("mcp");
-          setMcpStatus(t("mcp.auth.oauth_completed_reload", currentLocale()));
+          await refreshMcpServers();
         }}
         onReloadEngine={() => reloadEngineInstance()}
       />

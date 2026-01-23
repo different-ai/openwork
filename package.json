@@ -28,7 +28,10 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "@whiskeysockets/baileys",
+      "better-sqlite3",
+      "esbuild",
+      "protobufjs"
     ]
   },
   "packageManager": "pnpm@10.27.0"
