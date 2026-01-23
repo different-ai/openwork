@@ -722,12 +722,14 @@ export default function App() {
     setTemplateDraftPrompt,
     templateDraftScope,
     setTemplateDraftScope,
+    templateDraftAutoRun,
+    setTemplateDraftAutoRun,
     workspaceTemplates,
     globalTemplates,
     openTemplateModal,
     saveTemplate,
     deleteTemplate,
-    runTemplate,
+    applyTemplate,
     loadWorkspaceTemplates,
   } = templateState;
 
@@ -1436,8 +1438,15 @@ export default function App() {
       applyThemeMode(isDark ? "dark" : "light");
     });
 
+    // Listen for setPrompt events from template system (when autoRun is disabled)
+    const handleSetPrompt = (e: CustomEvent<string>) => {
+      setPrompt(e.detail);
+    };
+    window.addEventListener("openwork:setPrompt", handleSetPrompt as EventListener);
+
     onCleanup(() => {
       unsubscribeTheme();
+      window.removeEventListener("openwork:setPrompt", handleSetPrompt as EventListener);
     });
 
     createEffect(() => {
@@ -2051,7 +2060,7 @@ export default function App() {
       setTemplateDraftScope(scope);
     },
     openTemplateModal,
-    runTemplate,
+    applyTemplate,
     deleteTemplate,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
@@ -2224,6 +2233,8 @@ export default function App() {
               sessionStatus={selectedSessionStatus()}
               renameSession={renameSessionTitle}
             error={error()}
+              workspaceTemplates={workspaceTemplates()}
+              applyTemplate={applyTemplate}
           />
         </Match>
         <Match when={true}>
@@ -2293,12 +2304,14 @@ export default function App() {
         description={templateDraftDescription()}
         prompt={templateDraftPrompt()}
         scope={templateDraftScope()}
+        autoRun={templateDraftAutoRun()}
         onClose={() => setTemplateModalOpen(false)}
         onSave={saveTemplate}
         onTitleChange={setTemplateDraftTitle}
         onDescriptionChange={setTemplateDraftDescription}
         onPromptChange={setTemplateDraftPrompt}
         onScopeChange={setTemplateDraftScope}
+        onAutoRunChange={setTemplateDraftAutoRun}
       />
 
       <WorkspacePicker

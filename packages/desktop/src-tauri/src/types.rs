@@ -149,6 +149,12 @@ pub struct WorkspaceTemplate {
     pub prompt: String,
     #[serde(default)]
     pub created_at: u64,
+    #[serde(default = "default_auto_run")]
+    pub auto_run: Option<bool>,
+}
+
+fn default_auto_run() -> Option<bool> {
+    Some(true)
 }
 
 fn default_workspace_state_version() -> u8 {

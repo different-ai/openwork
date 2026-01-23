@@ -78,7 +78,7 @@ export type DashboardViewProps = {
   setTemplateDraftScope: (value: "workspace" | "global") => void;
   openTemplateModal: () => void;
   resetTemplateDraft?: (scope?: "workspace" | "global") => void;
-  runTemplate: (template: WorkspaceTemplate) => void;
+  applyTemplate: (template: WorkspaceTemplate) => void;
   deleteTemplate: (templateId: string) => void;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
@@ -537,7 +537,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     <For each={quickTemplates()}>
                       {(t) => (
                         <button
-                          onClick={() => props.runTemplate(t)}
+                          onClick={() => props.applyTemplate(t)}
                           class="group p-5 rounded-2xl bg-gray-2/30 border border-gray-6/50 hover:bg-gray-2 hover:border-gray-7 transition-all text-left"
                         >
                           <div class="w-10 h-10 rounded-full bg-gray-4 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
@@ -545,7 +545,7 @@ export default function DashboardView(props: DashboardViewProps) {
                           </div>
                           <h4 class="font-medium text-gray-12 mb-1">{t.title}</h4>
                           <p class="text-sm text-gray-10">
-                            {t.description || "Run a saved workflow"}
+                            {t.description || "Apply a saved workflow"}
                           </p>
                         </button>
                       )}
@@ -698,7 +698,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 setTemplateDraftScope={props.setTemplateDraftScope}
                 openTemplateModal={props.openTemplateModal}
                 resetTemplateDraft={props.resetTemplateDraft}
-                runTemplate={props.runTemplate}
+                applyTemplate={props.applyTemplate}
                 deleteTemplate={props.deleteTemplate}
               />
             </Match>

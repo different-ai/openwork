@@ -9,11 +9,13 @@ import type {
   TodoItem,
   View,
   WorkspaceDisplay,
+  WorkspaceTemplate,
 } from "../types";
 
 import {
   AlertTriangle,
   ArrowRight,
+  FileText,
   HardDrive,
   Shield,
   Zap,
@@ -93,6 +95,8 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  workspaceTemplates: WorkspaceTemplate[];
+  applyTemplate: (template: WorkspaceTemplate) => void;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -323,7 +327,7 @@ export default function SessionView(props: SessionViewProps) {
     }
     setPrevArtifactCount(count);
   });
-  
+
   createEffect(() => {
      const files = props.workingFiles;
      const count = files.length;
@@ -718,56 +722,101 @@ export default function SessionView(props: SessionViewProps) {
                 }
               `}
             </style>
-            
+
             <Show when={props.messages.length === 0}>
-              <div class="text-center py-20 space-y-4">
-                <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
-                  <Zap class="text-gray-7" />
+              <div class="flex flex-col h-full">
+                <div class="text-center py-20 space-y-4">
+                  <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
+                    <Zap class="text-gray-7" />
+                  </div>
+                  <h3 class="text-xl font-medium">Ready to work</h3>
+                  <p class="text-gray-10 text-sm max-w-xs mx-auto">
+                    Describe a task. I'll show progress and ask for permissions when needed.
+                  </p>
                 </div>
-                <h3 class="text-xl font-medium">Ready to work</h3>
-                <p class="text-gray-10 text-sm max-w-xs mx-auto">
-                  Describe a task. I'll show progress and ask for permissions when needed.
-                </p>
+
+                {/* Spacer */}
+                <div class="flex-1" />
+
+                {/* Quick Start Templates */}
+                <Show when={props.workspaceTemplates.length > 0}>
+                  <div class="mb-12 px-4 max-w-3xl mx-auto">
+                    <div class="flex items-center justify-between mb-4">
+                      <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
+                        Quick Start Templates
+                      </h3>
+                      <button
+                        class="text-xs text-gray-10 hover:text-gray-12 transition-colors"
+                        onClick={() => {
+                          props.setView("dashboard");
+                          props.setTab("templates");
+                        }}
+                      >
+                        View all
+                      </button>
+                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <For each={props.workspaceTemplates.slice(0, 3)}>
+                        {(t) => (
+                          <button
+                            onClick={() => props.applyTemplate(t)}
+                            class="group p-5 rounded-2xl bg-gray-2/30 border border-gray-6/50 hover:bg-gray-2 hover:border-gray-7 transition-all text-left"
+                          >
+                            <div class="w-10 h-10 rounded-full bg-gray-4 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                              <FileText size={20} class="text-indigo-11" />
+                            </div>
+                            <h4 class="font-medium text-gray-12 mb-1">{t.title}</h4>
+                            <p class="text-sm text-gray-10">
+                              {t.description || "Run a saved workflow"}
+                            </p>
+                          </button>
+                        )}
+                      </For>
+                    </div>
+                  </div>
+                </Show>
               </div>
             </Show>
 
-            <MessageList 
-              messages={props.messages}
-              artifacts={props.artifacts}
-              developerMode={props.developerMode}
-              showThinking={props.showThinking}
-              expandedStepIds={props.expandedStepIds}
-              setExpandedStepIds={props.setExpandedStepIds}
-              onOpenArtifact={handleOpenArtifact}
-              footer={
-                showRunIndicator() ? (
-                  <div class="flex justify-start pl-2">
-                    <div
-                      class={`w-full max-w-[68ch] flex items-center justify-between gap-3 text-xs font-mono ${
-                        runPhase() === "error" ? "text-red-11" : "text-gray-9"
-                      }`}
-                      role="status"
-                      aria-live="polite"
-                    >
-                      <div class="flex items-center gap-2 min-w-0">
-                        <Show
-                          when={runPhase() !== "error"}
-                          fallback={<AlertTriangle size={12} class="shrink-0" />}
-                        >
-                          <Zap size={12} class="shrink-0" />
-                        </Show>
-                        <span class="truncate">{runLine()}</span>
+            <Show when={props.messages.length > 0}>
+              <MessageList 
+                messages={props.messages}
+                artifacts={props.artifacts}
+                developerMode={props.developerMode}
+                showThinking={props.showThinking}
+                expandedStepIds={props.expandedStepIds}
+                setExpandedStepIds={props.setExpandedStepIds}
+                onOpenArtifact={handleOpenArtifact}
+                footer={
+                  showRunIndicator() ? (
+                    <div class="flex justify-start pl-2">
+                      <div
+                        class={`w-full max-w-[68ch] flex items-center justify-between gap-3 text-xs font-mono ${
+                          runPhase() === "error" ? "text-red-11" : "text-gray-9"
+                        }`}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div class="flex items-center gap-2 min-w-0">
+                          <Show
+                            when={runPhase() !== "error"}
+                            fallback={<AlertTriangle size={12} class="shrink-0" />}
+                          >
+                            <Zap size={12} class="shrink-0" />
+                          </Show>
+                          <span class="truncate">{runLine()}</span>
+                        </div>
+                        <span class="shrink-0">{runElapsedLabel()}</span>
                       </div>
-                      <span class="shrink-0">{runElapsedLabel()}</span>
                     </div>
-                  </div>
-                ) : undefined
-              }
-            />
+                  ) : undefined
+                }
+              />
+            </Show>
 
             <div ref={(el) => (messagesEndEl = el)} />
           </div>
-          
+
           <Minimap containerRef={() => chatContainerEl} messages={props.messages} />
 
           <Show when={artifactToast()}>
@@ -777,7 +826,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
         </div>
 
-        <Composer 
+        <Composer
            prompt={props.prompt}
            setPrompt={props.setPrompt}
            busy={props.busy}
