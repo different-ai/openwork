@@ -1,6 +1,7 @@
 import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
 import Button from "./button";
+import TextInput from "./text-input";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
@@ -37,6 +38,9 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const [alreadyConnected, setAlreadyConnected] = createSignal(false);
   const [authInProgress, setAuthInProgress] = createSignal(false);
   const [statusChecking, setStatusChecking] = createSignal(false);
+  const [authorizationUrl, setAuthorizationUrl] = createSignal<string | null>(null);
+  const [callbackInput, setCallbackInput] = createSignal("");
+  const [manualAuthBusy, setManualAuthBusy] = createSignal(false);
 
   let statusPoll: number | null = null;
 
@@ -120,6 +124,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setNeedsReload(false);
     setAlreadyConnected(false);
     stopStatusPolling();
+    setAuthorizationUrl(null);
+    setCallbackInput("");
     setLoading(true);
     setAuthInProgress(true);
 
@@ -147,6 +153,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
         return;
       }
 
+      setAuthorizationUrl(auth.authorizationUrl);
       await openAuthorizationUrl(auth.authorizationUrl);
       startStatusPolling(slug);
     } catch (err) {
@@ -202,11 +209,90 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setNeedsReload(false);
     setAuthInProgress(false);
     setStatusChecking(false);
+    setAuthorizationUrl(null);
+    setCallbackInput("");
+    setManualAuthBusy(false);
     stopStatusPolling();
     props.onClose();
   };
 
-  const isBusy = () => loading() || statusChecking();
+  const isBusy = () => loading() || statusChecking() || manualAuthBusy();
+
+  const parseAuthCode = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const match = trimmed.match(/[?&]code=([^&]+)/);
+    if (match) {
+      try {
+        return decodeURIComponent(match[1]);
+      } catch {
+        return match[1];
+      }
+    }
+
+    if (/^https?:\/\//i.test(trimmed) || trimmed.includes("localhost") || trimmed.includes("127.0.0.1")) {
+      return null;
+    }
+
+    return trimmed;
+  };
+
+  const handleManualComplete = async () => {
+    const entry = props.entry;
+    const client = props.client;
+    if (!entry || !client) return;
+
+    let slug = "";
+    try {
+      const safeName = validateMcpServerName(entry.name);
+      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
+      setError(message);
+      return;
+    }
+
+    const code = parseAuthCode(callbackInput());
+    if (!code) {
+      setError(translate("mcp.auth.callback_invalid"));
+      return;
+    }
+
+    setManualAuthBusy(true);
+    setError(null);
+    stopStatusPolling();
+
+    try {
+      const result = await client.mcp.auth.callback({
+        name: slug,
+        directory: props.projectDir,
+        code,
+      });
+      const status = unwrap(result) as { status?: string; error?: string };
+      if (status.status === "connected") {
+        setAlreadyConnected(true);
+        setManualAuthBusy(false);
+        await props.onComplete();
+        return;
+      }
+
+      if (status.status === "needs_client_registration") {
+        setError(status.error ?? translate("mcp.auth.client_registration_required"));
+      } else if (status.status === "disabled") {
+        setError(translate("mcp.auth.server_disabled"));
+      } else if (status.status === "failed") {
+        setError(status.error ?? translate("mcp.auth.oauth_failed"));
+      } else {
+        setError(translate("mcp.auth.authorization_still_required"));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.oauth_failed");
+      setError(message);
+    } finally {
+      setManualAuthBusy(false);
+    }
+  };
 
   const handleComplete = async () => {
     const entry = props.entry;
@@ -330,6 +416,41 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     </Button>
                   </div>
                 </Show>
+              </div>
+            </Show>
+
+            <Show when={!isBusy() && authorizationUrl() && !alreadyConnected()}>
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                <div class="text-xs font-medium text-gray-12">
+                  {translate("mcp.auth.manual_finish_title")}
+                </div>
+                <div class="text-xs text-gray-10">
+                  {translate("mcp.auth.manual_finish_hint")}
+                </div>
+                <TextInput
+                  label={translate("mcp.auth.callback_label")}
+                  placeholder={translate("mcp.auth.callback_placeholder")}
+                  value={callbackInput()}
+                  onInput={(event) => setCallbackInput(event.currentTarget.value)}
+                />
+                <div class="text-[11px] text-gray-9">
+                  {translate("mcp.auth.port_forward_hint")}
+                </div>
+                <div class="flex justify-end">
+                  <Button
+                    variant="secondary"
+                    onClick={handleManualComplete}
+                    disabled={manualAuthBusy() || !callbackInput().trim()}
+                  >
+                    <Show
+                      when={manualAuthBusy()}
+                      fallback={translate("mcp.auth.complete_connection")}
+                    >
+                      <Loader2 size={14} class="animate-spin" />
+                      {translate("mcp.auth.complete_connection")}
+                    </Show>
+                  </Button>
+                </div>
               </div>
             </Show>
 
