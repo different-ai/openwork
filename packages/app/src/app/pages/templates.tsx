@@ -1,10 +1,10 @@
-import { For, Show } from "solid-js";
+import { For, Show, createSignal } from "solid-js";
 
 import type { WorkspaceTemplate } from "../types";
 import { formatRelativeTime } from "../utils";
 
 import Button from "../components/button";
-import { FileText, Play, Plus, Trash2 } from "lucide-solid";
+import { FileText, Play, Plus, Trash2, Bug, X } from "lucide-solid";
 
 export type TemplatesViewProps = {
   busy: boolean;
@@ -21,6 +21,8 @@ export type TemplatesViewProps = {
 };
 
 export default function TemplatesView(props: TemplatesViewProps) {
+  const [debugOpen, setDebugOpen] = createSignal(false);
+
   const openNewTemplate = () => {
     const reset = props.resetTemplateDraft;
     if (reset) {
@@ -33,6 +35,25 @@ export default function TemplatesView(props: TemplatesViewProps) {
     }
     props.openTemplateModal();
   };
+
+  // Debug: Log template data when component mounts or templates change
+  const logTemplates = () => {
+    console.log("[DEBUG Templates] Workspace Templates:", props.workspaceTemplates);
+    console.log("[DEBUG Templates] Global Templates:", props.globalTemplates);
+    props.workspaceTemplates.forEach((t, i) => {
+      console.log(`[DEBUG] Workspace Template ${i}:`, {
+        id: t.id,
+        title: t.title,
+        autoRun: t.autoRun,
+        autoRunType: typeof t.autoRun,
+        autoRunStrictEqual: t.autoRun === false,
+        autoRunLooseEqual: t.autoRun == false,
+      });
+    });
+  };
+
+  // Log on mount
+  logTemplates();
 
   return (
     <section class="space-y-4">
@@ -110,6 +131,81 @@ export default function TemplatesView(props: TemplatesViewProps) {
               </For>
             </div>
           </Show>
+        </div>
+      </Show>
+
+      {/* Debug Panel Toggle Button */}
+      <button
+        onClick={() => {
+          setDebugOpen(!debugOpen());
+          logTemplates();
+        }}
+        class="fixed bottom-4 right-4 z-50 bg-amber-600 hover:bg-amber-500 text-white p-2 rounded-full shadow-lg"
+        title="Toggle Template Debug Panel"
+      >
+        <Bug size={20} />
+      </button>
+
+      {/* Floating Debug Panel */}
+      <Show when={debugOpen()}>
+        <div class="fixed bottom-16 right-4 z-50 w-96 max-h-[70vh] bg-gray-1 border border-amber-600 rounded-xl shadow-2xl overflow-hidden">
+          <div class="bg-amber-600 text-white px-4 py-2 flex items-center justify-between">
+            <span class="font-semibold text-sm">🐛 Templates Debug Panel</span>
+            <button onClick={() => setDebugOpen(false)} class="hover:bg-amber-500 p-1 rounded">
+              <X size={16} />
+            </button>
+          </div>
+          <div class="p-4 overflow-y-auto max-h-[calc(70vh-3rem)] text-xs font-mono">
+            <div class="mb-4">
+              <div class="text-amber-400 font-bold mb-2">Workspace Templates ({props.workspaceTemplates.length})</div>
+              <For each={props.workspaceTemplates} fallback={<div class="text-gray-10">No workspace templates</div>}>
+                {(t) => (
+                  <div class="mb-3 p-2 bg-gray-2 rounded border border-gray-6">
+                    <div class="text-gray-12 font-semibold">{t.title}</div>
+                    <div class="text-gray-10 mt-1">ID: {t.id}</div>
+                    <div class="mt-1">
+                      <span class="text-gray-10">autoRun: </span>
+                      <span class={t.autoRun === false ? "text-red-400 font-bold" : "text-green-400 font-bold"}>
+                        {String(t.autoRun)}
+                      </span>
+                      <span class="text-gray-7"> (type: {typeof t.autoRun})</span>
+                    </div>
+                    <div class="text-gray-10 mt-1">
+                      autoRun !== false: {String(t.autoRun !== false)}
+                    </div>
+                    <div class="text-gray-7 mt-1 truncate" title={t.prompt}>
+                      Prompt: {t.prompt.slice(0, 50)}...
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+
+            <div>
+              <div class="text-green-400 font-bold mb-2">Global Templates ({props.globalTemplates.length})</div>
+              <For each={props.globalTemplates} fallback={<div class="text-gray-10">No global templates</div>}>
+                {(t) => (
+                  <div class="mb-3 p-2 bg-gray-2 rounded border border-gray-6">
+                    <div class="text-gray-12 font-semibold">{t.title}</div>
+                    <div class="text-gray-10 mt-1">ID: {t.id}</div>
+                    <div class="mt-1">
+                      <span class="text-gray-10">autoRun: </span>
+                      <span class={t.autoRun === false ? "text-red-400 font-bold" : "text-green-400 font-bold"}>
+                        {String(t.autoRun)}
+                      </span>
+                      <span class="text-gray-7"> (type: {typeof t.autoRun})</span>
+                    </div>
+                    <div class="text-gray-10 mt-1">
+                      autoRun !== false: {String(t.autoRun !== false)}
+                    </div>
+                    <div class="text-gray-7 mt-1 truncate" title={t.prompt}>
+                      Prompt: {t.prompt.slice(0, 50)}...
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
         </div>
       </Show>
     </section>
