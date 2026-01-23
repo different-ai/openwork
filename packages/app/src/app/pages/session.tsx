@@ -223,7 +223,8 @@ export default function SessionView(props: SessionViewProps) {
       // But we want it fixed? No, "minimap" style usually maps entire scrollHeight to viewport height.
       
       const mapTop = (relativeTop / scrollHeight) * clientHeight;
-      const mapHeight = Math.max(2, (rect.height / scrollHeight) * clientHeight);
+      // Fixed height for all lines as requested
+      const mapHeight = 2; 
 
       return {
         id: el.getAttribute('data-message-id') || "",
@@ -1272,39 +1273,37 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </div>
 
-          <div class="hidden lg:flex w-3 bg-gray-1 border-l border-gray-6 flex-col items-center justify-start relative group/rail z-10 overflow-hidden">
+          <div class="hidden lg:flex w-5 bg-transparent flex-col items-center justify-start relative group/rail z-10 overflow-hidden py-1">
             <For each={messageLines()}>
               {(line) => (
                 <div
-                  class={`absolute left-1/2 -translate-x-1/2 w-[1.5px] min-h-[4px] rounded-full transition-all duration-300 cursor-pointer
-                    group-hover/rail:w-[2px] group-hover/rail:scale-x-125
+                  class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer
                     ${
                       line.id === activeMessageId()
-                        ? "w-[2.5px] scale-x-150 opacity-100 z-20"
-                        : "opacity-40 hover:opacity-100"
+                        ? "w-3 h-[3px] opacity-100 z-20 shadow-[0_0_8px_rgba(235,0,41,0.6)] dark:shadow-[0_0_8px_rgba(255,255,255,0.6)]"
+                        : "w-1.5 h-[2px] opacity-30 hover:opacity-80 hover:w-2.5"
                     }
                   `}
                   style={{
                     top: `${line.top}px`,
-                    height: `${line.height}px`,
                     "background-color": line.role === "user" ? "#EB0029" : "var(--rail-agent-color, currentColor)",
                   }}
                   title={line.role === "user" ? "User" : "Agent"}
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     const el = chatContainerEl?.querySelector(`[data-message-id="${line.id}"]`);
                     el?.scrollIntoView({ behavior: "smooth", block: "center" });
                   }}
-                />
+                >
+                  {/* Invisible hit area for easier clicking */}
+                  <div class="absolute -inset-x-2 -inset-y-1 bg-transparent" />
+                </div>
               )}
             </For>
             <style>
               {`
                 :root { --rail-agent-color: #000; }
                 [data-theme="dark"] { --rail-agent-color: #fff; }
-                
-                .group\\/rail:hover .absolute {
-                   /* subtle scatter effect could go here if simple width change isn't enough */
-                }
               `}
             </style>
           </div>
