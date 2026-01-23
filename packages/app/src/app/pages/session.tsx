@@ -9,7 +9,6 @@ import type {
   TodoItem,
   View,
   WorkspaceDisplay,
-  WorkspaceTemplate,
 } from "../types";
 
 import {
@@ -17,8 +16,6 @@ import {
   HardDrive,
   Shield,
   Zap,
-  Bug,
-  X,
 } from "lucide-solid";
 
 import Button from "../components/button";
@@ -108,25 +105,6 @@ export default function SessionView(props: SessionViewProps) {
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
 
-  // DEBUG: Track last used template from window global
-  const [debugPanelOpen, setDebugPanelOpen] = createSignal(false);
-  const [debugLastTemplate, setDebugLastTemplate] = createSignal<WorkspaceTemplate | null>(null);
-
-  // Poll for debug template changes
-  createEffect(() => {
-    if (debugPanelOpen()) {
-      const checkTemplate = () => {
-        const template = (window as any).__DEBUG_LAST_TEMPLATE__ as WorkspaceTemplate | undefined;
-        if (template) {
-          setDebugLastTemplate(template);
-        }
-      };
-      checkTemplate();
-      const interval = setInterval(checkTemplate, 500);
-      return () => clearInterval(interval);
-    }
-  });
-
   type Flyout = {
     id: string;
     rect: { top: number; left: number; width: number; height: number };
@@ -139,7 +117,7 @@ export default function SessionView(props: SessionViewProps) {
   const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
-  
+
   const pendingArtifactRafIds = new Set<number>();
 
   onMount(() => {
@@ -217,7 +195,7 @@ export default function SessionView(props: SessionViewProps) {
     }
     setPrevArtifactCount(count);
   });
-  
+
   createEffect(() => {
      const files = props.workingFiles;
      const count = files.length;
@@ -611,7 +589,7 @@ export default function SessionView(props: SessionViewProps) {
                 }
               `}
             </style>
-            
+
             <Show when={props.messages.length === 0}>
               <div class="text-center py-20 space-y-4">
                 <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
@@ -624,7 +602,7 @@ export default function SessionView(props: SessionViewProps) {
               </div>
             </Show>
 
-            <MessageList 
+            <MessageList
               messages={props.messages}
               artifacts={props.artifacts}
               developerMode={props.developerMode}
@@ -636,7 +614,7 @@ export default function SessionView(props: SessionViewProps) {
 
             <div ref={(el) => (messagesEndEl = el)} />
           </div>
-          
+
           <Minimap containerRef={() => chatContainerEl} messages={props.messages} />
 
           <Show when={artifactToast()}>
@@ -646,7 +624,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
         </div>
 
-        <Composer 
+        <Composer
            prompt={props.prompt}
            setPrompt={props.setPrompt}
            busy={props.busy}
@@ -758,93 +736,6 @@ export default function SessionView(props: SessionViewProps) {
         <For each={flyouts()}>
           {(item) => <FlyoutItem item={item} />}
         </For>
-
-        {/* DEBUG: Template Debug Panel Toggle Button */}
-        <button
-          onClick={() => {
-            setDebugPanelOpen(!debugPanelOpen());
-            // Log current state
-            const template = (window as any).__DEBUG_LAST_TEMPLATE__;
-            console.log("[DEBUG Session] Last used template from window:", template);
-          }}
-          class="fixed bottom-4 left-4 z-50 bg-purple-600 hover:bg-purple-500 text-white p-2 rounded-full shadow-lg"
-          title="Toggle Template Debug Panel (Session)"
-        >
-          <Bug size={20} />
-        </button>
-
-        {/* DEBUG: Floating Template Debug Panel */}
-        <Show when={debugPanelOpen()}>
-          <div class="fixed bottom-16 left-4 z-50 w-96 max-h-[60vh] bg-gray-1 border border-purple-600 rounded-xl shadow-2xl overflow-hidden">
-            <div class="bg-purple-600 text-white px-4 py-2 flex items-center justify-between">
-              <span class="font-semibold text-sm">🐛 Session Template Debug</span>
-              <button onClick={() => setDebugPanelOpen(false)} class="hover:bg-purple-500 p-1 rounded">
-                <X size={16} />
-              </button>
-            </div>
-            <div class="p-4 overflow-y-auto max-h-[calc(60vh-3rem)] text-xs font-mono">
-              <Show
-                when={debugLastTemplate()}
-                fallback={
-                  <div class="text-gray-10">
-                    <p>No template has been used yet in this session.</p>
-                    <p class="mt-2 text-gray-7">Run a template from the Templates page to see its data here.</p>
-                  </div>
-                }
-              >
-                <div class="space-y-3">
-                  <div class="text-purple-400 font-bold">Last Used Template</div>
-
-                  <div class="p-3 bg-gray-2 rounded border border-gray-6">
-                    <div class="text-gray-12 font-semibold text-sm">{debugLastTemplate()?.title}</div>
-                    <div class="text-gray-10 mt-2">ID: {debugLastTemplate()?.id}</div>
-                    <div class="text-gray-10 mt-1">Scope: {debugLastTemplate()?.scope}</div>
-
-                    <div class="mt-3 p-2 bg-gray-1 rounded border border-gray-6">
-                      <div class="text-gray-11 font-semibold mb-1">autoRun Analysis:</div>
-                      <div class="space-y-1">
-                        <div>
-                          <span class="text-gray-10">Value: </span>
-                          <span class={debugLastTemplate()?.autoRun === false ? "text-red-400 font-bold" : "text-green-400 font-bold"}>
-                            {String(debugLastTemplate()?.autoRun)}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-gray-10">typeof: </span>
-                          <span class="text-blue-400">{typeof debugLastTemplate()?.autoRun}</span>
-                        </div>
-                        <div>
-                          <span class="text-gray-10">autoRun === false: </span>
-                          <span class={debugLastTemplate()?.autoRun === false ? "text-red-400" : "text-green-400"}>
-                            {String(debugLastTemplate()?.autoRun === false)}
-                          </span>
-                        </div>
-                        <div>
-                          <span class="text-gray-10">autoRun !== false (shouldAutoRun): </span>
-                          <span class={debugLastTemplate()?.autoRun !== false ? "text-green-400" : "text-red-400"}>
-                            {String(debugLastTemplate()?.autoRun !== false)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div class="mt-3">
-                      <div class="text-gray-10">Prompt (truncated):</div>
-                      <div class="text-gray-7 mt-1 p-2 bg-gray-1 rounded border border-gray-6 max-h-24 overflow-y-auto">
-                        {debugLastTemplate()?.prompt?.slice(0, 200)}
-                        {(debugLastTemplate()?.prompt?.length ?? 0) > 200 ? "..." : ""}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="text-gray-7 text-xs mt-2">
-                    Check browser console for detailed logs (search for "[DEBUG")
-                  </div>
-                </div>
-              </Show>
-            </div>
-          </div>
-        </Show>
       </div>
     </Show>
   );

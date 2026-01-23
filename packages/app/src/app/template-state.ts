@@ -29,9 +29,6 @@ export function createTemplateState(options: {
   const [workspaceTemplatesLoaded, setWorkspaceTemplatesLoaded] = createSignal(false);
   const [globalTemplatesLoaded, setGlobalTemplatesLoaded] = createSignal(false);
 
-  // DEBUG: Track the last template used for debugging purposes
-  const [lastUsedTemplate, setLastUsedTemplate] = createSignal<WorkspaceTemplate | null>(null);
-
   const [templateModalOpen, setTemplateModalOpen] = createSignal(false);
   const [templateDraftTitle, setTemplateDraftTitle] = createSignal("");
   const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
@@ -147,25 +144,6 @@ export function createTemplateState(options: {
   }
 
   async function runTemplate(template: WorkspaceTemplate) {
-    // DEBUG: Log template data when running
-    console.log("[DEBUG runTemplate] Template being run:", {
-      id: template.id,
-      title: template.title,
-      autoRun: template.autoRun,
-      autoRunType: typeof template.autoRun,
-      autoRunStrictEqualFalse: template.autoRun === false,
-      autoRunLooseEqualFalse: template.autoRun == false,
-      fullTemplate: template,
-    });
-
-    // DEBUG: Store the template being used for debugging
-    setLastUsedTemplate(template);
-
-    // Also expose to window for debugging
-    if (typeof window !== "undefined") {
-      (window as any).__DEBUG_LAST_TEMPLATE__ = template;
-    }
-
     if (options.isDemoMode()) {
       options.setView("session");
       return;
@@ -176,7 +154,6 @@ export function createTemplateState(options: {
 
     // Check autoRun setting (default to true for backwards compatibility)
     const shouldAutoRun = template.autoRun !== false;
-    console.log("[DEBUG runTemplate] shouldAutoRun calculated as:", shouldAutoRun);
 
     options.setBusy(true);
     options.setError(null);
@@ -190,7 +167,6 @@ export function createTemplateState(options: {
       options.setView("session");
 
       if (shouldAutoRun) {
-        console.log("[DEBUG runTemplate] AUTO-RUNNING template - sending prompt automatically");
         const model = options.defaultModel();
 
         await c.session.promptAsync({
@@ -206,7 +182,6 @@ export function createTemplateState(options: {
         }));
       } else {
         // Don't auto-run: populate the prompt input and let user send manually
-        console.log("[DEBUG runTemplate] NOT AUTO-RUNNING - just populating prompt input");
         window.dispatchEvent(new CustomEvent("openwork:setPrompt", { detail: template.prompt }));
       }
     } catch (e) {
@@ -243,23 +218,13 @@ export function createTemplateState(options: {
         if (parsedFrontmatter) {
           const meta = parsedFrontmatter.data;
 
-          // DEBUG: Log raw frontmatter data
-          console.log("[DEBUG parseTemplateContent] Raw frontmatter meta:", meta);
-          console.log("[DEBUG parseTemplateContent] meta.autoRun:", {
-            value: meta.autoRun,
-            type: typeof meta.autoRun,
-            isBoolean: typeof meta.autoRun === "boolean",
-            isStringFalse: meta.autoRun === "false",
-            isStringTrue: meta.autoRun === "true",
-          });
-
           const title = typeof meta.title === "string" ? meta.title : t("common.untitled", currentLocale());
           const promptText = parsedFrontmatter.body ?? "";
           if (!promptText.trim()) return false;
 
           const createdAtValue = Number(meta.createdAt);
 
-          // DEBUG: Convert string "true"/"false" to actual booleans
+          // Convert string "true"/"false" to actual booleans (frontmatter parser returns strings)
           let autoRunValue: boolean;
           if (typeof meta.autoRun === "boolean") {
             autoRunValue = meta.autoRun;
@@ -270,8 +235,6 @@ export function createTemplateState(options: {
           } else {
             autoRunValue = true; // default
           }
-
-          console.log("[DEBUG parseTemplateContent] Final autoRunValue:", autoRunValue);
 
           pushTemplate({
             id: typeof meta.id === "string" ? meta.id : fallbackId,
@@ -288,14 +251,6 @@ export function createTemplateState(options: {
         const parsed = safeParseJson<Partial<WorkspaceTemplate> & Record<string, unknown>>(raw);
         if (!parsed) return false;
 
-        // DEBUG: Log JSON parsed data
-        console.log("[DEBUG parseTemplateContent JSON] Parsed JSON:", parsed);
-        console.log("[DEBUG parseTemplateContent JSON] parsed.autoRun:", {
-          value: parsed.autoRun,
-          type: typeof parsed.autoRun,
-          isBoolean: typeof parsed.autoRun === "boolean",
-        });
-
         const title = typeof parsed.title === "string" ? parsed.title : t("common.untitled", currentLocale());
         const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
         if (!promptText.trim()) return false;
@@ -309,8 +264,6 @@ export function createTemplateState(options: {
         } else {
           jsonAutoRunValue = true; // default
         }
-
-        console.log("[DEBUG parseTemplateContent JSON] Final jsonAutoRunValue:", jsonAutoRunValue);
 
         pushTemplate({
           id: typeof parsed.id === "string" ? parsed.id : fallbackId,
@@ -329,11 +282,6 @@ export function createTemplateState(options: {
         try {
           const content = unwrap(await c.file.read({ directory: root, path }));
           if (content.type !== "text") return false;
-
-          // DEBUG: Log raw file content
-          console.log("[DEBUG readTemplatePath] Raw file content for", path, ":");
-          console.log(content.content);
-
           return parseTemplateContent(content.content, fallbackId);
         } catch {
           return false;
@@ -404,7 +352,5 @@ export function createTemplateState(options: {
     deleteTemplate,
     runTemplate,
     loadWorkspaceTemplates,
-    // DEBUG: Expose last used template for debugging
-    lastUsedTemplate,
   };
 }
