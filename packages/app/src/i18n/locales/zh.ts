@@ -661,6 +661,16 @@ export default {
   "status.restarting_engine": "正在重启引擎",
   "status.installing_opencode": "正在安装 OpenCode",
   "status.disconnecting": "正在断开连接",
+
+  // ==================== Workspace Switching ====================
+  "workspace.switching_title": "正在打开 {name}",
+  "workspace.switching_title_unknown": "正在打开工作区",
+  "workspace.switching_subtitle": "马上带你回到最近的工作。",
+  "workspace.switching_status_preparing": "正在准备",
+  "workspace.switching_status_connecting": "正在检查连接",
+  "workspace.switching_status_loading": "正在加载最近任务",
+  "workspace.switching_status_almost": "快好了",
+
   "app.connection_lost": "服务器连接已断开。请重新加载。",
   "app.unknown_error": "未知错误",
   "app.error.tauri_required": "此操作需要 Tauri 应用运行时。",

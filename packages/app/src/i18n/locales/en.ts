@@ -654,6 +654,16 @@ export default {
   "status.restarting_engine": "Restarting engine",
   "status.installing_opencode": "Installing OpenCode",
   "status.disconnecting": "Disconnecting",
+
+  // ==================== Workspace Switching ====================
+  "workspace.switching_title": "Opening {name}",
+  "workspace.switching_title_unknown": "Opening workspace",
+  "workspace.switching_subtitle": "We’ll bring your recent work back.",
+  "workspace.switching_status_preparing": "Getting things ready",
+  "workspace.switching_status_connecting": "Checking your connection",
+  "workspace.switching_status_loading": "Loading recent tasks",
+  "workspace.switching_status_almost": "Almost there",
+
   "app.connection_lost": "Server connection lost. Please reload.",
   "app.unknown_error": "Unknown error",
   "app.error.tauri_required": "This action requires the Tauri app runtime.",

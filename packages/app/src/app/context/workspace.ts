@@ -179,44 +179,44 @@ export function createWorkspaceStore(options: {
     const isRemote = next.workspaceType === "remote";
     console.log("[workspace] activate", { id: next.id, type: next.workspaceType });
 
-    if (isRemote) {
-      const baseUrl = next.baseUrl?.trim() ?? "";
-      if (!baseUrl) {
-        options.setError(t("app.error.remote_base_url_required", currentLocale()));
-        return false;
-      }
-
-      setConnectingWorkspaceId(id);
-      options.setMode("client");
-
-      const ok = await connectToServer(baseUrl, next.directory?.trim() || undefined, {
-        workspaceId: next.id,
-        workspaceType: next.workspaceType,
-        targetRoot: next.directory?.trim() ?? "",
-      });
-
-      if (!ok) {
-        setConnectingWorkspaceId(null);
-        return false;
-      }
-
-      syncActiveWorkspaceId(id);
-      setProjectDir(next.directory?.trim() ?? "");
-      setWorkspaceConfig(null);
-      setWorkspaceConfigLoaded(true);
-      setAuthorizedDirs([]);
-
-      if (isTauriRuntime()) {
-        try {
-          await workspaceSetActive(id);
-        } catch {
-          // ignore
-        }
-      }
-
-      setConnectingWorkspaceId(null);
-      return true;
+    const baseUrl = isRemote ? next.baseUrl?.trim() ?? "" : "";
+    if (isRemote && !baseUrl) {
+      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      return false;
     }
+
+    setConnectingWorkspaceId(id);
+
+    try {
+      if (isRemote) {
+        options.setMode("client");
+
+        const ok = await connectToServer(baseUrl, next.directory?.trim() || undefined, {
+          workspaceId: next.id,
+          workspaceType: next.workspaceType,
+          targetRoot: next.directory?.trim() ?? "",
+        });
+
+        if (!ok) {
+          return false;
+        }
+
+        syncActiveWorkspaceId(id);
+        setProjectDir(next.directory?.trim() ?? "");
+        setWorkspaceConfig(null);
+        setWorkspaceConfigLoaded(true);
+        setAuthorizedDirs([]);
+
+        if (isTauriRuntime()) {
+          try {
+            await workspaceSetActive(id);
+          } catch {
+            // ignore
+          }
+        }
+
+        return true;
+      }
 
     const wasHostMode = options.mode() === "host" && options.client();
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
@@ -312,7 +312,10 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    return true;
+      return true;
+    } finally {
+      setConnectingWorkspaceId(null);
+    }
   }
 
   async function connectToServer(
