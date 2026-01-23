@@ -363,3 +363,48 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
+
+  aur-pr:
+    name: Open AUR update PR
+    needs: publish-tauri
+    runs-on: ubuntu-latest
+    if: ${{ vars.AUR_PR_AUTOMATION_ENABLED == 'true' }}
+
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Set release metadata
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          TAG_INPUT="${INPUT_TAG:-}"
+          if [ -n "$TAG_INPUT" ]; then
+            if [[ "$TAG_INPUT" == v* ]]; then
+              TAG="$TAG_INPUT"
+            else
+              TAG="v$TAG_INPUT"
+            fi
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          # Guard against multiline env var injection
+          TAG="${TAG//$'\n'/}"
+          TAG="${TAG//$'\r'/}"
+
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Open AUR update PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: scripts/aur/open-pr.sh "$RELEASE_TAG"

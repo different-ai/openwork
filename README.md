@@ -140,6 +140,19 @@ pnpm build:ui
 pnpm test:e2e
 ```
 
+## Troubleshooting
+
+### Linux / Wayland (Hyprland)
+If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+```
+
+```bash
+WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
+```
+
 ## Security Notes
 
 - OpenWork hides model reasoning and sensitive tool metadata by default.
