@@ -126,7 +126,6 @@ export type WorkspaceOpenworkConfig = {
     createdAt?: number | null;
     preset?: string | null;
   } | null;
-  defaultModel?: { providerID: string; modelID: string } | null;
   authorizedRoots: string[];
 };
 

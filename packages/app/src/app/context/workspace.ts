@@ -798,7 +798,6 @@ export function createWorkspaceStore(options: {
     const cfg: WorkspaceOpenworkConfig = {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
-      defaultModel: existing?.defaultModel ?? null,
       authorizedRoots: nextRoots,
     };
 

@@ -37,7 +37,6 @@ import {
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
-  WORKSPACE_MODEL_PREF_KEY,
 } from "./constants";
 import { parseMcpServersFromContent } from "./mcp";
 import type {
@@ -58,7 +57,6 @@ import type {
   WorkspaceDisplay,
   McpServerEntry,
   McpStatusMap,
-  WorkspaceOpenworkConfig,
   WorkspaceTemplate,
   UpdateHandle,
 } from "./types";
@@ -101,7 +99,6 @@ import {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
-  workspaceOpenworkWrite,
 } from "./lib/tauri";
 
 export default function App() {
@@ -555,9 +552,6 @@ export default function App() {
   >([]);
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
-
-  const workspaceDefaultModelKey = (workspaceId: string) =>
-    `${WORKSPACE_MODEL_PREF_KEY}.${workspaceId}`;
   const sessionModelOverridesKey = (workspaceId: string) =>
     `${SESSION_MODEL_PREF_KEY}.${workspaceId}`;
 
@@ -598,6 +592,38 @@ export default function App() {
       payload[sessionId] = formatModelRef(model);
     }
     return JSON.stringify(payload);
+  };
+
+  const parseDefaultModelFromConfig = (content: string | null) => {
+    if (!content) return null;
+    try {
+      const parsed = parse(content) as Record<string, unknown> | undefined;
+      const rawModel = typeof parsed?.model === "string" ? parsed.model : null;
+      return parseModelRef(rawModel);
+    } catch {
+      return null;
+    }
+  };
+
+  const formatConfigWithDefaultModel = (content: string | null, model: ModelRef) => {
+    let config: Record<string, unknown> = {};
+    if (content?.trim()) {
+      try {
+        const parsed = parse(content) as Record<string, unknown> | undefined;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          config = { ...parsed };
+        }
+      } catch {
+        config = {};
+      }
+    }
+
+    if (!config["$schema"]) {
+      config["$schema"] = "https://opencode.ai/config.json";
+    }
+
+    config.model = formatModelRef(model);
+    return `${JSON.stringify(config, null, 2)}\n`;
   };
   const [modelPickerOpen, setModelPickerOpen] = createSignal(false);
   const [modelPickerTarget, setModelPickerTarget] = createSignal<
@@ -1595,38 +1621,50 @@ export default function App() {
 
     setWorkspaceDefaultModelReady(false);
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
-    if (isTauriRuntime() && workspaceType === "local" && !workspaceStore.workspaceConfigLoaded()) {
-      return;
-    }
+    const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
+    const activeClient = client();
 
-    const configDefault =
-      workspaceType === "local" ? workspaceStore.workspaceConfig()?.defaultModel ?? null : null;
-    const validConfigDefault =
-      configDefault && configDefault.providerID && configDefault.modelID ? configDefault : null;
-    const storedDefault = parseModelRef(
-      window.localStorage.getItem(workspaceDefaultModelKey(workspaceId))
-    );
-    const nextDefault = validConfigDefault ?? storedDefault ?? legacyDefaultModel();
-    const currentDefault = untrack(defaultModel);
-    if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
-      setDefaultModel(nextDefault);
-    }
-    setWorkspaceDefaultModelReady(true);
-  });
+    let cancelled = false;
 
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    if (!workspaceDefaultModelReady()) return;
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    if (!workspaceId) return;
-    try {
-      window.localStorage.setItem(
-        workspaceDefaultModelKey(workspaceId),
-        formatModelRef(defaultModel())
-      );
-    } catch {
-      // ignore
-    }
+    const applyDefault = async () => {
+      let configDefault: ModelRef | null = null;
+
+      if (isTauriRuntime() && workspaceType === "local" && workspaceRoot) {
+        try {
+          const configFile = await readOpencodeConfig("project", workspaceRoot);
+          configDefault = parseDefaultModelFromConfig(configFile.content);
+        } catch {
+          // ignore
+        }
+      } else if (activeClient) {
+        try {
+          const config = unwrap(
+            await activeClient.config.get({ directory: workspaceRoot || undefined })
+          );
+          if (typeof config.model === "string") {
+            configDefault = parseModelRef(config.model);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const nextDefault = configDefault ?? legacyDefaultModel();
+      const currentDefault = untrack(defaultModel);
+      if (nextDefault && !modelEquals(currentDefault, nextDefault)) {
+        setDefaultModel(nextDefault);
+      }
+
+      if (!cancelled) {
+        setWorkspaceDefaultModelReady(true);
+      }
+    };
+
+    void applyDefault();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   createEffect(() => {
@@ -1635,30 +1673,35 @@ export default function App() {
 
     const workspace = workspaceStore.activeWorkspaceDisplay();
     if (workspace.workspaceType !== "local") return;
-    if (!workspaceStore.workspaceConfigLoaded()) return;
 
     const root = workspaceStore.activeWorkspacePath().trim();
     if (!root) return;
-
-    const existing = workspaceStore.workspaceConfig();
     const nextModel = defaultModel();
-    if (existing?.defaultModel && modelEquals(existing.defaultModel, nextModel)) return;
+    let cancelled = false;
 
-    const cfg = {
-      version: existing?.version ?? 1,
-      workspace: existing?.workspace ?? null,
-      authorizedRoots: existing?.authorizedRoots ?? workspaceStore.authorizedDirs(),
-      defaultModel: nextModel,
-    } as WorkspaceOpenworkConfig;
+    const writeConfig = async () => {
+      try {
+        const configFile = await readOpencodeConfig("project", root);
+        const existingModel = parseDefaultModelFromConfig(configFile.content);
+        if (existingModel && modelEquals(existingModel, nextModel)) return;
 
-    void workspaceOpenworkWrite({ workspacePath: root, config: cfg })
-      .then(() => {
-        workspaceStore.setWorkspaceConfig(cfg);
-      })
-      .catch((error) => {
+        const content = formatConfigWithDefaultModel(configFile.content, nextModel);
+        const result = await writeOpencodeConfig("project", root, content);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+        }
+      } catch (error) {
+        if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
         setError(addOpencodeCacheHint(message));
-      });
+      }
+    };
+
+    void writeConfig();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
   });
 
   createEffect(() => {
