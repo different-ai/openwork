@@ -442,8 +442,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <Button
                 variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
                 onClick={() => props.setEngineSource("sidecar")}
-                disabled={props.busy || props.isWindows}
-                title={props.isWindows ? "Bundled engine is not supported on Windows yet" : ""}
+                disabled={props.busy}
               >
                 Bundled (recommended)
               </Button>
@@ -457,9 +456,6 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
             <div class="text-[11px] text-gray-7">
               Bundled engine is the most reliable option. Use System install only if you manage OpenCode yourself.
-              <Show when={props.isWindows}>
-                <span class="text-gray-10"> Bundled engine is currently unavailable on Windows.</span>
-              </Show>
             </div>
           </div>
         </Show>
