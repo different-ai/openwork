@@ -179,6 +179,11 @@ export default function SessionSidebar(props: SidebarProps) {
                         </div>
                         <div class="min-w-0">
                           <div class="truncate">{artifact.name}</div>
+                          <Show when={artifact.path}>
+                            <div class="truncate text-[7px] text-gray-5" title={artifact.path}>
+                              {artifact.path}
+                            </div>
+                          </Show>
                         </div>
                       </button>
                     )}
