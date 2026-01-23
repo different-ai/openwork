@@ -34,6 +34,7 @@ export function createTemplateState(options: {
   const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
   const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
+  const [templateDraftAutoRun, setTemplateDraftAutoRun] = createSignal(true);
 
   const workspaceTemplates = createMemo(() => templates().filter((t) => t.scope === "workspace"));
   const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
@@ -41,7 +42,7 @@ export function createTemplateState(options: {
   function openTemplateModal() {
     const seedTitle = options.selectedSession()?.title ?? "";
     const seedPrompt = options.lastPromptSent() || options.prompt();
-    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace", autoRun: true });
 
     resetTemplateDraft(
       {
@@ -49,6 +50,7 @@ export function createTemplateState(options: {
         setDescription: setTemplateDraftDescription,
         setPrompt: setTemplateDraftPrompt,
         setScope: setTemplateDraftScope,
+        setAutoRun: setTemplateDraftAutoRun,
       },
       nextDraft.scope,
     );
@@ -59,10 +61,11 @@ export function createTemplateState(options: {
   }
 
   async function saveTemplate() {
-    const draft = buildTemplateDraft({ scope: templateDraftScope() });
+    const draft = buildTemplateDraft({ scope: templateDraftScope(), autoRun: templateDraftAutoRun() });
     draft.title = templateDraftTitle().trim();
     draft.description = templateDraftDescription().trim();
     draft.prompt = templateDraftPrompt().trim();
+    draft.autoRun = templateDraftAutoRun();
 
     if (!draft.title || !draft.prompt) {
       options.setError(t("app.error.title_prompt_required", currentLocale()));
@@ -140,7 +143,8 @@ export function createTemplateState(options: {
     setGlobalTemplatesLoaded(true);
   }
 
-  async function runTemplate(template: WorkspaceTemplate) {
+  // Apply a template to create a new session
+  async function applyTemplate(template: WorkspaceTemplate) {
     if (options.isDemoMode()) {
       options.setView("session");
       return;
@@ -148,6 +152,12 @@ export function createTemplateState(options: {
 
     const c = options.client();
     if (!c) return;
+
+    // Check autoRun setting (default to true for backwards compatibility)
+    const shouldAutoRun = template.autoRun !== false;
+
+    // Trim the prompt before using
+    const trimmedPrompt = template.prompt.trim();
 
     options.setBusy(true);
     options.setError(null);
@@ -160,19 +170,24 @@ export function createTemplateState(options: {
       await options.selectSession(session.id);
       options.setView("session");
 
-      const model = options.defaultModel();
+      if (shouldAutoRun) {
+        const model = options.defaultModel();
 
-      await c.session.promptAsync({
-        sessionID: session.id,
-        model,
-        variant: options.modelVariant() ?? undefined,
-        parts: [{ type: "text", text: template.prompt }],
-      });
+        await c.session.promptAsync({
+          sessionID: session.id,
+          model,
+          variant: options.modelVariant() ?? undefined,
+          parts: [{ type: "text", text: trimmedPrompt }],
+        });
 
-      options.setSessionModelById((current) => ({
-        ...current,
-        [session.id]: model,
-      }));
+        options.setSessionModelById((current) => ({
+          ...current,
+          [session.id]: model,
+        }));
+      } else {
+        // Don't auto-run: populate the prompt input and let user send manually
+        window.dispatchEvent(new CustomEvent("openwork:setPrompt", { detail: trimmedPrompt }));
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       options.setError(addOpencodeCacheHint(message));
@@ -206,11 +221,25 @@ export function createTemplateState(options: {
         const parsedFrontmatter = parseTemplateFrontmatter(raw);
         if (parsedFrontmatter) {
           const meta = parsedFrontmatter.data;
+
           const title = typeof meta.title === "string" ? meta.title : t("common.untitled", currentLocale());
           const promptText = parsedFrontmatter.body ?? "";
           if (!promptText.trim()) return false;
 
           const createdAtValue = Number(meta.createdAt);
+
+          // Convert string "true"/"false" to actual booleans (frontmatter parser returns strings)
+          let autoRunValue: boolean;
+          if (typeof meta.autoRun === "boolean") {
+            autoRunValue = meta.autoRun;
+          } else if (meta.autoRun === "false") {
+            autoRunValue = false;
+          } else if (meta.autoRun === "true") {
+            autoRunValue = true;
+          } else {
+            autoRunValue = true; // default
+          }
+
           pushTemplate({
             id: typeof meta.id === "string" ? meta.id : fallbackId,
             title,
@@ -218,6 +247,7 @@ export function createTemplateState(options: {
             prompt: promptText,
             createdAt: Number.isFinite(createdAtValue) && createdAtValue > 0 ? createdAtValue : Date.now(),
             scope: "workspace",
+            autoRun: autoRunValue,
           });
           return true;
         }
@@ -229,6 +259,16 @@ export function createTemplateState(options: {
         const promptText = typeof parsed.prompt === "string" ? parsed.prompt : "";
         if (!promptText.trim()) return false;
 
+        // For JSON, autoRun should already be a boolean if properly serialized
+        let jsonAutoRunValue: boolean;
+        if (typeof parsed.autoRun === "boolean") {
+          jsonAutoRunValue = parsed.autoRun;
+        } else if (parsed.autoRun === "false" || parsed.autoRun === false) {
+          jsonAutoRunValue = false;
+        } else {
+          jsonAutoRunValue = true; // default
+        }
+
         pushTemplate({
           id: typeof parsed.id === "string" ? parsed.id : fallbackId,
           title,
@@ -236,6 +276,7 @@ export function createTemplateState(options: {
           prompt: promptText,
           createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
           scope: "workspace",
+          autoRun: jsonAutoRunValue,
         });
 
         return true;
@@ -306,12 +347,14 @@ export function createTemplateState(options: {
     setTemplateDraftPrompt,
     templateDraftScope,
     setTemplateDraftScope,
+    templateDraftAutoRun,
+    setTemplateDraftAutoRun,
     workspaceTemplates,
     globalTemplates,
     openTemplateModal,
     saveTemplate,
     deleteTemplate,
-    runTemplate,
+    applyTemplate,
     loadWorkspaceTemplates,
   };
 }

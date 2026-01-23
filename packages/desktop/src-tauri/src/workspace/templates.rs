@@ -31,6 +31,7 @@ pub fn serialize_template_frontmatter(template: &WorkspaceTemplate) -> Result<St
   out.push_str(&escape_yaml_scalar(&template.description));
   out.push_str("\n");
   out.push_str(&format!("createdAt: {}\n", template.created_at));
+  out.push_str(&format!("autoRun: {}\n", template.auto_run.unwrap_or(true)));
   out.push_str("---\n\n");
   out.push_str(template.prompt.trim_end());
   out.push('\n');
@@ -55,6 +56,7 @@ pub fn write_template(workspace_path: &str, template: WorkspaceTemplate) -> Resu
     description: template.description,
     prompt: template.prompt,
     created_at: default_template_created_at(template.created_at),
+    auto_run: template.auto_run,
   };
 
   let template_dir = templates_dir.join(&template_id);

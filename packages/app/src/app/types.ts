@@ -92,6 +92,7 @@ export type Template = {
   description: string;
   prompt: string;
   createdAt: number;
+  autoRun?: boolean;
 };
 
 export type SkillCard = {

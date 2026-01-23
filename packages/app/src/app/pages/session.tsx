@@ -117,7 +117,7 @@ export default function SessionView(props: SessionViewProps) {
   const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
-  
+
   const pendingArtifactRafIds = new Set<number>();
 
   onMount(() => {
@@ -195,7 +195,7 @@ export default function SessionView(props: SessionViewProps) {
     }
     setPrevArtifactCount(count);
   });
-  
+
   createEffect(() => {
      const files = props.workingFiles;
      const count = files.length;
@@ -589,7 +589,7 @@ export default function SessionView(props: SessionViewProps) {
                 }
               `}
             </style>
-            
+
             <Show when={props.messages.length === 0}>
               <div class="text-center py-20 space-y-4">
                 <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
@@ -602,7 +602,7 @@ export default function SessionView(props: SessionViewProps) {
               </div>
             </Show>
 
-            <MessageList 
+            <MessageList
               messages={props.messages}
               artifacts={props.artifacts}
               developerMode={props.developerMode}
@@ -614,7 +614,7 @@ export default function SessionView(props: SessionViewProps) {
 
             <div ref={(el) => (messagesEndEl = el)} />
           </div>
-          
+
           <Minimap containerRef={() => chatContainerEl} messages={props.messages} />
 
           <Show when={artifactToast()}>
@@ -624,7 +624,7 @@ export default function SessionView(props: SessionViewProps) {
           </Show>
         </div>
 
-        <Composer 
+        <Composer
            prompt={props.prompt}
            setPrompt={props.setPrompt}
            busy={props.busy}
