@@ -473,8 +473,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string } {
 }
 
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
-  const results: ArtifactItem[] = [];
-  const seen = new Set<string>();
+  const results = new Map<string, ArtifactItem>();
   const filePattern = /([\w./\-]+\.(?:pdf|docx|doc|txt|md|csv|json|js|ts|tsx|xlsx|pptx|png|jpg|jpeg))/gi;
 
   list.forEach((message) => {
@@ -500,25 +499,27 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
       if (!matches.length) return;
 
       matches.forEach((match) => {
-        const name = match.split("/").pop() ?? match;
-        const idBase = record.id ?? name;
-        const id = messageId ? `artifact-${messageId}-${idBase}` : `artifact-${idBase}`;
-        if (seen.has(id)) return;
-        seen.add(id);
-
-        results.push({
+        const normalizedPath = match.trim().replace(/[\\/]+/g, "/");
+        if (!normalizedPath) return;
+        const key = normalizedPath.toLowerCase();
+        const name = normalizedPath.split("/").pop() ?? normalizedPath;
+        const idBase = encodeURIComponent(normalizedPath);
+        const id = `artifact-${idBase}`;
+        const next = {
           id,
           name,
-          path: match,
-          kind: "file",
+          path: normalizedPath,
+          kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
-        });
+        };
+        if (results.has(key)) results.delete(key);
+        results.set(key, next);
       });
     });
   });
 
-  return results;
+  return Array.from(results.values());
 }
 
 export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
