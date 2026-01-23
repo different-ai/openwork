@@ -4,8 +4,8 @@
   "version": "0.3.3",
   "identifier": "com.differentai.openwork",
   "build": {
-    "beforeDevCommand": "pnpm -C .. run prepare:sidecar && pnpm -w dev:ui",
-    "beforeBuildCommand": "pnpm -C .. run prepare:sidecar && pnpm -w build:ui",
+    "beforeDevCommand": "pnpm -C ../.. run prepare:sidecar && pnpm -w dev:ui",
+    "beforeBuildCommand": "pnpm -C ../.. run prepare:sidecar && pnpm -w build:ui",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
   },
