@@ -1311,8 +1311,8 @@ export default function SessionView(props: SessionViewProps) {
                   class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer
                     ${
                       line.id === activeMessageId()
-                        ? "w-3 h-[3px] opacity-100 z-20 shadow-[0_0_8px_rgba(235,0,41,0.6)] dark:shadow-[0_0_8px_rgba(255,255,255,0.6)]"
-                        : "w-1.5 h-[2px] opacity-30 hover:opacity-80 hover:w-2.5"
+                        ? "w-4 h-[3px] opacity-100 z-20 shadow-[0_0_8px_rgba(235,0,41,0.6)] dark:shadow-[0_0_8px_rgba(255,255,255,0.6)]"
+                        : "w-2.5 h-[2px] opacity-30 hover:opacity-80 hover:w-3.5"
                     }
                   `}
                   style={{
