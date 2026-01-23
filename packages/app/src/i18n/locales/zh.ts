@@ -163,6 +163,8 @@ export default {
   "templates.prompt_label": "提示词",
   "templates.prompt_placeholder": "编写您想重用的指令…",
   "templates.prompt_hint": "这将成为第一条用户消息。",
+  "templates.auto_run_label": "自动运行",
+  "templates.auto_run_hint": "使用此模板时自动开始会话。",
 
   // ==================== Skills ====================
   "skills.title": "Skills",

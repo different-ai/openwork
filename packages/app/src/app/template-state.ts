@@ -34,6 +34,7 @@ export function createTemplateState(options: {
   const [templateDraftDescription, setTemplateDraftDescription] = createSignal("");
   const [templateDraftPrompt, setTemplateDraftPrompt] = createSignal("");
   const [templateDraftScope, setTemplateDraftScope] = createSignal<"workspace" | "global">("workspace");
+  const [templateDraftAutoRun, setTemplateDraftAutoRun] = createSignal(true);
 
   const workspaceTemplates = createMemo(() => templates().filter((t) => t.scope === "workspace"));
   const globalTemplates = createMemo(() => templates().filter((t) => t.scope === "global"));
@@ -41,7 +42,7 @@ export function createTemplateState(options: {
   function openTemplateModal() {
     const seedTitle = options.selectedSession()?.title ?? "";
     const seedPrompt = options.lastPromptSent() || options.prompt();
-    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace" });
+    const nextDraft = buildTemplateDraft({ seedTitle, seedPrompt, scope: "workspace", autoRun: true });
 
     resetTemplateDraft(
       {
@@ -49,6 +50,7 @@ export function createTemplateState(options: {
         setDescription: setTemplateDraftDescription,
         setPrompt: setTemplateDraftPrompt,
         setScope: setTemplateDraftScope,
+        setAutoRun: setTemplateDraftAutoRun,
       },
       nextDraft.scope,
     );
@@ -59,10 +61,11 @@ export function createTemplateState(options: {
   }
 
   async function saveTemplate() {
-    const draft = buildTemplateDraft({ scope: templateDraftScope() });
+    const draft = buildTemplateDraft({ scope: templateDraftScope(), autoRun: templateDraftAutoRun() });
     draft.title = templateDraftTitle().trim();
     draft.description = templateDraftDescription().trim();
     draft.prompt = templateDraftPrompt().trim();
+    draft.autoRun = templateDraftAutoRun();
 
     if (!draft.title || !draft.prompt) {
       options.setError(t("app.error.title_prompt_required", currentLocale()));
@@ -149,6 +152,9 @@ export function createTemplateState(options: {
     const c = options.client();
     if (!c) return;
 
+    // Check autoRun setting (default to true for backwards compatibility)
+    const shouldAutoRun = template.autoRun !== false;
+
     options.setBusy(true);
     options.setError(null);
 
@@ -160,19 +166,24 @@ export function createTemplateState(options: {
       await options.selectSession(session.id);
       options.setView("session");
 
-      const model = options.defaultModel();
+      if (shouldAutoRun) {
+        const model = options.defaultModel();
 
-      await c.session.promptAsync({
-        sessionID: session.id,
-        model,
-        variant: options.modelVariant() ?? undefined,
-        parts: [{ type: "text", text: template.prompt }],
-      });
+        await c.session.promptAsync({
+          sessionID: session.id,
+          model,
+          variant: options.modelVariant() ?? undefined,
+          parts: [{ type: "text", text: template.prompt }],
+        });
 
-      options.setSessionModelById((current) => ({
-        ...current,
-        [session.id]: model,
-      }));
+        options.setSessionModelById((current) => ({
+          ...current,
+          [session.id]: model,
+        }));
+      } else {
+        // Don't auto-run: populate the prompt input and let user send manually
+        window.dispatchEvent(new CustomEvent("openwork:setPrompt", { detail: template.prompt }));
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       options.setError(addOpencodeCacheHint(message));
@@ -218,6 +229,7 @@ export function createTemplateState(options: {
             prompt: promptText,
             createdAt: Number.isFinite(createdAtValue) && createdAtValue > 0 ? createdAtValue : Date.now(),
             scope: "workspace",
+            autoRun: typeof meta.autoRun === "boolean" ? meta.autoRun : true,
           });
           return true;
         }
@@ -236,6 +248,7 @@ export function createTemplateState(options: {
           prompt: promptText,
           createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now(),
           scope: "workspace",
+          autoRun: typeof parsed.autoRun === "boolean" ? parsed.autoRun : true,
         });
 
         return true;
@@ -306,6 +319,8 @@ export function createTemplateState(options: {
     setTemplateDraftPrompt,
     templateDraftScope,
     setTemplateDraftScope,
+    templateDraftAutoRun,
+    setTemplateDraftAutoRun,
     workspaceTemplates,
     globalTemplates,
     openTemplateModal,

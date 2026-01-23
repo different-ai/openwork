@@ -12,12 +12,14 @@ export type TemplateModalProps = {
   description: string;
   prompt: string;
   scope: "workspace" | "global";
+  autoRun: boolean;
   onClose: () => void;
   onSave: () => void;
   onTitleChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
   onPromptChange: (value: string) => void;
   onScopeChange: (value: "workspace" | "global") => void;
+  onAutoRunChange: (value: boolean) => void;
 };
 
 export default function TemplateModal(props: TemplateModalProps) {
@@ -88,6 +90,25 @@ export default function TemplateModal(props: TemplateModalProps) {
                 />
                 <div class="mt-1 text-xs text-gray-10">{translate("templates.prompt_hint")}</div>
               </label>
+
+              {/* Auto-run Toggle */}
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">{translate("templates.auto_run_label")}</div>
+                  <div class="text-xs text-gray-7">{translate("templates.auto_run_hint")}</div>
+                </div>
+                <button
+                  type="button"
+                  class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors shrink-0 ${
+                    props.autoRun
+                      ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
+                      : "text-gray-10 border-gray-6 hover:text-gray-12"
+                  }`}
+                  onClick={() => props.onAutoRunChange(!props.autoRun)}
+                >
+                  {props.autoRun ? "On" : "Off"}
+                </button>
+              </div>
             </div>
 
             <div class="mt-6 flex justify-end gap-2">

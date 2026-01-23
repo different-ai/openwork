@@ -162,6 +162,8 @@ export default {
   "templates.prompt_label": "Prompt",
   "templates.prompt_placeholder": "Write the instructions you want to reuse…",
   "templates.prompt_hint": "This becomes the first user message.",
+  "templates.auto_run_label": "Auto-run",
+  "templates.auto_run_hint": "Automatically start the session when this template is used.",
 
   // ==================== Skills ====================
   "skills.title": "Skills",

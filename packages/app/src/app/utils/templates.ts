@@ -5,6 +5,7 @@ type TemplateDraft = {
   description: string;
   prompt: string;
   scope: "workspace" | "global";
+  autoRun: boolean;
 };
 
 type TemplateDraftSetters = {
@@ -12,6 +13,7 @@ type TemplateDraftSetters = {
   setDescription: (value: string) => void;
   setPrompt: (value: string) => void;
   setScope: (value: "workspace" | "global") => void;
+  setAutoRun: (value: boolean) => void;
 };
 
 export function resetTemplateDraft(setters: TemplateDraftSetters, scope: "workspace" | "global" = "workspace") {
@@ -19,18 +21,21 @@ export function resetTemplateDraft(setters: TemplateDraftSetters, scope: "worksp
   setters.setDescription("");
   setters.setPrompt("");
   setters.setScope(scope);
+  setters.setAutoRun(true);
 }
 
 export function buildTemplateDraft(params: {
   seedTitle?: string;
   seedPrompt?: string;
   scope?: "workspace" | "global";
+  autoRun?: boolean;
 }): TemplateDraft {
   return {
     title: params.seedTitle ?? "",
     description: "",
     prompt: params.seedPrompt ?? "",
     scope: params.scope ?? "workspace",
+    autoRun: params.autoRun ?? true,
   };
 }
 
@@ -42,5 +47,6 @@ export function createTemplateRecord(draft: TemplateDraft): WorkspaceTemplate {
     prompt: draft.prompt,
     createdAt: Date.now(),
     scope: draft.scope,
+    autoRun: draft.autoRun,
   };
 }

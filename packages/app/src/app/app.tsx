@@ -642,6 +642,8 @@ export default function App() {
     setTemplateDraftPrompt,
     templateDraftScope,
     setTemplateDraftScope,
+    templateDraftAutoRun,
+    setTemplateDraftAutoRun,
     workspaceTemplates,
     globalTemplates,
     openTemplateModal,
@@ -1352,8 +1354,15 @@ export default function App() {
       applyThemeMode(isDark ? "dark" : "light");
     });
 
+    // Listen for setPrompt events from template system (when autoRun is disabled)
+    const handleSetPrompt = (e: CustomEvent<string>) => {
+      setPrompt(e.detail);
+    };
+    window.addEventListener("openwork:setPrompt", handleSetPrompt as EventListener);
+
     onCleanup(() => {
       unsubscribeTheme();
+      window.removeEventListener("openwork:setPrompt", handleSetPrompt as EventListener);
     });
 
     createEffect(() => {
@@ -2083,12 +2092,14 @@ export default function App() {
         description={templateDraftDescription()}
         prompt={templateDraftPrompt()}
         scope={templateDraftScope()}
+        autoRun={templateDraftAutoRun()}
         onClose={() => setTemplateModalOpen(false)}
         onSave={saveTemplate}
         onTitleChange={setTemplateDraftTitle}
         onDescriptionChange={setTemplateDraftDescription}
         onPromptChange={setTemplateDraftPrompt}
         onScopeChange={setTemplateDraftScope}
+        onAutoRunChange={setTemplateDraftAutoRun}
       />
 
       <WorkspacePicker
