@@ -1932,6 +1932,7 @@ export default function App() {
     connectMcp,
     refreshMcpServers,
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
+    mcpReloadBlocked: anyActiveRuns(),
     reloadMcpEngine: () => reloadEngineInstance(),
     language: currentLocale(),
     setLanguage: setLocale,
@@ -2066,6 +2067,7 @@ export default function App() {
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
         reloadRequired={reloadRequired() && reloadReasons().includes("mcp")}
+        reloadBlocked={anyActiveRuns()}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);

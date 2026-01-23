@@ -126,6 +126,7 @@ export type DashboardViewProps = {
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
+  mcpReloadBlocked: boolean;
   reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
@@ -751,6 +752,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 quickConnect={props.quickConnect}
                 connectMcp={props.connectMcp}
                 showMcpReloadBanner={props.showMcpReloadBanner}
+                reloadBlocked={props.mcpReloadBlocked}
                 reloadMcpEngine={props.reloadMcpEngine}
               />
             </Match>

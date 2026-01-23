@@ -15,6 +15,7 @@ export type McpAuthModalProps = {
   onComplete: () => void | Promise<void>;
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
+  reloadBlocked?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
@@ -38,6 +39,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const [alreadyConnected, setAlreadyConnected] = createSignal(false);
   const [authInProgress, setAuthInProgress] = createSignal(false);
   const [statusChecking, setStatusChecking] = createSignal(false);
+  const [reloadNotice, setReloadNotice] = createSignal<string | null>(null);
   const [authorizationUrl, setAuthorizationUrl] = createSignal<string | null>(null);
   const [callbackInput, setCallbackInput] = createSignal("");
   const [manualAuthBusy, setManualAuthBusy] = createSignal(false);
@@ -126,13 +128,18 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     stopStatusPolling();
     setAuthorizationUrl(null);
     setCallbackInput("");
+    setReloadNotice(null);
     setLoading(true);
     setAuthInProgress(true);
 
     try {
       if (props.reloadRequired) {
         setNeedsReload(true);
-        setError(translate("mcp.auth.reload_before_oauth"));
+        setReloadNotice(
+          props.reloadBlocked
+            ? translate("mcp.auth.reload_blocked")
+            : translate("mcp.auth.reload_notice")
+        );
         return;
       }
 
@@ -161,9 +168,17 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
       if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server";
-        setError(
-          `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
-        );
+        if (props.reloadRequired) {
+          setReloadNotice(
+            props.reloadBlocked
+              ? translate("mcp.auth.reload_blocked")
+              : translate("mcp.auth.reload_notice")
+          );
+        } else {
+          setError(
+            `${message}\n\n` + translate("mcp.auth.oauth_not_supported_hint", { server: serverSlug })
+          );
+        }
         setNeedsReload(true);
       } else if (message.toLowerCase().includes("not found") || message.toLowerCase().includes("unknown")) {
         setNeedsReload(true);
@@ -212,6 +227,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setAuthorizationUrl(null);
     setCallbackInput("");
     setManualAuthBusy(false);
+    setReloadNotice(null);
     stopStatusPolling();
     props.onClose();
   };
@@ -391,6 +407,29 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
+            <Show when={reloadNotice()}>
+              <div class="bg-gray-1/50 border border-gray-6/70 rounded-xl p-4 space-y-3">
+                <p class="text-sm text-gray-11">{reloadNotice()}</p>
+
+                <div class="flex flex-wrap gap-2 pt-1">
+                  <Show when={props.onReloadEngine}>
+                    <Button
+                      variant="secondary"
+                      onClick={handleReloadAndRetry}
+                      disabled={props.reloadBlocked}
+                      title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                    >
+                      <RefreshCcw size={14} />
+                      {translate("mcp.auth.reload_engine_retry")}
+                    </Button>
+                  </Show>
+                  <Button variant="ghost" onClick={handleRetry}>
+                    {translate("mcp.auth.retry_now")}
+                  </Button>
+                </div>
+              </div>
+            </Show>
+
             <Show when={error()}>
               <div class="bg-red-7/10 border border-red-7/20 rounded-xl p-4 space-y-3">
                 <p class="text-sm text-red-11">{error()}</p>
@@ -398,7 +437,12 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                 <Show when={needsReload()}>
                   <div class="flex flex-wrap gap-2 pt-2">
                     <Show when={props.onReloadEngine}>
-                      <Button variant="secondary" onClick={handleReloadAndRetry}>
+                      <Button
+                        variant="secondary"
+                        onClick={handleReloadAndRetry}
+                        disabled={props.reloadBlocked}
+                        title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                      >
                         <RefreshCcw size={14} />
                         {translate("mcp.auth.reload_engine_retry")}
                       </Button>
@@ -454,7 +498,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
-            <Show when={!isBusy() && !error() && !alreadyConnected()}>
+            <Show when={!isBusy() && !error() && !reloadNotice() && !alreadyConnected()}>
               <div class="space-y-4">
                 <div class="flex items-start gap-3">
                   <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">
