@@ -1155,73 +1155,80 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="p-4 border-t border-gray-6 bg-gray-1 sticky bottom-0 z-20">
           <div class="max-w-2xl mx-auto">
-            <div class="bg-gray-2 border border-gray-6 rounded-2xl overflow-visible focus-within:ring-1 focus-within:ring-gray-7 transition-all shadow-2xl relative group/input">
-              <button
-                type="button"
-                class="absolute top-2 left-4 flex items-center gap-1 text-[10px] font-bold text-gray-7 hover:text-gray-11 transition-colors uppercase tracking-widest z-10"
-                onClick={() => props.openSessionModelPicker()}
-                disabled={props.busy}
+              <div
+                class={`bg-gray-2 border border-gray-6 rounded-2xl overflow-visible transition-all shadow-2xl relative group/input ${
+                  commandMenuOpen()
+                    ? "rounded-t-none border-t-transparent"
+                    : "focus-within:ring-1 focus-within:ring-gray-7"
+                }`}
               >
-                <Zap size={10} class="text-gray-7 group-hover:text-amber-11 transition-colors" />
-                <span>{isModelUnknown() ? "Standard" : modelLabelParts().model}</span>
-              </button>
-
-              <div class="p-2 pt-6 pb-3 px-4">
-                <Show when={props.showTryNotionPrompt}>
-                  <button
-                    type="button"
-                    class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
-                    onClick={() => props.onTryNotionPrompt()}
-                  >
-                    <span>Try it now: set up my CRM in Notion</span>
-                    <span class="text-xs text-green-12 font-medium">Insert prompt</span>
-                  </button>
-                </Show>
-
-                <div class="relative">
-                  <Show when={commandMenuOpen()}>
-                    <div class="absolute bottom-full left-0 right-0 mb-2 z-30">
-                      <div class="rounded-2xl border border-gray-6/70 bg-gray-1/95 shadow-xl backdrop-blur-sm">
-                        <div class="px-3 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8">
-                          Commands
-                        </div>
-                        <div class="space-y-1 px-2 pb-2">
-                          <Show
-                            when={commandMatches().length}
-                            fallback={
-                              <div class="px-3 py-2 text-xs text-gray-9">
-                                No commands found.
-                              </div>
-                            }
-                          >
-                            <For each={commandMatches()}>
-                              {(command, idx) => (
-                                <button
-                                  type="button"
-                                  class={`w-full flex items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
-                                    idx() === commandIndex()
-                                      ? "bg-gray-12/10 text-gray-12"
-                                      : "text-gray-11 hover:bg-gray-12/5"
-                                  }`}
-                                  onMouseDown={(event) => {
-                                    event.preventDefault();
-                                    selectCommand(command.id);
-                                  }}
-                                  onMouseEnter={() => {
-                                    setCommandIndex(idx());
-                                    promptInputEl?.focus();
-                                  }}
-                                >
-                                  <div class="text-xs font-semibold text-gray-12">/{command.id}</div>
-                                  <div class="text-[11px] text-gray-9">{command.description}</div>
-                                </button>
-                              )}
-                            </For>
-                          </Show>
-                        </div>
+                <Show when={commandMenuOpen()}>
+                  <div class="absolute bottom-full left-[-1px] right-[-1px] z-30">
+                    <div class="rounded-t-2xl border border-gray-6 border-b-0 bg-gray-2 shadow-2xl overflow-hidden">
+                      <div class="px-3 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30 bg-gray-2">
+                        Commands
+                      </div>
+                      <div class="space-y-1 p-2 bg-gray-2">
+                        <Show
+                          when={commandMatches().length}
+                          fallback={
+                            <div class="px-3 py-2 text-xs text-gray-9">
+                              No commands found.
+                            </div>
+                          }
+                        >
+                          <For each={commandMatches()}>
+                            {(command, idx) => (
+                              <button
+                                type="button"
+                                class={`w-full flex items-start gap-3 rounded-xl px-3 py-2 text-left transition-colors ${
+                                  idx() === commandIndex()
+                                    ? "bg-gray-12/10 text-gray-12"
+                                    : "text-gray-11 hover:bg-gray-12/5"
+                                }`}
+                                onMouseDown={(event) => {
+                                  event.preventDefault();
+                                  selectCommand(command.id);
+                                }}
+                                onMouseEnter={() => {
+                                  setCommandIndex(idx());
+                                  promptInputEl?.focus();
+                                }}
+                              >
+                                <div class="text-xs font-semibold text-gray-12">/{command.id}</div>
+                                <div class="text-[11px] text-gray-9">{command.description}</div>
+                              </button>
+                            )}
+                          </For>
+                        </Show>
                       </div>
                     </div>
+                  </div>
+                </Show>
+
+                <button
+                  type="button"
+                  class="absolute top-2 left-4 flex items-center gap-1 text-[10px] font-bold text-gray-7 hover:text-gray-11 transition-colors uppercase tracking-widest z-10"
+                  onClick={() => props.openSessionModelPicker()}
+                  disabled={props.busy}
+                >
+                  <Zap size={10} class="text-gray-7 group-hover:text-amber-11 transition-colors" />
+                  <span>{isModelUnknown() ? "Standard" : modelLabelParts().model}</span>
+                </button>
+
+                <div class="p-2 pt-6 pb-3 px-4">
+                  <Show when={props.showTryNotionPrompt}>
+                    <button
+                      type="button"
+                      class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
+                      onClick={() => props.onTryNotionPrompt()}
+                    >
+                      <span>Try it now: set up my CRM in Notion</span>
+                      <span class="text-xs text-green-12 font-medium">Insert prompt</span>
+                    </button>
                   </Show>
+
+                  <div class="relative">
 
                   <Show when={commandToast()}>
                     <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1/90 px-3 py-2 text-xs text-gray-11 shadow-lg">
