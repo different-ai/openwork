@@ -114,6 +114,7 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
       description: "Safe, practical file workflows".to_string(),
       prompt: "Show me how to interact with files in this workspace. Include safe examples for reading, summarizing, and editing.".to_string(),
       created_at: now_ms(),
+      auto_run: Some(true),
     },
     WorkspaceTemplate {
       id: "tmpl_learn_skills".to_string(),
@@ -121,6 +122,7 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
       description: "How skills work and how to create your own".to_string(),
       prompt: "Explain what skills are, how to use them, and how to create a new skill for this workspace.".to_string(),
       created_at: now_ms(),
+      auto_run: Some(true),
     },
     WorkspaceTemplate {
       id: "tmpl_learn_plugins".to_string(),
@@ -128,6 +130,7 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
       description: "What plugins are and how to install them".to_string(),
       prompt: "Explain what plugins are and how to install them in this workspace.".to_string(),
       created_at: now_ms(),
+      auto_run: Some(true),
     },
   ];
 
