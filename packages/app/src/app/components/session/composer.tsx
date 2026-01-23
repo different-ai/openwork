@@ -24,6 +24,11 @@ export default function Composer(props: ComposerProps) {
   let textareaRef: HTMLTextAreaElement | undefined;
   const [commandIndex, setCommandIndex] = createSignal(0);
 
+  // Track IME composition state via events (more reliable than event.isComposing)
+  const [isComposingIME, setIsComposingIME] = createSignal(false);
+  // Flag to skip the Enter key that confirms IME composition
+  let skipNextEnter = false;
+
   const commandMenuOpen = createMemo(() => {
     return props.prompt.startsWith("/") && !props.busy;
   });
@@ -48,8 +53,17 @@ export default function Composer(props: ComposerProps) {
   });
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    // During IME composition, let the browser handle all keys
+    if (isComposingIME() || event.isComposing) return;
+
+    // Skip the Enter key that was used to confirm IME composition
+    // (flag is cleared by onCompositionEnd's setTimeout)
+    if (event.key === "Enter" && skipNextEnter) {
+      return;
+    }
+
+    // Shift+Enter allows newline
     if (event.key === "Enter" && event.shiftKey) return;
-    if (event.isComposing && event.key !== "Enter") return;
 
     if (commandMenuOpen()) {
       const matches = props.commandMatches;
@@ -187,6 +201,20 @@ export default function Composer(props: ComposerProps) {
                   value={props.prompt}
                   onInput={(e) => props.setPrompt(e.currentTarget.value)}
                   onKeyDown={handleKeyDown}
+                  onCompositionStart={() => {
+                    setIsComposingIME(true);
+                    // The Enter that confirms IME composition should be skipped
+                    skipNextEnter = true;
+                  }}
+                  onCompositionEnd={() => {
+                    setIsComposingIME(false);
+                    // Clear the flag after current task completes and a small delay to allow the keydown event to fire
+                    // If Enter confirmed IME, its keydown fires before this runs → skipped
+                    // If mouse/touch/spacebar confirmed IME, this clears the flag → next Enter works
+                    setTimeout(() => {
+                      skipNextEnter = false;
+                    }, 100);
+                  }}
                   placeholder="Ask OpenWork..."
                   class="flex-1 bg-transparent border-none p-0 text-gray-12 placeholder-gray-6 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px]"
                 />
