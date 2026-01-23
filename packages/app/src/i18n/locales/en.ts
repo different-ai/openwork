@@ -364,6 +364,7 @@ export default {
   "mcp.auth.reload_engine_retry": "Reload engine and retry",
   "mcp.auth.retry_now": "Retry Now",
   "mcp.auth.retry": "Retry",
+  "mcp.auth.reload_before_oauth": "Reload the engine to finish setting up this MCP before starting OAuth.",
   "mcp.auth.step1_title": "Opening your browser",
   "mcp.auth.step1_description": "We'll launch {server}'s sign-in flow automatically.",
   "mcp.auth.step2_title": "Authorize OpenWork",

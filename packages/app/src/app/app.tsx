@@ -660,6 +660,7 @@ export default function App() {
     sessionStatusById,
     refreshPlugins,
     refreshSkills,
+    refreshMcpServers,
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -2064,15 +2065,15 @@ export default function App() {
         entry={mcpAuthEntry()}
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
+        reloadRequired={reloadRequired() && reloadReasons().includes("mcp")}
         onClose={() => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
         }}
-        onComplete={() => {
+        onComplete={async () => {
           setMcpAuthModalOpen(false);
           setMcpAuthEntry(null);
-          markReloadRequired("mcp");
-          setMcpStatus(t("mcp.auth.oauth_completed_reload", currentLocale()));
+          await refreshMcpServers();
         }}
         onReloadEngine={() => reloadEngineInstance()}
       />
