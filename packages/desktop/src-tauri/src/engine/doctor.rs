@@ -56,45 +56,36 @@ pub fn resolve_sidecar_candidate(
 
   let mut notes = Vec::new();
 
-  #[cfg(not(windows))]
-  {
-    let mut candidates = Vec::new();
+  let mut candidates = Vec::new();
 
-    if let Some(current_bin_dir) = current_bin_dir {
-      candidates.push(current_bin_dir.join(crate::engine::paths::opencode_executable_name()));
-    }
+  if let Some(current_bin_dir) = current_bin_dir {
+    candidates.push(current_bin_dir.join(crate::engine::paths::opencode_executable_name()));
+  }
 
-    if let Some(resource_dir) = resource_dir {
-      candidates.push(
-        resource_dir
-          .join("sidecars")
-          .join(crate::engine::paths::opencode_executable_name()),
-      );
-      candidates.push(resource_dir.join(crate::engine::paths::opencode_executable_name()));
-    }
-
+  if let Some(resource_dir) = resource_dir {
     candidates.push(
-      std::path::PathBuf::from("src-tauri/sidecars")
+      resource_dir
+        .join("sidecars")
         .join(crate::engine::paths::opencode_executable_name()),
     );
+    candidates.push(resource_dir.join(crate::engine::paths::opencode_executable_name()));
+  }
 
-    for candidate in candidates {
-      if candidate.is_file() {
-        notes.push(format!("Using bundled sidecar: {}", candidate.display()));
-        return (Some(candidate), notes);
-      }
+  candidates.push(
+    std::path::PathBuf::from("src-tauri/sidecars")
+      .join(crate::engine::paths::opencode_executable_name()),
+  );
 
-      notes.push(format!("Sidecar missing: {}", candidate.display()));
+  for candidate in candidates {
+    if candidate.is_file() {
+      notes.push(format!("Using bundled sidecar: {}", candidate.display()));
+      return (Some(candidate), notes);
     }
 
-    return (None, notes);
+    notes.push(format!("Sidecar missing: {}", candidate.display()));
   }
 
-  #[cfg(windows)]
-  {
-    notes.push("Sidecar requested but unsupported on Windows".to_string());
-    (None, notes)
-  }
+  (None, notes)
 }
 
 pub fn resolve_engine_path(

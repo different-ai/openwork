@@ -617,7 +617,7 @@ export function createWorkspaceStore(options: {
       if (!result.found) {
         options.setError(
           options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows, then restart OpenWork. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
             : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;
@@ -646,11 +646,6 @@ export function createWorkspaceStore(options: {
       setProjectDir(dir);
       if (!authorizedDirs().length) {
         setAuthorizedDirs([dir]);
-      }
-
-      if (options.engineSource() === "sidecar" && options.isWindowsPlatform()) {
-        options.setEngineSource("path");
-        options.setError(t("app.error.sidecar_unsupported_windows", currentLocale()));
       }
 
       const info = await engineStart(dir, { preferSidecar: options.engineSource() === "sidecar" });

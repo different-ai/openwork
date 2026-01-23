@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+      - feat/windows-sidecar
 
 permissions:
   contents: write
