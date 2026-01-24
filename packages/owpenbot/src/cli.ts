@@ -51,7 +51,13 @@ program
   .description("Start the bridge")
   .action(() => runStart());
 
-program.action((pathArg: string | undefined) => runStart(pathArg));
+program.action((pathArg: string | undefined) => {
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    program.outputHelp();
+    return;
+  }
+  return runStart(pathArg);
+});
 
 program
   .command("setup")
