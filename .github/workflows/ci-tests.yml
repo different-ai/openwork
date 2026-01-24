@@ -61,5 +61,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Security audit (dependencies)
+        run: pnpm audit --prod --audit-level high
+
       - name: Run e2e tests
         run: pnpm --filter @different-ai/openwork test:e2e

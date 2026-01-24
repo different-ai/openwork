@@ -381,7 +381,8 @@ Guidance for future contributors:
 
 Recommended workflow:
 
-- Run `pnpm audit` regularly and treat **high/critical** findings as blockers.
+- Run `pnpm audit --prod --audit-level high` regularly and treat **high/critical** findings as blockers.
+- A dedicated CI step runs this command on pushes to `dev` and on pull requests, so new vulnerabilities are surfaced automatically.
 - Prefer explicit version bumps with PRs rather than floating ranges for high-risk libraries.
 
 ---

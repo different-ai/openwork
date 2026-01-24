@@ -24,7 +24,8 @@
     "bump:minor": "pnpm --filter @different-ai/openwork-ui bump:minor",
     "bump:major": "pnpm --filter @different-ai/openwork-ui bump:major",
     "bump:set": "pnpm --filter @different-ai/openwork-ui bump:set",
-    "tauri": "pnpm --filter @different-ai/openwork exec tauri"
+    "tauri": "pnpm --filter @different-ai/openwork exec tauri",
+    "audit": "pnpm audit --prod --audit-level high"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

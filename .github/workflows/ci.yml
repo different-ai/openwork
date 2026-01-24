@@ -30,5 +30,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Security audit (dependencies)
+        run: pnpm audit --prod --audit-level high
+
       - name: Build web
         run: pnpm --filter @different-ai/openwork build:web
