@@ -16,6 +16,14 @@ Or install from npm:
 npm install -g owpenwork
 ```
 
+Quick run without install:
+
+```bash
+npx owpenwork setup
+npx owpenwork whatsapp login
+npx owpenwork start
+```
+
 Then follow the printed next steps (run `owpenbot setup`, link WhatsApp, start the bridge).
 
 1) One-command setup (installs deps, builds, creates `.env` if missing):
@@ -38,27 +46,27 @@ Recommended:
 3) Run setup (writes `~/.owpenbot/owpenbot.json`):
 
 ```bash
-owpenbot setup
+owpenwork setup
 ```
 
 4) Link WhatsApp (QR):
 
 ```bash
-owpenbot whatsapp login
+owpenwork whatsapp login
 ```
 
 5) Start the bridge:
 
 ```bash
-owpenbot start
+owpenwork start
 ```
 
 Owpenbot keeps the WhatsApp session alive once connected.
 
 6) Pair a user with the bot (only if DM policy is pairing):
 
-- Run `owpenbot pairing list` to view pending codes.
-- Approve a code: `owpenbot pairing approve <code>`.
+- Run `owpenwork pairing list` to view pending codes.
+- Approve a code: `owpenwork pairing approve <code>`.
 - The user can then message again to receive OpenCode replies.
 
 ## Usage Flows
@@ -67,8 +75,8 @@ Owpenbot keeps the WhatsApp session alive once connected.
 
 Use your own WhatsApp account as the bot and test from a second number you control.
 
-1) Run `owpenbot setup` and choose “personal number.”
-2) Run `owpenbot whatsapp login` to scan the QR.
+1) Run `owpenwork setup` and choose “personal number.”
+2) Run `owpenwork whatsapp login` to scan the QR.
 3) Message yourself or from a second number; your number is already allowlisted.
 
 Note: WhatsApp’s “message yourself” thread is not reliable for bot testing.
@@ -78,9 +86,9 @@ Note: WhatsApp’s “message yourself” thread is not reliable for bot testing
 Use a separate WhatsApp number as the bot account so it stays independent from your personal chat history.
 
 1) Create a new WhatsApp account for the dedicated number.
-2) Run `owpenbot setup` and choose “dedicated number.”
-3) Run `owpenbot whatsapp login` to scan the QR.
-4) If DM policy is pairing, approve codes with `owpenbot pairing approve <code>`.
+2) Run `owpenwork setup` and choose “dedicated number.”
+3) Run `owpenwork whatsapp login` to scan the QR.
+4) If DM policy is pairing, approve codes with `owpenwork pairing approve <code>`.
 
 ## Telegram (Untested)
 
@@ -91,12 +99,12 @@ Telegram support is wired but not E2E tested yet. To try it:
 ## Commands
 
 ```bash
-owpenbot setup
-owpenbot whatsapp login
-owpenbot start
-owpenbot pairing list
-owpenbot pairing approve <code>
-owpenbot status
+owpenwork setup
+owpenwork whatsapp login
+owpenwork start
+owpenwork pairing list
+owpenwork pairing approve <code>
+owpenwork status
 ```
 
 ## Defaults
