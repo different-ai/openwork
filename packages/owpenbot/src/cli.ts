@@ -23,7 +23,7 @@ const program = new Command();
 
 program
   .name("owpenbot")
-  .version("0.1.5")
+  .version("0.1.7")
   .description("OpenCode WhatsApp + Telegram bridge")
   .argument("[path]")
   .option("--non-interactive", "Run setup defaults and exit", false)
@@ -322,7 +322,8 @@ program
 program
   .command("doctor")
   .description("Diagnose common issues")
-  .action(async () => {
+  .option("--reset", "Reset owpenbot state", false)
+  .action(async (opts) => {
     const config = loadConfig(process.env, { requireOpencode: false });
     const authPath = `${config.whatsappAuthDir}/creds.json`;
     if (!fs.existsSync(authPath)) {
@@ -332,6 +333,27 @@ program
     }
     console.log(`OpenCode URL: ${config.opencodeUrl}`);
     console.log("If replies fail, ensure the server is running.");
+
+    const resetRequested = Boolean(opts.reset);
+    if (!resetRequested && !process.stdin.isTTY) return;
+
+    let confirmed = resetRequested;
+    if (!resetRequested) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      const answer = await rl.question("Reset owpenbot state (y/N)? ");
+      rl.close();
+      confirmed = answer.trim().toLowerCase() === "y";
+    }
+
+    if (!confirmed) return;
+
+    const targets = [config.configPath, config.dbPath, config.whatsappAuthDir];
+    for (const target of targets) {
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
+      }
+    }
+    console.log("Reset complete. Run: owpenwork setup");
   });
 
 program.parseAsync(process.argv).catch((error) => {
