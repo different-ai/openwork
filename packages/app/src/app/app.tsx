@@ -10,7 +10,6 @@ import {
 import {
   Navigate,
   Route,
-  Routes,
   useLocation,
   useNavigate,
   useParams,
@@ -2397,13 +2396,11 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        <Route path="/" component={RootRoute} />
-        <Route path="/onboarding" component={OnboardingRoute} />
-        <Route path="/dashboard/:tab?" component={DashboardRoute} />
-        <Route path="/session/:sessionId?" component={SessionRoute} />
-        <Route path="*all" component={FallbackRoute} />
-      </Routes>
+      <Route path="/" component={RootRoute} />
+      <Route path="/onboarding" component={OnboardingRoute} />
+      <Route path="/dashboard/:tab?" component={DashboardRoute} />
+      <Route path="/session/:sessionId?" component={SessionRoute} />
+      <Route path="*" component={FallbackRoute} />
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}
