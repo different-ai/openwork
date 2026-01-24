@@ -37,6 +37,7 @@ export type McpViewProps = {
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
+  reloadBlocked: boolean;
   reloadMcpEngine: () => void;
 };
 
@@ -218,10 +219,17 @@ export default function McpView(props: McpViewProps) {
                 <div>
                   <div class="text-sm font-medium text-gray-12">{translate("mcp.reload_banner_title")}</div>
                   <div class="text-xs text-gray-10">
-                    {translate("mcp.reload_banner_description")}
+                    {props.reloadBlocked
+                      ? translate("mcp.reload_banner_description_blocked")
+                      : translate("mcp.reload_banner_description")}
                   </div>
                 </div>
-                <Button variant="secondary" onClick={() => props.reloadMcpEngine()}>
+                <Button
+                  variant="secondary"
+                  onClick={() => props.reloadMcpEngine()}
+                  disabled={props.reloadBlocked}
+                  title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                >
                   {translate("mcp.reload_engine")}
                 </Button>
               </div>

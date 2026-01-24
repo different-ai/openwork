@@ -547,6 +547,18 @@ export default {
   "settings.updates_not_supported": "此环境不支持更新。",
   "settings.updates_desktop_only": "更新仅在桌面应用中可用。",
 
+  // ==================== Reload ====================
+  "reload.toast_title": "需要重新加载",
+  "reload.toast_description": "你需要重新加载工作区才能使这些更改生效。",
+  "reload.toast_warning": "重新加载可能会中断正在进行的会话或流程。",
+  "reload.toast_warning_active": "检测到活动运行，立即重新加载将会中断它们。",
+  "reload.toast_reload": "重新加载",
+  "reload.toast_reloading": "正在重新加载...",
+  "reload.toast_dismiss": "忽略",
+  "reload.toast_blocked_host": "仅主机模式可重新加载。",
+  "reload.toast_blocked_connect": "连接到此工作区后才能重新加载。",
+  "reload.toast_blocked_runs": "请先停止活动运行再重新加载。",
+
   // ==================== Onboarding ====================
   "onboarding.starting_host": "正在启动 OpenWork...",
   "onboarding.searching_host": "正在搜索主机...",
@@ -658,6 +670,7 @@ export default {
   "status.loading_session": "正在加载会话",
   "status.creating_task": "正在创建新任务",
   "status.starting_engine": "正在启动引擎",
+  "status.reloading_engine": "正在重新加载引擎",
   "status.restarting_engine": "正在重启引擎",
   "status.installing_opencode": "正在安装 OpenCode",
   "status.disconnecting": "正在断开连接",

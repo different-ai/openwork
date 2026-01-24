@@ -11,6 +11,7 @@ import type {
   OpencodeEvent,
   PendingPermission,
   PlaceholderAssistantMessage,
+  ReloadReason,
   TodoItem,
 } from "../types";
 import {
@@ -19,6 +20,7 @@ import {
   normalizeDirectoryPath,
   normalizeEvent,
   normalizeSessionStatus,
+  safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 
@@ -110,6 +112,7 @@ export function createSessionStore(options: {
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
+  markReloadRequired?: (reason: ReloadReason) => void;
 }) {
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
@@ -121,6 +124,50 @@ export function createSessionStore(options: {
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const reloadDetectionSet = new Set<string>();
+
+  const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
+  const opencodeConfigPattern = /(?:^|[\\/])opencode\.json\b/i;
+  const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
+
+  const extractSearchText = (value: unknown) => {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
+    return safeStringify(value);
+  };
+
+  const detectReloadReason = (value: unknown): ReloadReason | null => {
+    const text = extractSearchText(value);
+    if (!text) return null;
+    if (skillPathPattern.test(text)) return "skills";
+    if (opencodeConfigPattern.test(text)) return "config";
+    if (opencodePathPattern.test(text)) return "config";
+    return null;
+  };
+
+  const detectReloadFromPart = (part: Part): ReloadReason | null => {
+    const record = part as Record<string, unknown>;
+    return (
+      detectReloadReason(record.text) ||
+      detectReloadReason(record.path) ||
+      detectReloadReason(record.title) ||
+      detectReloadReason((record.state as { title?: unknown })?.title) ||
+      detectReloadReason((record.state as { output?: unknown })?.output) ||
+      detectReloadReason((record.state as { input?: unknown })?.input)
+    );
+  };
+
+  const maybeMarkReloadRequired = (part: Part) => {
+    if (!options.markReloadRequired) return;
+    if (!part?.id || !part.messageID) return;
+    const key = `${part.messageID}:${part.id}`;
+    if (reloadDetectionSet.has(key)) return;
+    const reason = detectReloadFromPart(part);
+    if (!reason) return;
+    reloadDetectionSet.add(key);
+    options.markReloadRequired(reason);
+  };
 
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
@@ -472,6 +519,7 @@ export function createSessionStore(options: {
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          maybeMarkReloadRequired(part);
         }
       }
     }

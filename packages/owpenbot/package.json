@@ -1,0 +1,57 @@
+{
+  "name": "owpenwork",
+  "version": "0.1.2",
+  "description": "WhatsApp bridge for a running OpenCode server",
+  "private": false,
+  "type": "module",
+  "bin": {
+    "owpenwork": "dist/cli.js",
+    "owpenbot": "dist/cli.js"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/owpenbot"
+  },
+  "keywords": [
+    "opencode",
+    "whatsapp",
+    "bridge",
+    "bot"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example",
+    "install.sh"
+  ],
+  "scripts": {
+    "dev": "tsx src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js start",
+    "whatsapp:login": "node dist/cli.js whatsapp login",
+    "pairing-code": "node dist/cli.js pairing-code",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "setup": "node scripts/setup.mjs",
+    "test:unit": "pnpm build && node --test test/*.test.js",
+    "test:smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.1.19",
+    "@whiskeysockets/baileys": "7.0.0-rc.9",
+    "better-sqlite3": "^11.7.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.7",
+    "grammy": "^1.39.3",
+    "pino": "^9.6.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.2",
+    "@types/qrcode-terminal": "^0.12.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
+  }
+}

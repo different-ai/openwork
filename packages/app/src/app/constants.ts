@@ -1,6 +1,7 @@
 import type { ModelRef, SuggestedPlugin } from "./types";
 
 export const MODEL_PREF_KEY = "openwork.defaultModel";
+export const SESSION_MODEL_PREF_KEY = "openwork.sessionModels";
 export const THINKING_PREF_KEY = "openwork.showThinking";
 export const VARIANT_PREF_KEY = "openwork.modelVariant";
 export const DEMO_MODE_PREF_KEY = "openwork.demoMode";

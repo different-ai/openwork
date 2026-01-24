@@ -146,7 +146,7 @@ export type McpStatus =
 
 export type McpStatusMap = Record<string, McpStatus>;
 
-export type ReloadReason = "plugins" | "skills" | "mcp";
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config";
 
 export type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;

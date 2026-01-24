@@ -27,6 +27,8 @@ export function createSystemState(options: {
   sessionStatusById: Accessor<Record<string, string>>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
+  refreshMcpServers?: () => Promise<void>;
+  reloadWorkspaceEngine?: () => Promise<boolean>;
   setProviders: (value: Provider[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -162,6 +164,13 @@ export function createSystemState(options: {
       };
     }
 
+    if (reasons.length === 1 && reasons[0] === "config") {
+      return {
+        title: "Reload required",
+        body: "OpenCode reads opencode.json at startup. Reload the engine to apply configuration changes.",
+      };
+    }
+
     if (reasons.length === 1 && reasons[0] === "mcp") {
       return {
         title: "Reload required",
@@ -171,7 +180,7 @@ export function createSystemState(options: {
 
     return {
       title: "Reload required",
-      body: "OpenWork detected plugin/skill/MCP changes. Reload the engine to apply them.",
+      body: "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.",
     };
   });
 
@@ -179,7 +188,6 @@ export function createSystemState(options: {
     if (!reloadRequired()) return false;
     if (!options.client()) return false;
     if (reloadBusy()) return false;
-    if (anyActiveRuns()) return false;
     if (options.mode() !== "host") return false;
     return true;
   });
@@ -190,34 +198,48 @@ export function createSystemState(options: {
   });
 
   async function reloadEngineInstance() {
-    const c = options.client();
-    if (!c) return;
+    const initialClient = options.client();
+    if (!initialClient) return;
 
     if (options.mode() !== "host") {
       setReloadError("Reload is only available in Host mode.");
       return;
     }
 
-    if (anyActiveRuns()) {
-      setReloadError("A run is in progress. Stop it before reloading the engine.");
-      return;
-    }
+    // if (anyActiveRuns()) {
+    //   setReloadError("Waiting for active tasks to complete before reloading.");
+    //   return;
+    // }
 
     setReloadBusy(true);
     setReloadError(null);
 
     try {
-      unwrap(await c.instance.dispose());
-      await waitForHealthy(c, { timeoutMs: 12_000 });
+      if (options.reloadWorkspaceEngine) {
+        const ok = await options.reloadWorkspaceEngine();
+        if (ok === false) {
+          setReloadError("Failed to reload the engine.");
+          return;
+        }
+      } else {
+        unwrap(await initialClient.instance.dispose());
+      }
+
+      const nextClient = options.client();
+      if (!nextClient) {
+        throw new Error("OpenCode client unavailable after reload.");
+      }
+
+      await waitForHealthy(nextClient, { timeoutMs: 12_000 });
 
       try {
-        const providerList = unwrap(await c.provider.list());
+        const providerList = unwrap(await nextClient.provider.list());
         options.setProviders(providerList.all as unknown as Provider[]);
         options.setProviderDefaults(providerList.default);
         options.setProviderConnectedIds(providerList.connected);
       } catch {
         try {
-          const cfg = unwrap(await c.config.providers());
+          const cfg = unwrap(await nextClient.config.providers());
           options.setProviders(cfg.providers);
           options.setProviderDefaults(cfg.default);
           options.setProviderConnectedIds([]);
@@ -230,6 +252,7 @@ export function createSystemState(options: {
 
       await options.refreshPlugins("project").catch(() => undefined);
       await options.refreshSkills({ force: true }).catch(() => undefined);
+      await options.refreshMcpServers?.().catch(() => undefined);
 
       if (options.notion) {
         let nextStatus = options.notion.status();
@@ -261,6 +284,10 @@ export function createSystemState(options: {
     } finally {
       setReloadBusy(false);
     }
+  }
+
+  async function reloadWorkspaceEngine() {
+    await reloadEngineInstance();
   }
 
   async function repairOpencodeCache() {
@@ -431,6 +458,7 @@ export function createSystemState(options: {
     markReloadRequired,
     clearReloadRequired,
     reloadEngineInstance,
+    reloadWorkspaceEngine,
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
