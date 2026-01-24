@@ -1,8 +1,12 @@
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import dotenv from "dotenv";
 
+const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+const packageDir = path.resolve(moduleDir, "..");
+dotenv.config({ path: path.join(packageDir, ".env") });
 dotenv.config();
 
 export type ChannelName = "telegram" | "whatsapp";

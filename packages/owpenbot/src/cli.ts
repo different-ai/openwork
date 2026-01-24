@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { createInterface } from "node:readline/promises";
 
 import { startBridge } from "./bridge.js";
 import { loadConfig } from "./config.js";
@@ -14,11 +13,12 @@ const program = new Command();
 program
   .name("owpenbot")
   .description("OpenCode WhatsApp + Telegram bridge")
-  .allowExcessArguments(true)
-  .allowUnknownOption(true)
   .argument("[path]");
 
-const runStart = async () => {
+const runStart = async (pathOverride?: string) => {
+  if (pathOverride?.trim()) {
+    process.env.OPENCODE_DIRECTORY = pathOverride.trim();
+  }
   const config = loadConfig();
   const logger = createLogger(config.logLevel);
   if (!process.env.OPENCODE_DIRECTORY) {
@@ -40,44 +40,9 @@ const runStart = async () => {
 program
   .command("start")
   .description("Start the bridge")
-  .action(runStart);
+  .action(() => runStart());
 
-program.action(async () => {
-  if (!process.stdin.isTTY) {
-    await runStart();
-    return;
-  }
-
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const answer = await rl.question(
-    "Owpenbot options: (1) Start bridge (2) Show QR (3) Unpair (4) Pairing code > ",
-  );
-  rl.close();
-
-  const choice = answer.trim();
-  if (choice === "2") {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const logger = createLogger(config.logLevel);
-    await loginWhatsApp(config, logger);
-    return;
-  }
-  if (choice === "3") {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const logger = createLogger(config.logLevel);
-    unpairWhatsApp(config, logger);
-    return;
-  }
-  if (choice === "4") {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const store = new BridgeStore(config.dbPath);
-    const code = resolvePairingCode(store, config.pairingCode);
-    console.log(code);
-    store.close();
-    return;
-  }
-
-  await runStart();
-});
+program.action((pathArg: string | undefined) => runStart(pathArg));
 
 program
   .command("pairing-code")
