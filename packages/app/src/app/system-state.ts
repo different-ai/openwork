@@ -188,7 +188,6 @@ export function createSystemState(options: {
     if (!reloadRequired()) return false;
     if (!options.client()) return false;
     if (reloadBusy()) return false;
-    if (anyActiveRuns()) return false;
     if (options.mode() !== "host") return false;
     return true;
   });
@@ -207,10 +206,10 @@ export function createSystemState(options: {
       return;
     }
 
-    if (anyActiveRuns()) {
-      setReloadError("Waiting for active tasks to complete before reloading.");
-      return;
-    }
+    // if (anyActiveRuns()) {
+    //   setReloadError("Waiting for active tasks to complete before reloading.");
+    //   return;
+    // }
 
     setReloadBusy(true);
     setReloadError(null);
