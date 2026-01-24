@@ -1,5 +1,6 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
+import { HashRouter, Router } from "@solidjs/router";
 
 import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
@@ -14,6 +15,8 @@ const root = document.getElementById("root");
 if (!root) {
   throw new Error("Root element not found");
 }
+
+const RouterComponent = isTauriRuntime() ? HashRouter : Router;
 
 const platform: Platform = {
   platform: isTauriRuntime() ? "desktop" : "web",
@@ -79,7 +82,9 @@ const platform: Platform = {
 render(
   () => (
     <PlatformProvider value={platform}>
-      <AppEntry />
+      <RouterComponent>
+        <AppEntry />
+      </RouterComponent>
     </PlatformProvider>
   ),
   root,

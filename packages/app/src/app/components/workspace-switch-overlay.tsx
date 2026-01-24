@@ -1,18 +1,8 @@
 import { Show, createMemo } from "solid-js";
-import { Dynamic } from "solid-js/web";
-
-import { Folder, Globe, Zap } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
+import OpenWorkLogo from "./openwork-logo";
 
 import type { WorkspaceInfo } from "../lib/tauri";
-
-function iconForWorkspace(preset: string, workspaceType: string) {
-  if (workspaceType === "remote") return Globe;
-  if (preset === "starter") return Zap;
-  if (preset === "automation") return Folder;
-  if (preset === "minimal") return Globe;
-  return Folder;
-}
 
 export default function WorkspaceSwitchOverlay(props: {
   open: boolean;
@@ -58,10 +48,6 @@ export default function WorkspaceSwitchOverlay(props: {
     return props.workspace.directory?.trim() ?? "";
   });
 
-  const Icon = createMemo(() =>
-    iconForWorkspace(props.workspace?.preset ?? "starter", props.workspace?.workspaceType ?? "local")
-  );
-
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-[60] overflow-hidden bg-gray-1 text-gray-12 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-300">
@@ -99,8 +85,8 @@ export default function WorkspaceSwitchOverlay(props: {
                 class="absolute -inset-1 rounded-full border border-gray-6/30 motion-safe:animate-spin motion-reduce:opacity-60"
                 style={{ "animation-duration": "9s", "animation-direction": "reverse" }}
               />
-              <div class="relative h-24 w-24 rounded-3xl bg-gray-2/80 border border-gray-6/70 shadow-2xl flex items-center justify-center text-gray-12">
-                <Dynamic component={Icon()} size={26} />
+              <div class="relative h-24 w-24 rounded-3xl bg-gray-1/90 border border-gray-5/60 shadow-2xl flex items-center justify-center">
+                <OpenWorkLogo size={44} class="drop-shadow-sm" />
               </div>
             </div>
 

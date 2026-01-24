@@ -408,8 +408,8 @@ export function createWorkspaceStore(options: {
 
       options.refreshSkills({ force: true }).catch(() => undefined);
       if (!options.selectedSessionId()) {
-        options.setView("dashboard");
         options.setTab("home");
+        options.setView("dashboard");
       }
 
       // If the user successfully connected, treat onboarding as complete so we
@@ -466,8 +466,8 @@ export function createWorkspaceStore(options: {
 
       setWorkspacePickerOpen(false);
       setCreateWorkspaceOpen(false);
-      options.setView("dashboard");
       options.setTab("home");
+      options.setView("dashboard");
       markOnboardingComplete();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);

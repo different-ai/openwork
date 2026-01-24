@@ -34,7 +34,7 @@ export type DashboardViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   view: "dashboard" | "session" | "onboarding";
-  setView: (view: "dashboard" | "session" | "onboarding") => void;
+  setView: (view: "dashboard" | "session" | "onboarding", sessionId?: string) => void;
   mode: "host" | "client" | null;
   baseUrl: string;
   clientConnected: boolean;
@@ -211,9 +211,9 @@ export default function DashboardView(props: DashboardViewProps) {
   const openSessionFromList = (sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
     window.setTimeout(() => {
-      props.setView("session");
-      props.setTab("sessions");
       void props.selectSession(sessionId);
+      props.setTab("sessions");
+      props.setView("session", sessionId);
     }, 0);
   };
 

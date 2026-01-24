@@ -17,7 +17,7 @@ export function createTemplateState(options: {
   setSessionModelById: (value: Record<string, ModelRef> | ((current: Record<string, ModelRef>) => Record<string, ModelRef>)) => void;
   defaultModel: Accessor<ModelRef>;
   modelVariant: Accessor<string | null>;
-  setView: (view: "onboarding" | "dashboard" | "session") => void;
+  setView: (view: "onboarding" | "dashboard" | "session", sessionId?: string) => void;
   isDemoMode: Accessor<boolean>;
   activeWorkspaceRoot: Accessor<string>;
   setBusy: (value: boolean) => void;

@@ -33,7 +33,7 @@ import FlyoutItem from "../components/flyout-item";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
-  setView: (view: View) => void;
+  setView: (view: View, sessionId?: string) => void;
   setTab: (tab: DashboardTab) => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   setWorkspaceSearch: (value: string) => void;
@@ -655,8 +655,8 @@ export default function SessionView(props: SessionViewProps) {
             <div class="text-lg font-medium">No session selected</div>
             <Button
               onClick={() => {
-                props.setView("dashboard");
                 props.setTab("sessions");
+                props.setView("dashboard");
               }}
             >
               Back to dashboard
@@ -672,8 +672,8 @@ export default function SessionView(props: SessionViewProps) {
               variant="ghost"
               class="!p-2 rounded-full"
               onClick={() => {
-                props.setView("dashboard");
                 props.setTab("sessions");
+                props.setView("dashboard");
               }}
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
@@ -713,11 +713,11 @@ export default function SessionView(props: SessionViewProps) {
                }}
                sessions={props.sessions}
                selectedSessionId={props.selectedSessionId}
-               onSelectSession={async (id) => {
-                 await props.selectSession(id);
-                 props.setView("session");
-                 props.setTab("sessions");
-               }}
+                onSelectSession={async (id) => {
+                  await props.selectSession(id);
+                  props.setView("session", id);
+                  props.setTab("sessions");
+                }}
                sessionStatusById={props.sessionStatusById}
                onCreateSession={props.createSessionAndOpen}
                newTaskDisabled={props.newTaskDisabled}

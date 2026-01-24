@@ -1,7 +1,4 @@
 import {
-  Match,
-  Show,
-  Switch,
   createEffect,
   createMemo,
   createSignal,
@@ -9,6 +6,15 @@ import {
   onMount,
   untrack,
 } from "solid-js";
+
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "@solidjs/router";
 
 import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
 
@@ -105,35 +111,73 @@ import {
 export default function App() {
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
 
-  const initialView: View = (() => {
-    if (typeof window === "undefined") return "onboarding";
-    try {
-      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
-        ? "dashboard"
-        : "onboarding";
-    } catch {
-      return "onboarding";
-    }
-  })();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const [view, _setView] = createSignal<View>(initialView);
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
-  const setView = (next: View) => {
-    // Guard: Don't allow view to change to dashboard while creating session.
+  const currentView = createMemo<View>(() => {
+    const path = location.pathname.toLowerCase();
+    if (path.startsWith("/onboarding")) return "onboarding";
+    if (path.startsWith("/session")) return "session";
+    return "dashboard";
+  });
+
+  const [tab, setTabState] = createSignal<DashboardTab>("home");
+
+  const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
+    setTabState(nextTab);
+    navigate(`/dashboard/${nextTab}`, options);
+  };
+
+  const setTab = (nextTab: DashboardTab) => {
+    if (currentView() === "dashboard") {
+      goToDashboard(nextTab);
+      return;
+    }
+    setTabState(nextTab);
+  };
+
+  const setView = (next: View, sessionId?: string) => {
     if (next === "dashboard" && creatingSession()) {
       return;
     }
     if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
       return;
     }
-    _setView(next);
+    if (next === "onboarding") {
+      navigate("/onboarding");
+      return;
+    }
+    if (next === "session") {
+      if (sessionId) {
+        goToSession(sessionId);
+        return;
+      }
+      const fallback = activeSessionId();
+      if (fallback) {
+        goToSession(fallback);
+        return;
+      }
+      navigate("/session");
+      return;
+    }
+    goToDashboard(tab());
   };
+
+  const goToSession = (sessionId: string, options?: { replace?: boolean }) => {
+    const trimmed = sessionId.trim();
+    if (!trimmed) {
+      navigate("/session", options);
+      return;
+    }
+    navigate(`/session/${trimmed}`, options);
+  };
+
   const [mode, setMode] = createSignal<Mode | null>(null);
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>("mode");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
-  const [tab, setTab] = createSignal<DashboardTab>("home");
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
@@ -900,7 +944,7 @@ export default function App() {
   createEffect(() => {
     // If we lose the client (disconnect / stop engine), don't strand the user
     // in a session view that can't operate.
-    if (view() !== "session") return;
+    if (currentView() !== "session") return;
     if (isDemoMode()) return;
     if (creatingSession()) return;
     if (client()) return;
@@ -1065,7 +1109,7 @@ export default function App() {
     setDefaultModel(next);
     setModelPickerOpen(false);
 
-    if (typeof window !== "undefined" && view() === "session") {
+    if (typeof window !== "undefined" && currentView() === "session") {
       requestAnimationFrame(() => {
         window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
       });
@@ -1344,7 +1388,12 @@ export default function App() {
     console.log("[DEBUG] current baseUrl:", baseUrl());
     console.log("[DEBUG] engine info:", engine());
     if (isDemoMode()) {
-      setView("session");
+      const demoId = activeSessionId();
+      if (demoId) {
+        goToSession(demoId);
+      } else {
+        setView("session");
+      }
       return;
     }
 
@@ -1452,7 +1501,7 @@ export default function App() {
       // Now switch view AFTER session is selected
       mark("view set to session");
       // setSessionViewLockUntil(Date.now() + 1200);
-      setView("session");
+      goToSession(session.id);
     } catch (e) {
       mark("error caught", e);
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
@@ -2034,8 +2083,8 @@ export default function App() {
       workspaceStore.setEngineInstallLogs(notes || null);
     },
     onOpenSettings: () => {
-      setView("dashboard");
       setTab("settings");
+      setView("dashboard");
     },
     themeMode: themeMode(),
     setThemeMode,
@@ -2044,7 +2093,7 @@ export default function App() {
   const dashboardProps = () => ({
     tab: tab(),
     setTab,
-    view: view(),
+    view: currentView(),
     setView,
     mode: mode(),
     baseUrl: baseUrl(),
@@ -2186,92 +2235,175 @@ export default function App() {
     setLanguage: setLocale,
   });
 
+  const sessionProps = () => ({
+    selectedSessionId: activeSessionId(),
+    setView,
+    setTab,
+    activeWorkspaceDisplay: activeWorkspaceDisplay(),
+    setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
+    setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
+    headerStatus: headerStatus(),
+    busyHint: busyHint(),
+    selectedSessionModelLabel: selectedSessionModelLabel(),
+    openSessionModelPicker: openSessionModelPicker,
+    activePlugins: sidebarPluginList(),
+    activePluginStatus: sidebarPluginStatus(),
+    createSessionAndOpen: createSessionAndOpen,
+    sendPromptAsync: sendPrompt,
+    newTaskDisabled: newTaskDisabled(),
+    sessions: activeSessions().map((session) => ({
+      id: session.id,
+      title: session.title,
+      slug: session.slug,
+    })),
+    selectSession: isDemoMode() ? selectDemoSession : selectSession,
+    messages: activeMessages(),
+    todos: activeTodos(),
+    busyLabel: busyLabel(),
+    developerMode: developerMode(),
+    showThinking: showThinking(),
+    groupMessageParts,
+    summarizeStep,
+    expandedStepIds: expandedStepIds(),
+    setExpandedStepIds: setExpandedStepIds,
+    expandedSidebarSections: expandedSidebarSections(),
+    setExpandedSidebarSections: setExpandedSidebarSections,
+    artifacts: activeArtifacts(),
+    workingFiles: activeWorkingFiles(),
+    authorizedDirs: activeAuthorizedDirs(),
+    busy: busy(),
+    prompt: prompt(),
+    setPrompt: setPrompt,
+    sendPrompt: sendPrompt,
+    activePermission: activePermissionMemo(),
+    permissionReplyBusy: permissionReplyBusy(),
+    respondPermission: respondPermission,
+    respondPermissionAndRemember: respondPermissionAndRemember,
+    safeStringify: safeStringify,
+    showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
+    openConnect: openConnectFlow,
+    startProviderAuth: startProviderAuth,
+    openProviderAuthModal: openProviderAuthModal,
+    closeProviderAuthModal: closeProviderAuthModal,
+    providerAuthModalOpen: providerAuthModalOpen(),
+    providerAuthBusy: providerAuthBusy(),
+    providerAuthError: providerAuthError(),
+    providerAuthMethods: providerAuthMethods(),
+    providers: providers(),
+    providerConnectedIds: providerConnectedIds(),
+    listAgents: listAgents,
+    setSessionAgent: setSessionAgent,
+    saveSession: saveSessionExport,
+    sessionStatusById: activeSessionStatusById(),
+    onTryNotionPrompt: () => {
+      setPrompt("setup my crm");
+      setTryNotionPromptVisible(false);
+      setNotionSkillInstalled(true);
+      try {
+        window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+      } catch {
+        // ignore
+      }
+    },
+    sessionStatus: selectedSessionStatus(),
+    renameSession: renameSessionTitle,
+    error: error(),
+  });
+
+  const dashboardTabs = new Set<DashboardTab>([
+    "home",
+    "sessions",
+    "templates",
+    "skills",
+    "plugins",
+    "mcp",
+    "settings",
+  ]);
+
+  const resolveDashboardTab = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (dashboardTabs.has(normalized as DashboardTab)) {
+      return normalized as DashboardTab;
+    }
+    return "home";
+  };
+
+  const initialRoute = () => {
+    if (typeof window === "undefined") return "/onboarding";
+    try {
+      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
+        ? "/dashboard/home"
+        : "/onboarding";
+    } catch {
+      return "/onboarding";
+    }
+  };
+
+  const RootRoute = () => <Navigate href={initialRoute()} />;
+
+  const OnboardingRoute = () => <OnboardingView {...onboardingProps()} />;
+
+  const DashboardRoute = () => {
+    const params = useParams();
+    const nextTab = createMemo(() => resolveDashboardTab(params.tab));
+
+    createEffect(() => {
+      const resolvedTab = nextTab();
+      const rawTab = params.tab?.trim().toLowerCase();
+
+      if (resolvedTab !== tab()) {
+        setTabState(resolvedTab);
+      }
+      if (!rawTab || rawTab !== resolvedTab) {
+        goToDashboard(resolvedTab, { replace: true });
+      }
+    });
+
+    return <DashboardView {...dashboardProps()} />;
+  };
+
+  const SessionRoute = () => {
+    const params = useParams();
+    const routeSessionId = createMemo(() => params.sessionId?.trim() ?? "");
+
+    createEffect(() => {
+      const id = routeSessionId();
+      if (!id) {
+        const fallback = activeSessionId();
+        if (fallback) {
+          goToSession(fallback, { replace: true });
+        } else {
+          goToDashboard("sessions", { replace: true });
+        }
+        return;
+      }
+
+      if (isDemoMode()) {
+        if (activeSessionId() !== id) {
+          selectDemoSession(id);
+        }
+        return;
+      }
+
+      if (selectedSessionId() !== id) {
+        void selectSession(id);
+      }
+    });
+
+    return <SessionView {...sessionProps()} />;
+  };
+
+  const FallbackRoute = () => <Navigate href="/dashboard/home" />;
+
   return (
     <>
-      <Switch>
-        <Match when={view() === "onboarding"}>
-          <OnboardingView {...onboardingProps()} />
-        </Match>
-        <Match when={view() === "session"}>
-          <SessionView
-              selectedSessionId={activeSessionId()}
-              setView={setView}
-              setTab={setTab}
-              activeWorkspaceDisplay={activeWorkspaceDisplay()}
-              setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
-              setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
-              headerStatus={headerStatus()}
-              busyHint={busyHint()}
-              selectedSessionModelLabel={selectedSessionModelLabel()}
-              openSessionModelPicker={openSessionModelPicker}
-              activePlugins={sidebarPluginList()}
-              activePluginStatus={sidebarPluginStatus()}
-              createSessionAndOpen={createSessionAndOpen}
-              sendPromptAsync={sendPrompt}
-              newTaskDisabled={newTaskDisabled()}
-              sessions={activeSessions().map((session) => ({
-                id: session.id,
-                title: session.title,
-                slug: session.slug,
-              }))}
-              selectSession={isDemoMode() ? selectDemoSession : selectSession}
-              messages={activeMessages()}
-              todos={activeTodos()}
-              busyLabel={busyLabel()}
-              developerMode={developerMode()}
-              showThinking={showThinking()}
-              groupMessageParts={groupMessageParts}
-              summarizeStep={summarizeStep}
-              expandedStepIds={expandedStepIds()}
-              setExpandedStepIds={setExpandedStepIds}
-              expandedSidebarSections={expandedSidebarSections()}
-              setExpandedSidebarSections={setExpandedSidebarSections}
-              artifacts={activeArtifacts()}
-              workingFiles={activeWorkingFiles()}
-              authorizedDirs={activeAuthorizedDirs()}
-              busy={busy()}
-              prompt={prompt()}
-              setPrompt={setPrompt}
-              sendPrompt={sendPrompt}
-              activePermission={activePermissionMemo()}
-              permissionReplyBusy={permissionReplyBusy()}
-              respondPermission={respondPermission}
-              respondPermissionAndRemember={respondPermissionAndRemember}
-              safeStringify={safeStringify}
-              showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
-              openConnect={openConnectFlow}
-              startProviderAuth={startProviderAuth}
-              openProviderAuthModal={openProviderAuthModal}
-              closeProviderAuthModal={closeProviderAuthModal}
-              providerAuthModalOpen={providerAuthModalOpen()}
-              providerAuthBusy={providerAuthBusy()}
-              providerAuthError={providerAuthError()}
-              providerAuthMethods={providerAuthMethods()}
-              providers={providers()}
-              providerConnectedIds={providerConnectedIds()}
-              listAgents={listAgents}
-              setSessionAgent={setSessionAgent}
-              saveSession={saveSessionExport}
-              sessionStatusById={activeSessionStatusById()}
-              onTryNotionPrompt={() => {
-                setPrompt("setup my crm");
-                setTryNotionPromptVisible(false);
-                setNotionSkillInstalled(true);
-                try {
-                  window.localStorage.setItem("openwork.notionSkillInstalled", "1");
-                } catch {
-                  // ignore
-                }
-              }}
-              sessionStatus={selectedSessionStatus()}
-              renameSession={renameSessionTitle}
-            error={error()}
-          />
-        </Match>
-        <Match when={true}>
-          <DashboardView {...dashboardProps()} />
-        </Match>
-      </Switch>
+      <Routes>
+        <Route path="/" component={RootRoute} />
+        <Route path="/onboarding" component={OnboardingRoute} />
+        <Route path="/dashboard/:tab?" component={DashboardRoute} />
+        <Route path="/session/:sessionId?" component={SessionRoute} />
+        <Route path="*all" component={FallbackRoute} />
+      </Routes>
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}
