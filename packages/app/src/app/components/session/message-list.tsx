@@ -1,21 +1,18 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File, FileText } from "lucide-solid";
+import { Check, ChevronDown, Circle, Copy, File } from "lucide-solid";
 
-import type { ArtifactItem, MessageGroup, MessageWithParts } from "../../types";
+import type { MessageGroup, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep } from "../../utils";
-import Button from "../button";
 import PartView from "../part-view";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
-  artifacts: ArtifactItem[];
   developerMode: boolean;
   showThinking: boolean;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
-  onOpenArtifact: (artifact: ArtifactItem) => void;
   footer?: JSX.Element;
 };
 
@@ -26,7 +23,6 @@ type StepClusterBlock = {
   partsGroups: Part[][];
   messageIds: string[];
   isUser: boolean;
-  artifacts: ArtifactItem[];
 };
 
 type MessageBlock = {
@@ -36,7 +32,6 @@ type MessageBlock = {
   groups: MessageGroup[];
   isUser: boolean;
   messageId: string;
-  artifacts: ArtifactItem[];
 };
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
@@ -103,24 +98,8 @@ export default function MessageList(props: MessageListProps) {
       return props.developerMode;
     });
 
-  const artifactsByMessage = createMemo(() => {
-    const map = new Map<string, ArtifactItem[]>();
-    for (const artifact of props.artifacts) {
-      const key = artifact.messageId?.trim();
-      if (!key) continue;
-      const current = map.get(key);
-      if (current) {
-        current.push(artifact);
-      } else {
-        map.set(key, [artifact]);
-      }
-    }
-    return map;
-  });
-
   const messageBlocks = createMemo<MessageBlockItem[]>(() => {
     const blocks: MessageBlockItem[] = [];
-    const artifactMap = artifactsByMessage();
 
     for (const message of props.messages) {
       const renderableParts = renderablePartsForMessage(message);
@@ -130,7 +109,6 @@ export default function MessageList(props: MessageListProps) {
       const groupId = String((message.info as any).id ?? "message");
       const groups = groupMessageParts(renderableParts, groupId);
       const isUser = (message.info as any).role === "user";
-      const messageArtifacts = artifactMap.get(messageId) ?? [];
       const isStepsOnly = groups.length === 1 && groups[0].kind === "steps";
 
       if (isStepsOnly) {
@@ -140,9 +118,6 @@ export default function MessageList(props: MessageListProps) {
           lastBlock.partsGroups.push(stepGroup.parts);
           lastBlock.stepIds.push(stepGroup.id);
           lastBlock.messageIds.push(messageId);
-          if (messageArtifacts.length) {
-            lastBlock.artifacts.push(...messageArtifacts);
-          }
         } else {
           blocks.push({
             kind: "steps-cluster",
@@ -151,7 +126,6 @@ export default function MessageList(props: MessageListProps) {
             partsGroups: [stepGroup.parts],
             messageIds: [messageId],
             isUser,
-            artifacts: [...messageArtifacts],
           });
         }
         continue;
@@ -164,7 +138,6 @@ export default function MessageList(props: MessageListProps) {
         groups,
         isUser,
         messageId,
-        artifacts: messageArtifacts,
       });
     }
 
@@ -261,36 +234,6 @@ export default function MessageList(props: MessageListProps) {
                       </div>
                     </Show>
                   </div>
-                  <Show when={block.artifacts.length}>
-                    <div class={`mt-4 space-y-2 ${block.isUser ? "text-gray-12" : ""}`.trim()}>
-                      <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
-                      <For each={block.artifacts}>
-                        {(artifact) => (
-                          <div
-                            class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between"
-                            data-artifact-id={artifact.id}
-                          >
-                            <div class="flex items-center gap-3">
-                              <div class="h-9 w-9 rounded-lg bg-gray-2 flex items-center justify-center">
-                                <FileText size={16} class="text-gray-10" />
-                              </div>
-                              <div>
-                                <div class="text-sm text-gray-12">{artifact.name}</div>
-                                <div class="text-xs text-gray-10">Document</div>
-                              </div>
-                            </div>
-                            <Button
-                              variant="outline"
-                              class="text-xs"
-                              onClick={() => props.onOpenArtifact(artifact)}
-                            >
-                              Open
-                            </Button>
-                          </div>
-                        )}
-                      </For>
-                    </div>
-                  </Show>
                 </div>
               </div>
             );
@@ -322,8 +265,8 @@ export default function MessageList(props: MessageListProps) {
                           renderMarkdown={!block.isUser}
                         />
                       </Show>
-                      <Show when={group.kind === "steps"}>
-                        {() => {
+                      {group.kind === "steps" &&
+                        (() => {
                           const stepGroup = group as { kind: "steps"; id: string; parts: Part[] };
                           const expanded = () => isStepsExpanded(stepGroup.id);
                           return (
@@ -355,42 +298,10 @@ export default function MessageList(props: MessageListProps) {
                               </Show>
                             </div>
                           );
-                        }}
-                      </Show>
+                        })()}
                     </div>
                   )}
                 </For>
-                <Show when={block.artifacts.length}>
-                  <div class={`mt-4 space-y-2 ${block.isUser ? "text-gray-12" : ""}`.trim()}>
-                    <div class="text-[11px] uppercase tracking-wide text-gray-9">Artifacts</div>
-                    <For each={block.artifacts}>
-                      {(artifact) => (
-                        <div
-                          class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3 flex items-center justify-between"
-                          data-artifact-id={artifact.id}
-                        >
-                          <div class="flex items-center gap-3">
-                            <div class="h-9 w-9 rounded-lg bg-gray-2 flex items-center justify-center">
-                              <FileText size={16} class="text-gray-10" />
-                            </div>
-                            <div>
-                              <div class="text-sm text-gray-12">{artifact.name}</div>
-                              <div class="text-xs text-gray-10">Document</div>
-                            </div>
-                          </div>
-                          <Button
-                            variant="outline"
-                            class="text-xs"
-                            onClick={() => props.onOpenArtifact(artifact)}
-                          >
-                            Open
-                          </Button>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-
                 <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
                   <button
                     class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
