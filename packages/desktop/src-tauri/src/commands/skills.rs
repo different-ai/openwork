@@ -9,10 +9,32 @@ fn resolve_skill_root(project_dir: &str) -> Result<PathBuf, String> {
   let base = PathBuf::from(project_dir).join(".opencode");
   let plural = base.join("skills");
   let singular = base.join("skill");
-  let root = if plural.exists() { plural } else { singular };
+  let root = if plural.is_dir() { plural } else { singular };
   fs::create_dir_all(&root)
     .map_err(|e| format!("Failed to create {}: {e}", root.display()))?;
   Ok(root)
+}
+
+fn resolve_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
+  let base = PathBuf::from(project_dir).join(".opencode");
+  let plural = base.join("skills");
+  let singular = base.join("skill");
+
+  let mut roots = Vec::new();
+  if plural.is_dir() {
+    roots.push(plural);
+  }
+  if singular.is_dir() {
+    roots.push(singular.clone());
+  }
+
+  if roots.is_empty() {
+    fs::create_dir_all(&singular)
+      .map_err(|e| format!("Failed to create {}: {e}", singular.display()))?;
+    roots.push(singular);
+  }
+
+  Ok(roots)
 }
 
 fn validate_skill_name(name: &str) -> Result<String, String> {
@@ -114,10 +136,12 @@ pub fn list_local_skills(project_dir: String) -> Result<Vec<LocalSkillCard>, Str
     return Err("projectDir is required".to_string());
   }
 
-  let skill_root = resolve_skill_root(project_dir)?;
+  let skill_roots = resolve_skill_roots(project_dir)?;
   let mut found: Vec<PathBuf> = Vec::new();
   let mut seen = HashSet::new();
-  gather_skills(&skill_root, &mut seen, &mut found)?;
+  for root in skill_roots {
+    gather_skills(&root, &mut seen, &mut found)?;
+  }
 
   let mut out = Vec::new();
   for path in found {
@@ -192,20 +216,28 @@ pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, 
   }
 
   let name = validate_skill_name(&name)?;
-  let skill_root = resolve_skill_root(project_dir)?;
-  let dest = skill_root.join(&name);
+  let skill_roots = resolve_skill_roots(project_dir)?;
+  let mut removed = false;
 
-  if !dest.exists() {
+  for root in skill_roots {
+    let dest = root.join(&name);
+    if !dest.exists() {
+      continue;
+    }
+
+    fs::remove_dir_all(&dest)
+      .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
+    removed = true;
+  }
+
+  if !removed {
     return Ok(ExecResult {
       ok: false,
       status: 1,
       stdout: String::new(),
-      stderr: format!("Skill not found at {}", dest.display()),
+      stderr: "Skill not found in .opencode/skill(s)".to_string(),
     });
   }
-
-  fs::remove_dir_all(&dest)
-    .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
 
   Ok(ExecResult {
     ok: true,
