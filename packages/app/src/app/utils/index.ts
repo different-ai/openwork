@@ -474,47 +474,70 @@ export function summarizeStep(part: Part): { title: string; detail?: string } {
 
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
-  const filePattern = /([\w./\-]+\.(?:pdf|docx|doc|txt|md|csv|json|js|ts|tsx|xlsx|pptx|png|jpg|jpeg))/gi;
 
   list.forEach((message) => {
-    const messageId = String((message.info as any).id ?? "");
+    const messageId = String((message.info as any)?.id ?? "");
+
     message.parts.forEach((part) => {
       if (part.type !== "tool") return;
       const record = part as any;
       const state = record.state ?? {};
+      const matches = new Set<string>();
 
-      const candidates: string[] = [];
-      if (typeof state.title === "string") candidates.push(state.title);
-      if (typeof state.output === "string") candidates.push(state.output);
-      if (typeof state.path === "string") candidates.push(state.path);
-      if (typeof state.file === "string") candidates.push(state.file);
-      if (Array.isArray(state.files)) {
-        state.files.filter((f: unknown) => typeof f === "string").forEach((f: string) => candidates.push(f));
+      const explicit = [
+        state.path,
+        state.file,
+        ...(Array.isArray(state.files) ? state.files : []),
+      ];
+
+      explicit.forEach((f) => {
+        if (typeof f === "string") {
+          const trimmed = f.trim();
+          if (
+            trimmed.length > 0 &&
+            trimmed.length <= 500 &&
+            trimmed.includes(".") &&
+            !/^\.{2,}$/.test(trimmed)
+          ) {
+            matches.add(trimmed);
+          }
+        }
+      });
+
+      const text = [state.title, state.output]
+        .filter((v): v is string => typeof v === "string")
+        .join(" ");
+
+      if (text) {
+        const pathPattern =
+          /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
+
+        Array.from(text.matchAll(pathPattern))
+          .map((m) => m[1])
+          .filter((f) => f && f.length <= 500)
+          .forEach((f) => matches.add(f));
       }
 
-      const combined = candidates.join(" ");
-      if (!combined) return;
-
-      const matches = Array.from(combined.matchAll(filePattern)).map((m) => m[1]);
-      if (!matches.length) return;
+      if (matches.size === 0) return;
 
       matches.forEach((match) => {
         const normalizedPath = match.trim().replace(/[\\/]+/g, "/");
         if (!normalizedPath) return;
+
         const key = normalizedPath.toLowerCase();
         const name = normalizedPath.split("/").pop() ?? normalizedPath;
-        const idBase = encodeURIComponent(normalizedPath);
-        const id = `artifact-${idBase}`;
-        const next = {
+        const id = `artifact-${encodeURIComponent(normalizedPath)}`;
+
+        // Delete and re-add to move to end (most recent)
+        if (results.has(key)) results.delete(key);
+        results.set(key, {
           id,
           name,
           path: normalizedPath,
           kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
-        };
-        if (results.has(key)) results.delete(key);
-        results.set(key, next);
+        });
       });
     });
   });
