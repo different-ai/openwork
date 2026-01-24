@@ -2351,6 +2351,7 @@ export default function App() {
         dismissLabel={t("reload.toast_dismiss", currentLocale())}
         busy={reloadBusy()}
         canReload={canReloadEngine()}
+        hasActiveRuns={anyActiveRuns()}
         onReload={() => reloadWorkspaceEngine()}
         onDismiss={() => setReloadToastDismissedAt(Date.now())}
       />
