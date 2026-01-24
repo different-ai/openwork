@@ -1,6 +1,6 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
-import { HashRouter, Router } from "@solidjs/router";
+import { HashRouter, Route, Router } from "@solidjs/router";
 
 import { bootstrapTheme } from "./app/theme";
 import "./app/index.css";
@@ -82,8 +82,8 @@ const platform: Platform = {
 render(
   () => (
     <PlatformProvider value={platform}>
-      <RouterComponent>
-        <AppEntry />
+      <RouterComponent root={AppEntry}>
+        <Route path="*all" component={() => null} />
       </RouterComponent>
     </PlatformProvider>
   ),
