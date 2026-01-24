@@ -93,6 +93,12 @@ pnpm dev
 pnpm dev:ui
 ```
 
+### Arch Users:
+
+```bash
+yay -s opencode # Releases version
+```
+
 ## Architecture (high-level)
 
 - In **Host mode**, OpenWork spawns:
@@ -150,6 +156,7 @@ pnpm test:e2e
 ## Troubleshooting
 
 ### Linux / Wayland (Hyprland)
+
 If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
 
 ```bash
