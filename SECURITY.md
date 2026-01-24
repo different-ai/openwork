@@ -130,7 +130,7 @@ Owpenbot (`packages/owpenbot`) connects WhatsApp/Telegram to a single OpenCode w
 Config type (simplified):
 
 ```ts
-type PermissionMode = "allow" | "deny";
+type PermissionMode = "allow" | "deny" | "readonly";
 ```
 
 Previously:
@@ -143,23 +143,41 @@ Now:
 - **Default is `"deny"`**:
 
   ```ts
-  const permissionMode =
-    env.PERMISSION_MODE?.toLowerCase() === "allow" ? "allow" : "deny";
+  const rawPermissionMode = env.PERMISSION_MODE?.toLowerCase();
+  const permissionMode: Config["permissionMode"] =
+    rawPermissionMode === "allow"
+      ? "allow"
+      : rawPermissionMode === "readonly" || rawPermissionMode === "read-only"
+        ? "readonly"
+        : "deny";
   ```
 
-- This means:
-  - If `PERMISSION_MODE` is unset or anything other than `"allow"`, Owpenbot:
-    - Creates sessions with `permission: [{ permission: "*", pattern: "*", action: "deny" }]`.
-    - Auto-rejects any `permission.asked` events.
-  - To regain the previous behavior, users must explicitly set:
-
-    ```env
-    PERMISSION_MODE=allow
-    ```
+- Modes behave as follows:
+  - `PERMISSION_MODE=deny`
+    - Sessions are created with a blanket deny rule: `[{ permission: "*", pattern: "*", action: "deny" }]`.
+    - Any `permission.asked` events from OpenCode are auto-rejected.
+    - Tools are effectively disabled for chat users.
+  - `PERMISSION_MODE=readonly`
+    - Sessions are created with a **read-only ruleset** that:
+      - Starts from `*/* -> allow`.
+      - Explicitly denies high-risk tools:
+        - `bash`
+        - `edit` (covers `edit`, `write`, `patch`, `multiedit`)
+        - `task` (subagents)
+        - `todowrite`
+        - `external_directory`
+        - `webfetch`
+    - Any `permission.asked` events are auto-rejected, so tools cannot elevate beyond this ruleset.
+    - This is aimed at “review-only” or “read-only assistant” deployments.
+  - `PERMISSION_MODE=allow`
+    - Sessions are created with a blanket allow rule: `[{ permission: "*", pattern: "*", action: "allow" }]`.
+    - Any permission prompts from OpenCode are auto-approved with `"always"`.
+    - Paired users effectively get full workspace tool access (filesystem, shell, plugins, MCPs) as exposed by your OpenCode config.
 
 **Strong recommendation:**
 
 - Keep `PERMISSION_MODE=deny` for most deployments.
+- Prefer `PERMISSION_MODE=readonly` over `allow` when you only need read/list/search capabilities.
 - If you set `PERMISSION_MODE=allow`, use a **dedicated, limited-scope workspace** just for Owpenbot (e.g. `/home/bot/owpenbot-workspace`), not your entire home directory or a production monorepo.
 
 ### 4.2 Owpenbot health server binding
@@ -194,12 +212,18 @@ Changes:
   - Clarify that allowlisting and pairing should be used to restrict who can access the workspace.
   - Document the health server behavior and localhost binding.
 
-### 4.4 Pairing and allowlists (unchanged behavior)
+### 4.4 Pairing and allowlists
 
-- Pairing uses a **6-digit numeric code** stored in SQLite (no expiry).
+- Pairing uses a **6-digit numeric code** stored in SQLite.
+- The code now has a **bounded lifetime**:
+  - A creation timestamp is stored alongside the code.
+  - On process startup, if the stored code is older than roughly 24 hours, a new code is generated and persisted.
+  - You can override the code explicitly by setting `PAIRING_CODE` in the environment.
+- The pairing code is **not echoed back** to unpaired users in chat; they only see a generic “pairing required” message.
+- A simple in-memory rate limiter for unpaired peers reduces brute-force-style attempts from a single WhatsApp/Telegram ID.
 - An allowlist (`ALLOW_FROM`, `ALLOW_FROM_TELEGRAM`, `ALLOW_FROM_WHATSAPP`) controls which peers can talk to the bot at all.
 - Security guidance:
-  - Treat the pairing code as a **shared secret**, only exchanged out-of-band.
+  - Treat the pairing code as a **shared secret**, only exchanged out-of-band (for example, via the `pairing-code` CLI command).
   - Prefer explicit allowlists for production bots.
   - Use a dedicated phone number / account for the bot so personal history is not exposed.
 

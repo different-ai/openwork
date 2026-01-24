@@ -33,6 +33,47 @@ export function buildPermissionRules(mode: Config["permissionMode"]) {
     ];
   }
 
+  if (mode === "readonly") {
+    return [
+      // Start from an allow-all baseline, then explicitly deny risky tools.
+      {
+        permission: "*",
+        pattern: "*",
+        action: "allow" as const,
+      },
+      {
+        permission: "bash",
+        pattern: "*",
+        action: "deny" as const,
+      },
+      {
+        permission: "edit",
+        pattern: "*",
+        action: "deny" as const,
+      },
+      {
+        permission: "task",
+        pattern: "*",
+        action: "deny" as const,
+      },
+      {
+        permission: "todowrite",
+        pattern: "*",
+        action: "deny" as const,
+      },
+      {
+        permission: "external_directory",
+        pattern: "*",
+        action: "deny" as const,
+      },
+      {
+        permission: "webfetch",
+        pattern: "*",
+        action: "deny" as const,
+      },
+    ];
+  }
+
   return [
     {
       permission: "*",

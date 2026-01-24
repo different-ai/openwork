@@ -97,17 +97,31 @@ Owpenbot sits on top of a single OpenCode workspace and can exercise its tools o
 Owpenbot uses a simple permission mode:
 
 - `PERMISSION_MODE=deny` (default)
-  - Sessions are created with a blanket deny rule.
+  - Sessions are created with a blanket deny rule (`*/* -> deny`).
   - Any `permission.asked` events from OpenCode are auto-rejected.
   - This is the safest default and is recommended for most deployments.
+- `PERMISSION_MODE=readonly`
+  - Sessions are created with a **read-only ruleset**:
+    - Non-destructive tools such as `read`, `list`, `glob`, `grep`, `websearch`, and `codesearch` are allowed.
+    - Risky tools are explicitly denied, including:
+      - `bash`
+      - `edit` (covers `edit`, `write`, `patch`, `multiedit`)
+      - `task` (subagents)
+      - `todowrite`
+      - `external_directory`
+      - `webfetch`
+  - Permission prompts (if any still occur) are auto-rejected.
+  - This is a good fit for “review-only” or “read-only assistant” use cases in a scoped workspace.
 - `PERMISSION_MODE=allow`
-  - Sessions are created with a blanket allow rule.
+  - Sessions are created with a blanket allow rule (`*/* -> allow`).
   - Any permission prompts from OpenCode are auto-approved with `"always"`.
   - Paired users effectively get full workspace tool access (filesystem, shell, plugins, MCPs) as exposed by your OpenCode config.
 
 **Strongly recommended:**
 
-- Keep `PERMISSION_MODE=deny` unless:
+- Keep `PERMISSION_MODE=deny` for most deployments.
+- Prefer `PERMISSION_MODE=readonly` over `allow` when you only need read/list/search capabilities.
+- If you set `PERMISSION_MODE=allow`, ensure:
   - You are using a **dedicated, limited-scope workspace** for Owpenbot, and
   - You are comfortable with users in that chat having tool-level access.
 - Never run Owpenbot with `PERMISSION_MODE=allow` pointed at `$HOME` or other broad directories.
@@ -115,7 +129,9 @@ Owpenbot uses a simple permission mode:
 ### Pairing code and allowlist
 
 - The pairing code is a 6-digit numeric code stored in SQLite.
-- It does not expire automatically; treat it as a **shared secret** and rotate it by changing `PAIRING_CODE` in the environment if needed.
+- By default, it is rotated when it is older than roughly 24 hours at process startup. You can override it explicitly by setting `PAIRING_CODE` in the environment.
+- The code is **not** sent back to unpaired users in chat; treat it as a shared secret and distribute it out-of-band (for example, via `pnpm -C packages/owpenbot pairing-code`).
+- A simple in-memory rate limiter for unpaired peers reduces brute-force attempts.
 - Use `ALLOW_FROM`, `ALLOW_FROM_TELEGRAM`, and `ALLOW_FROM_WHATSAPP` to restrict which peers or phone numbers can talk to the bot.
 
 ### Health server

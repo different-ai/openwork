@@ -22,7 +22,7 @@ export type Config = {
   pairingCode?: string;
   toolUpdatesEnabled: boolean;
   groupsEnabled: boolean;
-  permissionMode: "allow" | "deny";
+  permissionMode: "allow" | "deny" | "readonly";
   toolOutputLimit: number;
   healthPort?: number;
   logLevel: string;
@@ -102,8 +102,14 @@ export function loadConfig(
   const whatsappAuthDir = expandHome(env.WHATSAPP_AUTH_DIR ?? path.join(dataDir, "whatsapp"));
 
   const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
-  const permissionMode =
-    env.PERMISSION_MODE?.toLowerCase() === "allow" ? "allow" : "deny";
+
+  const rawPermissionMode = env.PERMISSION_MODE?.toLowerCase();
+  const permissionMode: Config["permissionMode"] =
+    rawPermissionMode === "allow"
+      ? "allow"
+      : rawPermissionMode === "readonly" || rawPermissionMode === "read-only"
+        ? "readonly"
+        : "deny";
 
   return {
     opencodeUrl: env.OPENCODE_URL?.trim() ?? "http://127.0.0.1:4096",

@@ -73,6 +73,15 @@ export async function startBridge(config: Config, logger: Logger) {
   const sessionQueue = new Map<string, Promise<void>>();
   const activeRuns = new Map<string, RunState>();
 
+  // Simple in-memory rate limiting for pairing attempts per peer.
+  const pairingAttempts = new Map<
+    string,
+    { windowStart: number; count: number; blockedUntil?: number }
+  >();
+  const PAIRING_WINDOW_MS = 60_000;
+  const PAIRING_MAX_ATTEMPTS = 20;
+  const PAIRING_BLOCK_MS = 5 * 60_000;
+
   let opencodeHealthy = false;
   let opencodeVersion: string | undefined;
 
@@ -146,16 +155,25 @@ export async function startBridge(config: Config, logger: Logger) {
       if (event.type === "permission.asked") {
         const permission = event.properties as { id?: string; sessionID?: string };
         if (!permission?.id || !permission.sessionID) continue;
-        const response = config.permissionMode === "deny" ? "reject" : "always";
+
+        // In conservative modes (deny, readonly), automatically reject permission
+        // requests so tools cannot elevate beyond the configured ruleset.
+        const response = config.permissionMode === "allow" ? "always" : "reject";
+
         await client.permission.respond({
           sessionID: permission.sessionID,
           permissionID: permission.id,
           response,
         });
+
         if (response === "reject") {
           const run = activeRuns.get(permission.sessionID);
           if (run) {
-            await sendText(run.channel, run.peerId, "Permission denied. Update configuration to allow tools.");
+            await sendText(
+              run.channel,
+              run.peerId,
+              "Permission denied. Update configuration to allow tools.",
+            );
           }
         }
       }
@@ -185,6 +203,43 @@ export async function startBridge(config: Config, logger: Logger) {
 
     const allowed = store.isAllowed(inbound.channel, inbound.peerId);
     if (!allowed) {
+      const key = `${inbound.channel}:${inbound.peerId}`;
+      const now = Date.now();
+      const current = pairingAttempts.get(key);
+
+      if (current?.blockedUntil && now < current.blockedUntil) {
+        const remainingSeconds = Math.ceil((current.blockedUntil - now) / 1000);
+        await sendText(
+          inbound.channel,
+          inbound.peerId,
+          `Too many pairing attempts. Try again in ${remainingSeconds} seconds.`,
+        );
+        return;
+      }
+
+      const withinWindow = current && now - current.windowStart < PAIRING_WINDOW_MS;
+      const count = withinWindow ? current.count + 1 : 1;
+      const updated: { windowStart: number; count: number; blockedUntil?: number } = {
+        windowStart: withinWindow ? current!.windowStart : now,
+        count,
+      };
+
+      if (count > PAIRING_MAX_ATTEMPTS) {
+        updated.blockedUntil = now + PAIRING_BLOCK_MS;
+      }
+
+      pairingAttempts.set(key, updated);
+
+      if (updated.blockedUntil && now < updated.blockedUntil) {
+        const remainingSeconds = Math.ceil((updated.blockedUntil - now) / 1000);
+        await sendText(
+          inbound.channel,
+          inbound.peerId,
+          `Too many pairing attempts. Try again in ${remainingSeconds} seconds.`,
+        );
+        return;
+      }
+
       const trimmed = inbound.text.trim();
       if (trimmed.includes(pairingCode)) {
         store.allowPeer(inbound.channel, inbound.peerId);
@@ -200,7 +255,7 @@ export async function startBridge(config: Config, logger: Logger) {
         await sendText(
           inbound.channel,
           inbound.peerId,
-          `Pairing required. Reply with code: ${pairingCode}`,
+          "Pairing required. Reply with your pairing code.",
         );
         return;
       }
