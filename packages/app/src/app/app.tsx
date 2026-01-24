@@ -1,4 +1,6 @@
 import {
+  Match,
+  Switch,
   createEffect,
   createMemo,
   createSignal,
@@ -7,13 +9,7 @@ import {
   untrack,
 } from "solid-js";
 
-import {
-  Navigate,
-  Route,
-  useLocation,
-  useNavigate,
-  useParams,
-} from "@solidjs/router";
+import { useLocation, useNavigate } from "@solidjs/router";
 
 import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
 
@@ -2338,35 +2334,32 @@ export default function App() {
     }
   };
 
-  const RootRoute = () => <Navigate href={initialRoute()} />;
+  createEffect(() => {
+    const rawPath = location.pathname.trim();
+    const path = rawPath.toLowerCase();
 
-  const OnboardingRoute = () => <OnboardingView {...onboardingProps()} />;
+    if (path === "" || path === "/") {
+      navigate(initialRoute(), { replace: true });
+      return;
+    }
 
-  const DashboardRoute = () => {
-    const params = useParams();
-    const nextTab = createMemo(() => resolveDashboardTab(params.tab));
-
-    createEffect(() => {
-      const resolvedTab = nextTab();
-      const rawTab = params.tab?.trim().toLowerCase();
+    if (path.startsWith("/dashboard")) {
+      const [, , tabSegment] = path.split("/");
+      const resolvedTab = resolveDashboardTab(tabSegment);
 
       if (resolvedTab !== tab()) {
         setTabState(resolvedTab);
       }
-      if (!rawTab || rawTab !== resolvedTab) {
+      if (!tabSegment || tabSegment !== resolvedTab) {
         goToDashboard(resolvedTab, { replace: true });
       }
-    });
+      return;
+    }
 
-    return <DashboardView {...dashboardProps()} />;
-  };
+    if (path.startsWith("/session")) {
+      const [, , sessionSegment] = rawPath.split("/");
+      const id = (sessionSegment ?? "").trim();
 
-  const SessionRoute = () => {
-    const params = useParams();
-    const routeSessionId = createMemo(() => params.sessionId?.trim() ?? "");
-
-    createEffect(() => {
-      const id = routeSessionId();
       if (!id) {
         const fallback = activeSessionId();
         if (fallback) {
@@ -2387,20 +2380,29 @@ export default function App() {
       if (selectedSessionId() !== id) {
         void selectSession(id);
       }
-    });
+      return;
+    }
 
-    return <SessionView {...sessionProps()} />;
-  };
+    if (path.startsWith("/onboarding")) {
+      return;
+    }
 
-  const FallbackRoute = () => <Navigate href="/dashboard/home" />;
+    navigate("/dashboard/home", { replace: true });
+  });
 
   return (
     <>
-      <Route path="/" component={RootRoute} />
-      <Route path="/onboarding" component={OnboardingRoute} />
-      <Route path="/dashboard/:tab?" component={DashboardRoute} />
-      <Route path="/session/:sessionId?" component={SessionRoute} />
-      <Route path="*" component={FallbackRoute} />
+      <Switch>
+        <Match when={currentView() === "onboarding"}>
+          <OnboardingView {...onboardingProps()} />
+        </Match>
+        <Match when={currentView() === "session"}>
+          <SessionView {...sessionProps()} />
+        </Match>
+        <Match when={true}>
+          <DashboardView {...dashboardProps()} />
+        </Match>
+      </Switch>
 
       <WorkspaceSwitchOverlay
         open={workspaceSwitchOpen()}
