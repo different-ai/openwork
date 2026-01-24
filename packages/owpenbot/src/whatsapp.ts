@@ -33,6 +33,7 @@ export type WhatsAppAdapter = {
 };
 
 const MAX_TEXT_LENGTH = 3800;
+const SENT_MESSAGE_TTL_MS = 10 * 60_000;
 
 function extractText(message: WAMessage): string {
   const content = message.message;
@@ -58,6 +59,7 @@ export function createWhatsAppAdapter(
   let connecting = false;
   let reconnectAttempts = 0;
   let reconnectTimer: NodeJS.Timeout | null = null;
+  const sentMessageIds = new Map<string, number>();
 
   const log = logger.child({ channel: "whatsapp" });
   const authDir = path.resolve(config.whatsappAuthDir);
@@ -102,6 +104,20 @@ export function createWhatsAppAdapter(
     }, delayMs);
   };
 
+  const recordSentMessage = (messageId?: string | null) => {
+    if (!messageId) return;
+    sentMessageIds.set(messageId, Date.now());
+  };
+
+  const pruneSentMessages = () => {
+    const now = Date.now();
+    for (const [id, timestamp] of sentMessageIds) {
+      if (now - timestamp > SENT_MESSAGE_TTL_MS) {
+        sentMessageIds.delete(id);
+      }
+    }
+  };
+
   async function connect(options: { printQr?: boolean } = {}) {
     if (stopped || connecting) return;
     connecting = true;
@@ -141,9 +157,15 @@ export function createWhatsAppAdapter(
       );
 
       sock.ev.on("messages.upsert", async ({ messages }: { messages: WAMessage[] }) => {
+        pruneSentMessages();
         for (const msg of messages) {
           if (!msg.message) continue;
           const fromMe = Boolean(msg.key.fromMe);
+          const messageId = msg.key.id;
+          if (fromMe && messageId && sentMessageIds.has(messageId)) {
+            sentMessageIds.delete(messageId);
+            continue;
+          }
           if (fromMe && !config.whatsappSelfChatMode) continue;
           const peerId = msg.key.remoteJid;
           if (!peerId) continue;
@@ -192,7 +214,8 @@ export function createWhatsAppAdapter(
     },
     async sendText(peerId: string, text: string) {
       if (!socket) throw new Error("WhatsApp socket not initialized");
-      await socket.sendMessage(peerId, { text });
+      const sent = await socket.sendMessage(peerId, { text });
+      recordSentMessage(sent?.key?.id);
     },
   };
 }
