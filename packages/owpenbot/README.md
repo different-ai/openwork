@@ -119,4 +119,6 @@ owpenwork status
 ```bash
 pnpm -C packages/owpenbot test:unit
 pnpm -C packages/owpenbot test:smoke
+pnpm -C packages/owpenbot test:cli
+pnpm -C packages/owpenbot test:npx
 ```
