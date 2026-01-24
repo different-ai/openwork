@@ -21,3 +21,22 @@ test("BridgeStore allowlist and sessions", () => {
 
   store.close();
 });
+
+test("BridgeStore pairing requests", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-"));
+  const dbPath = path.join(dir, "owpenbot.db");
+  const store = new BridgeStore(dbPath);
+
+  store.createPairingRequest("whatsapp", "+15551234567", "123456", 1000);
+  const list = store.listPairingRequests("whatsapp");
+  assert.equal(list.length, 1);
+  assert.equal(list[0].code, "123456");
+
+  const approved = store.approvePairingRequest("whatsapp", "123456");
+  assert.equal(approved?.peer_id, "+15551234567");
+
+  const empty = store.listPairingRequests("whatsapp");
+  assert.equal(empty.length, 0);
+
+  store.close();
+});

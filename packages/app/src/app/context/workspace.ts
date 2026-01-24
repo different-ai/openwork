@@ -717,6 +717,55 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  async function reloadWorkspaceEngine() {
+    if (!isTauriRuntime()) {
+      options.setError("Reloading the engine requires the desktop app.");
+      return false;
+    }
+
+    if (options.mode() !== "host") {
+      options.setError("Reload is only available in Host mode.");
+      return false;
+    }
+
+    const root = activeWorkspacePath().trim();
+    if (!root) {
+      options.setError("Pick a workspace folder first.");
+      return false;
+    }
+
+    options.setError(null);
+    options.setBusy(true);
+    options.setBusyLabel("status.reloading_engine");
+    options.setBusyStartedAt(Date.now());
+
+    try {
+      const info = await engineStop();
+      setEngine(info);
+
+      const nextInfo = await engineStart(root, { preferSidecar: options.engineSource() === "sidecar" });
+      setEngine(nextInfo);
+
+      if (nextInfo.baseUrl) {
+        const ok = await connectToServer(nextInfo.baseUrl, nextInfo.projectDir ?? undefined);
+        if (!ok) {
+          options.setError("Failed to reconnect after reload");
+          return false;
+        }
+      }
+
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      return false;
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
   async function onInstallEngine() {
     options.setError(null);
     setEngineInstallLogs(null);
@@ -1133,6 +1182,7 @@ export function createWorkspaceStore(options: {
     pickWorkspaceFolder,
     startHost,
     stopHost,
+    reloadWorkspaceEngine,
     bootstrapOnboarding,
     onModeSelect,
     onBackToMode,

@@ -555,6 +555,19 @@ export default {
   "settings.updates_not_supported": "Updates are not supported in this environment.",
   "settings.updates_desktop_only": "Updates are only available in the desktop app.",
 
+  // ==================== Reload ====================
+  "reload.toast_title": "Updates available",
+  "reload.toast_description": "Reload workspace to apply config changes.",
+  "reload.toast_warning": "Stops all active tasks.",
+  "reload.toast_warning_active": "Reloading stops {count} active tasks.",
+  "reload.toast_reload": "Reload",
+  "reload.toast_reload_stopped": "Reload & Stop Tasks",
+  "reload.toast_reloading": "Reloading...",
+  "reload.toast_dismiss": "Later",
+  "reload.toast_blocked_host": "Reloading is only available in Host mode.",
+  "reload.toast_blocked_connect": "Connect to this workspace to reload.",
+  "reload.toast_blocked_runs": "Waiting for active tasks to complete before reloading.",
+
   // ==================== Onboarding ====================
   "onboarding.starting_host": "Starting OpenWork...",
   "onboarding.searching_host": "Searching for Host...",
@@ -666,6 +679,7 @@ export default {
   "status.loading_session": "Loading session",
   "status.creating_task": "Creating new task",
   "status.starting_engine": "Starting engine",
+  "status.reloading_engine": "Reloading engine",
   "status.restarting_engine": "Restarting engine",
   "status.installing_opencode": "Installing OpenCode",
   "status.disconnecting": "Disconnecting",

@@ -22,7 +22,10 @@ The goal: make “agentic work” feel like a product, not a terminal.
 
 ## Alternate UIs
 
-- **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. See `packages/owpenbot/README.md` for setup and the one-command installer.
+- **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
+  - `curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash`
+  - run `owpenbot setup`, then `owpenbot whatsapp login`, then `owpenbot start`
+  - full setup: [packages/owpenbot/README.md](./packages/owpenbot/README.md)
 
 
 ## Quick start
@@ -142,6 +145,19 @@ pnpm typecheck
 pnpm build
 pnpm build:ui
 pnpm test:e2e
+```
+
+## Troubleshooting
+
+### Linux / Wayland (Hyprland)
+If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
+
+```bash
+WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
+```
+
+```bash
+WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 ```
 
 ## Security Notes

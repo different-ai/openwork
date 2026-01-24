@@ -19,6 +19,14 @@ type AllowlistRow = {
   created_at: number;
 };
 
+type PairingRow = {
+  channel: ChannelName;
+  peer_id: string;
+  code: string;
+  created_at: number;
+  expires_at: number;
+};
+
 export class BridgeStore {
   private db: Database.Database;
 
@@ -44,6 +52,14 @@ export class BridgeStore {
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS pairing_requests (
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        code TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (channel, peer_id)
       );
     `);
   }
@@ -101,6 +117,63 @@ export class BridgeStore {
       }
     });
     transaction(peers);
+  }
+
+  listPairingRequests(channel?: ChannelName): PairingRow[] {
+    const now = Date.now();
+    const stmt = channel
+      ? this.db.prepare(
+          "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND expires_at > ? ORDER BY created_at ASC",
+        )
+      : this.db.prepare(
+          "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE expires_at > ? ORDER BY created_at ASC",
+        );
+    const rows = (channel ? stmt.all(channel, now) : stmt.all(now)) as PairingRow[];
+    return rows;
+  }
+
+  getPairingRequest(channel: ChannelName, peerId: string): PairingRow | null {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND peer_id = ? AND expires_at > ?",
+    );
+    const row = stmt.get(channel, peerId, now) as PairingRow | undefined;
+    return row ?? null;
+  }
+
+  createPairingRequest(channel: ChannelName, peerId: string, code: string, ttlMs: number) {
+    const now = Date.now();
+    const expiresAt = now + ttlMs;
+    const stmt = this.db.prepare(
+      `INSERT INTO pairing_requests (channel, peer_id, code, created_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(channel, peer_id) DO UPDATE SET code = excluded.code, created_at = excluded.created_at, expires_at = excluded.expires_at`,
+    );
+    stmt.run(channel, peerId, code, now, expiresAt);
+  }
+
+  approvePairingRequest(channel: ChannelName, code: string): PairingRow | null {
+    const now = Date.now();
+    const select = this.db.prepare(
+      "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND code = ? AND expires_at > ?",
+    );
+    const row = select.get(channel, code, now) as PairingRow | undefined;
+    if (!row) return null;
+    const del = this.db.prepare("DELETE FROM pairing_requests WHERE channel = ? AND peer_id = ?");
+    del.run(channel, row.peer_id);
+    return row;
+  }
+
+  denyPairingRequest(channel: ChannelName, code: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM pairing_requests WHERE channel = ? AND code = ?");
+    const result = stmt.run(channel, code);
+    return result.changes > 0;
+  }
+
+  prunePairingRequests() {
+    const now = Date.now();
+    const stmt = this.db.prepare("DELETE FROM pairing_requests WHERE expires_at <= ?");
+    stmt.run(now);
   }
 
   getSetting(key: string): string | null {

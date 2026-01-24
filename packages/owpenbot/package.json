@@ -1,11 +1,31 @@
 {
-  "name": "@different-ai/owpenbot",
-  "version": "0.1.0",
-  "private": true,
+  "name": "owpenwork",
+  "version": "0.1.2",
+  "description": "WhatsApp bridge for a running OpenCode server",
+  "private": false,
   "type": "module",
   "bin": {
+    "owpenwork": "dist/cli.js",
     "owpenbot": "dist/cli.js"
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/owpenbot"
+  },
+  "keywords": [
+    "opencode",
+    "whatsapp",
+    "bridge",
+    "bot"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    ".env.example",
+    "install.sh"
+  ],
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",

@@ -20,6 +20,7 @@ export type InboundMessage = {
   peerId: string;
   text: string;
   raw: unknown;
+  fromMe?: boolean;
 };
 
 export type MessageHandler = (message: InboundMessage) => Promise<void> | void;
@@ -109,7 +110,9 @@ export function createWhatsAppAdapter(
 
     sock.ev.on("messages.upsert", async ({ messages }: { messages: WAMessage[] }) => {
       for (const msg of messages) {
-        if (!msg.message || msg.key.fromMe) continue;
+        if (!msg.message) continue;
+        const fromMe = Boolean(msg.key.fromMe);
+        if (fromMe && !config.whatsappSelfChatMode) continue;
         const peerId = msg.key.remoteJid;
         if (!peerId) continue;
         if (isJidGroup(peerId) && !config.groupsEnabled) {
@@ -123,6 +126,7 @@ export function createWhatsAppAdapter(
           peerId,
           text,
           raw: msg,
+          fromMe,
         });
       }
     });
@@ -201,4 +205,14 @@ export async function loginWhatsApp(config: Config, logger: Logger) {
       }
     });
   });
+}
+
+export function unpairWhatsApp(config: Config, logger: Logger) {
+  const authDir = path.resolve(config.whatsappAuthDir);
+  if (!fs.existsSync(authDir)) {
+    logger.info({ authDir }, "whatsapp auth directory not found");
+    return;
+  }
+  fs.rmSync(authDir, { recursive: true, force: true });
+  logger.info({ authDir }, "whatsapp auth cleared; run owpenbot to re-pair");
 }
