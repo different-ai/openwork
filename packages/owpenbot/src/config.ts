@@ -53,6 +53,7 @@ export type Config = {
   whatsappEnabled: boolean;
   dataDir: string;
   dbPath: string;
+  logFile: string;
   allowlist: Record<ChannelName, Set<string>>;
   toolUpdatesEnabled: boolean;
   groupsEnabled: boolean;
@@ -188,6 +189,7 @@ export function loadConfig(
 
   const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? "~/.owpenbot");
   const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
+  const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
   const configPath = resolveConfigPath(dataDir, env);
   const { config: configFile } = readConfigFile(configPath);
   const whatsappFile = configFile.channels?.whatsapp ?? {};
@@ -234,6 +236,7 @@ export function loadConfig(
     whatsappEnabled: parseBoolean(env.WHATSAPP_ENABLED, true),
     dataDir,
     dbPath,
+    logFile,
     allowlist: envAllowlist,
     toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
     groupsEnabled: parseBoolean(env.GROUPS_ENABLED, false),

@@ -56,7 +56,7 @@ export function createWhatsAppAdapter(
   config: Config,
   logger: Logger,
   onMessage: MessageHandler,
-  opts: { printQr?: boolean } = {},
+  opts: { printQr?: boolean; onStatus?: (message: string) => void } = {},
 ): WhatsAppAdapter {
   let socket: ReturnType<typeof makeWASocket> | null = null;
   let stopped = false;
@@ -87,10 +87,12 @@ export function createWhatsAppAdapter(
       if (update.qr && opts.printQr) {
         qrcode.generate(update.qr, { small: true });
         log.info("scan the QR code to connect WhatsApp");
+        opts.onStatus?.("Scan the QR code to connect WhatsApp.");
       }
 
       if (update.connection === "open") {
         log.info("whatsapp connected");
+        opts.onStatus?.("WhatsApp connected.");
       }
 
       if (update.connection === "close") {
@@ -100,6 +102,7 @@ export function createWhatsAppAdapter(
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         if (statusCode === 515 && !stopped) {
           log.warn("whatsapp stream error; restarting connection");
+          opts.onStatus?.("WhatsApp stream error; reconnecting.");
           setTimeout(() => {
             void connect();
           }, 1000);
@@ -108,9 +111,11 @@ export function createWhatsAppAdapter(
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         if (shouldReconnect && !stopped) {
           log.warn("whatsapp connection closed, reconnecting");
+          opts.onStatus?.("WhatsApp connection closed; reconnecting.");
           void connect();
         } else if (!shouldReconnect) {
           log.warn("whatsapp logged out, run 'owpenbot whatsapp login'");
+          opts.onStatus?.("WhatsApp logged out. Run: owpenwork whatsapp login.");
         }
       }
     });
@@ -161,7 +166,11 @@ export function createWhatsAppAdapter(
   };
 }
 
-export async function loginWhatsApp(config: Config, logger: Logger) {
+export async function loginWhatsApp(
+  config: Config,
+  logger: Logger,
+  options: { onStatus?: (message: string) => void } = {},
+) {
   const authDir = path.resolve(config.whatsappAuthDir);
   ensureDir(authDir);
   const log = logger.child({ channel: "whatsapp" });
@@ -204,9 +213,11 @@ export async function loginWhatsApp(config: Config, logger: Logger) {
         if (update.qr) {
           qrcode.generate(update.qr, { small: true });
           log.info("scan the QR code to connect WhatsApp");
+          options.onStatus?.("Scan the QR code to connect WhatsApp.");
         }
 
         if (update.connection === "open") {
+          options.onStatus?.("WhatsApp linked.");
           finish("connection.open", "linked");
         }
 
@@ -218,14 +229,17 @@ export async function loginWhatsApp(config: Config, logger: Logger) {
           if (statusCode === 515) {
             if (state.creds?.registered || fs.existsSync(credsPath)) {
               log.info("whatsapp login requires reconnect; completing login");
+              options.onStatus?.("WhatsApp login requires reconnect; completing login.");
               finish("connection.restart.required", "linked");
             } else {
               log.warn("whatsapp restart requested before creds registered");
+              options.onStatus?.("WhatsApp login needs another scan.");
               finish("connection.restart.required", "restart");
             }
             return;
           }
           if (state.creds?.registered) {
+            options.onStatus?.("WhatsApp linked.");
             finish("connection.close.registered", "linked");
           }
         }
@@ -238,6 +252,7 @@ export async function loginWhatsApp(config: Config, logger: Logger) {
 
     if (attempt < maxAttempts) {
       log.warn("retrying whatsapp login after restart");
+      options.onStatus?.("Retrying WhatsApp login...");
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
   }

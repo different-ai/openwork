@@ -20,6 +20,14 @@ type Adapter = {
   sendText(peerId: string, text: string): Promise<void>;
 };
 
+type OutboundKind = "reply" | "system" | "tool";
+
+export type BridgeReporter = {
+  onStatus?: (message: string) => void;
+  onInbound?: (message: { channel: ChannelName; peerId: string; text: string; fromMe?: boolean }) => void;
+  onOutbound?: (message: { channel: ChannelName; peerId: string; text: string; kind: OutboundKind }) => void;
+};
+
 type InboundMessage = {
   channel: ChannelName;
   peerId: string;
@@ -49,7 +57,8 @@ const TOOL_LABELS: Record<string, string> = {
   webfetch: "webfetch",
 };
 
-export async function startBridge(config: Config, logger: Logger) {
+export async function startBridge(config: Config, logger: Logger, reporter?: BridgeReporter) {
+  const reportStatus = reporter?.onStatus;
   const client = createClient(config);
   const store = new BridgeStore(config.dbPath);
   store.seedAllowlist("telegram", config.allowlist.telegram);
@@ -64,12 +73,17 @@ export async function startBridge(config: Config, logger: Logger) {
     adapters.set("telegram", createTelegramAdapter(config, logger, handleInbound));
   } else {
     logger.info("telegram adapter disabled");
+    reportStatus?.("Telegram adapter disabled.");
   }
 
   if (config.whatsappEnabled) {
-    adapters.set("whatsapp", createWhatsAppAdapter(config, logger, handleInbound, { printQr: true }));
+    adapters.set(
+      "whatsapp",
+      createWhatsAppAdapter(config, logger, handleInbound, { printQr: true, onStatus: reportStatus }),
+    );
   } else {
     logger.info("whatsapp adapter disabled");
+    reportStatus?.("WhatsApp adapter disabled.");
   }
 
   const sessionQueue = new Map<string, Promise<void>>();
@@ -142,7 +156,7 @@ export async function startBridge(config: Config, logger: Logger) {
           if (output) message += `\n${output}`;
         }
 
-        await sendText(run.channel, run.peerId, message);
+        await sendText(run.channel, run.peerId, message, { kind: "tool" });
       }
 
       if (event.type === "permission.asked") {
@@ -157,7 +171,9 @@ export async function startBridge(config: Config, logger: Logger) {
         if (response === "reject") {
           const run = activeRuns.get(permission.sessionID);
           if (run) {
-            await sendText(run.channel, run.peerId, "Permission denied. Update configuration to allow tools.");
+            await sendText(run.channel, run.peerId, "Permission denied. Update configuration to allow tools.", {
+              kind: "system",
+            });
           }
         }
       }
@@ -166,9 +182,18 @@ export async function startBridge(config: Config, logger: Logger) {
     logger.error({ error }, "event stream closed");
   });
 
-  async function sendText(channel: ChannelName, peerId: string, text: string) {
+  async function sendText(
+    channel: ChannelName,
+    peerId: string,
+    text: string,
+    options: { kind?: OutboundKind; display?: boolean } = {},
+  ) {
     const adapter = adapters.get(channel);
     if (!adapter) return;
+    const kind = options.kind ?? "system";
+    if (options.display !== false) {
+      reporter?.onOutbound?.({ channel, peerId, text, kind });
+    }
     const chunks = chunkText(text, adapter.maxTextLength);
     for (const chunk of chunks) {
       logger.info({ channel, peerId, length: chunk.length }, "sending message");
@@ -199,6 +224,7 @@ export async function startBridge(config: Config, logger: Logger) {
             inbound.channel,
             inbound.peerId,
             "Access denied. Ask the owner to allowlist your number.",
+            { kind: "system" },
           );
           return;
         }
@@ -211,6 +237,7 @@ export async function startBridge(config: Config, logger: Logger) {
             inbound.channel,
             inbound.peerId,
             "Pairing queue full. Ask the owner to approve pending requests.",
+            { kind: "system" },
           );
           return;
         }
@@ -223,15 +250,23 @@ export async function startBridge(config: Config, logger: Logger) {
           inbound.channel,
           inbound.peerId,
           `Pairing required. Ask the owner to approve code: ${code}`,
+          { kind: "system" },
         );
         return;
       }
     } else if (config.allowlist[inbound.channel].size > 0) {
       if (!store.isAllowed(inbound.channel, peerKey)) {
-        await sendText(inbound.channel, inbound.peerId, "Access denied.");
+        await sendText(inbound.channel, inbound.peerId, "Access denied.", { kind: "system" });
         return;
       }
     }
+
+    reporter?.onInbound?.({
+      channel: inbound.channel,
+      peerId: inbound.peerId,
+      text: inbound.text,
+      fromMe: inbound.fromMe,
+    });
 
     const session = store.getSession(inbound.channel, peerKey);
     const sessionID = session?.session_id ?? (await createSession({ ...inbound, peerId: peerKey }));
@@ -258,13 +293,17 @@ export async function startBridge(config: Config, logger: Logger) {
           .trim();
 
         if (reply) {
-          await sendText(inbound.channel, inbound.peerId, reply);
+          await sendText(inbound.channel, inbound.peerId, reply, { kind: "reply" });
         } else {
-          await sendText(inbound.channel, inbound.peerId, "No response generated. Try again.");
+          await sendText(inbound.channel, inbound.peerId, "No response generated. Try again.", {
+            kind: "system",
+          });
         }
       } catch (error) {
         logger.error({ error }, "prompt failed");
-        await sendText(inbound.channel, inbound.peerId, "Error: failed to reach OpenCode.");
+        await sendText(inbound.channel, inbound.peerId, "Error: failed to reach OpenCode.", {
+          kind: "system",
+        });
       } finally {
         activeRuns.delete(sessionID);
       }
@@ -301,9 +340,11 @@ export async function startBridge(config: Config, logger: Logger) {
 
   for (const adapter of adapters.values()) {
     await adapter.start();
+    reportStatus?.(`${adapter.name === "whatsapp" ? "WhatsApp" : "Telegram"} adapter started.`);
   }
 
   logger.info({ channels: Array.from(adapters.keys()) }, "bridge started");
+  reportStatus?.(`Bridge running. Logs: ${config.logFile}`);
 
   return {
     async stop() {

@@ -16,21 +16,23 @@ import {
 } from "@clack/prompts";
 import { Command } from "commander";
 
-import { startBridge } from "./bridge.js";
+import { startBridge, type BridgeReporter } from "./bridge.js";
 import {
   loadConfig,
   normalizeWhatsAppId,
   readConfigFile,
   writeConfigFile,
+  type ChannelName,
   type DmPolicy,
   type OwpenbotConfigFile,
 } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { createLogger } from "./logger.js";
 import { createClient } from "./opencode.js";
+import { truncateText } from "./text.js";
 import { loginWhatsApp, unpairWhatsApp } from "./whatsapp.js";
 
-const VERSION = "0.1.11";
+const VERSION = "0.1.12";
 
 type SetupStep = "config" | "whatsapp" | "telegram" | "start";
 
@@ -87,6 +89,42 @@ function defaultSelections(configExists: boolean, whatsappLinked: boolean): Setu
   if (!whatsappLinked) selections.push("whatsapp");
   selections.push("start");
   return selections;
+}
+
+function createAppLogger(config: ReturnType<typeof loadConfig>) {
+  return createLogger(config.logLevel, { logFile: config.logFile });
+}
+
+function createConsoleReporter(): BridgeReporter {
+  const formatChannel = (channel: ChannelName) => (channel === "whatsapp" ? "WhatsApp" : "Telegram");
+  const formatPeer = (channel: ChannelName, peerId: string, fromMe?: boolean) => {
+    const base = channel === "whatsapp" ? normalizeWhatsAppId(peerId) : peerId;
+    return fromMe ? `${base} (me)` : base;
+  };
+
+  const printBlock = (prefix: string, text: string) => {
+    const lines = text.split(/\r?\n/).map((line) => truncateText(line.trim(), 240));
+    const [first, ...rest] = lines.length ? lines : ["(empty)"];
+    console.log(`${prefix} ${first}`);
+    for (const line of rest) {
+      console.log(`${" ".repeat(prefix.length)} ${line}`);
+    }
+  };
+
+  return {
+    onStatus(message) {
+      console.log(message);
+    },
+    onInbound({ channel, peerId, text, fromMe }) {
+      const prefix = `[${formatChannel(channel)}] ${formatPeer(channel, peerId, fromMe)} >`;
+      printBlock(prefix, text);
+    },
+    onOutbound({ channel, peerId, text, kind }) {
+      const marker = kind === "reply" ? "<" : kind === "tool" ? "*" : "!";
+      const prefix = `[${formatChannel(channel)}] ${formatPeer(channel, peerId)} ${marker}`;
+      printBlock(prefix, text);
+    },
+  };
 }
 
 function updateConfig(configPath: string, updater: (cfg: OwpenbotConfigFile) => OwpenbotConfigFile) {
@@ -244,12 +282,13 @@ async function runStart(pathOverride?: string) {
     process.env.OPENCODE_DIRECTORY = pathOverride.trim();
   }
   const config = loadConfig();
-  const logger = createLogger(config.logLevel);
+  const logger = createAppLogger(config);
+  const reporter = createConsoleReporter();
   if (!process.env.OPENCODE_DIRECTORY) {
     process.env.OPENCODE_DIRECTORY = config.opencodeDirectory;
   }
-  const bridge = await startBridge(config, logger);
-  logger.info("Commands: owpenwork whatsapp login, owpenwork pairing list, owpenwork status");
+  const bridge = await startBridge(config, logger, reporter);
+  reporter.onStatus?.("Commands: owpenwork whatsapp login, owpenwork pairing list, owpenwork status");
 
   const shutdown = async () => {
     logger.info("shutting down");
@@ -331,21 +370,21 @@ async function runGuidedFlow(pathArg: string | undefined, opts: { nonInteractive
     }
 
     if (step === "whatsapp") {
-      await runStep("Link WhatsApp", async () => {
-        const alreadyLinked = fs.existsSync(authPath);
-        if (alreadyLinked) {
-          const relink = unwrap(
-            await confirm({
-              message: "WhatsApp already linked. Relink?",
-              initialValue: false,
-            }),
-          ) as boolean;
-          if (!relink) return;
-        }
-        await loginWhatsApp(config, createLogger(config.logLevel));
-      });
-      continue;
-    }
+        await runStep("Link WhatsApp", async () => {
+          const alreadyLinked = fs.existsSync(authPath);
+          if (alreadyLinked) {
+            const relink = unwrap(
+              await confirm({
+                message: "WhatsApp already linked. Relink?",
+                initialValue: false,
+              }),
+            ) as boolean;
+            if (!relink) return;
+          }
+          await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
+        });
+        continue;
+      }
 
     if (step === "telegram") {
       await runStep("Link Telegram", async () => {
@@ -413,7 +452,7 @@ login
   .description("Login to WhatsApp via QR code")
   .action(async () => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createLogger(config.logLevel));
+    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
   });
 
 login
@@ -450,7 +489,7 @@ whatsapp
   .description("Login to WhatsApp via QR code")
   .action(async () => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createLogger(config.logLevel));
+    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
   });
 
 whatsapp
@@ -458,7 +497,7 @@ whatsapp
   .description("Logout of WhatsApp and clear auth state")
   .action(() => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    unpairWhatsApp(config, createLogger(config.logLevel));
+    unpairWhatsApp(config, createAppLogger(config));
   });
 
 program
@@ -466,7 +505,7 @@ program
   .description("Print a WhatsApp QR code to pair")
   .action(async () => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createLogger(config.logLevel));
+    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
   });
 
 program
@@ -474,7 +513,7 @@ program
   .description("Clear WhatsApp pairing data")
   .action(() => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    unpairWhatsApp(config, createLogger(config.logLevel));
+    unpairWhatsApp(config, createAppLogger(config));
   });
 
 const pairing = program.command("pairing").description("Pairing requests");
