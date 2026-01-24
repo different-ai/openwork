@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ArrowRight,
   FileText,
+  ChevronDown,
   HardDrive,
   Shield,
   Zap,
@@ -129,6 +130,7 @@ export default function SessionView(props: SessionViewProps) {
     assistantId: null,
     partCount: 0,
   });
+  const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   
   const pendingArtifactRafIds = new Set<number>();
 
@@ -179,6 +181,104 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const showRunIndicator = createMemo(() => runPhase() !== "idle");
+
+  const latestRunPart = createMemo<Part | null>(() => {
+    if (!showRunIndicator()) return null;
+    const baseline = runBaseline();
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role !== "assistant") continue;
+      const messageId =
+        typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+      if (!messageId) continue;
+      if (baseline.assistantId && messageId === baseline.assistantId && msg.parts.length <= baseline.partCount) {
+        continue;
+      }
+      if (!msg.parts.length) continue;
+      return msg.parts[msg.parts.length - 1] ?? null;
+    }
+    return null;
+  });
+
+  const computeStatusFromPart = (part: Part | null) => {
+    if (!part) return null;
+    if (part.type === "tool") {
+      const record = part as any;
+      const tool = typeof record.tool === "string" ? record.tool : "";
+      switch (tool) {
+        case "task":
+          return "Delegating";
+        case "todowrite":
+        case "todoread":
+          return "Planning";
+        case "read":
+          return "Gathering context";
+        case "list":
+        case "grep":
+        case "glob":
+          return "Searching codebase";
+        case "webfetch":
+          return "Searching the web";
+        case "edit":
+        case "write":
+          return "Making edits";
+        case "bash":
+          return "Running commands";
+        default:
+          return "Working";
+      }
+    }
+    if (part.type === "reasoning") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const match = text.trimStart().match(/^\*\*(.+?)\*\*/);
+      if (match) return `Thinking about ${match[1].trim()}`;
+      return "Thinking";
+    }
+    if (part.type === "text") {
+      return "Gathering thoughts";
+    }
+    return null;
+  };
+
+  const truncateDetail = (value: string, max = 240) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.length <= max) return trimmed;
+    return `${trimmed.slice(0, max)}...`;
+  };
+
+  const thinkingStatus = createMemo(() => {
+    const status = computeStatusFromPart(latestRunPart());
+    if (status) return status;
+    if (runPhase() === "thinking") return "Thinking";
+    return null;
+  });
+
+  const thinkingDetail = createMemo<null | { title: string; detail?: string }>(() => {
+    const part = latestRunPart();
+    if (!part) return null;
+    if (part.type === "tool") {
+      const record = part as any;
+      const state = record.state ?? {};
+      const title =
+        typeof state.title === "string" && state.title.trim() ? state.title.trim() : String(record.tool ?? "Tool");
+      const output = typeof state.output === "string" ? truncateDetail(state.output) : null;
+      const error = typeof state.error === "string" ? truncateDetail(state.error) : null;
+      return { title, detail: output ?? error ?? undefined };
+    }
+    if (part.type === "reasoning") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const detail = truncateDetail(text);
+      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
+    }
+    if (part.type === "text") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const detail = truncateDetail(text);
+      return detail ? { title: "Draft", detail } : { title: "Draft" };
+    }
+    return null;
+  });
 
   const runLabel = createMemo(() => {
     switch (runPhase()) {
@@ -254,6 +354,12 @@ export default function SessionView(props: SessionViewProps) {
     setRunTick(Date.now());
     const id = window.setInterval(() => setRunTick(Date.now()), 50);
     onCleanup(() => window.clearInterval(id));
+  });
+
+  createEffect(() => {
+    if (!thinkingStatus()) {
+      setThinkingExpanded(false);
+    }
   });
 
   createEffect(() => {
@@ -790,23 +896,54 @@ export default function SessionView(props: SessionViewProps) {
                 footer={
                   showRunIndicator() ? (
                     <div class="flex justify-start pl-2">
-                      <div
-                        class={`w-full max-w-[68ch] flex items-center justify-between gap-3 text-xs font-mono ${
-                          runPhase() === "error" ? "text-red-11" : "text-gray-9"
-                        }`}
-                        role="status"
-                        aria-live="polite"
-                      >
-                        <div class="flex items-center gap-2 min-w-0">
-                          <Show
-                            when={runPhase() !== "error"}
-                            fallback={<AlertTriangle size={12} class="shrink-0" />}
-                          >
-                            <Zap size={12} class="shrink-0" />
-                          </Show>
-                          <span class="truncate">{runLine()}</span>
+                      <div class="w-full max-w-[68ch] space-y-2">
+                        <Show when={thinkingStatus()}>
+                          <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 text-xs text-gray-11">
+                            <button
+                              type="button"
+                              class="w-full flex items-center justify-between gap-3 text-left"
+                              onClick={() => setThinkingExpanded((prev) => !prev)}
+                              aria-expanded={thinkingExpanded()}
+                            >
+                              <div class="flex items-center gap-2 min-w-0">
+                                <span class="text-[10px] uppercase tracking-wide text-gray-9">Thinking</span>
+                                <span class="truncate text-gray-12">{thinkingStatus()}</span>
+                              </div>
+                              <ChevronDown
+                                size={12}
+                                class={`text-gray-8 transition-transform ${thinkingExpanded() ? "rotate-180" : ""}`}
+                              />
+                            </button>
+                            <Show when={thinkingExpanded() && thinkingDetail()}>
+                              {(detail) => (
+                                <div class="mt-2 text-xs text-gray-11">
+                                  <div class="text-gray-12">{detail().title}</div>
+                                  <Show when={detail().detail}>
+                                    <div class="mt-1 whitespace-pre-wrap text-gray-10">{detail().detail}</div>
+                                  </Show>
+                                </div>
+                              )}
+                            </Show>
+                          </div>
+                        </Show>
+                        <div
+                          class={`w-full flex items-center justify-between gap-3 text-xs font-mono ${
+                            runPhase() === "error" ? "text-red-11" : "text-gray-9"
+                          }`}
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <div class="flex items-center gap-2 min-w-0">
+                            <Show
+                              when={runPhase() !== "error"}
+                              fallback={<AlertTriangle size={12} class="shrink-0" />}
+                            >
+                              <Zap size={12} class="shrink-0" />
+                            </Show>
+                            <span class="truncate">{runLine()}</span>
+                          </div>
+                          <span class="shrink-0">{runElapsedLabel()}</span>
                         </div>
-                        <span class="shrink-0">{runElapsedLabel()}</span>
                       </div>
                     </div>
                   ) : undefined
