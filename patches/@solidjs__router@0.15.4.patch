@@ -1,0 +1,20 @@
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 2acf9f2213ac91f71bf844c53bf63be28ce7d79d..49eac35140e3e004963ad5f9b2ffe315a740339f 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -1,4 +1,5 @@
+ export * from "./routers/index.js";
++export * from "./routers/index.js";
+ export * from "./components.jsx";
+ export * from "./lifecycle.js";
+ export { useHref, useIsRouting, useLocation, useMatch, useCurrentMatches, useNavigate, useParams, useResolvedPath, useSearchParams, useBeforeLeave, usePreloadRoute } from "./routing.js";
+diff --git a/dist/index.jsx b/dist/index.jsx
+index c9079ba9cf5244de3c4a3fe938d33c67ab13fc00..305f052987ae0b2aec0edb163fec6d0dcf663581 100644
+--- a/dist/index.jsx
++++ b/dist/index.jsx
+@@ -1,4 +1,5 @@
+ export * from "./routers/index.js";
++export * from "./routers/index.js";
+ export * from "./components.jsx";
+ export * from "./lifecycle.js";
+ export { useHref, useIsRouting, useLocation, useMatch, useCurrentMatches, useNavigate, useParams, useResolvedPath, useSearchParams, useBeforeLeave, usePreloadRoute } from "./routing.js";
