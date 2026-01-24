@@ -323,7 +323,7 @@ export default function MessageList(props: MessageListProps) {
                         />
                       </Show>
                       <Show when={group.kind === "steps"}>
-                        {() => {
+                        {(() => {
                           const stepGroup = group as { kind: "steps"; id: string; parts: Part[] };
                           const expanded = () => isStepsExpanded(stepGroup.id);
                           return (
@@ -355,7 +355,7 @@ export default function MessageList(props: MessageListProps) {
                               </Show>
                             </div>
                           );
-                        }}
+                        })()}
                       </Show>
                     </div>
                   )}
