@@ -153,6 +153,7 @@ export default function App() {
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [booting, setBooting] = createSignal(true);
   const [developerMode, setDeveloperMode] = createSignal(false);
   let markReloadRequiredRef: (reason: ReloadReason) => void = () => {};
 
@@ -1632,7 +1633,7 @@ export default function App() {
       }
     }
 
-    void workspaceStore.bootstrapOnboarding();
+    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
   });
 
   createEffect(() => {
@@ -1936,6 +1937,7 @@ export default function App() {
   });
 
   const workspaceSwitchOpen = createMemo(() => {
+    if (booting()) return true;
     if (workspaceStore.connectingWorkspaceId()) return true;
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
@@ -1954,6 +1956,7 @@ export default function App() {
     }
     if (label === "status.loading_session") return "workspace.switching_status_loading";
     if (workspaceStore.connectingWorkspaceId()) return "workspace.switching_status_loading";
+    if (booting()) return "workspace.switching_status_preparing";
     return "workspace.switching_status_preparing";
   });
 
