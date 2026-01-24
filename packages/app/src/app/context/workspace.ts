@@ -484,11 +484,6 @@ export function createWorkspaceStore(options: {
     directory?: string | null;
     displayName?: string | null;
   }) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
     const baseUrl = input.baseUrl.trim();
     if (!baseUrl) {
       options.setError(t("app.error.remote_base_url_required", currentLocale()));
@@ -518,14 +513,37 @@ export function createWorkspaceStore(options: {
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
 
+    const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
+    const displayName = input.displayName?.trim() || null;
+    const workspaceId = `remote:${normalizedBaseUrl}:${resolvedDirectory}`;
+
     try {
-      const ws = await workspaceCreateRemote({
-        baseUrl,
-        directory: resolvedDirectory ? resolvedDirectory : null,
-        displayName: input.displayName?.trim() ? input.displayName.trim() : null,
-      });
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
+      if (isTauriRuntime()) {
+        const ws = await workspaceCreateRemote({
+          baseUrl: normalizedBaseUrl,
+          directory: resolvedDirectory ? resolvedDirectory : null,
+          displayName,
+        });
+        setWorkspaces(ws.workspaces);
+        syncActiveWorkspaceId(ws.activeId);
+      } else {
+        const nextWorkspace: WorkspaceInfo = {
+          id: workspaceId,
+          name: displayName ?? normalizedBaseUrl,
+          path: "",
+          preset: "remote",
+          workspaceType: "remote",
+          baseUrl: normalizedBaseUrl,
+          directory: resolvedDirectory || null,
+          displayName,
+        };
+
+        setWorkspaces((prev) => {
+          const withoutMatch = prev.filter((workspace) => workspace.id !== workspaceId);
+          return [...withoutMatch, nextWorkspace];
+        });
+        syncActiveWorkspaceId(workspaceId);
+      }
 
       setProjectDir(resolvedDirectory);
       setWorkspaceConfig(null);
