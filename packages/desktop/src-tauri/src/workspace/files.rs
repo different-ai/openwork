@@ -148,9 +148,9 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
 pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), String> {
   let root = PathBuf::from(workspace_path);
 
-  let skill_root = root.join(".opencode").join("skill");
+  let skill_root = root.join(".opencode").join("skills");
   fs::create_dir_all(&skill_root)
-    .map_err(|e| format!("Failed to create .opencode/skill: {e}"))?;
+    .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
   seed_workspace_guide(&skill_root)?;
 
   let templates_dir = root.join(".openwork").join("templates");

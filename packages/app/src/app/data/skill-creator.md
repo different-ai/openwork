@@ -9,7 +9,7 @@ This skill is a template + checklist for creating skills in a workspace.
 
 ## What is a skill?
 
-A skill is a folder under `.opencode/skill/<skill-name>/` (or `.opencode/skills/<skill-name>/`) anchored by `SKILL.md`.
+A skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`.
 
 ## Design goals
 
@@ -22,7 +22,7 @@ A skill is a folder under `.opencode/skill/<skill-name>/` (or `.opencode/skills/
 
 ```
 .opencode/
-  skill/
+  skills/
     my-skill/
       SKILL.md
       README.md

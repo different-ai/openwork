@@ -228,7 +228,7 @@ OpenWork’s settings pages use:
 OpenWork exposes two extension surfaces:
 
 1. **Skills (OpenPackage)**
-   - Installed into `.opencode/skill/*`.
+   - Installed into `.opencode/skills/*`.
    - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
 
 2. **Plugins (OpenCode)**
