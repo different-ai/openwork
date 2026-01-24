@@ -20,6 +20,7 @@ export type InboundMessage = {
   peerId: string;
   text: string;
   raw: unknown;
+  fromMe?: boolean;
 };
 
 export type MessageHandler = (message: InboundMessage) => Promise<void> | void;
@@ -109,7 +110,9 @@ export function createWhatsAppAdapter(
 
     sock.ev.on("messages.upsert", async ({ messages }: { messages: WAMessage[] }) => {
       for (const msg of messages) {
-        if (!msg.message || msg.key.fromMe) continue;
+        if (!msg.message) continue;
+        const fromMe = Boolean(msg.key.fromMe);
+        if (fromMe && !config.whatsappSelfChatMode) continue;
         const peerId = msg.key.remoteJid;
         if (!peerId) continue;
         if (isJidGroup(peerId) && !config.groupsEnabled) {
@@ -123,6 +126,7 @@ export function createWhatsAppAdapter(
           peerId,
           text,
           raw: msg,
+          fromMe,
         });
       }
     });

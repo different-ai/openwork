@@ -24,7 +24,7 @@ The goal: make “agentic work” feel like a product, not a terminal.
 
 - **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash`
-  - then run `owpenbot`
+  - run `owpenbot setup`, then `owpenbot whatsapp login`, then `owpenbot start`
   - full setup: [packages/owpenbot/README.md](./packages/owpenbot/README.md)
 
 

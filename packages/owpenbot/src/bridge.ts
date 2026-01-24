@@ -3,11 +3,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { Logger } from "pino";
 
 import type { Config, ChannelName } from "./config.js";
+import { normalizeWhatsAppId } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
-import { resolvePairingCode } from "./pairing.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createTelegramAdapter } from "./telegram.js";
 import { createWhatsAppAdapter } from "./whatsapp.js";
@@ -25,6 +25,7 @@ type InboundMessage = {
   peerId: string;
   text: string;
   raw: unknown;
+  fromMe?: boolean;
 };
 
 type RunState = {
@@ -52,10 +53,11 @@ export async function startBridge(config: Config, logger: Logger) {
   const client = createClient(config);
   const store = new BridgeStore(config.dbPath);
   store.seedAllowlist("telegram", config.allowlist.telegram);
-  store.seedAllowlist("whatsapp", config.allowlist.whatsapp);
-
-  const pairingCode = resolvePairingCode(store, config.pairingCode);
-  logger.info({ pairingCode }, "pairing code ready");
+  store.seedAllowlist(
+    "whatsapp",
+    [...config.whatsappAllowFrom].filter((entry) => entry !== "*"),
+  );
+  store.prunePairingRequests();
 
   const adapters = new Map<ChannelName, Adapter>();
   if (config.telegramEnabled && config.telegramToken) {
@@ -182,32 +184,57 @@ export async function startBridge(config: Config, logger: Logger) {
       { channel: inbound.channel, peerId: inbound.peerId, length: inbound.text.length },
       "received message",
     );
+    const peerKey = inbound.channel === "whatsapp" ? normalizeWhatsAppId(inbound.peerId) : inbound.peerId;
+    if (inbound.channel === "whatsapp") {
+      if (config.whatsappDmPolicy === "disabled") {
+        return;
+      }
 
-    const allowed = store.isAllowed(inbound.channel, inbound.peerId);
-    if (!allowed) {
-      const trimmed = inbound.text.trim();
-      if (trimmed.includes(pairingCode)) {
-        store.allowPeer(inbound.channel, inbound.peerId);
-        const remaining = trimmed.replace(pairingCode, "").trim();
-        if (remaining) {
-          await sendText(inbound.channel, inbound.peerId, "Paired. Processing your message.");
-        } else {
-          await sendText(inbound.channel, inbound.peerId, "Paired. Send your message again.");
+      const allowAll = config.whatsappDmPolicy === "open" || config.whatsappAllowFrom.has("*");
+      const isSelf = Boolean(inbound.fromMe && config.whatsappSelfChatMode);
+      const allowed = allowAll || isSelf || store.isAllowed("whatsapp", peerKey);
+      if (!allowed) {
+        if (config.whatsappDmPolicy === "allowlist") {
+          await sendText(
+            inbound.channel,
+            inbound.peerId,
+            "Access denied. Ask the owner to allowlist your number.",
+          );
           return;
         }
-        inbound = { ...inbound, text: remaining };
-      } else {
+
+        store.prunePairingRequests();
+        const active = store.getPairingRequest("whatsapp", peerKey);
+        const pending = store.listPairingRequests("whatsapp");
+        if (!active && pending.length >= 3) {
+          await sendText(
+            inbound.channel,
+            inbound.peerId,
+            "Pairing queue full. Ask the owner to approve pending requests.",
+          );
+          return;
+        }
+
+        const code = active?.code ?? String(Math.floor(100000 + Math.random() * 900000));
+        if (!active) {
+          store.createPairingRequest("whatsapp", peerKey, code, 60 * 60_000);
+        }
         await sendText(
           inbound.channel,
           inbound.peerId,
-          `Pairing required. Reply with code: ${pairingCode}`,
+          `Pairing required. Ask the owner to approve code: ${code}`,
         );
+        return;
+      }
+    } else if (config.allowlist[inbound.channel].size > 0) {
+      if (!store.isAllowed(inbound.channel, peerKey)) {
+        await sendText(inbound.channel, inbound.peerId, "Access denied.");
         return;
       }
     }
 
-    const session = store.getSession(inbound.channel, inbound.peerId);
-    const sessionID = session?.session_id ?? (await createSession(inbound));
+    const session = store.getSession(inbound.channel, peerKey);
+    const sessionID = session?.session_id ?? (await createSession({ ...inbound, peerId: peerKey }));
 
     enqueue(sessionID, async () => {
       const runState: RunState = {

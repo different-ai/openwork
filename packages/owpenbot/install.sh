@@ -133,8 +133,10 @@ cat <<EOF
 Owpenbot installed.
 
 Next steps:
-1) Edit $ENV_PATH
-2) Run owpenbot: owpenbot
+1) Edit $ENV_PATH (optional)
+2) Run setup: owpenbot setup
+3) Link WhatsApp: owpenbot whatsapp login
+4) Start bridge: owpenbot start
 
-Owpenbot will print a QR code if WhatsApp is not paired.
+Owpenbot will print a QR code during login and keep the session alive.
 EOF
