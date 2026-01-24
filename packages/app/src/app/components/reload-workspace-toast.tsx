@@ -22,12 +22,12 @@ export type ReloadWorkspaceToastProps = {
 export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
   return (
     <Show when={props.open}>
-      <div class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 w-[min(480px,calc(100vw-2rem))]">
+      <div class="fixed top-6 left-1/2 -translate-x-1/2 z-50 w-[min(480px,calc(100vw-2rem))]">
         <div 
           class="
             flex items-center gap-3 p-2 pr-3 rounded-full 
             border border-gray-6/50 bg-gray-2/95 shadow-xl backdrop-blur-md 
-            animate-in fade-in slide-in-from-bottom-4 duration-300
+            animate-in fade-in slide-in-from-top-4 duration-300
           "
         >
           {/* Icon Circle */}
