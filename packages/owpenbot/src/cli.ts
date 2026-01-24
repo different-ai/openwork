@@ -23,7 +23,7 @@ const program = new Command();
 
 program
   .name("owpenbot")
-  .version("0.1.3")
+  .version("0.1.5")
   .description("OpenCode WhatsApp + Telegram bridge")
   .argument("[path]")
   .option("--non-interactive", "Run setup defaults and exit", false)
@@ -333,4 +333,7 @@ program
     console.log("If replies fail, ensure OpenCode server is running at OPENCODE_URL.");
   });
 
-await program.parseAsync(process.argv);
+program.parseAsync(process.argv).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

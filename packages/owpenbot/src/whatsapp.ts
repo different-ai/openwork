@@ -98,6 +98,13 @@ export function createWhatsAppAdapter(
           | { error?: { output?: { statusCode?: number } } }
           | undefined;
         const statusCode = lastDisconnect?.error?.output?.statusCode;
+        if (statusCode === 515 && !stopped) {
+          log.warn("whatsapp stream error; restarting connection");
+          setTimeout(() => {
+            void connect();
+          }, 1000);
+          return;
+        }
         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
         if (shouldReconnect && !stopped) {
           log.warn("whatsapp connection closed, reconnecting");
