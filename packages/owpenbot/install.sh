@@ -140,9 +140,8 @@ cat <<EOF
 Owpenbot installed.
 
 Next steps:
-1) Run setup: owpenwork setup
-2) Link WhatsApp: owpenwork whatsapp login
-3) Start bridge: owpenwork start
+1) Run owpenwork: owpenwork
+2) Follow the guided setup + QR login
 
 Owpenbot will print a QR code during login and keep the session alive.
 EOF

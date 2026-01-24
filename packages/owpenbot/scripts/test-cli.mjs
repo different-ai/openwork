@@ -64,7 +64,7 @@ async function runSetupNonInteractive() {
     OWPENBOT_CONFIG_PATH: path.join(tempDir, "owpenbot.json"),
     OPENCODE_DIRECTORY: tempDir,
   };
-  const result = await run("node", [cliPath, "setup", "--non-interactive"], {
+  const result = await run("node", [cliPath, "--non-interactive"], {
     env,
     timeoutMs: 5000,
   });
@@ -87,7 +87,7 @@ async function runSetupInteractive() {
     OPENCODE_DIRECTORY: tempDir,
   };
   const input = "1\n+15551234567\n";
-  const result = await run("node", ["--no-warnings", cliPath, "setup"], {
+  const result = await run("node", ["--no-warnings", cliPath], {
     env,
     timeoutMs: 1500,
     expectTimeout: true,

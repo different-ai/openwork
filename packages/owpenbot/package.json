@@ -1,6 +1,6 @@
 {
   "name": "owpenwork",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "WhatsApp bridge for a running OpenCode server",
   "private": false,
   "type": "module",

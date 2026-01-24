@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 import { createInterface } from "node:readline/promises";
 
 import { Command } from "commander";
@@ -23,7 +24,9 @@ const program = new Command();
 program
   .name("owpenbot")
   .description("OpenCode WhatsApp + Telegram bridge")
-  .argument("[path]");
+  .argument("[path]")
+  .option("--non-interactive", "Run setup defaults and exit", false)
+  .option("--check", "Validate config/auth and exit", false);
 
 const runStart = async (pathOverride?: string) => {
   if (pathOverride?.trim()) {
@@ -35,7 +38,7 @@ const runStart = async (pathOverride?: string) => {
     process.env.OPENCODE_DIRECTORY = config.opencodeDirectory;
   }
   const bridge = await startBridge(config, logger);
-  logger.info("Commands: owpenbot whatsapp login, owpenbot pairing list, owpenbot status");
+  logger.info("Commands: owpenwork whatsapp login, owpenwork pairing list, owpenwork status");
 
   const shutdown = async () => {
     logger.info("shutting down");
@@ -47,6 +50,132 @@ const runStart = async (pathOverride?: string) => {
   process.on("SIGTERM", shutdown);
 };
 
+async function runSetupWizard(config: ReturnType<typeof loadConfig>, nonInteractive: boolean) {
+  const { config: existing } = readConfigFile(config.configPath);
+  const next: OwpenbotConfigFile = existing ?? { version: 1 };
+
+  if (nonInteractive) {
+    next.version = 1;
+    next.channels = next.channels ?? {};
+    next.channels.whatsapp = {
+      dmPolicy: "pairing",
+      allowFrom: [],
+      selfChatMode: false,
+      accounts: {
+        [config.whatsappAccountId]: {
+          authDir: config.whatsappAuthDir,
+        },
+      },
+    };
+    writeConfigFile(config.configPath, next);
+    console.log(`Wrote ${config.configPath}`);
+    return;
+  }
+
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const phoneMode = await rl.question(
+    "WhatsApp setup: (1) Personal number (2) Dedicated number [1]: ",
+  );
+  const mode = phoneMode.trim() === "2" ? "dedicated" : "personal";
+
+  let dmPolicy: DmPolicy = "pairing";
+  let allowFrom: string[] = [];
+  let selfChatMode = false;
+
+  if (mode === "personal") {
+    let normalized = "";
+    while (!normalized) {
+      const number = await rl.question("Your WhatsApp number (E.164, e.g. +15551234567): ");
+      const candidate = normalizeWhatsAppId(number);
+      if (!/^\+\d+$/.test(candidate)) {
+        console.log("Invalid number. Try again.");
+        continue;
+      }
+      normalized = candidate;
+    }
+    allowFrom = [normalized];
+    dmPolicy = "allowlist";
+    selfChatMode = true;
+  } else {
+    const policyInput = await rl.question(
+      "DM policy: (1) Pairing (2) Allowlist (3) Open (4) Disabled [1]: ",
+    );
+    const policyChoice = policyInput.trim();
+    if (policyChoice === "2") dmPolicy = "allowlist";
+    else if (policyChoice === "3") dmPolicy = "open";
+    else if (policyChoice === "4") dmPolicy = "disabled";
+    else dmPolicy = "pairing";
+
+    const listInput = await rl.question(
+      "Allowlist numbers (comma-separated, optional): ",
+    );
+    if (listInput.trim()) {
+      allowFrom = listInput
+        .split(",")
+        .map((item) => normalizeWhatsAppId(item))
+        .filter(Boolean);
+    }
+    if (dmPolicy === "open") {
+      allowFrom = allowFrom.length ? allowFrom : ["*"];
+    }
+  }
+
+  rl.close();
+
+  next.version = 1;
+  next.channels = next.channels ?? {};
+  next.channels.whatsapp = {
+    dmPolicy,
+    allowFrom,
+    selfChatMode,
+    accounts: {
+      [config.whatsappAccountId]: {
+        authDir: config.whatsappAuthDir,
+      },
+    },
+  };
+  writeConfigFile(config.configPath, next);
+  console.log(`Wrote ${config.configPath}`);
+}
+
+async function runGuidedFlow(pathArg: string | undefined, opts: { nonInteractive: boolean; check: boolean }) {
+  if (pathArg?.trim()) {
+    process.env.OPENCODE_DIRECTORY = pathArg.trim();
+  }
+  let config = loadConfig(process.env, { requireOpencode: false });
+  if (!process.env.OPENCODE_DIRECTORY) {
+    process.env.OPENCODE_DIRECTORY = config.opencodeDirectory;
+  }
+
+  if (opts.check) {
+    const authPath = path.join(config.whatsappAuthDir, "creds.json");
+    const linked = fs.existsSync(authPath);
+    const cfgExists = fs.existsSync(config.configPath);
+    console.log(`Config: ${cfgExists ? "yes" : "no"}`);
+    console.log(`WhatsApp linked: ${linked ? "yes" : "no"}`);
+    process.exit(linked && cfgExists ? 0 : 1);
+  }
+
+  const cfgExists = fs.existsSync(config.configPath);
+  const cfgHasWhatsApp = config.configFile.channels?.whatsapp;
+  if (!cfgExists || !cfgHasWhatsApp) {
+    await runSetupWizard(config, opts.nonInteractive);
+    if (opts.nonInteractive) {
+      console.log("Next: owpenwork whatsapp login");
+      return;
+    }
+  }
+
+  config = loadConfig(process.env, { requireOpencode: false });
+
+  const authPath = path.join(config.whatsappAuthDir, "creds.json");
+  if (!fs.existsSync(authPath)) {
+    await loginWhatsApp(config, createLogger(config.logLevel));
+  }
+
+  await runStart(pathArg);
+}
+
 program
   .command("start")
   .description("Start the bridge")
@@ -57,7 +186,8 @@ program.action((pathArg: string | undefined) => {
     program.outputHelp();
     return;
   }
-  return runStart(pathArg);
+  const opts = program.opts<{ nonInteractive: boolean; check: boolean }>();
+  return runGuidedFlow(pathArg, { nonInteractive: Boolean(opts.nonInteractive), check: Boolean(opts.check) });
 });
 
 program
@@ -66,91 +196,7 @@ program
   .option("--non-interactive", "Write defaults without prompts", false)
   .action(async (opts) => {
     const config = loadConfig(process.env, { requireOpencode: false });
-    const { config: existing } = readConfigFile(config.configPath);
-    const next: OwpenbotConfigFile = existing ?? { version: 1 };
-
-    if (opts.nonInteractive) {
-      next.version = 1;
-      next.channels = next.channels ?? {};
-      next.channels.whatsapp = {
-        dmPolicy: "pairing",
-        allowFrom: [],
-        selfChatMode: false,
-        accounts: {
-          [config.whatsappAccountId]: {
-            authDir: config.whatsappAuthDir,
-          },
-        },
-      };
-      writeConfigFile(config.configPath, next);
-      console.log(`Wrote ${config.configPath}`);
-      return;
-    }
-
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const phoneMode = await rl.question(
-      "WhatsApp setup: (1) Personal number (2) Dedicated number [1]: ",
-    );
-    const mode = phoneMode.trim() === "2" ? "dedicated" : "personal";
-
-    let dmPolicy: DmPolicy = "pairing";
-    let allowFrom: string[] = [];
-    let selfChatMode = false;
-
-    if (mode === "personal") {
-      let normalized = "";
-      while (!normalized) {
-        const number = await rl.question("Your WhatsApp number (E.164, e.g. +15551234567): ");
-        const candidate = normalizeWhatsAppId(number);
-        if (!/^\+\d+$/.test(candidate)) {
-          console.log("Invalid number. Try again.");
-          continue;
-        }
-        normalized = candidate;
-      }
-      allowFrom = [normalized];
-      dmPolicy = "allowlist";
-      selfChatMode = true;
-    } else {
-      const policyInput = await rl.question(
-        "DM policy: (1) Pairing (2) Allowlist (3) Open (4) Disabled [1]: ",
-      );
-      const policyChoice = policyInput.trim();
-      if (policyChoice === "2") dmPolicy = "allowlist";
-      else if (policyChoice === "3") dmPolicy = "open";
-      else if (policyChoice === "4") dmPolicy = "disabled";
-      else dmPolicy = "pairing";
-
-      const listInput = await rl.question(
-        "Allowlist numbers (comma-separated, optional): ",
-      );
-      if (listInput.trim()) {
-        allowFrom = listInput
-          .split(",")
-          .map((item) => normalizeWhatsAppId(item))
-          .filter(Boolean);
-      }
-      if (dmPolicy === "open") {
-        allowFrom = allowFrom.length ? allowFrom : ["*"];
-      }
-    }
-
-    rl.close();
-
-    next.version = 1;
-    next.channels = next.channels ?? {};
-    next.channels.whatsapp = {
-      dmPolicy,
-      allowFrom,
-      selfChatMode,
-      accounts: {
-        [config.whatsappAccountId]: {
-          authDir: config.whatsappAuthDir,
-        },
-      },
-    };
-    writeConfigFile(config.configPath, next);
-    console.log(`Wrote ${config.configPath}`);
+    await runSetupWizard(config, Boolean(opts.nonInteractive));
   });
 
 program
