@@ -50,12 +50,16 @@ export function createTelegramAdapter(
     const text = msg.text ?? msg.caption ?? "";
     if (!text.trim()) return;
 
-    await onMessage({
-      channel: "telegram",
-      peerId: String(msg.chat.id),
-      text,
-      raw: msg,
-    });
+    try {
+      await onMessage({
+        channel: "telegram",
+        peerId: String(msg.chat.id),
+        text,
+        raw: msg,
+      });
+    } catch (error) {
+      logger.error({ error, peerId: msg.chat.id }, "telegram inbound handler failed");
+    }
   });
 
   return {
