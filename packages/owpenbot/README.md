@@ -10,6 +10,12 @@ One-command install (recommended):
 curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash
 ```
 
+Or install from npm:
+
+```bash
+npm install -g owpenwork
+```
+
 Then follow the printed next steps (run `owpenbot setup`, link WhatsApp, start the bridge).
 
 1) One-command setup (installs deps, builds, creates `.env` if missing):
