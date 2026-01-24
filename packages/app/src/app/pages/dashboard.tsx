@@ -127,6 +127,7 @@ export type DashboardViewProps = {
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
   mcpReloadBlocked: boolean;
+  isRemoteWorkspace: boolean;
   reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
@@ -753,6 +754,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 connectMcp={props.connectMcp}
                 showMcpReloadBanner={props.showMcpReloadBanner}
                 reloadBlocked={props.mcpReloadBlocked}
+                isRemoteWorkspace={props.isRemoteWorkspace}
                 reloadMcpEngine={props.reloadMcpEngine}
               />
             </Match>

@@ -38,6 +38,7 @@ export type McpViewProps = {
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
   reloadBlocked: boolean;
+  isRemoteWorkspace: boolean;
   reloadMcpEngine: () => void;
 };
 
@@ -180,8 +181,13 @@ export default function McpView(props: McpViewProps) {
     return status?.status === "connected";
   };
 
-  const canConnect = (entry: McpDirectoryInfo) =>
-    props.mode === "host" && isTauriRuntime() && !props.busy && !!props.activeWorkspaceRoot.trim();
+  const canConnect = (entry: McpDirectoryInfo) => {
+    if (props.busy || !props.activeWorkspaceRoot.trim()) return false;
+    if (props.isRemoteWorkspace) {
+      return props.mode === "client";
+    }
+    return props.mode === "host" && isTauriRuntime();
+  };
 
   return (
     <section class="space-y-6">

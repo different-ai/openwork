@@ -17,29 +17,31 @@ export function validateMcpServerName(name: string): string {
   return trimmed;
 }
 
+export function parseMcpServersFromConfig(mcp: McpConfigValue): McpServerEntry[] {
+  if (!mcp || typeof mcp !== "object") {
+    return [];
+  }
+
+  return Object.entries(mcp).flatMap(([name, value]) => {
+    if (!value || typeof value !== "object") {
+      return [];
+    }
+
+    const config = value as McpServerConfig;
+    if (config.type !== "remote" && config.type !== "local") {
+      return [];
+    }
+
+    return [{ name, config }];
+  });
+}
+
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {
   if (!content.trim()) return [];
 
   try {
     const parsed = parse(content) as Record<string, unknown> | undefined;
-    const mcp = parsed?.mcp as McpConfigValue;
-
-    if (!mcp || typeof mcp !== "object") {
-      return [];
-    }
-
-    return Object.entries(mcp).flatMap(([name, value]) => {
-      if (!value || typeof value !== "object") {
-        return [];
-      }
-
-      const config = value as McpServerConfig;
-      if (config.type !== "remote" && config.type !== "local") {
-        return [];
-      }
-
-      return [{ name, config }];
-    });
+    return parseMcpServersFromConfig(parsed?.mcp as McpConfigValue);
   } catch {
     return [];
   }
