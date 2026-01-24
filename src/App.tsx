@@ -1615,6 +1615,13 @@ export default function App() {
     setNotionSkillInstalled(false);
 
     try {
+      // Check if client is available before creating config stub
+      if (!client()) {
+        setNotionError("OpenCode is not running. Start OpenCode or ensure it's installed.");
+        setNotionBusy(false);
+        return;
+      }
+      
       const config = await readOpencodeConfig("project", projectDir);
       const raw = config.content ?? "";
       const nextConfig = raw.trim()
@@ -1707,6 +1714,13 @@ export default function App() {
 
     try {
       setMcpStatus(null);
+      
+      // Check if client is available before creating config stub
+      if (!client()) {
+        setMcpStatus("OpenCode is not running. Start OpenCode or ensure it's installed.");
+        return;
+      }
+      
       const config = await readOpencodeConfig("project", projectDir);
       const raw = config.content ?? "";
       const nextConfig = raw.trim()
@@ -1754,6 +1768,12 @@ export default function App() {
     }
 
     try {
+      // Check if client is available before creating config stub
+      if (!client()) {
+        setMcpStatus("OpenCode is not running. Start OpenCode or ensure it's installed.");
+        return;
+      }
+      
       const config = await readOpencodeConfig("project", projectDir);
       const raw = config.content ?? "";
       const nextConfig = raw.trim()

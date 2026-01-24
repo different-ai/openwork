@@ -250,6 +250,14 @@ export function createExtensionsStore(options: {
 
     try {
       setPluginStatus(null);
+      
+      // Check if client is available before creating config stub
+      const c = options.client();
+      if (!c) {
+        setPluginStatus("OpenCode is not running. Start OpenCode or ensure it's installed.");
+        return;
+      }
+      
       const config = await readOpencodeConfig(scope, targetDir);
       const raw = config.content ?? "";
 
