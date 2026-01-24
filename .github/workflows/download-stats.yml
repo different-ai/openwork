@@ -1,0 +1,42 @@
+name: Download Stats
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # Run daily at 12:00 UTC
+  workflow_dispatch:
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  stats:
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run stats script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+          POSTHOG_HOST: https://us.i.posthog.com
+          POSTHOG_EVENT: download
+          POSTHOG_DISTINCT_ID: openwork-download
+          GITHUB_REPO: different-ai/openwork
+        run: node scripts/stats.mjs
+
+      - name: Commit stats
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add STATS.md
+          git diff --staged --quiet || git commit -m "ignore: update download stats $(date -I)"
+          git push

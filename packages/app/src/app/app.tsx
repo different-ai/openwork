@@ -23,6 +23,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -153,6 +154,7 @@ export default function App() {
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [developerMode, setDeveloperMode] = createSignal(false);
+  let markReloadRequiredRef: (reason: ReloadReason) => void = () => {};
 
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
@@ -194,6 +196,7 @@ export default function App() {
     developerMode,
     setError,
     setSseConnected,
+    markReloadRequired: (reason) => markReloadRequiredRef(reason),
   });
 
   const {
@@ -501,8 +504,6 @@ export default function App() {
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
 
-  let markReloadRequiredRef: (reason: ReloadReason) => void = () => {};
-
   const extensionsStore = createExtensionsStore({
     client,
     mode,
@@ -743,6 +744,7 @@ export default function App() {
     refreshPlugins,
     refreshSkills,
     refreshMcpServers,
+    reloadWorkspaceEngine: () => workspaceStore.reloadWorkspaceEngine(),
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -763,11 +765,10 @@ export default function App() {
     reloadLastTriggeredAt,
     reloadBusy,
     reloadError,
-    reloadCopy,
     canReloadEngine,
     markReloadRequired,
     clearReloadRequired,
-    reloadEngineInstance,
+    reloadWorkspaceEngine,
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
@@ -793,6 +794,43 @@ export default function App() {
     confirmReset,
     anyActiveRuns,
   } = systemState;
+
+  const [reloadToastDismissedAt, setReloadToastDismissedAt] = createSignal<number | null>(null);
+
+  const reloadToastVisible = createMemo(() => {
+    if (!reloadRequired()) return false;
+    const lastTriggeredAt = reloadLastTriggeredAt();
+    const dismissedAt = reloadToastDismissedAt();
+    if (!lastTriggeredAt) return true;
+    if (!dismissedAt) return true;
+    return dismissedAt < lastTriggeredAt;
+  });
+
+  const reloadWarning = createMemo(() =>
+    anyActiveRuns()
+      ? t("reload.toast_warning_active", currentLocale())
+      : t("reload.toast_warning", currentLocale()),
+  );
+
+  const reloadBlockedReason = createMemo(() => {
+    if (!reloadRequired()) return null;
+    if (!client()) return t("reload.toast_blocked_connect", currentLocale());
+    if (mode() !== "host") return t("reload.toast_blocked_host", currentLocale());
+    if (anyActiveRuns()) return t("reload.toast_blocked_runs", currentLocale());
+    return null;
+  });
+
+  const reloadActionLabel = createMemo(() =>
+    reloadBusy()
+      ? t("reload.toast_reloading", currentLocale())
+      : t("reload.toast_reload", currentLocale()),
+  );
+
+  createEffect(() => {
+    if (!reloadRequired()) {
+      setReloadToastDismissedAt(null);
+    }
+  });
 
   markReloadRequiredRef = markReloadRequired;
 
@@ -1713,6 +1751,7 @@ export default function App() {
         if (!result.ok) {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
+        markReloadRequired("config");
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
@@ -2148,7 +2187,7 @@ export default function App() {
     refreshMcpServers,
     showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
     mcpReloadBlocked: anyActiveRuns(),
-    reloadMcpEngine: () => reloadEngineInstance(),
+    reloadMcpEngine: () => reloadWorkspaceEngine(),
     language: currentLocale(),
     setLanguage: setLocale,
   });
@@ -2295,7 +2334,7 @@ export default function App() {
           setMcpAuthEntry(null);
           await refreshMcpServers();
         }}
-        onReloadEngine={() => reloadEngineInstance()}
+        onReloadEngine={() => reloadWorkspaceEngine()}
       />
 
       <TemplateModal
@@ -2312,6 +2351,22 @@ export default function App() {
         onPromptChange={setTemplateDraftPrompt}
         onScopeChange={setTemplateDraftScope}
         onAutoRunChange={setTemplateDraftAutoRun}
+      />
+
+      <ReloadWorkspaceToast
+        open={reloadToastVisible()}
+        title={t("reload.toast_title", currentLocale())}
+        description={t("reload.toast_description", currentLocale())}
+        warning={reloadWarning()}
+        blockedReason={reloadBlockedReason()}
+        error={reloadError()}
+        reloadLabel={reloadActionLabel()}
+        dismissLabel={t("reload.toast_dismiss", currentLocale())}
+        busy={reloadBusy()}
+        canReload={canReloadEngine()}
+        hasActiveRuns={anyActiveRuns()}
+        onReload={() => reloadWorkspaceEngine()}
+        onDismiss={() => setReloadToastDismissedAt(Date.now())}
       />
 
       <WorkspacePicker
