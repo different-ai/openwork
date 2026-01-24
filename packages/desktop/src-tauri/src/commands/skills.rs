@@ -3,16 +3,99 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::paths::{candidate_xdg_config_dirs, home_dir};
 use crate::types::ExecResult;
 
-fn resolve_skill_root(project_dir: &str) -> Result<PathBuf, String> {
+fn ensure_project_skill_root(project_dir: &str) -> Result<PathBuf, String> {
+  let project_dir = project_dir.trim();
+  if project_dir.is_empty() {
+    return Err("projectDir is required".to_string());
+  }
+
   let base = PathBuf::from(project_dir).join(".opencode");
-  let plural = base.join("skills");
-  let singular = base.join("skill");
-  let root = if plural.exists() { plural } else { singular };
-  fs::create_dir_all(&root)
-    .map_err(|e| format!("Failed to create {}: {e}", root.display()))?;
-  Ok(root)
+  let legacy = base.join("skill");
+  let modern = base.join("skills");
+
+  if legacy.is_dir() && !modern.exists() {
+    fs::rename(&legacy, &modern)
+      .map_err(|e| format!("Failed to move {} -> {}: {e}", legacy.display(), modern.display()))?;
+  }
+
+  fs::create_dir_all(&modern)
+    .map_err(|e| format!("Failed to create {}: {e}", modern.display()))?;
+  Ok(modern)
+}
+
+fn collect_project_skill_roots(project_dir: &Path) -> Vec<PathBuf> {
+  let mut roots = Vec::new();
+  let mut current = Some(project_dir);
+
+  while let Some(dir) = current {
+    let opencode_root = dir.join(".opencode").join("skills");
+    if opencode_root.is_dir() {
+      roots.push(opencode_root);
+    } else {
+      let legacy_root = dir.join(".opencode").join("skill");
+      if legacy_root.is_dir() {
+        roots.push(legacy_root);
+      }
+    }
+
+    let claude_root = dir.join(".claude").join("skills");
+    if claude_root.is_dir() {
+      roots.push(claude_root);
+    }
+
+    if dir.join(".git").exists() {
+      break;
+    }
+
+    current = dir.parent();
+  }
+
+  roots
+}
+
+fn collect_global_skill_roots() -> Vec<PathBuf> {
+  let mut roots = Vec::new();
+  for dir in candidate_xdg_config_dirs() {
+    let opencode_root = dir.join("opencode").join("skills");
+    if opencode_root.is_dir() {
+      roots.push(opencode_root);
+    }
+  }
+
+  if let Some(home) = home_dir() {
+    let claude_root = home.join(".claude").join("skills");
+    if claude_root.is_dir() {
+      roots.push(claude_root);
+    }
+  }
+
+  roots
+}
+
+fn collect_skill_roots(project_dir: &str) -> Result<Vec<PathBuf>, String> {
+  let project_dir = project_dir.trim();
+  if project_dir.is_empty() {
+    return Err("projectDir is required".to_string());
+  }
+
+  let mut roots = Vec::new();
+  let project_path = PathBuf::from(project_dir);
+  roots.extend(collect_project_skill_roots(&project_path));
+  roots.extend(collect_global_skill_roots());
+
+  let mut seen = HashSet::new();
+  let mut unique = Vec::new();
+  for root in roots {
+    let key = root.to_string_lossy().to_string();
+    if seen.insert(key) {
+      unique.push(root);
+    }
+  }
+
+  Ok(unique)
 }
 
 fn validate_skill_name(name: &str) -> Result<String, String> {
@@ -114,10 +197,12 @@ pub fn list_local_skills(project_dir: String) -> Result<Vec<LocalSkillCard>, Str
     return Err("projectDir is required".to_string());
   }
 
-  let skill_root = resolve_skill_root(project_dir)?;
+  let skill_roots = collect_skill_roots(project_dir)?;
   let mut found: Vec<PathBuf> = Vec::new();
   let mut seen = HashSet::new();
-  gather_skills(&skill_root, &mut seen, &mut found)?;
+  for root in skill_roots {
+    gather_skills(&root, &mut seen, &mut found)?;
+  }
 
   let mut out = Vec::new();
   for path in found {
@@ -154,7 +239,7 @@ pub fn install_skill_template(
   }
 
   let name = validate_skill_name(&name)?;
-  let skill_root = resolve_skill_root(project_dir)?;
+  let skill_root = ensure_project_skill_root(project_dir)?;
   let dest = skill_root.join(&name);
 
   if dest.exists() {
@@ -192,20 +277,28 @@ pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, 
   }
 
   let name = validate_skill_name(&name)?;
-  let skill_root = resolve_skill_root(project_dir)?;
-  let dest = skill_root.join(&name);
+  let skill_roots = collect_skill_roots(project_dir)?;
+  let mut removed = false;
 
-  if !dest.exists() {
+  for root in skill_roots {
+    let dest = root.join(&name);
+    if !dest.exists() {
+      continue;
+    }
+
+    fs::remove_dir_all(&dest)
+      .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
+    removed = true;
+  }
+
+  if !removed {
     return Ok(ExecResult {
       ok: false,
       status: 1,
       stdout: String::new(),
-      stderr: format!("Skill not found at {}", dest.display()),
+      stderr: "Skill not found in .opencode/skills or .claude/skills".to_string(),
     });
   }
-
-  fs::remove_dir_all(&dest)
-    .map_err(|e| format!("Failed to remove {}: {e}", dest.display()))?;
 
   Ok(ExecResult {
     ok: true,

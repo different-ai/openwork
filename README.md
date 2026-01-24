@@ -51,9 +51,9 @@ OpenWork is designed to be:
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
 - **Skills manager**:
-  - list installed `.opencode/skill` folders
+  - list installed `.opencode/skills` folders
   - install from OpenPackage (`opkg install ...`)
-  - import a local skill folder into `.opencode/skill/<skill-name>`
+  - import a local skill folder into `.opencode/skills/<skill-name>`
  
 
 ## Skill Manager    
@@ -177,7 +177,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 - Review `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
-- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## License
 

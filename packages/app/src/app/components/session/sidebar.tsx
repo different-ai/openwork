@@ -1,7 +1,7 @@
 import { For, Show, createMemo } from "solid-js";
-import { Check, ChevronDown, Circle, File, FileText, Folder, Plus } from "lucide-solid";
+import { Check, ChevronDown, Plus } from "lucide-solid";
 
-import type { ArtifactItem, TodoItem } from "../../types";
+import type { TodoItem } from "../../types";
 
 export type SidebarSectionState = {
   progress: boolean;
@@ -11,34 +11,14 @@ export type SidebarSectionState = {
 
 export type SidebarProps = {
   todos: TodoItem[];
-  artifacts: ArtifactItem[];
-  activePlugins: string[];
-  activePluginStatus: string | null;
-  authorizedDirs: string[];
-  workingFiles: string[];
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
-  onOpenArtifact: (artifact: ArtifactItem) => void;
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   sessionStatusById: Record<string, string>;
   onCreateSession: () => void;
   newTaskDisabled: boolean;
-};
-
-const humanizePlugin = (name: string) => {
-  const cleaned = name
-    .replace(/^@[^/]+\//, "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b(opencode|plugin)\b/gi, "")
-    .trim();
-  return cleaned
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ")
-    .trim();
 };
 
 export default function SessionSidebar(props: SidebarProps) {
@@ -112,7 +92,7 @@ export default function SessionSidebar(props: SidebarProps) {
 
         <div class="space-y-4">
           <Show when={realTodos().length > 0}>
-            <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
+            <div class="rounded-2xl border border-gray-6 bg-gray-2/30" id="sidebar-progress">
               <button
                 class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
                 onClick={() => props.onToggleSection("progress")}
@@ -148,134 +128,6 @@ export default function SessionSidebar(props: SidebarProps) {
               </Show>
             </div>
           </Show>
-
-          <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
-            <button
-              class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
-              onClick={() => props.onToggleSection("artifacts")}
-            >
-              <span>Artifacts</span>
-              <ChevronDown
-                size={16}
-                class={`transition-transform text-gray-10 ${
-                  props.expandedSections.artifacts ? "rotate-180" : ""
-                }`.trim()}
-              />
-            </button>
-            <Show when={props.expandedSections.artifacts}>
-              <div class="px-4 pb-4 pt-1 space-y-3">
-                <Show
-                  when={props.artifacts.length}
-                  fallback={<div class="text-xs text-gray-9 pl-1">No artifacts yet.</div>}
-                >
-                  <For each={props.artifacts}>
-                    {(artifact) => (
-                      <button
-                        class="flex items-center gap-3 text-sm text-gray-11 hover:text-gray-12 w-full text-left group"
-                        onClick={() => props.onOpenArtifact(artifact)}
-                      >
-                        <div class="h-8 w-8 rounded-lg bg-gray-3 group-hover:bg-gray-4 flex items-center justify-center transition-colors shrink-0">
-                          <FileText size={16} class="text-gray-10 group-hover:text-gray-11" />
-                        </div>
-                        <div class="min-w-0">
-                          <div class="truncate">{artifact.name}</div>
-                          <Show when={artifact.path}>
-                            <div class="truncate text-[7px] text-gray-5" title={artifact.path}>
-                              {artifact.path}
-                            </div>
-                          </Show>
-                        </div>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-            </Show>
-          </div>
-
-          <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
-            <button
-              class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
-              onClick={() => props.onToggleSection("context")}
-            >
-              <span>Context</span>
-              <ChevronDown
-                size={16}
-                class={`transition-transform text-gray-10 ${
-                  props.expandedSections.context ? "rotate-180" : ""
-                }`.trim()}
-              />
-            </button>
-            <Show when={props.expandedSections.context}>
-              <div class="px-4 pb-4 pt-1 space-y-5">
-                <Show when={props.activePlugins.length || props.activePluginStatus}>
-                  <div>
-                    <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                      <span>Active plugins</span>
-                    </div>
-                    <div class="space-y-2">
-                      <Show
-                        when={props.activePlugins.length}
-                        fallback={
-                          <div class="text-xs text-gray-9">
-                            {props.activePluginStatus ?? "No plugins loaded."}
-                          </div>
-                        }
-                      >
-                        <For each={props.activePlugins}>
-                          {(plugin) => (
-                            <div class="flex items-center gap-2 text-xs text-gray-11">
-                              <Circle size={6} class="text-green-9 fill-green-9" />
-                              <span class="truncate">{humanizePlugin(plugin) || plugin}</span>
-                            </div>
-                          )}
-                        </For>
-                      </Show>
-                    </div>
-                  </div>
-                </Show>
-
-                <div>
-                  <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                    <span>Authorized folders</span>
-                  </div>
-                  <div class="space-y-2">
-                    <For each={props.authorizedDirs.slice(0, 3)}>
-                      {(folder) => (
-                        <div class="flex items-center gap-2 text-xs text-gray-11">
-                          <Folder size={12} class="text-gray-9" />
-                          <span class="truncate" title={folder}>
-                            {folder.split(/[/\\]/).pop()}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </div>
-
-                <div>
-                   <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                    <span>Working files</span>
-                  </div>
-                  <div class="space-y-2">
-                    <Show
-                      when={props.workingFiles.length}
-                      fallback={<div class="text-xs text-gray-9">None yet.</div>}
-                    >
-                      <For each={props.workingFiles}>
-                        {(file) => (
-                          <div class="flex items-center gap-2 text-xs text-gray-11">
-                            <File size={12} class="text-gray-9" />
-                            <span class="truncate">{file}</span>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </div>
-                </div>
-              </div>
-            </Show>
-          </div>
         </div>
       </div>
     </div>
