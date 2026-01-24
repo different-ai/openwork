@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::engine::doctor::resolve_engine_path;
+use crate::engine::doctor::{resolve_engine_path, MIN_SAFE_ENGINE_VERSION};
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
 use crate::types::{ExecResult, WorkspaceOpenworkConfig};
@@ -238,7 +238,7 @@ pub fn opencode_mcp_auth(
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(
-      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- Or follow the instructions at https://opencode.ai/install\n\nNotes:\n{notes_text}"
     ));
   };
 

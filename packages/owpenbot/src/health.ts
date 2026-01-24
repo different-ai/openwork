@@ -34,7 +34,7 @@ export function startHealthServer(
     res.end(JSON.stringify({ ok: false, error: "Not found" }));
   });
 
-  server.listen(port, "0.0.0.0", () => {
+  server.listen(port, "127.0.0.1", () => {
     logger.info({ port }, "health server listening");
   });
 

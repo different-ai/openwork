@@ -22,7 +22,7 @@ The goal: make “agentic work” feel like a product, not a terminal.
 
 ## Alternate UIs
 
-- **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. See `packages/owpenbot/README.md` for setup and the one-command installer.
+- **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. See `packages/owpenbot/README.md` for setup and security notes.
 
 
 ## Quick start
@@ -161,6 +161,11 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 - OpenWork hides model reasoning and sensitive tool metadata by default.
 - Host mode binds to `127.0.0.1` by default.
+- Host mode now enforces a **minimum OpenCode CLI version** (currently `>= 1.1.10`) before starting the local engine, to avoid known vulnerabilities in older releases.
+- `engineDoctor` surfaces version and `serve` support along with notes when an update is recommended.
+- Owpenbot defaults to `PERMISSION_MODE=deny` and binds its optional health server to `127.0.0.1` when enabled.
+
+See `SECURITY.md` for a full overview of the trust model and hardening guidance.
 
 ## Contributing
 

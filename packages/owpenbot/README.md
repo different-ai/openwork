@@ -4,13 +4,27 @@ Simple WhatsApp bridge for a running OpenCode server. Telegram support exists bu
 
 ## Install + Run (WhatsApp)
 
-One-command install (recommended):
+### Safer installer usage
+
+Instead of piping a remote script directly into `bash`, download and inspect the installer first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh -o owpenbot-install.sh
+# Review owpenbot-install.sh in your editor, then:
+bash owpenbot-install.sh
 ```
 
+The installer will:
+
+- Clone/update this repo into `~/.owpenbot/openwork` by default.
+- Run `pnpm install` at the repo root.
+- Build the Owpenbot package.
+- Create `packages/owpenbot/.env` if it doesn’t exist.
+- Install an `owpenbot` shim into `~/.local/bin` (or your configured `OWPENBOT_BIN_DIR`).
+
 Then follow the printed next steps (edit `.env`, run `owpenbot`).
+
+### Manual setup from source
 
 1) One-command setup (installs deps, builds, creates `.env` if missing):
 
@@ -28,6 +42,10 @@ Required:
 Recommended:
 - `OPENCODE_SERVER_USERNAME`
 - `OPENCODE_SERVER_PASSWORD`
+
+Security recommendations:
+- Point `OPENCODE_DIRECTORY` at a **dedicated workspace** for Owpenbot, not your entire home directory.
+- Keep `PERMISSION_MODE=deny` unless you fully understand the implications (see below).
 
 3) Run the bridge:
 
@@ -70,6 +88,50 @@ Telegram support is wired but not E2E tested yet. To try it:
 - Set `TELEGRAM_BOT_TOKEN`.
 - Optionally set `TELEGRAM_ENABLED=true`.
 
+## Security & Permissions
+
+Owpenbot sits on top of a single OpenCode workspace and can exercise its tools on behalf of chat users. Configuration choices matter.
+
+### Permission mode
+
+Owpenbot uses a simple permission mode:
+
+- `PERMISSION_MODE=deny` (default)
+  - Sessions are created with a blanket deny rule.
+  - Any `permission.asked` events from OpenCode are auto-rejected.
+  - This is the safest default and is recommended for most deployments.
+- `PERMISSION_MODE=allow`
+  - Sessions are created with a blanket allow rule.
+  - Any permission prompts from OpenCode are auto-approved with `"always"`.
+  - Paired users effectively get full workspace tool access (filesystem, shell, plugins, MCPs) as exposed by your OpenCode config.
+
+**Strongly recommended:**
+
+- Keep `PERMISSION_MODE=deny` unless:
+  - You are using a **dedicated, limited-scope workspace** for Owpenbot, and
+  - You are comfortable with users in that chat having tool-level access.
+- Never run Owpenbot with `PERMISSION_MODE=allow` pointed at `$HOME` or other broad directories.
+
+### Pairing code and allowlist
+
+- The pairing code is a 6-digit numeric code stored in SQLite.
+- It does not expire automatically; treat it as a **shared secret** and rotate it by changing `PAIRING_CODE` in the environment if needed.
+- Use `ALLOW_FROM`, `ALLOW_FROM_TELEGRAM`, and `ALLOW_FROM_WHATSAPP` to restrict which peers or phone numbers can talk to the bot.
+
+### Health server
+
+Owpenbot can expose a simple health endpoint when `OWPENBOT_HEALTH_PORT` is set.
+
+Current behavior:
+
+- The health server listens on `127.0.0.1` only.
+- It reports:
+  - OpenCode URL and health status,
+  - Detected engine version (if available),
+  - Enabled channels (WhatsApp/Telegram).
+
+To expose this remotely, prefer an explicit tunnel or port-forward (e.g. `ssh -L`) instead of binding directly to a network interface.
+
 ## Commands
 
 ```bash
@@ -82,6 +144,7 @@ pnpm -C packages/owpenbot pairing-code
 - SQLite at `~/.owpenbot/owpenbot.db` unless overridden.
 - Allowlist is enforced by default; a pairing code is generated if not provided.
 - Group chats are disabled unless `GROUPS_ENABLED=true`.
+- Health server (if enabled via `OWPENBOT_HEALTH_PORT`) binds to `127.0.0.1`.
 
 ## Tests
 

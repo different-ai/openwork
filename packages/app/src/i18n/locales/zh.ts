@@ -692,7 +692,7 @@ export default {
   "app.error.remote_base_url_required": "请先填写服务器地址。",
   "app.error.host_requires_local": "请先选择本地工作区以启动引擎。",
   "app.error.sidecar_unsupported_windows": "Windows 尚不支持 Sidecar OpenCode。将改用 PATH。",
-  "app.error.install_failed": "OpenCode 安装失败。请查看上方日志。",
+  "app.error.install_failed": "OpenCode 自动安装已禁用。请查看上方日志中的手动命令。",
   "app.error.title_prompt_required": "模板标题和提示词是必需的。",
   "app.error.workspace_templates_desktop": "工作区模板需要桌面应用。",
 } as const;

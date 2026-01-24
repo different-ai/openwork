@@ -698,7 +698,7 @@ export default {
   "app.error.remote_base_url_required": "Add a server URL to continue.",
   "app.error.host_requires_local": "Select a local workspace to start the engine.",
   "app.error.sidecar_unsupported_windows": "Sidecar OpenCode is not supported on Windows yet. Using PATH instead.",
-  "app.error.install_failed": "OpenCode install failed. See logs above.",
+  "app.error.install_failed": "Automatic OpenCode install is disabled. See logs above for manual commands.",
   "app.error.title_prompt_required": "Template title and prompt are required.",
   "app.error.workspace_templates_desktop": "Workspace templates require the desktop app.",
 } as const;

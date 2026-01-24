@@ -1,6 +1,9 @@
 use tauri::{AppHandle, Manager, State};
 
-use crate::engine::doctor::{opencode_serve_help, opencode_version, resolve_engine_path};
+use crate::engine::doctor::{
+  is_engine_version_safe, opencode_serve_help, opencode_version, resolve_engine_path,
+  MIN_SAFE_ENGINE_VERSION,
+};
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{build_engine_command, find_free_port, spawn_engine};
 use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
@@ -28,7 +31,7 @@ pub fn engine_doctor(app: AppHandle, prefer_sidecar: Option<bool>) -> EngineDoct
     .ok()
     .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
 
-  let (resolved, in_path, notes) =
+  let (resolved, in_path, mut notes) =
     resolve_engine_path(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
 
   let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
@@ -45,6 +48,14 @@ pub fn engine_doctor(app: AppHandle, prefer_sidecar: Option<bool>) -> EngineDoct
       }
       None => (None, false, None, None, None),
     };
+
+  if let Some(ref version_str) = version {
+    if let Some(false) = is_engine_version_safe(version_str) {
+      notes.push(format!(
+        "OpenCode CLI {version_str} is older than the recommended minimum {MIN_SAFE_ENGINE_VERSION}. Update OpenCode to receive security fixes."
+      ));
+    }
+  }
 
   EngineDoctorResult {
     found: resolved.is_some(),
@@ -66,8 +77,14 @@ pub fn engine_install() -> Result<ExecResult, String> {
     return Ok(ExecResult {
       ok: false,
       status: -1,
-      stdout: String::new(),
-      stderr: "Guided install is not supported on Windows yet. Install OpenCode via Scoop/Chocolatey or https://opencode.ai/install, then restart OpenWork.".to_string(),
+      stdout: String::from(
+        "Automatic OpenCode installation from OpenWork is not supported.\n\n\
+        Install OpenCode for Windows using one of:\n\
+        - Chocolatey (choco install opencode)\n\
+        - Scoop (scoop install extras/opencode)\n\
+        - Or follow the instructions at https://opencode.ai/install\n",
+      ),
+      stderr: "Automatic OpenCode install is disabled. See logs for manual commands.".to_string(),
     });
   }
 
@@ -78,19 +95,19 @@ pub fn engine_install() -> Result<ExecResult, String> {
       .join(".opencode")
       .join("bin");
 
-    let output = std::process::Command::new("bash")
-      .arg("-lc")
-      .arg("curl -fsSL https://opencode.ai/install | bash")
-      .env("OPENCODE_INSTALL_DIR", install_dir)
-      .output()
-      .map_err(|e| format!("Failed to run installer: {e}"))?;
+    let stdout = format!(
+      "Automatic OpenCode installation from OpenWork is disabled for security.\n\n\
+       To install OpenCode manually, run these commands in your terminal:\n\n\
+       - brew install anomalyco/tap/opencode   # macOS/Homebrew\n\
+       - Or follow the instructions at https://opencode.ai/install for your platform\n\n\
+       Suggested OPENCODE_INSTALL_DIR (if supported by the installer):\n  {install_dir}\n"
+    );
 
-    let status = output.status.code().unwrap_or(-1);
     Ok(ExecResult {
-      ok: output.status.success(),
-      status,
-      stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-      stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+      ok: false,
+      status: 0,
+      stdout,
+      stderr: "Automatic OpenCode install is disabled. See logs for manual commands.".to_string(),
     })
   }
 }
@@ -128,9 +145,19 @@ pub fn engine_start(
   let Some(program) = program else {
     let notes_text = notes.join("\n");
     return Err(format!(
-      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- curl -fsSL https://opencode.ai/install | bash\n\nNotes:\n{notes_text}"
+      "OpenCode CLI not found.\n\nInstall with:\n- brew install anomalyco/tap/opencode\n- Or follow the instructions at https://opencode.ai/install\n\nNotes:\n{notes_text}"
     ));
   };
+
+  if let Some(version_str) = opencode_version(program.as_os_str()) {
+    if let Some(false) = is_engine_version_safe(&version_str) {
+      return Err(format!(
+        "OpenCode CLI {version_str} is older than the recommended minimum {MIN_SAFE_ENGINE_VERSION} and may be missing security fixes.\n\
+         Please upgrade OpenCode to at least {MIN_SAFE_ENGINE_VERSION} before running Host mode.\n\n\
+         See https://opencode.ai/install for upgrade instructions."
+      ));
+    }
+  }
 
   let mut command = build_engine_command(&program, &hostname, port, &project_dir);
   let mut child = spawn_engine(&mut command)?;

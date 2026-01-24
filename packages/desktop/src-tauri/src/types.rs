@@ -38,6 +38,9 @@ impl WorkspaceOpenworkConfig {
             .unwrap_or("Workspace")
             .to_string();
 
+        let canonical_root = std::fs::canonicalize(&root).unwrap_or(root.clone());
+        let authorized_root = canonical_root.to_string_lossy().to_string();
+
         Self {
             version: 1,
             workspace: Some(WorkspaceOpenworkWorkspace {
@@ -45,7 +48,7 @@ impl WorkspaceOpenworkConfig {
                 created_at: Some(now_ms),
                 preset: Some(preset.to_string()),
             }),
-            authorized_roots: vec![workspace_path.to_string()],
+            authorized_roots: vec![authorized_root],
         }
     }
 }

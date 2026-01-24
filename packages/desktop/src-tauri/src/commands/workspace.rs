@@ -299,20 +299,28 @@ pub fn workspace_add_authorized_root(
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
 
+    let workspace_root = PathBuf::from(&workspace_path);
+    let workspace_canonical = fs::canonicalize(&workspace_root).unwrap_or(workspace_root);
+    let workspace_value = workspace_canonical.to_string_lossy().to_string();
+
+    let folder_root = PathBuf::from(&folder_path);
+    let folder_canonical = fs::canonicalize(&folder_root).unwrap_or(folder_root);
+    let folder_value = folder_canonical.to_string_lossy().to_string();
+
     let mut config: WorkspaceOpenworkConfig = if openwork_path.exists() {
         let raw = fs::read_to_string(&openwork_path)
             .map_err(|e| format!("Failed to read {}: {e}", openwork_path.display()))?;
         serde_json::from_str(&raw).unwrap_or_default()
     } else {
         let mut cfg = WorkspaceOpenworkConfig::default();
-        if !cfg.authorized_roots.iter().any(|p| p == &workspace_path) {
-            cfg.authorized_roots.push(workspace_path.clone());
+        if !cfg.authorized_roots.iter().any(|p| p == &workspace_value) {
+            cfg.authorized_roots.push(workspace_value.clone());
         }
         cfg
     };
 
-    if !config.authorized_roots.iter().any(|p| p == &folder_path) {
-        config.authorized_roots.push(folder_path);
+    if !config.authorized_roots.iter().any(|p| p == &folder_value) {
+        config.authorized_roots.push(folder_value);
     }
 
     fs::write(
@@ -366,7 +374,10 @@ pub fn workspace_openwork_read(
 
     if !openwork_path.exists() {
         let mut cfg = WorkspaceOpenworkConfig::default();
-        cfg.authorized_roots.push(workspace_path);
+        let workspace_root = PathBuf::from(&workspace_path);
+        let workspace_canonical = fs::canonicalize(&workspace_root).unwrap_or(workspace_root);
+        let workspace_value = workspace_canonical.to_string_lossy().to_string();
+        cfg.authorized_roots.push(workspace_value);
         return Ok(cfg);
     }
 

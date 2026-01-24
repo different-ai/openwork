@@ -622,7 +622,7 @@ export function createWorkspaceStore(options: {
         options.setError(
           options.isWindowsPlatform()
             ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
-            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
+            : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or follow the instructions at https://opencode.ai/install, then retry.",
         );
         return false;
       }

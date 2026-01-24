@@ -102,7 +102,8 @@ export function loadConfig(
   const whatsappAuthDir = expandHome(env.WHATSAPP_AUTH_DIR ?? path.join(dataDir, "whatsapp"));
 
   const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
-  const permissionMode = env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
+  const permissionMode =
+    env.PERMISSION_MODE?.toLowerCase() === "allow" ? "allow" : "deny";
 
   return {
     opencodeUrl: env.OPENCODE_URL?.trim() ?? "http://127.0.0.1:4096",

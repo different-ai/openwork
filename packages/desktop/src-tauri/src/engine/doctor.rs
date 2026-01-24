@@ -5,6 +5,45 @@ use crate::engine::paths::resolve_opencode_executable;
 use crate::platform::command_for_program;
 use crate::utils::truncate_output;
 
+/// Minimum recommended OpenCode CLI version for security fixes (e.g. CVE-2026-22812).
+pub const MIN_SAFE_ENGINE_VERSION: &str = "1.1.10";
+
+fn parse_semver_like(input: &str) -> Option<(u32, u32, u32)> {
+  // Extract the first numeric+dot run, e.g. "opencode v1.2.3-beta" -> "1.2.3".
+  let mut buf = String::new();
+  let mut seen_digit = false;
+
+  for ch in input.chars() {
+    if ch.is_ascii_digit() {
+      buf.push(ch);
+      seen_digit = true;
+    } else if ch == '.' && seen_digit {
+      buf.push(ch);
+    } else if seen_digit {
+      break;
+    }
+  }
+
+  if buf.is_empty() {
+    return None;
+  }
+
+  let mut parts = buf.split('.');
+  let major: u32 = parts.next()?.parse().ok()?;
+  let minor: u32 = parts.next().unwrap_or("0").parse().ok()?;
+  let patch: u32 = parts.next().unwrap_or("0").parse().ok()?;
+
+  Some((major, minor, patch))
+}
+
+/// Returns Some(true) if `version` is ≥ MIN_SAFE_ENGINE_VERSION,
+/// Some(false) if it is clearly older, or None if parsing fails.
+pub fn is_engine_version_safe(version: &str) -> Option<bool> {
+  let current = parse_semver_like(version)?;
+  let minimum = parse_semver_like(MIN_SAFE_ENGINE_VERSION)?;
+  Some(current >= minimum)
+}
+
 pub fn opencode_version(program: &OsStr) -> Option<String> {
   let output = command_for_program(Path::new(program)).arg("--version").output().ok()?;
   let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -107,6 +146,24 @@ pub fn resolve_engine_path(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn parses_semver_like_versions() {
+    assert_eq!(super::parse_semver_like("1.2.3"), Some((1, 2, 3)));
+    assert_eq!(super::parse_semver_like("opencode v1.2.3-beta"), Some((1, 2, 3)));
+    assert_eq!(super::parse_semver_like("v2.0.0"), Some((2, 0, 0)));
+    assert_eq!(super::parse_semver_like("not-a-version"), None);
+  }
+
+  #[test]
+  fn detects_safe_versions_relative_to_minimum() {
+    // MIN_SAFE_ENGINE_VERSION is 1.1.10
+    assert_eq!(super::is_engine_version_safe("1.1.10"), Some(true));
+    assert_eq!(super::is_engine_version_safe("1.1.11"), Some(true));
+    assert_eq!(super::is_engine_version_safe("1.2.0"), Some(true));
+    assert_eq!(super::is_engine_version_safe("1.1.9"), Some(false));
+    assert_eq!(super::is_engine_version_safe("1.0.0"), Some(false));
+  }
 
   #[cfg(not(windows))]
   fn unique_temp_dir(name: &str) -> std::path::PathBuf {
