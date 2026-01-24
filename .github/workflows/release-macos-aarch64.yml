@@ -368,7 +368,6 @@ jobs:
     name: Open AUR update PR
     needs: publish-tauri
     runs-on: ubuntu-latest
-    if: ${{ vars.AUR_PR_AUTOMATION_ENABLED == 'true' }}
 
     permissions:
       contents: write
