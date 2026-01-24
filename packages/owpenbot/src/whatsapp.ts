@@ -30,6 +30,7 @@ export type WhatsAppAdapter = {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(peerId: string, text: string): Promise<void>;
+  sendTyping(peerId: string): Promise<void>;
 };
 
 const MAX_TEXT_LENGTH = 3800;
@@ -216,6 +217,14 @@ export function createWhatsAppAdapter(
       if (!socket) throw new Error("WhatsApp socket not initialized");
       const sent = await socket.sendMessage(peerId, { text });
       recordSentMessage(sent?.key?.id);
+    },
+    async sendTyping(peerId: string) {
+      if (!socket) return;
+      try {
+        await socket.sendPresenceUpdate("composing", peerId);
+      } catch (error) {
+        log.warn({ error, peerId }, "whatsapp typing update failed");
+      }
     },
   };
 }
