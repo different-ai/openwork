@@ -40,6 +40,10 @@ export type SessionViewProps = {
   setWorkspaceSearch: (value: string) => void;
   setWorkspacePickerOpen: (open: boolean) => void;
   headerStatus: string;
+  serverName: string;
+  serverHealthy: boolean | undefined;
+  serverVersion: string | null;
+  openServerManager: () => void;
   busyHint: string | null;
   createSessionAndOpen: () => void;
   sendPromptAsync: () => Promise<void>;
@@ -740,6 +744,24 @@ export default function SessionView(props: SessionViewProps) {
                  props.setWorkspacePickerOpen(true);
                }}
              />
+             <Button
+               variant="ghost"
+               class="!px-2 !py-1 rounded-full flex items-center gap-2"
+               onClick={props.openServerManager}
+             >
+               <span
+                 classList={{
+                   "size-2 rounded-full": true,
+                   "bg-green-9": props.serverHealthy === true,
+                   "bg-red-9": props.serverHealthy === false,
+                   "bg-gray-7": props.serverHealthy === undefined,
+                 }}
+               />
+               <span class="text-xs text-gray-11">{props.serverName || "Server"}</span>
+               <Show when={props.serverVersion}>
+                 <span class="text-[10px] text-gray-8 font-mono">v{props.serverVersion}</span>
+               </Show>
+             </Button>
              <Show when={props.developerMode}>
                <span class="text-xs text-gray-7">{props.headerStatus}</span>
              </Show>

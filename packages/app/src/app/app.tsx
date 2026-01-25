@@ -754,6 +754,17 @@ export default function App() {
   const openServerManager = () => setServerManagerOpen(true);
   const closeServerManager = () => setServerManagerOpen(false);
 
+  const confirmServerSwitch = () => {
+    if (isDemoMode()) return true;
+    if (!selectedSessionId() && sessions().length === 0) return true;
+
+    const hasActiveRun = anyActiveRuns();
+    const message = hasActiveRun
+      ? "Switching servers will interrupt an active run. Continue?"
+      : "Switching servers will disconnect the current session. Continue?";
+    return window.confirm(message);
+  };
+
   const connectToServer = async (url: string) => {
     if (mode() !== "client") return;
     const directory = clientDirectory().trim() || undefined;
@@ -766,6 +777,7 @@ export default function App() {
   const handleServerSelect = async (url: string) => {
     const normalized = normalizeServerUrl(url);
     if (!normalized) return;
+    if (!confirmServerSwitch()) return;
     server.setActive(normalized);
     setBaseUrl(normalized);
     await connectToServer(normalized);
@@ -774,6 +786,7 @@ export default function App() {
   const handleServerAdd = async (url: string) => {
     const normalized = normalizeServerUrl(url);
     if (!normalized) return;
+    if (!confirmServerSwitch()) return;
     server.add(normalized);
     setBaseUrl(normalized);
     await connectToServer(normalized);
@@ -784,6 +797,12 @@ export default function App() {
     const target = normalizeServerUrl(server.url);
     if (!target) return;
     await connectToServer(target);
+  };
+
+  const handleServerRestart = async () => {
+    if (mode() !== "host") return;
+    if (!confirmServerSwitch()) return;
+    await workspaceStore.reloadWorkspaceEngine();
   };
 
   const commandState = createCommandState({
@@ -2278,6 +2297,10 @@ export default function App() {
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
     setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
     headerStatus: headerStatus(),
+    serverName: server.name,
+    serverHealthy: server.healthy(),
+    serverVersion: server.version(),
+    openServerManager,
     busyHint: busyHint(),
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
@@ -2478,6 +2501,7 @@ export default function App() {
         onRemove={server.remove}
         onSetActive={handleServerSelect}
         onReconnect={handleServerReconnect}
+        onRestart={handleServerRestart}
       />
 
       <ResetModal

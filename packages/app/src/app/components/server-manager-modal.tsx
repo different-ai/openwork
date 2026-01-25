@@ -19,6 +19,7 @@ export type ServerManagerModalProps = {
   onRemove: (url: string) => void;
   onSetActive: (url: string) => void;
   onReconnect: () => void;
+  onRestart?: () => void;
 };
 
 export default function ServerManagerModal(props: ServerManagerModalProps) {
@@ -52,6 +53,9 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
     setNewUrl("");
   };
 
+  const showReconnect = createMemo(() => props.mode === "client" && props.healthy === false);
+  const showRestart = createMemo(() => props.mode === "host" && props.healthy === false && props.onRestart);
+
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
@@ -75,7 +79,7 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
                 <Show when={props.version}>
                   <span class="text-xs text-gray-10 font-mono">v{props.version}</span>
                 </Show>
-                <Show when={props.mode === "client"}>
+                <Show when={showReconnect()}>
                   <Button
                     variant="outline"
                     class="text-xs h-7 px-2"
@@ -84,6 +88,17 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
                   >
                     <RefreshCcw size={12} />
                     Reconnect
+                  </Button>
+                </Show>
+                <Show when={showRestart()}>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-7 px-2"
+                    onClick={() => props.onRestart?.()}
+                    disabled={props.busy || !props.activeUrl}
+                  >
+                    <RefreshCcw size={12} />
+                    Restart
                   </Button>
                 </Show>
               </div>
