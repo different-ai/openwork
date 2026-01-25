@@ -7,6 +7,7 @@ export const VARIANT_PREF_KEY = "openwork.modelVariant";
 export const DEMO_MODE_PREF_KEY = "openwork.demoMode";
 export const DEMO_SEQUENCE_PREF_KEY = "openwork.demoSequence";
 export const LANGUAGE_PREF_KEY = "openwork.language";
+export const KEYBIND_PREF_KEY = "openwork.keybinds";
 
 export const DEFAULT_MODEL: ModelRef = {
   providerID: "opencode",
