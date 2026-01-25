@@ -253,7 +253,7 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`relative ${
                     block.isUser
-                      ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
+                      ? "max-w-2xl px-5 py-3 rounded-[20px] bg-gray-3 text-gray-12 text-[15px] leading-normal"
                       : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                   }`}
                 >
@@ -309,7 +309,7 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`relative ${
                   block.isUser
-                    ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
+                    ? "max-w-2xl px-5 py-3 rounded-[20px] bg-gray-3 text-gray-12 text-[15px] leading-normal"
                     : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                 }`}
               >
