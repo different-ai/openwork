@@ -32,7 +32,7 @@ import { createClient } from "./opencode.js";
 import { truncateText } from "./text.js";
 import { loginWhatsApp, unpairWhatsApp } from "./whatsapp.js";
 
-const VERSION = "0.1.14";
+const VERSION = "0.1.16";
 
 type SetupStep = "config" | "whatsapp" | "telegram" | "start";
 
@@ -83,10 +83,11 @@ function parseSelections(raw?: string): SetupStep[] | null {
   return selections.length ? selections : [];
 }
 
-function defaultSelections(configExists: boolean, whatsappLinked: boolean): SetupStep[] {
+function defaultSelections(configExists: boolean, whatsappLinked: boolean, telegramLinked: boolean): SetupStep[] {
   const selections: SetupStep[] = [];
   if (!configExists) selections.push("config");
   if (!whatsappLinked) selections.push("whatsapp");
+  if (!telegramLinked) selections.push("telegram");
   selections.push("start");
   return selections;
 }
@@ -231,6 +232,25 @@ async function runSetupWizard(
       }
     }
 
+    const currentWorkspace = config.configFile.opencodeDirectory ?? config.opencodeDirectory;
+    const keepDefault = unwrap(
+      await confirm({
+        message: `Use this OpenCode workspace? (${currentWorkspace})`,
+        initialValue: true,
+      }),
+    ) as boolean;
+
+    if (!keepDefault) {
+      const workspace = unwrap(
+        await text({
+          message: "OpenCode workspace path",
+          placeholder: "/path/to/workspace",
+          validate: (value: string) => (String(value ?? "").trim() ? undefined : "Path required"),
+        }),
+      ) as string;
+      next.opencodeDirectory = workspace.trim();
+    }
+
     next.channels = next.channels ?? {};
     next.channels.whatsapp = {
       dmPolicy,
@@ -338,7 +358,7 @@ async function runGuidedFlow(pathArg: string | undefined, opts: { nonInteractive
       await multiselect({
         message: "Select what to set up",
         options: STEP_OPTIONS,
-        initialValues: defaultSelections(configExists, whatsappLinked),
+        initialValues: defaultSelections(configExists, whatsappLinked, Boolean(config.telegramToken)),
         required: false,
       }),
     );

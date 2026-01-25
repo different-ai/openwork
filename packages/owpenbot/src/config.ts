@@ -16,6 +16,8 @@ export type DmPolicy = "pairing" | "allowlist" | "open" | "disabled";
 
 export type OwpenbotConfigFile = {
   version: number;
+  opencodeUrl?: string;
+  opencodeDirectory?: string;
   channels?: {
     whatsapp?: {
       dmPolicy?: DmPolicy;
@@ -181,17 +183,17 @@ export function loadConfig(
   options: { requireOpencode?: boolean } = {},
 ): Config {
   const requireOpencode = options.requireOpencode ?? false;
-  const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() ?? "";
-  if (!opencodeDirectory && requireOpencode) {
-    throw new Error("OPENCODE_DIRECTORY is required");
-  }
-  const resolvedDirectory = opencodeDirectory || process.cwd();
 
   const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? "~/.owpenbot");
   const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
   const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
   const configPath = resolveConfigPath(dataDir, env);
   const { config: configFile } = readConfigFile(configPath);
+  const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory || "";
+  if (!opencodeDirectory && requireOpencode) {
+    throw new Error("OPENCODE_DIRECTORY is required");
+  }
+  const resolvedDirectory = opencodeDirectory || process.cwd();
   const whatsappFile = configFile.channels?.whatsapp ?? {};
   const whatsappAccountId = env.WHATSAPP_ACCOUNT_ID?.trim() || "default";
   const accountAuthDir = whatsappFile.accounts?.[whatsappAccountId]?.authDir;
@@ -219,7 +221,7 @@ export function loadConfig(
   return {
     configPath,
     configFile,
-    opencodeUrl: env.OPENCODE_URL?.trim() ?? "http://127.0.0.1:4096",
+    opencodeUrl: env.OPENCODE_URL?.trim() || configFile.opencodeUrl || "http://127.0.0.1:4096",
     opencodeDirectory: resolvedDirectory,
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodePassword: env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
