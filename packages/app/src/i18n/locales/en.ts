@@ -173,6 +173,12 @@ export default {
   "commands.run_modal_title": "Run command",
   "commands.run_modal_description": "Add optional details before running.",
   "commands.run_modal_run": "Run command",
+  "commands.name_will_be": "Will be created as",
+  "commands.override_title": "Replace existing command?",
+  "commands.override_description": "A command with this name already exists.",
+  "commands.override_warning": "This will replace the existing \"{name}\" command. This action cannot be undone.",
+  "commands.override_confirm": "Replace",
+  "commands.override_cancel": "Keep existing",
 
   // ==================== Skills ====================
   "skills.title": "Skills",
@@ -713,5 +719,5 @@ export default {
   "app.error.install_failed": "OpenCode install failed. See logs above.",
   "app.error.command_name_template_required": "Command name and instructions are required.",
   "app.error.workspace_commands_desktop": "Commands require the desktop app.",
-  "app.error.command_scope_unknown": "This command can’t be managed in this mode.",
+  "app.error.command_scope_unknown": "This command can't be managed in this mode.",
 } as const;
