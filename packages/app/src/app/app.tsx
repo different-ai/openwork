@@ -763,6 +763,8 @@ export default function App() {
     setCommandDraftTemplate,
     commandDraftScope,
     setCommandDraftScope,
+    commandModalError,
+    setCommandModalError,
     runModalOpen,
     runModalCommand,
     runModalDetails,
@@ -2450,7 +2452,11 @@ export default function App() {
         description={commandDraftDescription()}
         template={commandDraftTemplate()}
         scope={commandDraftScope()}
-        onClose={() => setCommandModalOpen(false)}
+        error={commandModalError()}
+        onClose={() => {
+          setCommandModalOpen(false);
+          setCommandModalError(null);
+        }}
         onSave={saveCommand}
         onNameChange={setCommandDraftName}
         onDescriptionChange={setCommandDraftDescription}
