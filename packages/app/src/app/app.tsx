@@ -2472,7 +2472,7 @@ export default function App() {
     projectGroups: projectGroups(),
     allSessions: allSessions(),
     openProjectSession: openSessionFromProject,
-    createSessionInWorkspace,
+    createSessionInWorkspace: createSessionForWorkspace,
     activeWorkspaceRoot: isDemoMode()
       ? demoActiveWorkspaceDisplay().path
       : workspaceStore.activeWorkspaceRoot().trim(),
