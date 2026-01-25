@@ -217,6 +217,9 @@ export function createWorkspaceStore(options: {
           syncActiveWorkspaceId(id);
           setProjectDir(directory);
           options.setClientDirectory(directory);
+          options.setBaseUrl(baseUrl);
+          options.setSseConnected(false);
+          options.setClient(createClient(baseUrl, directory || undefined));
           setWorkspaceConfig(null);
           setWorkspaceConfigLoaded(true);
           setAuthorizedDirs([]);
