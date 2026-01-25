@@ -153,6 +153,18 @@ pnpm build:ui
 pnpm test:e2e
 ```
 
+## Linux Build/Install Helpers
+
+From the repo root:
+
+```bash
+./scripts/linux/build-openwork.sh
+./scripts/linux/install-openwork.sh
+./scripts/linux/uninstall-openwork.sh
+```
+
+`install`/`uninstall` may prompt for `sudo`.
+
 ## Troubleshooting
 
 ### Linux / Wayland (Hyprland)
