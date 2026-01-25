@@ -13,6 +13,7 @@ export type ComposerProps = {
   onSend: () => void;
   commandMatches: CommandItem[];
   onRunCommand: (commandId: string) => void;
+  onAutocompleteCommand: (commandId: string) => void;
   selectedModelLabel: string;
   onModelClick: () => void;
   showNotionBanner: boolean;
@@ -78,10 +79,9 @@ export default function Composer(props: ComposerProps) {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        // maybe autocomplete?
         const active = matches[commandIndex()] ?? matches[0];
-         if (active) {
-          props.onRunCommand(active.id);
+        if (active) {
+          props.onAutocompleteCommand(active.id);
         }
         return;
       }

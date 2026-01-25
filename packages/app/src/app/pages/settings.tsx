@@ -3,6 +3,7 @@ import { Match, Show, Switch } from "solid-js";
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
+import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
 
 export type SettingsViewProps = {
@@ -13,6 +14,10 @@ export type SettingsViewProps = {
   developerMode: boolean;
   toggleDeveloperMode: () => void;
   stopHost: () => void;
+  keybindItems: KeybindSetting[];
+  onOverrideKeybind: (id: string, keybind: string | null) => void;
+  onResetKeybind: (id: string) => void;
+  onResetAllKeybinds: () => void;
   engineSource: "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
   isWindows: boolean;
@@ -215,6 +220,13 @@ export default function SettingsView(props: SettingsViewProps) {
           System mode follows your OS preference automatically.
         </div>
       </div>
+
+      <SettingsKeybinds
+        items={props.keybindItems}
+        onOverride={props.onOverrideKeybind}
+        onReset={props.onResetKeybind}
+        onResetAll={props.onResetAllKeybinds}
+      />
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
