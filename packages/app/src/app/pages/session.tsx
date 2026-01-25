@@ -402,23 +402,15 @@ export default function SessionView(props: SessionViewProps) {
     }
   });
 
-  createEffect(
-    on(
-      () => [
-        props.messages.length,
-        props.todos.length,
-        props.messages.reduce((acc, m) => acc + m.parts.length, 0),
-      ],
-      (current, previous) => {
-        if (!previous) return;
-        const [mLen, tLen, pCount] = current;
-        const [prevM, prevT, prevP] = previous;
-        if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          messagesEndEl?.scrollIntoView({ behavior: "smooth" });
-        }
-      },
-    ),
-  );
+  const [prevMessageCount, setPrevMessageCount] = createSignal(0);
+  createEffect(() => {
+    const currentCount = props.messages.length;
+    const prev = prevMessageCount();
+    if (currentCount > prev) {
+      messagesEndEl?.scrollIntoView({ behavior: "smooth" });
+    }
+    setPrevMessageCount(currentCount);
+  });
 
   const triggerFlyout = (
     sourceEl: Element | null,
