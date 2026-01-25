@@ -55,6 +55,9 @@ export function createCommandState(options: {
   const [runModalCommand, setRunModalCommand] = createSignal<WorkspaceCommand | null>(null);
   const [runModalDetails, setRunModalDetails] = createSignal("");
 
+  // Track the just-saved command for scroll-to and highlight animation
+  const [justSavedCommand, setJustSavedCommand] = createSignal<{ name: string; scope: string } | null>(null);
+
   const workspaceCommands = createMemo(() => commands().filter((c) => c.scope === "workspace"));
   const globalCommands = createMemo(() => commands().filter((c) => c.scope === "global"));
   const otherCommands = createMemo(() => commands().filter((c) => c.scope === "unknown"));
@@ -128,6 +131,7 @@ export function createCommandState(options: {
         },
       });
       await loadCommands({ workspaceRoot, quiet: true });
+      setJustSavedCommand({ name: safeName, scope: draft.scope });
       setCommandModalOpen(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -310,6 +314,10 @@ export function createCommandState(options: {
     setRunModalCommand(null);
   }
 
+  function clearJustSavedCommand() {
+    setJustSavedCommand(null);
+  }
+
   return {
     commands,
     setCommands,
@@ -340,5 +348,7 @@ export function createCommandState(options: {
     openRunModal,
     confirmRunModal,
     closeRunModal,
+    justSavedCommand,
+    clearJustSavedCommand,
   };
 }

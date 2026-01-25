@@ -778,6 +778,8 @@ export default function App() {
     openRunModal,
     confirmRunModal,
     closeRunModal,
+    justSavedCommand,
+    clearJustSavedCommand,
   } = commandState;
 
   loadCommandsRef = loadCommands;
@@ -2120,6 +2122,8 @@ export default function App() {
     openCommandModal,
     runCommand: openRunModal,
     deleteCommand,
+    justSavedCommand: justSavedCommand(),
+    clearJustSavedCommand,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),

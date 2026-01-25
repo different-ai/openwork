@@ -1,4 +1,4 @@
-import { For, Show } from "solid-js";
+import { createEffect, For, on, Show } from "solid-js";
 
 import type { WorkspaceCommand } from "../types";
 import { t, currentLocale } from "../../i18n";
@@ -19,12 +19,50 @@ export type CommandsViewProps = {
   resetCommandDraft?: (scope?: "workspace" | "global") => void;
   runCommand: (command: WorkspaceCommand) => void;
   deleteCommand: (command: WorkspaceCommand) => void;
+  justSavedCommand?: { name: string; scope: string } | null;
+  clearJustSavedCommand?: () => void;
 };
 
 const commandNeedsDetails = (command: WorkspaceCommand) => /\$(ARGUMENTS|\d+)/i.test(command.template);
 
 export default function CommandsView(props: CommandsViewProps) {
   const translate = (key: string) => t(key, currentLocale());
+
+  // Map to store refs for command cards: "scope:name" -> HTMLElement
+  const commandRefs = new Map<string, HTMLElement>();
+
+  // Effect to scroll to and highlight the just-saved command
+  createEffect(
+    on(
+      () => props.justSavedCommand,
+      (saved) => {
+        if (!saved) return;
+
+        // Use requestAnimationFrame to ensure DOM is updated
+        requestAnimationFrame(() => {
+          const key = `${saved.scope}:${saved.name}`;
+          const element = commandRefs.get(key);
+
+          if (element) {
+            // Smooth scroll to center the element
+            element.scrollIntoView({ behavior: "smooth", block: "center" });
+
+            // Add highlight animation class
+            element.classList.add("command-just-saved");
+
+            // Remove the class and clear state after animation completes
+            setTimeout(() => {
+              element.classList.remove("command-just-saved");
+              props.clearJustSavedCommand?.();
+            }, 2000);
+          } else {
+            // Element not found, just clear the state
+            props.clearJustSavedCommand?.();
+          }
+        });
+      },
+    ),
+  );
 
   const openNewCommand = () => {
     const reset = props.resetCommandDraft;
@@ -43,7 +81,10 @@ export default function CommandsView(props: CommandsViewProps) {
     props.workspaceCommands.length || props.globalCommands.length || props.otherCommands.length;
 
   const renderCommand = (command: WorkspaceCommand, tone: string) => (
-    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 flex items-start justify-between gap-4">
+    <div
+      ref={(el) => commandRefs.set(`${command.scope}:${command.name}`, el)}
+      class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 flex items-start justify-between gap-4 transition-all duration-300"
+    >
       <div class="min-w-0">
         <div class="flex items-center gap-2">
           <Terminal size={16} class={tone} />

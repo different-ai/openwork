@@ -43,6 +43,27 @@ body {
   animation: soft-pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Highlight animation for just-saved command */
+@keyframes command-highlight {
+  0% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.6);
+    border-color: rgba(99, 102, 241, 0.8);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+    border-color: rgba(99, 102, 241, 0.4);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0);
+    border-color: rgba(255, 255, 255, 0.08);
+  }
+}
+
+.command-just-saved {
+  animation: command-highlight 2s ease-out;
+  border-color: rgba(99, 102, 241, 0.8);
+}
+
 
 :root {
   color-scheme: light;

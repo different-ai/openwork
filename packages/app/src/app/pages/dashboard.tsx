@@ -81,6 +81,8 @@ export type DashboardViewProps = {
   resetCommandDraft?: (scope?: "workspace" | "global") => void;
   runCommand: (command: WorkspaceCommand) => void;
   deleteCommand: (command: WorkspaceCommand) => void;
+  justSavedCommand?: { name: string; scope: string } | null;
+  clearJustSavedCommand?: () => void;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
@@ -702,6 +704,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 resetCommandDraft={props.resetCommandDraft}
                 runCommand={props.runCommand}
                 deleteCommand={props.deleteCommand}
+                justSavedCommand={props.justSavedCommand}
+                clearJustSavedCommand={props.clearJustSavedCommand}
               />
             </Match>
 
