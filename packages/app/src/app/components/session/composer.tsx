@@ -1171,7 +1171,7 @@ export default function Composer(props: ComposerProps) {
                             onClick={sendDraft}
                             class={`p-2 rounded-xl transition-all shadow-lg shrink-0 flex items-center justify-center ${
                               !props.prompt.trim() && !attachments().length
-                                ? "bg-gray-4 text-gray-8 cursor-not-allowed"
+                                ? "bg-gray-4 text-gray-8 cursor-not-allowed opacity-30"
                                 : "bg-gray-12 text-gray-1 hover:scale-105 active:scale-95"
                             }`}
                             title="Run"
