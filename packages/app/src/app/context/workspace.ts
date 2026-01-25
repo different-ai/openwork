@@ -170,7 +170,16 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function activateWorkspace(workspaceId: string) {
+  const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
+
+  async function activateWorkspace(
+    workspaceId: string,
+    optionsOverride?: {
+      silent?: boolean;
+      preferExistingConnection?: boolean;
+      skipHostRestart?: boolean;
+    }
+  ) {
     const id = workspaceId.trim();
     if (!id) return false;
 
@@ -184,17 +193,49 @@ export function createWorkspaceStore(options: {
       options.setError(t("app.error.remote_base_url_required", currentLocale()));
       return false;
     }
+    const hasClient = Boolean(options.client());
+    const currentBase = normalizeBaseUrl(options.baseUrl());
+    const nextBase = normalizeBaseUrl(baseUrl);
+    const canReuseConnection =
+      isRemote &&
+      optionsOverride?.preferExistingConnection &&
+      hasClient &&
+      options.mode() === "client" &&
+      currentBase &&
+      currentBase === nextBase;
 
-    setConnectingWorkspaceId(id);
+    if (!optionsOverride?.silent || !canReuseConnection) {
+      setConnectingWorkspaceId(id);
+    }
 
     try {
       if (isRemote) {
         options.setMode("client");
+        const directory = next.directory?.trim() ?? "";
 
-        const ok = await connectToServer(baseUrl, next.directory?.trim() || undefined, {
+        if (canReuseConnection) {
+          syncActiveWorkspaceId(id);
+          setProjectDir(directory);
+          options.setClientDirectory(directory);
+          setWorkspaceConfig(null);
+          setWorkspaceConfigLoaded(true);
+          setAuthorizedDirs([]);
+
+          if (isTauriRuntime()) {
+            try {
+              await workspaceSetActive(id);
+            } catch {
+              // ignore
+            }
+          }
+
+          return true;
+        }
+
+        const ok = await connectToServer(baseUrl, directory || undefined, {
           workspaceId: next.id,
           workspaceType: next.workspaceType,
-          targetRoot: next.directory?.trim() ?? "",
+          targetRoot: directory,
         });
 
         if (!ok) {
@@ -202,7 +243,7 @@ export function createWorkspaceStore(options: {
         }
 
         syncActiveWorkspaceId(id);
-        setProjectDir(next.directory?.trim() ?? "");
+        setProjectDir(directory);
         setWorkspaceConfig(null);
         setWorkspaceConfigLoaded(true);
         setAuthorizedDirs([]);
@@ -276,11 +317,10 @@ export function createWorkspaceStore(options: {
       options.setTodos([]);
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
-      await options.loadSessions(next.path).catch(() => undefined);
     }
 
     // In Host mode, restart the engine when workspace changes
-    if (!isRemote && wasHostMode && workspaceChanged) {
+    if (!isRemote && wasHostMode && workspaceChanged && !optionsOverride?.skipHostRestart) {
       options.setError(null);
       options.setBusy(true);
       options.setBusyLabel("status.restarting_engine");
@@ -372,8 +412,6 @@ export function createWorkspaceStore(options: {
       options.setClientDirectory(resolvedDirectory);
 
       const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
-      await options.loadSessions(targetRoot);
-      await options.refreshPendingPermissions();
 
       try {
         const providerList = unwrap(await nextClient.provider.list());

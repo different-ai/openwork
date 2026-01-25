@@ -366,9 +366,7 @@ export default function App() {
         return copy;
       });
 
-      await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(
-        () => undefined
-      );
+      // Session lists refresh via project aggregation.
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setError(addOpencodeCacheHint(message));
@@ -1127,7 +1125,11 @@ export default function App() {
       return;
     }
     if (workspaceStore.activeWorkspaceId() !== workspaceId) {
-      const ok = await workspaceStore.activateWorkspace(workspaceId);
+      const ok = await workspaceStore.activateWorkspace(workspaceId, {
+        silent: true,
+        preferExistingConnection: true,
+        skipHostRestart: true,
+      });
       if (!ok) return;
     }
     await selectSession(sessionId);
@@ -1135,7 +1137,11 @@ export default function App() {
 
   const createSessionForWorkspace = async (workspaceId: string) => {
     if (workspaceStore.activeWorkspaceId() !== workspaceId) {
-      const ok = await workspaceStore.activateWorkspace(workspaceId);
+      const ok = await workspaceStore.activateWorkspace(workspaceId, {
+        silent: true,
+        preferExistingConnection: true,
+        skipHostRestart: true,
+      });
       if (!ok) return;
     }
     await createSessionAndOpen();
@@ -1911,12 +1917,7 @@ export default function App() {
       mark("session unwrapped");
       // Set selectedSessionId BEFORE switching view to avoid "No session selected" flash
       setBusyLabel("status.loading_session");
-      await withTimeout(
-        loadSessions(workspaceStore.activeWorkspaceRoot().trim()),
-        12_000,
-        "session.list"
-      );
-      mark("sessions loaded");
+      mark("sessions refresh skipped");
       await selectSession(session.id);
       mark("session selected");
       // Now switch view AFTER session is selected
