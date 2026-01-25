@@ -3,6 +3,7 @@ import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
+  ComposerDraft,
   CommandRegistryItem,
   CommandTriggerContext,
   MessageGroup,
@@ -44,7 +45,7 @@ export type SessionViewProps = {
   headerStatus: string;
   busyHint: string | null;
   createSessionAndOpen: () => void;
-  sendPromptAsync: () => Promise<void>;
+  sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   newTaskDisabled: boolean;
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
@@ -69,7 +70,6 @@ export type SessionViewProps = {
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
-  sendPrompt: () => Promise<void>;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
   activePermission: PendingPermission | null;
@@ -550,7 +550,6 @@ export default function SessionView(props: SessionViewProps) {
     const commands = slashCommands().map((command) => `/${command.slash}`);
     return formatListHint(commands);
   };
-
   const registerSessionCommands = () => {
     const commands: CommandRegistryItem[] = [
       {
@@ -742,6 +741,14 @@ export default function SessionView(props: SessionViewProps) {
     return map;
   });
 
+  const commandNeedsArgs = createMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const command of props.commands) {
+      map.set(command.name, commandNeedsDetails(command));
+    }
+    return map;
+  });
+
   const commandMatches = createMemo(() => {
     const value = props.prompt;
     if (!value.startsWith("/")) return [];
@@ -753,6 +760,7 @@ export default function SessionView(props: SessionViewProps) {
     return matches.map((command) => ({
       id: command.slash!,
       description: command.description || "Run a command",
+      needsArgs: commandNeedsArgs().get(command.slash ?? "") ?? false,
     }));
   });
 
@@ -763,23 +771,38 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const handleAutocompleteCommand = (commandId: string) => {
-    const command = slashCommandIndex().get(commandId);
-    if (!command?.slash) return;
-    props.setPrompt(`/${command.slash} `);
+  const handleInsertCommand = (commandId: string) => {
+    props.setPrompt(`/${commandId} `);
+    window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
   };
 
-  const handleSendPrompt = () => {
-    if (props.prompt.trim().startsWith("/")) {
+  const handleSendPrompt = (draft: ComposerDraft) => {
+    const trimmed = draft.text.trim();
+    if (draft.mode === "prompt" && trimmed.startsWith("/")) {
       const active = commandMatches()[0];
       if (active) {
-        handleRunCommand(active.id);
+        const args = extractCommandArgs(trimmed);
+        if (active.needsArgs && !args) {
+          handleInsertCommand(active.id);
+        } else {
+          handleRunCommand(active.id);
+        }
       }
       return;
     }
 
     startRun();
-    props.sendPromptAsync().catch(() => undefined);
+    props.sendPromptAsync(draft).catch(() => undefined);
+  };
+
+  const handleDraftChange = (draft: ComposerDraft) => {
+    props.setPrompt(draft.text);
+  };
+
+  const searchFiles = async (query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return props.workingFiles.filter((file) => file.toLowerCase().includes(q));
   };
 
   return (
@@ -959,19 +982,24 @@ export default function SessionView(props: SessionViewProps) {
           </aside>
         </div>
 
-        <Composer 
-           prompt={props.prompt}
-           setPrompt={props.setPrompt}
-           busy={props.busy}
-           onSend={handleSendPrompt}
-           commandMatches={commandMatches()}
-           onRunCommand={handleRunCommand}
-           onAutocompleteCommand={handleAutocompleteCommand}
-           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-           onModelClick={props.openSessionModelPicker}
-           showNotionBanner={props.showTryNotionPrompt}
-           onNotionBannerClick={props.onTryNotionPrompt}
-           toast={commandToast()}
+        <Composer
+          prompt={props.prompt}
+          busy={props.busy}
+          onSend={handleSendPrompt}
+          onDraftChange={handleDraftChange}
+          commandMatches={commandMatches()}
+          onRunCommand={handleRunCommand}
+          onInsertCommand={handleInsertCommand}
+          selectedModelLabel={props.selectedSessionModelLabel || "Model"}
+          onModelClick={props.openSessionModelPicker}
+          showNotionBanner={props.showTryNotionPrompt}
+          onNotionBannerClick={props.onTryNotionPrompt}
+          toast={commandToast()}
+          onToast={(message) => setCommandToast(message)}
+          listAgents={props.listAgents}
+          recentFiles={props.workingFiles}
+          searchFiles={searchFiles}
+          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         />
 
         <ProviderAuthModal

@@ -11,7 +11,7 @@ import {
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
-import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
+import type { Agent, Provider, Part } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { parse } from "jsonc-parser";
@@ -64,6 +64,9 @@ import type {
   WorkspaceDisplay,
   McpServerEntry,
   McpStatusMap,
+  ComposerAttachment,
+  ComposerDraft,
+  ComposerPart,
   WorkspaceCommand,
   UpdateHandle,
 } from "./types";
@@ -305,9 +308,55 @@ export default function App() {
   const [keybindOverrides, setKeybindOverrides] = createSignal<Record<string, string>>({});
   const [recentCommandIds, setRecentCommandIds] = createSignal<string[]>([]);
 
-  async function sendPrompt() {
-    const content = prompt().trim();
-    if (!content) return;
+  const buildPromptParts = (draft: ComposerDraft): Part[] => {
+    const parts: Part[] = [];
+    const pushText = (text: string) => {
+      if (!text) return;
+      parts.push({ type: "text", text } as Part);
+    };
+
+    for (const part of draft.parts) {
+      if (part.type === "text") {
+        pushText(part.text);
+        continue;
+      }
+      if (part.type === "agent") {
+        parts.push({ type: "agent", name: part.name } as Part);
+        continue;
+      }
+      parts.push({ type: "file", path: part.path } as Part);
+    }
+
+    for (const attachment of draft.attachments) {
+      if (attachment.kind === "image") {
+        parts.push({ type: "image", image: attachment.dataUrl, mediaType: attachment.mimeType } as Part);
+        continue;
+      }
+      parts.push({
+        type: "file",
+        data: attachment.dataUrl,
+        filename: attachment.name,
+        mediaType: attachment.mimeType,
+      } as Part);
+    }
+
+    if (!parts.length && draft.text.trim()) {
+      pushText(draft.text.trim());
+    }
+
+    return parts;
+  };
+
+  async function sendPrompt(draft?: ComposerDraft) {
+    const fallbackText = prompt().trim();
+    const resolvedDraft: ComposerDraft = draft ?? {
+      mode: "prompt",
+      parts: fallbackText ? [{ type: "text", text: fallbackText } as ComposerPart] : [],
+      attachments: [] as ComposerAttachment[],
+      text: fallbackText,
+    };
+    const content = resolvedDraft.text.trim();
+    if (!content && !resolvedDraft.attachments.length) return;
 
     if (isDemoMode()) {
       setLastPromptSent(content);
@@ -330,30 +379,48 @@ export default function App() {
 
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
+      const parts = buildPromptParts(resolvedDraft);
 
-      await c.session.promptAsync({
-        sessionID,
-        model,
-        agent: agent ?? undefined,
-        variant: modelVariant() ?? undefined,
-        parts: [{ type: "text", text: content }],
-      });
+      if (resolvedDraft.mode === "shell") {
+        const sessionApi = c.session as any;
+        if (sessionApi.shellAsync) {
+          await sessionApi.shellAsync({ sessionID, command: content });
+        } else if (sessionApi.shell) {
+          await sessionApi.shell({ sessionID, command: content });
+        } else {
+          await c.session.promptAsync({
+            sessionID,
+            model,
+            agent: agent ?? undefined,
+            variant: modelVariant() ?? undefined,
+            parts: [{ type: "text", text: `!${content}` }],
+          });
+        }
+      } else {
+        await c.session.promptAsync({
+          sessionID,
+          model,
+          agent: agent ?? undefined,
+          variant: modelVariant() ?? undefined,
+          parts,
+        });
 
-      setSessionModelById((current) => ({
-        ...current,
-        [sessionID]: model,
-      }));
+        setSessionModelById((current) => ({
+          ...current,
+          [sessionID]: model,
+        }));
 
-      setSessionModelOverrideById((current) => {
-        if (!current[sessionID]) return current;
-        const copy = { ...current };
-        delete copy[sessionID];
-        return copy;
-      });
+        setSessionModelOverrideById((current) => {
+          if (!current[sessionID]) return current;
+          const copy = { ...current };
+          delete copy[sessionID];
+          return copy;
+        });
 
-      await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(
-        () => undefined
-      );
+        await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(
+          () => undefined
+        );
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setError(addOpencodeCacheHint(message));
@@ -2633,7 +2700,6 @@ export default function App() {
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
-    sendPrompt: sendPrompt,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
     respondPermission: respondPermission,
