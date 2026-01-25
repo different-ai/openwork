@@ -1125,9 +1125,13 @@ export default function App() {
       return;
     }
     if (workspaceStore.activeWorkspaceId() !== workspaceId) {
+      const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId);
+      const targetBaseUrl = normalizeServerUrl(workspace?.baseUrl ?? "");
+      const currentBaseUrl = normalizeServerUrl(server.url) ?? "";
+      const sameServer = Boolean(targetBaseUrl && currentBaseUrl && targetBaseUrl === currentBaseUrl);
       const ok = await workspaceStore.activateWorkspace(workspaceId, {
-        silent: true,
-        preferExistingConnection: true,
+        silent: !workspace || workspace.workspaceType !== "remote" || sameServer,
+        preferExistingConnection: sameServer,
         skipHostRestart: true,
       });
       if (!ok) return;
@@ -1137,9 +1141,13 @@ export default function App() {
 
   const createSessionForWorkspace = async (workspaceId: string) => {
     if (workspaceStore.activeWorkspaceId() !== workspaceId) {
+      const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId);
+      const targetBaseUrl = normalizeServerUrl(workspace?.baseUrl ?? "");
+      const currentBaseUrl = normalizeServerUrl(server.url) ?? "";
+      const sameServer = Boolean(targetBaseUrl && currentBaseUrl && targetBaseUrl === currentBaseUrl);
       const ok = await workspaceStore.activateWorkspace(workspaceId, {
-        silent: true,
-        preferExistingConnection: true,
+        silent: !workspace || workspace.workspaceType !== "remote" || sameServer,
+        preferExistingConnection: sameServer,
         skipHostRestart: true,
       });
       if (!ok) return;

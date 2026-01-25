@@ -204,7 +204,7 @@ export function createWorkspaceStore(options: {
       currentBase &&
       currentBase === nextBase;
 
-    if (!optionsOverride?.silent || !canReuseConnection) {
+    if (!optionsOverride?.silent) {
       setConnectingWorkspaceId(id);
     }
 
