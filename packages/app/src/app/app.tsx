@@ -443,14 +443,13 @@ export default function App() {
 
     try {
       markSessionEndReason(sessionID, "interrupted");
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
       await c.session.abort({ sessionID });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setError(message);
-    } finally {
-      setBusy(false);
-      setBusyLabel(null);
-      setBusyStartedAt(null);
     }
   }
 

@@ -227,6 +227,25 @@ export function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
+export function formatElapsedTime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  if (minutes > 0) {
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  if (seconds > 0) {
+    return `${seconds}s`;
+  }
+  return `${ms}ms`;
+}
+
 export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
   const root = workspaceRoot.trim().replace(/\/+$/, "");
   const name = commandName.trim().replace(/^\/+/, "");
@@ -490,14 +509,13 @@ const TOOL_LABELS: Record<string, string> = {
   glob: "Glob",
   task: "Task",
   webfetch: "Fetch",
-  FetchUrl: "Fetch",
-  WebSearch: "Search",
-  Execute: "Execute",
-  Create: "Create",
-  LS: "List",
-  Skill: "Skill",
+  fetchurl: "Fetch",
+  websearch: "Search",
+  execute: "Execute",
+  create: "Create",
+  ls: "List",
+  skill: "Skill",
   todowrite: "Todo",
-  TodoWrite: "Todo",
 };
 
 // Tools that should show GitHub icon (git operations)
@@ -600,7 +618,7 @@ export function summarizeStep(part: Part): StepSummary {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const toolLower = toolName.toLowerCase();
-    const label = TOOL_LABELS[toolName] ?? toolName;
+    const label = TOOL_LABELS[toolLower] ?? toolName;
     const state = record.state ?? {};
     const input = typeof state.input === "object" && state.input ? state.input : {};
     
@@ -613,8 +631,8 @@ export function summarizeStep(part: Part): StepSummary {
         (input.command.startsWith("git ") || input.command.startsWith("gh ")));
     
     // Some tools don't need detail
-    const noDetailTools = ["todowrite", "TodoWrite"];
-    if (noDetailTools.includes(toolName)) {
+    const noDetailTools = ["todowrite"];
+    if (noDetailTools.includes(toolLower)) {
       return { title: label, icon: isGithubTool ? "github" : "default" };
     }
     
@@ -622,30 +640,30 @@ export function summarizeStep(part: Part): StepSummary {
     let detail: string | null = null;
     
     // Read file
-    if (["read", "Read"].includes(toolName)) {
+    if (toolLower === "read") {
       detail = formatReadInfo(input);
     }
     // List directory
-    else if (["LS", "ls", "list", "List"].includes(toolName)) {
+    else if (toolLower === "ls" || toolLower === "list") {
       detail = formatListInfo(input);
     }
     // Search (grep/glob)
-    else if (["grep", "Grep", "glob", "Glob", "find", "Find"].includes(toolName)) {
-      detail = formatSearchInfo(toolName, input);
+    else if (["grep", "glob", "find"].includes(toolLower)) {
+      detail = formatSearchInfo(toolLower, input);
     }
     // Command/Execute
-    else if (["bash", "Bash", "Execute", "execute", "shell", "Shell"].includes(toolName)) {
+    else if (["bash", "execute", "shell"].includes(toolLower)) {
       detail = formatCommandInfo(input);
     }
     // Edit/Write/Create - show file path
-    else if (["edit", "Edit", "write", "Write", "Create", "create", "patch", "Patch", "multiedit", "MultiEdit"].includes(toolName)) {
+    else if (["edit", "write", "create", "patch", "multiedit"].includes(toolLower)) {
       const filePath = input.file_path ?? input.path;
       if (typeof filePath === "string" && filePath.trim()) {
         detail = shortenPath(filePath.trim());
       }
     }
     // Fetch/WebSearch - show URL or query
-    else if (["webfetch", "FetchUrl", "WebSearch"].includes(toolName)) {
+    else if (["webfetch", "fetchurl", "websearch"].includes(toolLower)) {
       const url = input.url;
       const query = input.query;
       if (typeof url === "string" && url.trim()) {

@@ -36,6 +36,7 @@ import Composer from "../components/session/composer";
 import SessionSidebar, { type SidebarSectionState } from "../components/session/sidebar";
 import ContextPanel from "../components/session/context-panel";
 import FlyoutItem from "../components/flyout-item";
+import { formatElapsedTime } from "../utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -362,25 +363,6 @@ export default function SessionView(props: SessionViewProps) {
     if (!start) return 0;
     return Math.max(0, runTick() - start);
   });
-
-  const formatElapsedTime = (ms: number): string => {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const hours = Math.floor(minutes / 60);
-    
-    if (hours > 0) {
-      const remainingMinutes = minutes % 60;
-      return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
-    }
-    if (minutes > 0) {
-      const remainingSeconds = seconds % 60;
-      return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-    }
-    if (seconds > 0) {
-      return `${seconds}s`;
-    }
-    return `${ms}ms`;
-  };
 
   const runElapsedLabel = createMemo(() => formatElapsedTime(runElapsedMs()));
 
