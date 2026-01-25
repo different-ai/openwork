@@ -300,12 +300,31 @@ export default function MessageList(props: MessageListProps) {
           }
 
           const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+          
+          const copyButton = (
+            <button
+              class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Copy message"
+              onClick={() => {
+                const text = block.renderableParts
+                  .map((part) => ("text" in part ? (part as any).text : ""))
+                  .join("\n");
+                handleCopy(text, block.messageId);
+              }}
+            >
+              <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
+                <Check size={12} class="text-green-10" />
+              </Show>
+            </button>
+          );
+          
           return (
             <div
-              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+              class={`flex group items-end gap-2 ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
             >
+              <Show when={block.isUser}>{copyButton}</Show>
               <div
                 class={`relative ${
                   block.isUser
@@ -388,22 +407,11 @@ export default function MessageList(props: MessageListProps) {
                     </div>
                   )}
                 </For>
-                <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
-                  <button
-                    class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                    title="Copy message"
-                    onClick={() => {
-                      const text = block.renderableParts
-                        .map((part) => partToText(part))
-                        .join("\n");
-                      handleCopy(text, block.messageId);
-                    }}
-                  >
-                    <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
-                      <Check size={12} class="text-green-10" />
-                    </Show>
-                  </button>
-                </div>
+                <Show when={!block.isUser}>
+                  <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
+                    {copyButton}
+                  </div>
+                </Show>
               </div>
             </div>
           );
