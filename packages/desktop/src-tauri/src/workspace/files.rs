@@ -31,10 +31,10 @@ description: Workspace guide to introduce OpenWork and onboard new users.
 
 # Welcome to OpenWork
 
-Hi, I\'m Ben and this is OpenWork. It\'s an open-source alternative to Claude\'s cowork. It helps you work on your files with AI and automate the mundane tasks so you don\'t have to.
+Hi, I'm Ben and this is OpenWork. It's an open-source alternative to Claude's cowork. It helps you work on your files with AI and automate the mundane tasks so you don't have to.
 
 Before we start, use the question tool to ask:
-"Are you more technical or non-technical? I\'ll tailor the explanation."
+"Are you more technical or non-technical? I'll tailor the explanation."
 
 ## If the person is non-technical
 OpenWork feels like a chat app, but it can safely work with the files you allow. Put files in this workspace and I can summarize them, create new ones, or help organize them.
@@ -45,7 +45,7 @@ Try:
 - "Draft a short summary from this document."
 
 ## Skills and plugins (simple)
-Skills add new capabilities. Plugins add advanced features like scheduling or browser automation. We can add them later when you\'re ready.
+Skills add new capabilities. Plugins add advanced features like scheduling or browser automation. We can add them later when you're ready.
 
 ## If the person is technical
 OpenWork is a GUI for OpenCode. Everything that works in OpenCode works here.
