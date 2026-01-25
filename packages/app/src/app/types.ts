@@ -97,6 +97,25 @@ export type ResetOpenworkMode = "onboarding" | "all";
 
 export type CommandScope = "workspace" | "global" | "unknown";
 
+export type CommandRegistryScope = "global" | "session";
+
+export type CommandTriggerContext = {
+  source?: "palette" | "slash" | "keybind";
+};
+
+export type CommandRegistryItem = {
+  id: string;
+  title: string;
+  category?: string;
+  description?: string;
+  keybind?: string;
+  slash?: string;
+  scope?: CommandRegistryScope;
+  showInPalette?: boolean;
+  onSelect: (context?: CommandTriggerContext) => void;
+  onHighlight?: (context?: CommandTriggerContext) => void;
+};
+
 export type CommandDefinition = {
   name: string;
   description?: string;

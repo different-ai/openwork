@@ -20,6 +20,7 @@ import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
 import CommandModal from "./components/command-modal";
 import CommandRunModal from "./components/command-run-modal";
+import CommandPaletteModal, { type PaletteGroup } from "./components/command-palette-modal";
 import WorkspacePicker from "./components/workspace-picker";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
@@ -34,6 +35,7 @@ import {
   DEFAULT_MODEL,
   DEMO_MODE_PREF_KEY,
   DEMO_SEQUENCE_PREF_KEY,
+  KEYBIND_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
@@ -57,6 +59,8 @@ import type {
   SkillCard,
   TodoItem,
   View,
+  CommandRegistryItem,
+  CommandTriggerContext,
   WorkspaceDisplay,
   McpServerEntry,
   McpStatusMap,
@@ -76,6 +80,7 @@ import {
   isTauriRuntime,
   modelEquals,
 } from "./utils";
+import { isEditableTarget, matchKeybind, normalizeKeybind } from "./utils/keybinds";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
@@ -96,6 +101,7 @@ import {
 } from "./theme";
 import { createDemoState } from "./demo-state";
 import { createCommandState } from "./command-state";
+import { createCommandRegistry } from "./command-registry";
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
@@ -296,6 +302,11 @@ export default function App() {
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+  const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
+  const [commandPaletteMode, setCommandPaletteMode] = createSignal<"command" | "file">("command");
+  const [commandPaletteQuery, setCommandPaletteQuery] = createSignal("");
+  const [keybindOverrides, setKeybindOverrides] = createSignal<Record<string, string>>({});
+  const [recentCommandIds, setRecentCommandIds] = createSignal<string[]>([]);
 
   const buildPromptParts = (draft: ComposerDraft): Part[] => {
     const parts: Part[] = [];
@@ -853,6 +864,287 @@ export default function App() {
     confirmRunModal,
     closeRunModal,
   } = commandState;
+
+  const commandRegistry = createCommandRegistry();
+  const commandRegistryItems = createMemo(() => commandRegistry.items());
+
+  const resolveKeybind = (command: CommandRegistryItem) =>
+    keybindOverrides()[command.id] ?? command.keybind ?? null;
+
+  const commandById = createMemo(() => {
+    const map = new Map<string, CommandRegistryItem>();
+    for (const item of commandRegistryItems()) {
+      map.set(item.id, item);
+    }
+    return map;
+  });
+
+  const registerRecentCommand = (commandId: string) => {
+    setRecentCommandIds((current) => {
+      const next = [commandId, ...current.filter((id) => id !== commandId)];
+      return next.slice(0, 6);
+    });
+  };
+
+  const runRegistryCommand = (command: CommandRegistryItem, source: CommandTriggerContext["source"]) => {
+    command.onSelect({ source });
+    registerRecentCommand(command.id);
+  };
+
+  const openCommandPalette = (mode: "command" | "file") => {
+    setCommandPaletteMode(mode);
+    setCommandPaletteQuery("");
+    setCommandPaletteOpen(true);
+  };
+  const closeCommandPalette = () => setCommandPaletteOpen(false);
+
+  const isCommandAvailable = (command: CommandRegistryItem) => {
+    const scope = command.scope ?? "global";
+    if (scope === "session" && currentView() !== "session") return false;
+    return true;
+  };
+
+  const insertFileIntoPrompt = (file: string) => {
+    const current = prompt();
+    const separator = current.trim() && !current.endsWith(" ") ? " " : "";
+    setPrompt(`${current}${separator}${file}`);
+    window.dispatchEvent(new Event("openwork:focusPrompt"));
+    const sessionId = activeSessionId();
+    if (currentView() !== "session" && sessionId) {
+      setView("session", sessionId);
+    }
+  };
+
+  const recentCommands = createMemo(() =>
+    recentCommandIds()
+      .map((id) => commandById().get(id))
+      .filter((command): command is CommandRegistryItem => Boolean(command)),
+  );
+
+  const paletteCommandItems = createMemo(() =>
+    commandRegistryItems()
+      .filter((command) => command.showInPalette !== false && isCommandAvailable(command))
+      .map((command) => ({
+        id: `command:${command.id}`,
+        title: command.title,
+        description: command.description,
+        category: command.category,
+        keybind: resolveKeybind(command) ?? undefined,
+        onSelect: () => runRegistryCommand(command, "palette"),
+        onHighlight: () => command.onHighlight?.({ source: "palette" }),
+      })),
+  );
+
+  const paletteRecentItems = createMemo(() =>
+    recentCommands()
+      .filter((command) => command.showInPalette !== false && isCommandAvailable(command))
+      .map((command) => ({
+        id: `recent:${command.id}`,
+        title: command.title,
+        description: command.description,
+        category: command.category,
+        keybind: resolveKeybind(command) ?? undefined,
+        onSelect: () => runRegistryCommand(command, "palette"),
+        onHighlight: () => command.onHighlight?.({ source: "palette" }),
+      })),
+  );
+
+  const paletteFileItems = createMemo(() =>
+    activeWorkingFiles().map((file) => ({
+      id: `file:${file}`,
+      title: file,
+      description: "Working file",
+      onSelect: () => insertFileIntoPrompt(file),
+    })),
+  );
+
+  const commandPaletteGroups = createMemo<PaletteGroup[]>(() => {
+    const groups: PaletteGroup[] = [];
+    if (commandPaletteMode() === "command") {
+      if (paletteRecentItems().length) {
+        groups.push({ id: "recent", title: "Recent", items: paletteRecentItems() });
+      }
+      if (paletteCommandItems().length) {
+        groups.push({ id: "commands", title: "Commands", items: paletteCommandItems() });
+      }
+      if (paletteFileItems().length) {
+        groups.push({ id: "files", title: "Files", items: paletteFileItems() });
+      }
+      return groups;
+    }
+    if (paletteFileItems().length) {
+      groups.push({ id: "files", title: "Files", items: paletteFileItems() });
+    }
+    return groups;
+  });
+
+  const keybindConflicts = createMemo(() => {
+    const byKeybind = new Map<string, CommandRegistryItem[]>();
+    for (const command of commandRegistryItems()) {
+      const rawKeybind = resolveKeybind(command);
+      const keybind = rawKeybind ? normalizeKeybind(rawKeybind) ?? rawKeybind : null;
+      if (!keybind) continue;
+      const list = byKeybind.get(keybind) ?? [];
+      list.push(command);
+      byKeybind.set(keybind, list);
+    }
+
+    const conflicts = new Map<string, string[]>();
+    for (const list of byKeybind.values()) {
+      if (list.length < 2) continue;
+      for (const command of list) {
+        const others = list.filter((entry) => entry.id !== command.id).map((entry) => entry.title);
+        conflicts.set(command.id, others);
+      }
+    }
+    return conflicts;
+  });
+
+  const keybindSettings = createMemo(() =>
+    commandRegistryItems().map((command) => ({
+      id: command.id,
+      title: command.title,
+      category: command.category,
+      description: command.description,
+      defaultKeybind: command.keybind ?? null,
+      overrideKeybind: keybindOverrides()[command.id] ?? null,
+      conflicts: keybindConflicts().get(command.id) ?? [],
+    })),
+  );
+
+  const updateKeybindOverride = (id: string, keybind: string | null) => {
+    setKeybindOverrides((current) => {
+      const next = { ...current };
+      if (!keybind) {
+        delete next[id];
+      } else {
+        const normalized = normalizeKeybind(keybind);
+        if (normalized) {
+          next[id] = normalized;
+        }
+      }
+      return next;
+    });
+  };
+
+  const resetKeybindOverride = (id: string) => updateKeybindOverride(id, null);
+  const resetAllKeybinds = () => setKeybindOverrides({});
+
+  createEffect(() => {
+    const modifier = isWindowsPlatform() ? "ctrl" : "cmd";
+    const cleanup = commandRegistry.registerCommands([
+      {
+        id: "palette.open",
+        title: "Open command palette",
+        category: "Navigation",
+        description: "Search commands and files",
+        keybind: `${modifier}+k`,
+        showInPalette: false,
+        scope: "global",
+        onSelect: () => openCommandPalette("command"),
+      },
+      {
+        id: "palette.files",
+        title: "Open file palette",
+        category: "Navigation",
+        description: "Search working files",
+        keybind: `${modifier}+p`,
+        showInPalette: false,
+        scope: "global",
+        onSelect: () => openCommandPalette("file"),
+      },
+      {
+        id: "nav.dashboard",
+        title: "Open dashboard",
+        category: "Navigation",
+        description: "Return to the dashboard",
+        scope: "global",
+        onSelect: () => {
+          setTab("home");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.sessions",
+        title: "Open sessions",
+        category: "Navigation",
+        description: "View all sessions",
+        scope: "global",
+        onSelect: () => {
+          setTab("sessions");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.commands",
+        title: "Open commands",
+        category: "Navigation",
+        description: "Manage saved commands",
+        scope: "global",
+        onSelect: () => {
+          setTab("commands");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.skills",
+        title: "Open skills",
+        category: "Navigation",
+        description: "Manage skills",
+        scope: "global",
+        onSelect: () => {
+          setTab("skills");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.plugins",
+        title: "Open plugins",
+        category: "Navigation",
+        description: "Manage plugins",
+        scope: "global",
+        onSelect: () => {
+          setTab("plugins");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.mcp",
+        title: "Open MCP",
+        category: "Navigation",
+        description: "Manage MCP servers",
+        scope: "global",
+        onSelect: () => {
+          setTab("mcp");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "nav.settings",
+        title: "Open settings",
+        category: "Navigation",
+        description: "Adjust preferences",
+        scope: "global",
+        onSelect: () => {
+          setTab("settings");
+          setView("dashboard");
+        },
+      },
+      {
+        id: "session.new-task",
+        title: "Start new task",
+        category: "Sessions",
+        description: "Start a new session",
+        scope: "global",
+        onSelect: () => {
+          createSessionAndOpen();
+          setView("session");
+        },
+      },
+    ]);
+
+    onCleanup(() => cleanup());
+  });
 
   loadCommandsRef = loadCommands;
 
@@ -1684,6 +1976,35 @@ export default function App() {
           setDemoSequence(storedDemoSequence);
         }
 
+        const storedKeybinds = window.localStorage.getItem(KEYBIND_PREF_KEY);
+        if (storedKeybinds) {
+          try {
+            const parsed = JSON.parse(storedKeybinds) as Record<string, unknown>;
+            const next: Record<string, string> = {};
+            for (const [id, value] of Object.entries(parsed ?? {})) {
+              if (typeof value !== "string") continue;
+              const normalized = normalizeKeybind(value);
+              if (normalized) next[id] = normalized;
+            }
+            setKeybindOverrides(next);
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedRecentCommands = window.localStorage.getItem("openwork.commandRecent");
+        if (storedRecentCommands) {
+          try {
+            const parsed = JSON.parse(storedRecentCommands);
+            if (Array.isArray(parsed)) {
+              const next = parsed.filter((value) => typeof value === "string").slice(0, 6);
+              setRecentCommandIds(next);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const storedUpdateAutoCheck = window.localStorage.getItem(
           "openwork.updateAutoCheck"
         );
@@ -1998,6 +2319,57 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const overrides = keybindOverrides();
+      if (Object.keys(overrides).length) {
+        window.localStorage.setItem(KEYBIND_PREF_KEY, JSON.stringify(overrides));
+      } else {
+        window.localStorage.removeItem(KEYBIND_PREF_KEY);
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const recent = recentCommandIds();
+      if (recent.length) {
+        window.localStorage.setItem("openwork.commandRecent", JSON.stringify(recent));
+      } else {
+        window.localStorage.removeItem("openwork.commandRecent");
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (commandPaletteOpen()) return;
+      const hasModifier = event.metaKey || event.ctrlKey || event.altKey;
+      if (isEditableTarget(event.target) && !hasModifier) return;
+
+      const match = commandRegistryItems().find((command) => {
+        if (!isCommandAvailable(command)) return false;
+        const keybind = resolveKeybind(command);
+        if (!keybind) return false;
+        return matchKeybind(event, keybind);
+      });
+      if (!match) return;
+      event.preventDefault();
+      event.stopPropagation();
+      runRegistryCommand(match, "keybind");
+    };
+
+    window.addEventListener("keydown", onKeyDown, true);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown, true));
+  });
+
+  createEffect(() => {
     const state = updateStatus();
     if (typeof window === "undefined") return;
     if (state.state === "idle" && state.lastCheckedAt) {
@@ -2224,6 +2596,10 @@ export default function App() {
     showThinking: showThinking(),
     toggleShowThinking: () => setShowThinking((v) => !v),
     modelVariantLabel: modelVariant() ?? t("common.default_parens", currentLocale()),
+    keybindItems: keybindSettings(),
+    onOverrideKeybind: updateKeybindOverride,
+    onResetKeybind: resetKeybindOverride,
+    onResetAllKeybinds: resetAllKeybinds,
     editModelVariant: () => {
       const next = window.prompt(
         t("settings.model_variant_prompt", currentLocale()),
@@ -2347,6 +2723,8 @@ export default function App() {
     commands: commands(),
     runCommand: runCommand,
     openCommandRunModal: openRunModal,
+    commandRegistryItems,
+    registerCommand: commandRegistry.registerCommand,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);
@@ -2538,6 +2916,15 @@ export default function App() {
         onDetailsChange={setRunModalDetails}
         onClose={closeRunModal}
         onRun={confirmRunModal}
+      />
+
+      <CommandPaletteModal
+        open={commandPaletteOpen()}
+        mode={commandPaletteMode()}
+        query={commandPaletteQuery()}
+        setQuery={setCommandPaletteQuery}
+        groups={commandPaletteGroups()}
+        onClose={closeCommandPalette}
       />
 
       <ReloadWorkspaceToast
