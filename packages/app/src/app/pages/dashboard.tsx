@@ -5,7 +5,7 @@ import type {
   McpStatusMap,
   PluginScope,
   SkillCard,
-  WorkspaceTemplate,
+  WorkspaceCommand,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -18,16 +18,16 @@ import McpView from "./mcp";
 import PluginsView from "./plugins";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
-import TemplatesView from "./templates";
+import CommandsView from "./commands";
 import {
   Command,
   Cpu,
-  FileText,
   Package,
   Play,
   Plus,
   Settings,
   Server,
+  Terminal,
 } from "lucide-solid";
 
 export type DashboardViewProps = {
@@ -70,16 +70,17 @@ export type DashboardViewProps = {
   }>;
   sessionStatusById: Record<string, string>;
   activeWorkspaceRoot: string;
-  workspaceTemplates: WorkspaceTemplate[];
-  globalTemplates: WorkspaceTemplate[];
-  setTemplateDraftTitle: (value: string) => void;
-  setTemplateDraftDescription: (value: string) => void;
-  setTemplateDraftPrompt: (value: string) => void;
-  setTemplateDraftScope: (value: "workspace" | "global") => void;
-  openTemplateModal: () => void;
-  resetTemplateDraft?: (scope?: "workspace" | "global") => void;
-  runTemplate: (template: WorkspaceTemplate) => void;
-  deleteTemplate: (templateId: string) => void;
+  workspaceCommands: WorkspaceCommand[];
+  globalCommands: WorkspaceCommand[];
+  otherCommands: WorkspaceCommand[];
+  setCommandDraftName: (value: string) => void;
+  setCommandDraftDescription: (value: string) => void;
+  setCommandDraftTemplate: (value: string) => void;
+  setCommandDraftScope: (value: "workspace" | "global") => void;
+  openCommandModal: () => void;
+  resetCommandDraft?: (scope?: "workspace" | "global") => void;
+  runCommand: (command: WorkspaceCommand) => void;
+  deleteCommand: (command: WorkspaceCommand) => void;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
@@ -191,8 +192,8 @@ export default function DashboardView(props: DashboardViewProps) {
     switch (props.tab) {
       case "sessions":
         return "Sessions";
-      case "templates":
-        return "Templates";
+      case "commands":
+        return "Commands";
       case "skills":
         return "Skills";
       case "plugins":
@@ -206,7 +207,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
   });
 
-  const quickTemplates = createMemo(() => props.workspaceTemplates.slice(0, 3));
+  const quickCommands = createMemo(() => props.workspaceCommands.slice(0, 3));
 
   const openSessionFromList = (sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
@@ -315,7 +316,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <nav class="space-y-1">
             {navItem("home", "Dashboard", <Command size={18} />)}
             {navItem("sessions", "Sessions", <Play size={18} />)}
-            {navItem("templates", "Templates", <FileText size={18} />)}
+            {navItem("commands", "Commands", <Terminal size={18} />)}
             {navItem("skills", "Skills", <Package size={18} />)}
             {navItem("plugins", "Plugins", <Cpu size={18} />)}
             {navItem(
@@ -437,20 +438,20 @@ export default function DashboardView(props: DashboardViewProps) {
               </Button>
             </Show>
 
-            <Show when={props.tab === "templates"}>
+            <Show when={props.tab === "commands"}>
               <Button
                 variant="secondary"
                 onClick={() => {
-                  const reset = props.resetTemplateDraft;
+                  const reset = props.resetCommandDraft;
                   if (reset) {
                     reset("workspace");
                   } else {
-                    props.setTemplateDraftTitle("");
-                    props.setTemplateDraftDescription("");
-                    props.setTemplateDraftPrompt("");
-                    props.setTemplateDraftScope("workspace");
+                    props.setCommandDraftName("");
+                    props.setCommandDraftDescription("");
+                    props.setCommandDraftTemplate("");
+                    props.setCommandDraftScope("workspace");
                   }
-                  props.openTemplateModal();
+                  props.openCommandModal();
                 }}
                 disabled={props.busy}
               >
@@ -515,37 +516,37 @@ export default function DashboardView(props: DashboardViewProps) {
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
-                    Quick Start Templates
+                    Quick Start Commands
                   </h3>
                   <button
                     class="text-sm text-gray-10 hover:text-gray-12"
-                    onClick={() => props.setTab("templates")}
+                    onClick={() => props.setTab("commands")}
                   >
                     View all
                   </button>
                 </div>
 
                 <Show
-                  when={quickTemplates().length}
+                  when={quickCommands().length}
                   fallback={
                     <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-6 text-sm text-gray-10">
-                      No templates yet. Starter templates will appear here.
+                      No commands yet. Starter commands will appear here.
                     </div>
                   }
                 >
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <For each={quickTemplates()}>
-                      {(t) => (
+                    <For each={quickCommands()}>
+                      {(command) => (
                         <button
-                          onClick={() => props.runTemplate(t)}
+                          onClick={() => props.runCommand(command)}
                           class="group p-5 rounded-2xl bg-gray-2/30 border border-gray-6/50 hover:bg-gray-2 hover:border-gray-7 transition-all text-left"
                         >
                           <div class="w-10 h-10 rounded-full bg-gray-4 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                            <FileText size={20} class="text-indigo-11" />
+                            <Terminal size={20} class="text-indigo-11" />
                           </div>
-                          <h4 class="font-medium text-gray-12 mb-1">{t.title}</h4>
+                          <h4 class="font-medium text-gray-12 mb-1">/{command.name}</h4>
                           <p class="text-sm text-gray-10">
-                            {t.description || "Run a saved workflow"}
+                            {command.description || "Run a saved command"}
                           </p>
                         </button>
                       )}
@@ -687,19 +688,20 @@ export default function DashboardView(props: DashboardViewProps) {
               </section>
             </Match>
 
-            <Match when={props.tab === "templates"}>
-              <TemplatesView
+            <Match when={props.tab === "commands"}>
+              <CommandsView
                 busy={props.busy}
-                workspaceTemplates={props.workspaceTemplates}
-                globalTemplates={props.globalTemplates}
-                setTemplateDraftTitle={props.setTemplateDraftTitle}
-                setTemplateDraftDescription={props.setTemplateDraftDescription}
-                setTemplateDraftPrompt={props.setTemplateDraftPrompt}
-                setTemplateDraftScope={props.setTemplateDraftScope}
-                openTemplateModal={props.openTemplateModal}
-                resetTemplateDraft={props.resetTemplateDraft}
-                runTemplate={props.runTemplate}
-                deleteTemplate={props.deleteTemplate}
+                workspaceCommands={props.workspaceCommands}
+                globalCommands={props.globalCommands}
+                otherCommands={props.otherCommands}
+                setCommandDraftName={props.setCommandDraftName}
+                setCommandDraftDescription={props.setCommandDraftDescription}
+                setCommandDraftTemplate={props.setCommandDraftTemplate}
+                setCommandDraftScope={props.setCommandDraftScope}
+                openCommandModal={props.openCommandModal}
+                resetCommandDraft={props.resetCommandDraft}
+                runCommand={props.runCommand}
+                deleteCommand={props.deleteCommand}
               />
             </Match>
 
@@ -866,12 +868,12 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "templates" ? "text-gray-12" : "text-gray-10"
+                props.tab === "commands" ? "text-gray-12" : "text-gray-10"
               }`}
-              onClick={() => props.setTab("templates")}
+              onClick={() => props.setTab("commands")}
             >
-              <FileText size={18} />
-              Templates
+              <Terminal size={18} />
+              Commands
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${

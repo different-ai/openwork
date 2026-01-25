@@ -12,6 +12,9 @@ mod workspace;
 
 pub use types::*;
 
+use commands::command_files::{
+    opencode_command_delete, opencode_command_list, opencode_command_write,
+};
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
 use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
@@ -21,7 +24,7 @@ use commands::updater::updater_environment;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_forget, workspace_openwork_read, workspace_openwork_write, workspace_set_active,
-    workspace_template_delete, workspace_template_write, workspace_update_remote,
+    workspace_update_remote,
 };
 use engine::manager::EngineManager;
 
@@ -50,8 +53,9 @@ pub fn run() {
             workspace_update_remote,
             workspace_forget,
             workspace_add_authorized_root,
-            workspace_template_write,
-            workspace_template_delete,
+            opencode_command_list,
+            opencode_command_write,
+            opencode_command_delete,
             workspace_openwork_read,
             workspace_openwork_write,
             opkg_install,

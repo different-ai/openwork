@@ -1,16 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::types::{
-    ExecResult, WorkspaceInfo, WorkspaceList, WorkspaceOpenworkConfig, WorkspaceTemplate,
-    WorkspaceType,
-};
+use crate::types::{ExecResult, WorkspaceInfo, WorkspaceList, WorkspaceOpenworkConfig, WorkspaceType};
 use crate::workspace::files::ensure_workspace_files;
 use crate::workspace::state::{
     ensure_starter_workspace, load_workspace_state, save_workspace_state, stable_workspace_id,
     stable_workspace_id_for_remote,
 };
-use crate::workspace::templates::{delete_template, write_template};
 
 #[tauri::command]
 pub fn workspace_bootstrap(app: tauri::AppHandle) -> Result<WorkspaceList, String> {
@@ -330,27 +326,6 @@ pub fn workspace_add_authorized_root(
 }
 
 #[tauri::command]
-pub fn workspace_template_write(
-    _app: tauri::AppHandle,
-    workspace_path: String,
-    template: WorkspaceTemplate,
-) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
-
-    let file_path = write_template(&workspace_path, template)?;
-
-    Ok(ExecResult {
-        ok: true,
-        status: 0,
-        stdout: format!("Wrote {}", file_path.display()),
-        stderr: String::new(),
-    })
-}
-
-#[tauri::command]
 pub fn workspace_openwork_read(
     _app: tauri::AppHandle,
     workspace_path: String,
@@ -407,27 +382,6 @@ pub fn workspace_openwork_write(
         ok: true,
         status: 0,
         stdout: format!("Wrote {}", openwork_path.display()),
-        stderr: String::new(),
-    })
-}
-
-#[tauri::command]
-pub fn workspace_template_delete(
-    _app: tauri::AppHandle,
-    workspace_path: String,
-    template_id: String,
-) -> Result<ExecResult, String> {
-    let workspace_path = workspace_path.trim().to_string();
-    if workspace_path.is_empty() {
-        return Err("workspacePath is required".to_string());
-    }
-
-    let file_path = delete_template(&workspace_path, &template_id)?;
-
-    Ok(ExecResult {
-        ok: true,
-        status: 0,
-        stdout: format!("Deleted {}", file_path.display()),
         stderr: String::new(),
     })
 }

@@ -142,13 +142,17 @@ pub struct WorkspaceList {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct WorkspaceTemplate {
-    pub id: String,
-    pub title: String,
-    pub description: String,
-    pub prompt: String,
+pub struct OpencodeCommand {
+    pub name: String,
     #[serde(default)]
-    pub created_at: u64,
+    pub description: Option<String>,
+    pub template: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub subtask: Option<bool>,
 }
 
 fn default_workspace_state_version() -> u8 {

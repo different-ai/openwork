@@ -8,6 +8,7 @@ import type {
   PendingPermission,
   TodoItem,
   View,
+  WorkspaceCommand,
   WorkspaceDisplay,
 } from "../types";
 
@@ -93,6 +94,9 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  commands: WorkspaceCommand[];
+  runCommand: (command: WorkspaceCommand, details?: string) => Promise<void>;
+  openCommandRunModal: (command: WorkspaceCommand) => void;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -104,6 +108,10 @@ export default function SessionView(props: SessionViewProps) {
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+
+  const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
+
+  const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
 
   type Flyout = {
     id: string;
@@ -502,7 +510,32 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const commandList = createMemo(() => [
+  const runOpenCodeCommand = (command: WorkspaceCommand) => {
+    const details = extractCommandArgs(props.prompt);
+
+    if (details) {
+      void props.runCommand(command, details);
+      clearPrompt();
+      return;
+    }
+
+    if (commandNeedsDetails(command)) {
+      props.openCommandRunModal(command);
+      clearPrompt();
+      return;
+    }
+
+    void props.runCommand(command);
+    clearPrompt();
+  };
+
+  const buildHelpPreview = () => {
+    const builtIn = builtInCommands().map((command) => `/${command.id}`);
+    const extra = opencodeCommands().map((command) => `/${command.id}`);
+    return formatListHint([...builtIn, ...extra]);
+  };
+
+  const builtInCommands = () => [
     {
       id: "models",
       description: "Choose a model",
@@ -619,11 +652,25 @@ export default function SessionView(props: SessionViewProps) {
       id: "help",
       description: "Show available commands",
       run: () => {
-        setCommandToast("Commands: /models, /connect, /new, /agent, /export, /rename, /help");
+        const preview = buildHelpPreview();
+        setCommandToast(preview ? `Commands: ${preview}` : "No commands available");
         clearPrompt();
       },
     },
-  ]);
+  ];
+
+  const opencodeCommands = createMemo(() => {
+    const reserved = new Set(builtInCommands().map((command) => command.id));
+    return props.commands
+      .filter((command) => !reserved.has(command.name))
+      .map((command) => ({
+        id: command.name,
+        description: command.description || "Run a saved command",
+        run: () => runOpenCodeCommand(command),
+      }));
+  });
+
+  const commandList = createMemo(() => [...builtInCommands(), ...opencodeCommands()]);
 
   const commandMatches = createMemo(() => {
     const value = props.prompt;
@@ -642,6 +689,14 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleSendPrompt = () => {
+    if (props.prompt.trim().startsWith("/")) {
+      const active = commandMatches()[0];
+      if (active) {
+        active.run();
+      }
+      return;
+    }
+
     startRun();
     props.sendPromptAsync().catch(() => undefined);
   };

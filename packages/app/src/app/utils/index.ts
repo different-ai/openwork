@@ -227,11 +227,11 @@ export function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
-export function templatePathFromWorkspaceRoot(workspaceRoot: string, templateId: string) {
+export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
   const root = workspaceRoot.trim().replace(/\/+$/, "");
-  const id = templateId.trim();
-  if (!root || !id) return null;
-  return `${root}/.openwork/templates/${id}/template.yml`;
+  const name = commandName.trim().replace(/^\/+/, "");
+  if (!root || !name) return null;
+  return `${root}/.opencode/commands/${name}.md`;
 }
 
 export function safeParseJson<T>(raw: string): T | null {
