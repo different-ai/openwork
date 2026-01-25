@@ -197,6 +197,37 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  // Calculate total duration from first assistant message to last completed assistant message
+  const sessionDuration = createMemo(() => {
+    const assistantMessages = props.messages.filter(
+      (m) => (m.info as any).role === "assistant"
+    );
+    if (assistantMessages.length === 0) return null;
+    
+    const firstAssistant = assistantMessages[0];
+    const lastAssistant = assistantMessages[assistantMessages.length - 1];
+    
+    const firstCreated = (firstAssistant.info as any)?.time?.created;
+    const lastCompleted = (lastAssistant.info as any)?.time?.completed;
+    
+    if (!firstCreated || !lastCompleted) return null;
+    
+    const duration = lastCompleted - firstCreated;
+    return duration > 0 ? duration : null;
+  });
+
+  // Find the last assistant message block
+  const lastAssistantBlockId = createMemo(() => {
+    const blocks = messageBlocks();
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      if (block.kind === "message" && !block.isUser) {
+        return block.messageId;
+      }
+    }
+    return null;
+  });
+
   const getToolStatus = (part: Part) => {
     if (part.type !== "tool") return null;
     const state = (part as any).state ?? {};
@@ -428,10 +459,8 @@ export default function MessageList(props: MessageListProps) {
                 </For>
                 <Show when={!block.isUser}>
                   {(() => {
-                    const info = block.message.info as any;
-                    const created = info?.time?.created;
-                    const completed = info?.time?.completed;
-                    const duration = created && completed ? completed - created : null;
+                    const isLastAssistant = block.messageId === lastAssistantBlockId();
+                    const duration = isLastAssistant ? sessionDuration() : null;
                     
                     return (
                       <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
