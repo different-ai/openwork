@@ -127,36 +127,7 @@ export function createCommandState(options: {
           template: draft.template,
         },
       });
-
-      // Directly add/update the command in local state since the SDK's
-      // command list won't reflect the new file until app restart
-      const newCommand: WorkspaceCommand = {
-        name: safeName,
-        description: draft.description || undefined,
-        template: draft.template,
-        scope: draft.scope,
-      };
-
-      setCommands((current) => {
-        // Check if command already exists (update case)
-        const existingIndex = current.findIndex(
-          (c) => c.name === safeName && c.scope === draft.scope
-        );
-
-        let updated: WorkspaceCommand[];
-        if (existingIndex >= 0) {
-          // Update existing command
-          updated = [...current];
-          updated[existingIndex] = newCommand;
-        } else {
-          // Add new command
-          updated = [...current, newCommand];
-        }
-
-        // Keep sorted alphabetically
-        return updated.sort((a, b) => a.name.localeCompare(b.name));
-      });
-
+      await loadCommands({ workspaceRoot, quiet: true });
       setCommandModalOpen(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
