@@ -80,6 +80,7 @@ import { currentLocale, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
+  normalizeDirectoryPath,
   parseModelRef,
   readModePreference,
   safeStringify,
@@ -798,6 +799,9 @@ export default function App() {
     return workspace.path?.trim() ?? "";
   };
 
+  const workspaceDirectoryNormalized = (workspace: WorkspaceInfo) =>
+    normalizeDirectoryPath(workspaceDirectory(workspace));
+
   const workspaceBaseUrl = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") return normalizeServerUrl(workspace.baseUrl ?? "") ?? "";
     return connectedServerUrl();
@@ -817,15 +821,18 @@ export default function App() {
     return mode() === "host";
   };
 
-  const sessionListQuery = (directory: string) => ({
-    directory,
-    roots: true,
-    limit: SESSION_LIST_LIMIT,
-  });
+  const sessionListQuery = (directory: string) => {
+    const normalized = normalizeDirectoryPath(directory);
+    return {
+      ...(normalized ? { directory: normalized } : {}),
+      roots: true,
+      limit: SESSION_LIST_LIMIT,
+    };
+  };
 
   const loadProjectSessions = async (workspace: WorkspaceInfo) => {
     const key = workspace.id;
-    const directory = workspaceDirectory(workspace);
+    const directory = workspaceDirectoryNormalized(workspace);
     const connected = isWorkspaceConnected(workspace);
 
     if (!connected || !directory) {
@@ -857,7 +864,7 @@ export default function App() {
     });
 
     try {
-      const client = createClient(baseUrl, directory);
+      const client = createClient(baseUrl, directory || undefined);
       const list = unwrap(await client.session.list(sessionListQuery(directory)));
       setProjectSessions(key, list);
       setSessionCache(key, list);
@@ -878,18 +885,49 @@ export default function App() {
     }
   };
 
+  let projectRefreshInFlight = false;
+  let projectRefreshQueued = false;
+  let lastProjectRefreshKey = "";
+
+  const projectRefreshKey = createMemo(() => {
+    if (tab() !== "sessions" && tab() !== "home") return "";
+    const list = workspaceStore.workspaces();
+    if (!list.length) return "";
+    const ids = list.map((workspace) => workspace.id).join("|");
+    const openIds = openProjectIds().join("|");
+    return `${connectedServerUrl()}|${mode()}|${tab()}|${ids}|${openIds}`;
+  });
+
   const refreshAllProjectSessions = async () => {
+    if (projectRefreshInFlight) {
+      projectRefreshQueued = true;
+      return;
+    }
+
     const list = workspaceStore.workspaces();
     if (!list.length) return;
-    await Promise.allSettled(list.map((workspace) => loadProjectSessions(workspace)));
+
+    const openIds = new Set(openProjectIds());
+    const targets = list.filter((workspace) => openIds.has(workspace.id));
+    if (!targets.length) return;
+
+    projectRefreshInFlight = true;
+    try {
+      await Promise.allSettled(targets.map((workspace) => loadProjectSessions(workspace)));
+    } finally {
+      projectRefreshInFlight = false;
+      if (projectRefreshQueued) {
+        projectRefreshQueued = false;
+        void refreshAllProjectSessions();
+      }
+    }
   };
 
   createEffect(() => {
-    const _server = connectedServerUrl();
-    const _mode = mode();
-    const list = workspaceStore.workspaces();
-    if (!list.length) return;
-    if (tab() !== "sessions" && tab() !== "home") return;
+    const key = projectRefreshKey();
+    if (!key) return;
+    if (key === lastProjectRefreshKey) return;
+    lastProjectRefreshKey = key;
     void refreshAllProjectSessions();
   });
 

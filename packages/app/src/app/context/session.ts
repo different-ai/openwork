@@ -223,16 +223,15 @@ export function createSessionStore(options: {
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
-    const root = scopeRoot?.trim();
+    const normalizedRoot = normalizeDirectoryPath(scopeRoot);
     const query: { directory?: string; roots: boolean; limit: number } = {
       roots: true,
       limit: SESSION_LIST_LIMIT,
     };
-    if (root) {
-      query.directory = root;
+    if (normalizedRoot) {
+      query.directory = normalizedRoot;
     }
     const list = unwrap(await c.session.list(query));
-    const normalizedRoot = normalizeDirectoryPath(root);
     const filtered = normalizedRoot
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === normalizedRoot)
       : list;
