@@ -131,6 +131,8 @@ export default function SessionView(props: SessionViewProps) {
   const [prevTodoCount, setPrevTodoCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
+  const [isAtBottom, setIsAtBottom] = createSignal(true);
+  const [pendingInitialScroll, setPendingInitialScroll] = createSignal(false);
   const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
   const [runHasBegun, setRunHasBegun] = createSignal(false);
   const [runTick, setRunTick] = createSignal(Date.now());
@@ -333,6 +335,12 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
+    const id = props.selectedSessionId;
+    if (!id) return;
+    setPendingInitialScroll(true);
+  });
+
+  createEffect(() => {
     const status = props.sessionStatus;
     if (status === "running" || status === "retry") {
       startRun();
@@ -369,8 +377,36 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
+    const el = chatContainerEl;
+    if (!el) return;
+
+    const onScroll = () => {
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      setIsAtBottom(distance < 120);
+    };
+
+    onScroll();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    onCleanup(() => el.removeEventListener("scroll", onScroll));
+  });
+
+  createEffect(() => {
     props.messages.length;
     props.todos.length;
+
+    const el = chatContainerEl;
+    if (!el) return;
+
+    if (pendingInitialScroll()) {
+      requestAnimationFrame(() => {
+        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+        setPendingInitialScroll(false);
+        setIsAtBottom(true);
+      });
+      return;
+    }
+
+    if (!isAtBottom()) return;
     messagesEndEl?.scrollIntoView({ behavior: "smooth" });
   });
 
@@ -799,7 +835,7 @@ export default function SessionView(props: SessionViewProps) {
           </aside>
 
           <div
-            class="flex-1 overflow-y-auto pt-6 md:pt-10 scroll-smooth relative"
+            class="flex-1 overflow-y-auto pt-6 md:pt-10 relative"
             ref={(el) => (chatContainerEl = el)}
           >
             <Show when={props.messages.length === 0}>
