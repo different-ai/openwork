@@ -251,10 +251,10 @@ export default function MessageList(props: MessageListProps) {
                 data-message-id={block.messageIds[0] ?? ""}
               >
                 <div
-                  class={`w-full relative ${
+                  class={`relative ${
                     block.isUser
                       ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                      : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                      : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                   }`}
                 >
                   <div class={block.isUser ? "mt-2" : "mt-3 border-t border-gray-6/60 pt-3"}>
@@ -307,10 +307,10 @@ export default function MessageList(props: MessageListProps) {
               data-message-id={block.messageId}
             >
               <div
-                class={`w-full relative ${
+                class={`relative ${
                   block.isUser
                     ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                    : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                    : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                 }`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
