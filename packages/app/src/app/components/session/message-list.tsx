@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, Circle, Clock, Copy, Github } from "lucide-solid";
 
-import type { MessageGroup, MessageWithParts } from "../../types";
+import type { MessageEndReason, MessageGroup, MessageInfo, MessageTiming, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
 import PartView from "../part-view";
 
@@ -28,6 +28,7 @@ function formatElapsedTime(ms: number): string {
 
 export type MessageListProps = {
   messages: MessageWithParts[];
+  messageTimings: Record<string, MessageTiming>;
   developerMode: boolean;
   showThinking: boolean;
   expandedStepIds: Set<string>;
@@ -197,14 +198,84 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
-  // Get duration for a specific message (created to completed)
-  const getMessageDuration = (message: MessageWithParts): number | null => {
-    const info = message.info as any;
-    const created = info?.time?.created;
-    const completed = info?.time?.completed;
-    if (!created || !completed) return null;
-    const duration = completed - created;
-    return duration > 0 ? duration : null;
+  const messageInfoById = createMemo(() => {
+    const map = new Map<string, MessageInfo>();
+    for (const message of props.messages) {
+      const id = String((message.info as any)?.id ?? "");
+      if (id) {
+        map.set(id, message.info);
+      }
+    }
+    return map;
+  });
+
+  const reasonPriority: Record<MessageEndReason, number> = {
+    terminated: 3,
+    interrupted: 2,
+    error: 2,
+    completed: 1,
+  };
+
+  const pickReason = (
+    current: MessageEndReason | undefined,
+    next: MessageEndReason | undefined,
+  ) => {
+    if (!next) return current;
+    if (!current) return next;
+    return reasonPriority[next] > reasonPriority[current] ? next : current;
+  };
+
+  const resolveTimingRange = (messageId: string, info?: MessageInfo) => {
+    const timing = props.messageTimings[messageId];
+    const created = (info as any)?.time?.created;
+    const completed = (info as any)?.time?.completed;
+    const start = timing?.startAt ?? (typeof created === "number" ? created : null);
+    const end = timing?.endAt ?? (typeof completed === "number" ? completed : null);
+    if (typeof start !== "number" || typeof end !== "number") return null;
+    const duration = end - start;
+    if (duration <= 0) return null;
+    const reason = timing?.endReason ?? (typeof completed === "number" ? "completed" : undefined);
+    return { start, end, duration, reason };
+  };
+
+  const resolveMessageTiming = (message: MessageWithParts) => {
+    const info = message.info as MessageInfo;
+    const messageId = String((info as any)?.id ?? "");
+    return resolveTimingRange(messageId, info);
+  };
+
+  const resolveClusterTiming = (messageIds: string[]) => {
+    const infoMap = messageInfoById();
+    let start: number | null = null;
+    let end: number | null = null;
+    let reason: MessageEndReason | undefined;
+
+    for (const messageId of messageIds) {
+      const info = infoMap.get(messageId);
+      const timing = resolveTimingRange(messageId, info);
+      if (!timing) continue;
+      start = start === null ? timing.start : Math.min(start, timing.start);
+      end = end === null ? timing.end : Math.max(end, timing.end);
+      reason = pickReason(reason, timing.reason);
+    }
+
+    if (start === null || end === null) return null;
+    const duration = end - start;
+    if (duration <= 0) return null;
+    return { duration, reason };
+  };
+
+  const formatReasonLabel = (reason: MessageEndReason) => {
+    switch (reason) {
+      case "terminated":
+        return "Terminated";
+      case "interrupted":
+        return "Interrupted";
+      case "error":
+        return "Error";
+      default:
+        return "";
+    }
   };
 
   const getToolStatus = (part: Part) => {
@@ -273,6 +344,7 @@ export default function MessageList(props: MessageListProps) {
           if (block.kind === "steps-cluster") {
             const relatedStepIds = block.stepIds.filter((stepId) => stepId !== block.id);
             const expanded = () => isStepsExpanded(block.id, relatedStepIds);
+            const clusterTiming = () => resolveClusterTiming(block.messageIds);
             return (
               <div
                 class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
@@ -299,6 +371,17 @@ export default function MessageList(props: MessageListProps) {
                         class={`transition-transform ${expanded() ? "rotate-180" : ""}`.trim()}
                       />
                     </button>
+                    <Show when={!block.isUser && clusterTiming()}>
+                      {(timing) => (
+                        <div class="mt-2 flex items-center gap-1.5 text-xs text-gray-9">
+                          <Clock size={12} />
+                          <span>{formatElapsedTime(timing().duration)}</span>
+                          <Show when={timing().reason && timing().reason !== "completed"}>
+                            <span class="text-gray-9/80">· {formatReasonLabel(timing().reason!)}</span>
+                          </Show>
+                        </div>
+                      )}
+                    </Show>
                     <Show when={expanded()}>
                       <div
                         class={`mt-3 rounded-xl border p-3 ${
@@ -438,15 +521,20 @@ export default function MessageList(props: MessageListProps) {
                 </For>
                 <Show when={!block.isUser}>
                   {(() => {
-                    const duration = getMessageDuration(block.message);
+                    const timing = () => resolveMessageTiming(block.message);
                     
                     return (
                       <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
-                        <Show when={duration && duration > 0}>
-                          <div class="flex items-center gap-1.5 opacity-60">
-                            <Clock size={12} />
-                            <span>{formatElapsedTime(duration!)}</span>
-                          </div>
+                        <Show when={timing()}>
+                          {(resolved) => (
+                            <div class="flex items-center gap-1.5 opacity-60">
+                              <Clock size={12} />
+                              <span>{formatElapsedTime(resolved().duration)}</span>
+                              <Show when={resolved().reason && resolved().reason !== "completed"}>
+                                <span class="text-gray-9/80">· {formatReasonLabel(resolved().reason!)}</span>
+                              </Show>
+                            </div>
+                          )}
                         </Show>
                         <div class="flex-1" />
                         <div class="opacity-0 group-hover:opacity-100 transition-opacity">

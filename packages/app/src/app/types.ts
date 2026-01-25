@@ -40,6 +40,15 @@ export type MessageWithParts = {
   parts: Part[];
 };
 
+export type MessageEndReason = "completed" | "interrupted" | "terminated" | "error";
+
+export type MessageTiming = {
+  startAt?: number;
+  lastTokenAt?: number;
+  endAt?: number;
+  endReason?: MessageEndReason;
+};
+
 export type MessageGroup =
   | { kind: "text"; part: Part }
   | { kind: "steps"; id: string; parts: Part[] };

@@ -379,11 +379,27 @@ export function removePart(list: MessageWithParts[], messageID: string, partID: 
 }
 
 export function normalizeSessionStatus(status: unknown) {
-  if (!status || typeof status !== "object") return "idle";
-  const record = status as Record<string, unknown>;
-  if (record.type === "busy") return "running";
-  if (record.type === "retry") return "retry";
-  if (record.type === "idle") return "idle";
+  const resolveType = (value: unknown) => {
+    if (!value) return null;
+    if (typeof value === "string") return value.toLowerCase();
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (typeof record.type === "string") return record.type.toLowerCase();
+    }
+    return null;
+  };
+
+  const type = resolveType(status);
+  if (!type) return "idle";
+
+  if (type === "busy" || type === "running") return "running";
+  if (type === "retry") return "retry";
+  if (type === "idle") return "idle";
+
+  if (["terminated", "terminate", "killed"].includes(type)) return "terminated";
+  if (["interrupt", "interrupted", "aborted", "cancelled", "canceled"].includes(type)) return "interrupted";
+  if (["error", "failed", "failure"].includes(type)) return "error";
+
   return "idle";
 }
 
