@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::types::{WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
-use crate::utils::now_ms;
 
 pub fn stable_workspace_id(path: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -81,12 +80,4 @@ pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -
         }
     }
     stable_workspace_id(&key)
-}
-
-pub fn default_template_created_at(input: u64) -> u64 {
-    if input > 0 {
-        input
-    } else {
-        now_ms()
-    }
 }

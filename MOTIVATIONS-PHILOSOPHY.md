@@ -48,7 +48,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 ## Core Concepts of OpenWork
 
 - uses all these primitives
-- adds new concept of "template"  simple files stored in .openwork/templates in markdown (look at repo to see how)
+- uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
 - adds a new abstraction "workspace" is a project fodler and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
   - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
 
@@ -395,14 +395,14 @@ Every run provides an exportable audit log:
 - allow once/session
 - audit of decisions
 
-### Templates
+### Commands
 
-- save a task as template
-- variables + quick run
+- save a task as a command
+- arguments + quick run
 
 ### Scheduling (Future)
 
-- schedule template runs
+- schedule command runs
 - notify on completion
 
 ---
@@ -425,7 +425,7 @@ Every run provides an exportable audit log:
 4. Provider/model configuration.
 5. `global.health()` check.
 6. Run a test session using `session.create()` + `session.prompt()`.
-7. Success + sample templates.
+7. Success + sample commands.
 
 ### 2. Pairing Onboarding (Client / Mobile)
 
@@ -497,10 +497,10 @@ Every run provides an exportable audit log:
 2. Open file: `file.read()`.
 3. Show changed files: `file.status()`.
 
-### 12. Templates
+### 12. Commands
 
-1. Save a plan + prompt as a template.
-2. Re-run template creates a new session.
+1. Save a plan + prompt as a command.
+2. Re-run command creates a new session.
 
 ### 13. Multi-user (Future)
 

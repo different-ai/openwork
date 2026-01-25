@@ -16,7 +16,7 @@ It’s a native desktop app that runs **OpenCode** under the hood, but presents 
 - start a run
 - watch progress + plan updates
 - approve permissions when needed
-- reuse what works (templates + skills)
+- reuse what works (commands + skills)
 
 The goal: make “agentic work” feel like a product, not a terminal.
 

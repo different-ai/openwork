@@ -6,21 +6,21 @@ import { t, currentLocale } from "../../i18n";
 import Button from "./button";
 import TextInput from "./text-input";
 
-export type TemplateModalProps = {
+export type CommandModalProps = {
   open: boolean;
-  title: string;
+  name: string;
   description: string;
-  prompt: string;
+  template: string;
   scope: "workspace" | "global";
   onClose: () => void;
   onSave: () => void;
-  onTitleChange: (value: string) => void;
+  onNameChange: (value: string) => void;
   onDescriptionChange: (value: string) => void;
-  onPromptChange: (value: string) => void;
+  onTemplateChange: (value: string) => void;
   onScopeChange: (value: "workspace" | "global") => void;
 };
 
-export default function TemplateModal(props: TemplateModalProps) {
+export default function CommandModal(props: CommandModalProps) {
   const translate = (key: string) => t(key, currentLocale());
 
   return (
@@ -30,8 +30,8 @@ export default function TemplateModal(props: TemplateModalProps) {
           <div class="p-6">
             <div class="flex items-start justify-between gap-4">
               <div>
-                <h3 class="text-lg font-semibold text-gray-12">{translate("templates.modal_title")}</h3>
-                <p class="text-sm text-gray-11 mt-1">{translate("templates.modal_description")}</p>
+                <h3 class="text-lg font-semibold text-gray-12">{translate("commands.modal_title")}</h3>
+                <p class="text-sm text-gray-11 mt-1">{translate("commands.modal_description")}</p>
               </div>
               <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
                 <X size={16} />
@@ -40,17 +40,18 @@ export default function TemplateModal(props: TemplateModalProps) {
 
             <div class="mt-6 space-y-4">
               <TextInput
-                label={translate("templates.title_label")}
-                value={props.title}
-                onInput={(e) => props.onTitleChange(e.currentTarget.value)}
-                placeholder={translate("templates.title_placeholder")}
+                label={translate("commands.name_label")}
+                value={props.name}
+                onInput={(event) => props.onNameChange(event.currentTarget.value)}
+                placeholder={translate("commands.name_placeholder")}
+                hint={translate("commands.name_hint")}
               />
 
               <TextInput
-                label={translate("templates.description_label")}
+                label={translate("commands.description_label")}
                 value={props.description}
-                onInput={(e) => props.onDescriptionChange(e.currentTarget.value)}
-                placeholder={translate("templates.description_placeholder")}
+                onInput={(event) => props.onDescriptionChange(event.currentTarget.value)}
+                placeholder={translate("commands.description_placeholder")}
               />
 
               <div class="grid grid-cols-2 gap-2">
@@ -63,7 +64,7 @@ export default function TemplateModal(props: TemplateModalProps) {
                   onClick={() => props.onScopeChange("workspace")}
                   type="button"
                 >
-                  {translate("templates.workspace")}
+                  {translate("commands.workspace")}
                 </button>
                 <button
                   class={`px-3 py-2 rounded-xl border text-sm transition-colors ${
@@ -74,19 +75,19 @@ export default function TemplateModal(props: TemplateModalProps) {
                   onClick={() => props.onScopeChange("global")}
                   type="button"
                 >
-                  {translate("templates.global")}
+                  {translate("commands.global")}
                 </button>
               </div>
 
               <label class="block">
-                <div class="mb-1 text-xs font-medium text-gray-11">{translate("templates.prompt_label")}</div>
+                <div class="mb-1 text-xs font-medium text-gray-11">{translate("commands.template_label")}</div>
                 <textarea
                   class="w-full min-h-40 rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-                  value={props.prompt}
-                  onInput={(e) => props.onPromptChange(e.currentTarget.value)}
-                  placeholder={translate("templates.prompt_placeholder")}
+                  value={props.template}
+                  onInput={(event) => props.onTemplateChange(event.currentTarget.value)}
+                  placeholder={translate("commands.template_placeholder")}
                 />
-                <div class="mt-1 text-xs text-gray-10">{translate("templates.prompt_hint")}</div>
+                <div class="mt-1 text-xs text-gray-10">{translate("commands.template_hint")}</div>
               </label>
             </div>
 

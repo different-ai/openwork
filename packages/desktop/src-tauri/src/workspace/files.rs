@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use crate::types::{WorkspaceOpenworkConfig, WorkspaceTemplate};
+use crate::types::{OpencodeCommand, WorkspaceOpenworkConfig};
 use crate::utils::now_ms;
-use crate::workspace::templates::serialize_template_frontmatter;
+use crate::workspace::commands::{sanitize_command_name, serialize_command_frontmatter};
 
 pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
   let mut out = existing;
@@ -13,26 +13,6 @@ pub fn merge_plugins(existing: Vec<String>, required: &[&str]) -> Vec<String> {
     }
   }
   out
-}
-
-pub fn sanitize_template_id(raw: &str) -> Option<String> {
-  let trimmed = raw.trim();
-  if trimmed.is_empty() {
-    return None;
-  }
-
-  let mut out = String::new();
-  for ch in trimmed.chars() {
-    if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
-      out.push(ch);
-    }
-  }
-
-  if out.is_empty() {
-    return None;
-  }
-
-  Some(out)
 }
 
 fn seed_workspace_guide(skill_root: &PathBuf) -> Result<(), String> {
@@ -98,9 +78,9 @@ End with two friendly next actions to try in OpenWork."#;
   Ok(())
 }
 
-fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
-  if fs::read_dir(templates_dir)
-    .map_err(|e| format!("Failed to read {}: {e}", templates_dir.display()))?
+fn seed_commands(commands_dir: &PathBuf) -> Result<(), String> {
+  if fs::read_dir(commands_dir)
+    .map_err(|e| format!("Failed to read {}: {e}", commands_dir.display()))?
     .next()
     .is_some()
   {
@@ -108,36 +88,39 @@ fn seed_templates(templates_dir: &PathBuf) -> Result<(), String> {
   }
 
   let defaults = vec![
-    WorkspaceTemplate {
-      id: "tmpl_interact_with_files".to_string(),
-      title: "Learn to interact with files".to_string(),
-      description: "Safe, practical file workflows".to_string(),
-      prompt: "Show me how to interact with files in this workspace. Include safe examples for reading, summarizing, and editing.".to_string(),
-      created_at: now_ms(),
+    OpencodeCommand {
+      name: "learn-files".to_string(),
+      description: Some("Safe, practical file workflows".to_string()),
+      template: "Show me how to interact with files in this workspace. Include safe examples for reading, summarizing, and editing.".to_string(),
+      agent: None,
+      model: None,
+      subtask: None,
     },
-    WorkspaceTemplate {
-      id: "tmpl_learn_skills".to_string(),
-      title: "Learn about skills".to_string(),
-      description: "How skills work and how to create your own".to_string(),
-      prompt: "Explain what skills are, how to use them, and how to create a new skill for this workspace.".to_string(),
-      created_at: now_ms(),
+    OpencodeCommand {
+      name: "learn-skills".to_string(),
+      description: Some("How skills work and how to create your own".to_string()),
+      template: "Explain what skills are, how to use them, and how to create a new skill for this workspace.".to_string(),
+      agent: None,
+      model: None,
+      subtask: None,
     },
-    WorkspaceTemplate {
-      id: "tmpl_learn_plugins".to_string(),
-      title: "Learn about plugins".to_string(),
-      description: "What plugins are and how to install them".to_string(),
-      prompt: "Explain what plugins are and how to install them in this workspace.".to_string(),
-      created_at: now_ms(),
+    OpencodeCommand {
+      name: "learn-plugins".to_string(),
+      description: Some("What plugins are and how to install them".to_string()),
+      template: "Explain what plugins are and how to install them in this workspace.".to_string(),
+      agent: None,
+      model: None,
+      subtask: None,
     },
   ];
 
-  for template in defaults {
-    let template_dir = templates_dir.join(&template.id);
-    fs::create_dir_all(&template_dir)
-      .map_err(|e| format!("Failed to create {}: {e}", template_dir.display()))?;
+  for command in defaults {
+    let Some(name) = sanitize_command_name(&command.name) else {
+      continue;
+    };
 
-    let file_path = template_dir.join("template.yml");
-    let serialized = serialize_template_frontmatter(&template)?;
+    let file_path = commands_dir.join(format!("{name}.md"));
+    let serialized = serialize_command_frontmatter(&command)?;
     fs::write(&file_path, serialized)
       .map_err(|e| format!("Failed to write {}: {e}", file_path.display()))?;
   }
@@ -153,10 +136,10 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
     .map_err(|e| format!("Failed to create .opencode/skills: {e}"))?;
   seed_workspace_guide(&skill_root)?;
 
-  let templates_dir = root.join(".openwork").join("templates");
-  fs::create_dir_all(&templates_dir)
-    .map_err(|e| format!("Failed to create .openwork/templates: {e}"))?;
-  seed_templates(&templates_dir)?;
+  let commands_dir = root.join(".opencode").join("commands");
+  fs::create_dir_all(&commands_dir)
+    .map_err(|e| format!("Failed to create .opencode/commands: {e}"))?;
+  seed_commands(&commands_dir)?;
 
   let config_path_jsonc = root.join("opencode.jsonc");
   let config_path_json = root.join("opencode.json");
