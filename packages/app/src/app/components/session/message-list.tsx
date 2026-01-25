@@ -183,32 +183,58 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  const getToolStatus = (part: Part) => {
+    if (part.type !== "tool") return null;
+    const state = (part as any).state ?? {};
+    return state.status as string | undefined;
+  };
+
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
-    <div class="space-y-3">
+    <div class="space-y-1.5">
       <For each={listProps.parts}>
         {(part) => {
           const summary = summarizeStep(part);
+          const status = getToolStatus(part);
+          const isCompleted = status === "completed";
+          const isError = status === "error";
+          const isRunning = status === "running";
+          const statusClass = summary.isSkill
+            ? "text-purple-10"
+            : isCompleted
+              ? "text-green-10"
+              : isError
+                ? "text-red-10"
+                : isRunning
+                  ? "text-blue-10"
+                  : "text-gray-10";
+
           return (
-            <div class="flex items-start gap-3 text-xs text-gray-11">
-              <div class={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center ${
-                summary.isSkill 
-                  ? "border-purple-7 bg-purple-3 text-purple-10" 
-                  : "border-gray-7 text-gray-10"
-              }`}>
-                {summary.isSkill ? <Sparkles size={12} /> : part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+            <div class="flex items-start gap-2 text-xs">
+              <div class={`flex-shrink-0 ${statusClass}`}>
+                {summary.isSkill ? (
+                  <Sparkles size={12} />
+                ) : isCompleted ? (
+                  <Check size={14} />
+                ) : isError ? (
+                  <Circle size={14} />
+                ) : isRunning ? (
+                  <Circle size={14} class="animate-pulse" />
+                ) : (
+                  <Circle size={14} />
+                )}
               </div>
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="text-gray-12">{summary.title}</span>
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="text-gray-12 font-medium">{summary.title}</span>
                   <Show when={summary.isSkill}>
                     <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
                       skill
                     </span>
                   </Show>
+                  <Show when={summary.detail}>
+                    <span class="text-gray-10 truncate max-w-[300px]">{summary.detail}</span>
+                  </Show>
                 </div>
-                <Show when={summary.detail}>
-                  <div class="mt-1 text-gray-10">{summary.detail}</div>
-                </Show>
                 <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
                   <div class="mt-2 text-xs text-gray-10">
                     <PartView

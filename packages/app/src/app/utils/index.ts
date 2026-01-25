@@ -466,44 +466,107 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  bash: "Bash",
+  read: "Read",
+  write: "Write",
+  edit: "Edit",
+  patch: "Patch",
+  multiedit: "MultiEdit",
+  grep: "Grep",
+  glob: "Glob",
+  task: "Task",
+  webfetch: "Fetch",
+  fetchurl: "Fetch",
+  websearch: "Search",
+  execute: "Execute",
+  create: "Create",
+  ls: "List",
+  list: "List",
+  skill: "Skill",
+  todowrite: "Todo",
+};
+
+function extractToolKeyParam(toolKey: string, input: Record<string, unknown>): string | null {
+  const paramPriority: Record<string, string[]> = {
+    webfetch: ["url"],
+    fetchurl: ["url"],
+    websearch: ["query"],
+    read: ["file_path", "path"],
+    write: ["file_path", "path"],
+    edit: ["file_path", "path"],
+    create: ["file_path", "path"],
+    grep: ["pattern", "query"],
+    glob: ["pattern", "patterns"],
+    bash: ["command"],
+    execute: ["command"],
+    ls: ["directory_path", "path"],
+    list: ["directory_path", "path"],
+  };
+
+  const keys = paramPriority[toolKey] ?? Object.keys(input).slice(0, 1);
+  for (const key of keys) {
+    const val = input[key];
+    if (typeof val === "string" && val.trim()) {
+      const trimmed = val.trim();
+      return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+    }
+    if (Array.isArray(val) && val.length > 0) {
+      const first = String(val[0]);
+      return first.length > 60 ? `${first.slice(0, 60)}…` : first;
+    }
+  }
+  return null;
+}
+
 export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
+    const toolKey = toolName.toLowerCase();
+    const label = TOOL_LABELS[toolKey] ?? toolName;
     const state = record.state ?? {};
-    const title = state.title ? String(state.title) : toolName;
-    const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
-    
-    // Detect skill trigger
-    if (toolName === "skill") {
-      const skillName = state.metadata?.name || title.replace(/^Loaded skill:\s*/i, "");
-      if (output) {
-        const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-        return { title, isSkill: true, skillName, detail: short };
-      }
-      return { title, isSkill: true, skillName };
+    const input = typeof state.input === "object" && state.input ? state.input : {};
+
+    if (toolKey === "skill") {
+      const title = state.title ? String(state.title) : toolName;
+      const rawName = state.metadata?.name ?? title.replace(/^Loaded skill:\s*/i, "");
+      const skillName = typeof rawName === "string" ? rawName.trim() : "";
+      return {
+        title: label,
+        detail: skillName || undefined,
+        isSkill: true,
+        skillName: skillName || undefined,
+      };
     }
-    
-    if (output) {
-      const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-      return { title, detail: short };
+
+    if (toolKey === "todowrite") {
+      return { title: label };
     }
-    return { title };
+
+    let keyParam = extractToolKeyParam(toolKey, input);
+
+    if (!keyParam && state.title) {
+      const titleStr =
+        typeof state.title === "string"
+          ? state.title
+          : typeof state.title === "object"
+            ? JSON.stringify(state.title).slice(0, 80)
+            : String(state.title);
+      const title = titleStr.trim();
+      keyParam = title.length > 80 ? `${title.slice(0, 80)}…` : title;
+    }
+
+    return { title: label, detail: keyParam ?? undefined };
   }
 
   if (part.type === "reasoning") {
-    const record = part as any;
-    const text = typeof record.text === "string" ? record.text.trim() : "";
-    if (!text) return { title: "Planning" };
-    const short = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    return { title: "Thinking", detail: short };
+    return { title: "Thinking" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
-    const reason = (part as any).reason;
     return {
       title: part.type === "step-start" ? "Step started" : "Step finished",
-      detail: reason ? String(reason) : undefined,
     };
   }
 
