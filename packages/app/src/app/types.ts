@@ -67,6 +67,28 @@ export type ComposerDraft = {
   text: string;
 };
 
+export type ContextItem = {
+  id: string;
+  path: string;
+  label: string;
+  startLine?: number;
+  endLine?: number;
+};
+
+export type FileTreeNode = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  ignored?: boolean;
+};
+
+export type FileStatusEntry = {
+  path: string;
+  status: "added" | "deleted" | "modified";
+  added?: number;
+  removed?: number;
+};
+
 export type ArtifactItem = {
   id: string;
   name: string;

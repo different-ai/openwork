@@ -1,11 +1,16 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { createStore, reconcile } from "solid-js/store";
 import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
+  ContextItem,
   DashboardTab,
   ComposerDraft,
+  ComposerPart,
   CommandRegistryItem,
   CommandTriggerContext,
+  FileStatusEntry,
+  FileTreeNode,
   MessageGroup,
   MessageWithParts,
   PendingPermission,
@@ -33,6 +38,8 @@ import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import SessionSidebar, { type SidebarSectionState } from "../components/session/sidebar";
 import ContextPanel from "../components/session/context-panel";
+import FileTree from "../components/session/file-tree";
+import FilePreviewModal from "../components/session/file-preview-modal";
 import FlyoutItem from "../components/flyout-item";
 
 export type SessionViewProps = {
@@ -101,6 +108,10 @@ export type SessionViewProps = {
   openCommandRunModal: (command: WorkspaceCommand) => void;
   commandRegistryItems: () => CommandRegistryItem[];
   registerCommand: (command: CommandRegistryItem) => () => void;
+  listFiles: (path: string) => Promise<FileTreeNode[]>;
+  readFile: (path: string) => Promise<{ content: string; size?: number | null } | null>;
+  getFileStatus: () => Promise<FileStatusEntry[]>;
+  findFiles: (query: string) => Promise<string[]>;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -112,10 +123,134 @@ export default function SessionView(props: SessionViewProps) {
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [contextItems, setContextItems] = createSignal<ContextItem[]>([]);
+  const [fileEntries, setFileEntries] = createStore<Record<string, FileTreeNode[]>>({});
+  const [fileExpanded, setFileExpanded] = createSignal(new Set<string>());
+  const [fileLoading, setFileLoading] = createSignal(new Set<string>());
+  const [fileStatusMap, setFileStatusMap] = createSignal<Record<string, FileStatusEntry>>({});
+  const [previewPath, setPreviewPath] = createSignal<string | null>(null);
+  const [previewContent, setPreviewContent] = createSignal<string | null>(null);
+  const [previewSize, setPreviewSize] = createSignal<number | null>(null);
+  const [previewLoading, setPreviewLoading] = createSignal(false);
+  const [previewError, setPreviewError] = createSignal<string | null>(null);
 
   const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
 
   const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
+
+  const workspaceRoot = createMemo(() => {
+    const directory = props.activeWorkspaceDisplay.directory ?? "";
+    if (directory.trim()) return directory.trim();
+    return props.activeWorkspaceDisplay.path ?? "";
+  });
+
+  const workspaceLabel = createMemo(() => {
+    return (
+      props.activeWorkspaceDisplay.displayName ??
+      props.activeWorkspaceDisplay.name ??
+      "Workspace"
+    );
+  });
+
+  const updateSet = (
+    setter: (value: Set<string>) => void,
+    current: Set<string>,
+    path: string,
+    enabled: boolean,
+  ) => {
+    const next = new Set(current);
+    if (enabled) {
+      next.add(path);
+    } else {
+      next.delete(path);
+    }
+    setter(next);
+  };
+
+  const loadDirectory = async (path: string) => {
+    if (!workspaceRoot().trim()) return;
+    updateSet(setFileLoading, fileLoading(), path, true);
+    try {
+      const entries = await props.listFiles(path);
+      setFileEntries(path, entries);
+    } catch {
+      // ignore
+    } finally {
+      updateSet(setFileLoading, fileLoading(), path, false);
+    }
+  };
+
+  const toggleDirectory = async (path: string) => {
+    const expanded = fileExpanded();
+    if (expanded.has(path)) {
+      updateSet(setFileExpanded, expanded, path, false);
+      return;
+    }
+    updateSet(setFileExpanded, expanded, path, true);
+    if (!fileEntries[path]) {
+      await loadDirectory(path);
+    }
+  };
+
+  const refreshFileStatus = async () => {
+    if (!workspaceRoot().trim()) return;
+    try {
+      const entries = await props.getFileStatus();
+      const next: Record<string, FileStatusEntry> = {};
+      for (const entry of entries) {
+        if (!entry.path) continue;
+        next[entry.path] = entry;
+      }
+      setFileStatusMap(next);
+    } catch {
+      // ignore
+    }
+  };
+
+  const openFilePreview = async (path: string) => {
+    setPreviewPath(path);
+    setPreviewContent(null);
+    setPreviewSize(null);
+    setPreviewError(null);
+    setPreviewLoading(true);
+    try {
+      const result = await props.readFile(path);
+      if (!result) {
+        setPreviewError("File unavailable");
+        return;
+      }
+      setPreviewContent(result.content ?? "");
+      setPreviewSize(result.size ?? null);
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "Failed to load file");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const closeFilePreview = () => {
+    setPreviewPath(null);
+    setPreviewContent(null);
+    setPreviewError(null);
+    setPreviewLoading(false);
+  };
+
+  const addContextItem = (path: string, startLine?: number, endLine?: number) => {
+    const label = startLine
+      ? `${path}:${startLine}${endLine ? `-${endLine}` : ""}`
+      : path;
+    const id = encodeURIComponent(`${path}:${startLine ?? ""}:${endLine ?? ""}`);
+    setContextItems((current) => {
+      if (current.some((item) => item.id === id)) return current;
+      return [...current, { id, path, label, startLine, endLine }];
+    });
+  };
+
+  const removeContextItem = (id: string) => {
+    setContextItems((current) => current.filter((item) => item.id !== id));
+  };
+
+  const clearContextItems = () => setContextItems([]);
 
   type Flyout = {
     id: string;
@@ -328,6 +463,39 @@ export default function SessionView(props: SessionViewProps) {
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
   });
+
+  createEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<string>).detail;
+      if (!detail || typeof detail !== "string") return;
+      addContextItem(detail);
+    };
+    window.addEventListener("openwork:addContextFile", handler);
+    onCleanup(() => window.removeEventListener("openwork:addContextFile", handler));
+  });
+
+  createEffect(() => {
+    const root = workspaceRoot().trim();
+    if (!root) return;
+    setFileEntries(reconcile({}));
+    setFileExpanded(new Set([""]));
+    void loadDirectory("");
+    void refreshFileStatus();
+    setPreviewPath(null);
+    setPreviewContent(null);
+    setPreviewError(null);
+  });
+
+  createEffect(
+    on(
+      () => props.sessionStatus,
+      (status, previous) => {
+        if (previous && previous !== "idle" && status === "idle") {
+          void refreshFileStatus();
+        }
+      },
+    ),
+  );
 
   createEffect(() => {
     const status = props.sessionStatus;
@@ -776,6 +944,30 @@ export default function SessionView(props: SessionViewProps) {
     window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
   };
 
+  const contextParts = createMemo<ComposerPart[]>(() =>
+    contextItems().map((item) => ({
+      type: "file",
+      path: item.path,
+      label: item.label,
+    })),
+  );
+
+  const mergeContextDraft = (draft: ComposerDraft) => {
+    if (!contextItems().length) return draft;
+    const existing = new Set(
+      draft.parts
+        .filter((part) => part.type === "file")
+        .map((part) => (part as { path?: string }).path ?? "")
+        .filter(Boolean),
+    );
+    const additions = contextParts().filter((part) => !existing.has(part.path));
+    if (!additions.length) return draft;
+    return {
+      ...draft,
+      parts: [...additions, ...draft.parts],
+    };
+  };
+
   const handleSendPrompt = (draft: ComposerDraft) => {
     const trimmed = draft.text.trim();
     if (draft.mode === "prompt" && trimmed.startsWith("/")) {
@@ -792,7 +984,7 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     startRun();
-    props.sendPromptAsync(draft).catch(() => undefined);
+    props.sendPromptAsync(mergeContextDraft(draft)).catch(() => undefined);
   };
 
   const handleDraftChange = (draft: ComposerDraft) => {
@@ -802,7 +994,11 @@ export default function SessionView(props: SessionViewProps) {
   const searchFiles = async (query: string) => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
-    return props.workingFiles.filter((file) => file.toLowerCase().includes(q));
+    try {
+      return await props.findFiles(q);
+    } catch {
+      return [];
+    }
   };
 
   return (
@@ -966,19 +1162,33 @@ export default function SessionView(props: SessionViewProps) {
           </div>
 
           <aside class="hidden lg:flex w-72 border-l border-gray-6 bg-gray-1 flex-col">
-            <ContextPanel
-              activePlugins={props.activePlugins}
-              activePluginStatus={props.activePluginStatus}
-              authorizedDirs={props.authorizedDirs}
-              workingFiles={props.workingFiles}
-              expanded={props.expandedSidebarSections.context}
-              onToggle={() =>
-                props.setExpandedSidebarSections((curr) => ({
-                  ...curr,
-                  context: !curr.context,
-                }))
-              }
-            />
+            <div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+              <FileTree
+                rootLabel={workspaceLabel()}
+                entries={fileEntries}
+                expanded={fileExpanded()}
+                loading={fileLoading()}
+                statusMap={fileStatusMap()}
+                onToggleDir={toggleDirectory}
+                onOpenFile={openFilePreview}
+              />
+              <ContextPanel
+                activePlugins={props.activePlugins}
+                activePluginStatus={props.activePluginStatus}
+                authorizedDirs={props.authorizedDirs}
+                workingFiles={props.workingFiles}
+                contextItems={contextItems()}
+                onRemoveContextItem={removeContextItem}
+                onClearContext={clearContextItems}
+                expanded={props.expandedSidebarSections.context}
+                onToggle={() =>
+                  props.setExpandedSidebarSections((curr) => ({
+                    ...curr,
+                    context: !curr.context,
+                  }))
+                }
+              />
+            </div>
           </aside>
         </div>
 
@@ -1000,6 +1210,17 @@ export default function SessionView(props: SessionViewProps) {
           recentFiles={props.workingFiles}
           searchFiles={searchFiles}
           isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+        />
+
+        <FilePreviewModal
+          open={Boolean(previewPath())}
+          path={previewPath()}
+          content={previewContent()}
+          size={previewSize()}
+          loading={previewLoading()}
+          error={previewError()}
+          onClose={closeFilePreview}
+          onAddContext={addContextItem}
         />
 
         <ProviderAuthModal

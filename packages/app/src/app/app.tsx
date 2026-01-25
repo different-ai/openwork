@@ -305,6 +305,8 @@ export default function App() {
   const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
   const [commandPaletteMode, setCommandPaletteMode] = createSignal<"command" | "file">("command");
   const [commandPaletteQuery, setCommandPaletteQuery] = createSignal("");
+  const [fileSearchResults, setFileSearchResults] = createSignal<string[]>([]);
+  const [fileSearchLoading, setFileSearchLoading] = createSignal(false);
   const [keybindOverrides, setKeybindOverrides] = createSignal<Record<string, string>>({});
   const [recentCommandIds, setRecentCommandIds] = createSignal<string[]>([]);
 
@@ -909,9 +911,67 @@ export default function App() {
     const separator = current.trim() && !current.endsWith(" ") ? " " : "";
     setPrompt(`${current}${separator}${file}`);
     window.dispatchEvent(new Event("openwork:focusPrompt"));
+    window.dispatchEvent(new CustomEvent("openwork:addContextFile", { detail: file }));
     const sessionId = activeSessionId();
     if (currentView() !== "session" && sessionId) {
       setView("session", sessionId);
+    }
+  };
+
+  const listFiles = async (path: string) => {
+    const c = client();
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    if (!c || !root) return [] as { name: string; path: string; type: "file" | "directory"; ignored?: boolean }[];
+    const target = path?.trim() || ".";
+    try {
+      const nodes = unwrap(await c.file.list({ directory: root, path: target }));
+      return nodes as typeof nodes;
+    } catch {
+      return [] as { name: string; path: string; type: "file" | "directory"; ignored?: boolean }[];
+    }
+  };
+
+  const readFile = async (path: string) => {
+    const c = client();
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    if (!c || !root) return null;
+    try {
+      const result = unwrap(await c.file.read({ directory: root, path }));
+      const content = result?.content ?? "";
+      const encoding = (result as { encoding?: string }).encoding;
+      if (encoding === "base64") {
+        return {
+          content: atob(content),
+          size: content.length,
+        };
+      }
+      return { content, size: content.length };
+    } catch {
+      return null;
+    }
+  };
+
+  const getFileStatus = async () => {
+    const c = client();
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    if (!c || !root) return [] as { path: string; status: "added" | "deleted" | "modified" }[];
+    try {
+      const status = unwrap(await c.file.status({ directory: root }));
+      return status as typeof status;
+    } catch {
+      return [] as { path: string; status: "added" | "deleted" | "modified" }[];
+    }
+  };
+
+  const findFiles = async (query: string) => {
+    const c = client();
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    if (!c || !root) return [] as string[];
+    try {
+      const result = unwrap(await c.find.files({ directory: root, query, type: "file", limit: 40 }));
+      return result as string[];
+    } catch {
+      return [] as string[];
     }
   };
 
@@ -950,13 +1010,38 @@ export default function App() {
   );
 
   const paletteFileItems = createMemo(() =>
-    activeWorkingFiles().map((file) => ({
+    (commandPaletteMode() === "file" && commandPaletteQuery().trim()
+      ? fileSearchResults()
+      : activeWorkingFiles()
+    ).map((file) => ({
       id: `file:${file}`,
       title: file,
-      description: "Working file",
+      description: commandPaletteMode() === "file" ? "Project file" : "Working file",
       onSelect: () => insertFileIntoPrompt(file),
     })),
   );
+
+  createEffect(() => {
+    if (!commandPaletteOpen() || commandPaletteMode() !== "file") {
+      setFileSearchResults([]);
+      setFileSearchLoading(false);
+      return;
+    }
+    const query = commandPaletteQuery().trim();
+    if (!query) {
+      setFileSearchResults([]);
+      setFileSearchLoading(false);
+      return;
+    }
+    setFileSearchLoading(true);
+    const timeout = window.setTimeout(() => {
+      findFiles(query)
+        .then((results) => setFileSearchResults(results))
+        .catch(() => setFileSearchResults([]))
+        .finally(() => setFileSearchLoading(false));
+    }, 150);
+    onCleanup(() => window.clearTimeout(timeout));
+  });
 
   const commandPaletteGroups = createMemo<PaletteGroup[]>(() => {
     const groups: PaletteGroup[] = [];
@@ -2725,6 +2810,10 @@ export default function App() {
     openCommandRunModal: openRunModal,
     commandRegistryItems,
     registerCommand: commandRegistry.registerCommand,
+    listFiles,
+    readFile,
+    getFileStatus,
+    findFiles,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);
