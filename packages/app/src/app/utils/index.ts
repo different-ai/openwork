@@ -487,66 +487,181 @@ const TOOL_LABELS: Record<string, string> = {
   todowrite: "Todo",
 };
 
-function extractToolKeyParam(toolKey: string, input: Record<string, unknown>): string | null {
-  const paramPriority: Record<string, string[]> = {
-    webfetch: ["url"],
-    fetchurl: ["url"],
-    websearch: ["query"],
-    read: ["file_path", "path"],
-    write: ["file_path", "path"],
-    edit: ["file_path", "path"],
-    create: ["file_path", "path"],
-    grep: ["pattern", "query"],
-    glob: ["pattern", "patterns"],
-    bash: ["command"],
-    execute: ["command"],
-    ls: ["directory_path", "path"],
-    list: ["directory_path", "path"],
-  };
+// Tools that should show GitHub icon (git operations)
+const GITHUB_TOOLS = new Set([
+  "git",
+  "gh",
+  "github",
+  "mcp_github",
+  "mcp-github",
+  "git_status",
+  "git_diff",
+  "git_log",
+  "git_commit",
+  "git_push",
+  "git_pull",
+  "create_pull_request",
+  "list_pull_requests",
+  "get_pull_request",
+  "create_issue",
+  "list_issues",
+  "get_issue",
+  "create_branch",
+  "list_branches",
+  "create_repository",
+]);
 
-  const keys = paramPriority[toolKey] ?? Object.keys(input).slice(0, 1);
-  for (const key of keys) {
-    const val = input[key];
-    if (typeof val === "string" && val.trim()) {
-      const trimmed = val.trim();
-      return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
-    }
-    if (Array.isArray(val) && val.length > 0) {
-      const first = String(val[0]);
-      return first.length > 60 ? `${first.slice(0, 60)}…` : first;
-    }
+// Shorten path to last N segments
+function shortenPath(path: string, segments = 3): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length <= segments) return path;
+  return parts.slice(-segments).join("/");
+}
+
+// Format file size or line count
+function formatReadInfo(input: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+
+  // Get file path (shortened)
+  const filePath = input.file_path ?? input.path;
+  if (typeof filePath === "string" && filePath.trim()) {
+    parts.push(shortenPath(filePath.trim()));
+  }
+
+  // Add line range info if present
+  const offset = input.offset ?? input.start_line;
+  const limit = input.limit ?? input.end_line ?? input.lines;
+  if (typeof offset === "number" || typeof limit === "number") {
+    const rangeInfo: string[] = [];
+    if (typeof offset === "number" && offset > 0) rangeInfo.push(`from L${offset}`);
+    if (typeof limit === "number") rangeInfo.push(`${limit} lines`);
+    if (rangeInfo.length) parts.push(`(${rangeInfo.join(", ")})`);
+  }
+
+  return parts.length ? parts.join(" ") : null;
+}
+
+// Format list directory info
+function formatListInfo(input: Record<string, unknown>): string | null {
+  const dirPath = input.directory_path ?? input.path ?? input.folder;
+  if (typeof dirPath === "string" && dirPath.trim()) {
+    return shortenPath(dirPath.trim());
   }
   return null;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string } {
+// Format search info (grep/glob)
+function formatSearchInfo(toolName: string, input: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+
+  // Pattern
+  const pattern = input.pattern ?? input.query ?? input.patterns;
+  if (typeof pattern === "string" && pattern.trim()) {
+    const p = pattern.trim();
+    parts.push(p.length > 30 ? `"${p.slice(0, 30)}…"` : `"${p}"`);
+  } else if (Array.isArray(pattern) && pattern.length > 0) {
+    const first = String(pattern[0]);
+    parts.push(first.length > 30 ? `"${first.slice(0, 30)}…"` : `"${first}"`);
+  }
+
+  // Path context
+  const path = input.path ?? input.folder ?? input.directory;
+  if (typeof path === "string" && path.trim()) {
+    parts.push(`in ${shortenPath(path.trim(), 2)}`);
+  }
+
+  // File type filter
+  const fileType = input.type ?? input.glob_pattern;
+  if (typeof fileType === "string" && fileType.trim()) {
+    parts.push(`(${fileType})`);
+  }
+
+  return parts.length ? parts.join(" ") : null;
+}
+
+// Format command/execute info
+function formatCommandInfo(input: Record<string, unknown>): string | null {
+  const cmd = input.command ?? input.cmd;
+  if (typeof cmd === "string" && cmd.trim()) {
+    const trimmed = cmd.trim();
+    // Show first line only, truncate if too long
+    const firstLine = trimmed.split("\n")[0];
+    return firstLine.length > 50 ? `${firstLine.slice(0, 50)}…` : firstLine;
+  }
+  return null;
+}
+
+export type StepSummary = {
+  title: string;
+  detail?: string;
+  icon?: "github" | "default";
+  isSkill?: boolean;
+  skillName?: string;
+};
+
+export function summarizeStep(part: Part): StepSummary {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
-    const toolKey = toolName.toLowerCase();
-    const label = TOOL_LABELS[toolKey] ?? toolName;
+    const toolLower = toolName.toLowerCase();
+    const label = TOOL_LABELS[toolLower] ?? toolName;
     const state = record.state ?? {};
     const input = typeof state.input === "object" && state.input ? state.input : {};
 
-    if (toolKey === "skill") {
+    const isGithubTool =
+      GITHUB_TOOLS.has(toolLower) ||
+      toolLower.includes("github") ||
+      toolLower.includes("git_") ||
+      toolLower.startsWith("gh_") ||
+      (toolLower === "execute" &&
+        typeof input.command === "string" &&
+        (input.command.startsWith("git ") || input.command.startsWith("gh ")));
+
+    if (toolLower === "skill") {
       const title = state.title ? String(state.title) : toolName;
       const rawName = state.metadata?.name ?? title.replace(/^Loaded skill:\s*/i, "");
       const skillName = typeof rawName === "string" ? rawName.trim() : "";
       return {
         title: label,
         detail: skillName || undefined,
+        icon: "default",
         isSkill: true,
         skillName: skillName || undefined,
       };
     }
 
-    if (toolKey === "todowrite") {
-      return { title: label };
+    if (toolLower === "todowrite") {
+      return { title: label, icon: isGithubTool ? "github" : "default" };
     }
 
-    let keyParam = extractToolKeyParam(toolKey, input);
+    let detail: string | null = null;
 
-    if (!keyParam && state.title) {
+    if (toolLower === "read") {
+      detail = formatReadInfo(input);
+    } else if (toolLower === "ls" || toolLower === "list") {
+      detail = formatListInfo(input);
+    } else if (["grep", "glob", "find"].includes(toolLower)) {
+      detail = formatSearchInfo(toolLower, input);
+    } else if (["bash", "execute", "shell"].includes(toolLower)) {
+      detail = formatCommandInfo(input);
+    } else if (["edit", "write", "create", "patch", "multiedit"].includes(toolLower)) {
+      const filePath = input.file_path ?? input.path;
+      if (typeof filePath === "string" && filePath.trim()) {
+        detail = shortenPath(filePath.trim());
+      }
+    } else if (["webfetch", "fetchurl", "websearch"].includes(toolLower)) {
+      const url = input.url;
+      const query = input.query;
+      if (typeof url === "string" && url.trim()) {
+        const u = url.trim();
+        detail = u.length > 50 ? `${u.slice(0, 50)}…` : u;
+      } else if (typeof query === "string" && query.trim()) {
+        const q = query.trim();
+        detail = q.length > 40 ? `"${q.slice(0, 40)}…"` : `"${q}"`;
+      }
+    }
+
+    if (!detail && state.title) {
       const titleStr =
         typeof state.title === "string"
           ? state.title
@@ -554,10 +669,14 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
             ? JSON.stringify(state.title).slice(0, 80)
             : String(state.title);
       const title = titleStr.trim();
-      keyParam = title.length > 80 ? `${title.slice(0, 80)}…` : title;
+      detail = title.length > 60 ? `${title.slice(0, 60)}…` : title;
     }
 
-    return { title: label, detail: keyParam ?? undefined };
+    return {
+      title: label,
+      detail: detail ?? undefined,
+      icon: isGithubTool ? "github" : "default",
+    };
   }
 
   if (part.type === "reasoning") {

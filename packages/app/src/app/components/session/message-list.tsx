@@ -1,10 +1,10 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File, Sparkles } from "lucide-solid";
+import { Check, ChevronDown, Circle, Copy, File, Github, Sparkles } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
-import { groupMessageParts, summarizeStep } from "../../utils";
+import { groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
 import PartView from "../part-view";
 
 export type MessageListProps = {
@@ -189,40 +189,61 @@ export default function MessageList(props: MessageListProps) {
     return state.status as string | undefined;
   };
 
+  const renderStepIcon = (summary: StepSummary, status: string | null | undefined) => {
+    const isCompleted = status === "completed";
+    const isError = status === "error";
+    const isRunning = status === "running";
+
+    if (summary.isSkill) {
+      const colorClass = isError
+        ? "text-red-10"
+        : isCompleted
+          ? "text-green-10"
+          : "text-purple-10";
+      return (
+        <div class={`flex-shrink-0 ${colorClass}`}>
+          <Sparkles size={12} class={isRunning ? "animate-pulse" : ""} />
+        </div>
+      );
+    }
+    
+    // GitHub icon for git-related operations
+    if (summary.icon === "github") {
+      return (
+        <div class={`flex-shrink-0 ${
+          isCompleted ? "text-green-10" : 
+          isError ? "text-red-10" : 
+          isRunning ? "text-blue-10" : "text-gray-10"
+        }`}>
+          <Github size={14} class={isRunning ? "animate-pulse" : ""} />
+        </div>
+      );
+    }
+    
+    // Default status icons
+    return (
+      <div class={`flex-shrink-0 ${
+        isCompleted ? "text-green-10" : 
+        isError ? "text-red-10" : 
+        isRunning ? "text-blue-10" : "text-gray-10"
+      }`}>
+        {isCompleted ? <Check size={14} /> : 
+         isError ? <Circle size={14} /> :
+         isRunning ? <Circle size={14} class="animate-pulse" /> :
+         <Circle size={14} />}
+      </div>
+    );
+  };
+
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
     <div class="space-y-1.5">
       <For each={listProps.parts}>
         {(part) => {
           const summary = summarizeStep(part);
           const status = getToolStatus(part);
-          const isCompleted = status === "completed";
-          const isError = status === "error";
-          const isRunning = status === "running";
-          const statusClass = summary.isSkill
-            ? "text-purple-10"
-            : isCompleted
-              ? "text-green-10"
-              : isError
-                ? "text-red-10"
-                : isRunning
-                  ? "text-blue-10"
-                  : "text-gray-10";
-
           return (
             <div class="flex items-start gap-2 text-xs">
-              <div class={`flex-shrink-0 ${statusClass}`}>
-                {summary.isSkill ? (
-                  <Sparkles size={12} />
-                ) : isCompleted ? (
-                  <Check size={14} />
-                ) : isError ? (
-                  <Circle size={14} />
-                ) : isRunning ? (
-                  <Circle size={14} class="animate-pulse" />
-                ) : (
-                  <Circle size={14} />
-                )}
-              </div>
+              {renderStepIcon(summary, status)}
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2 min-w-0">
                   <span class="text-gray-12 font-medium">{summary.title}</span>
