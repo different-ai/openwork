@@ -25,6 +25,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import ServerManagerModal from "./components/server-manager-modal";
 import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
@@ -98,6 +99,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
 import { createWorkspaceStore } from "./context/workspace";
+import { normalizeServerUrl, useServer } from "./context/server";
 import {
   updaterEnvironment,
   readOpencodeConfig,
@@ -215,6 +217,7 @@ export default function App() {
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+  const [serverManagerOpen, setServerManagerOpen] = createSignal(false);
 
   const sessionStore = createSessionStore({
     client,
@@ -263,6 +266,8 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
+  const server = useServer();
+
   const demoState = createDemoState({
     sessions,
     sessionStatusById,
@@ -289,6 +294,24 @@ export default function App() {
     selectDemoSession,
     renameDemoSession,
   } = demoState;
+
+  const normalizedBaseUrl = createMemo(() => normalizeServerUrl(baseUrl()) ?? "");
+
+  createEffect(() => {
+    const next = normalizedBaseUrl();
+    if (!next) return;
+    if (next !== server.url) {
+      server.add(next);
+    }
+  });
+
+  createEffect(() => {
+    const next = server.url;
+    if (!next) return;
+    if (normalizeServerUrl(baseUrl()) !== next) {
+      setBaseUrl(next);
+    }
+  });
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -727,6 +750,41 @@ export default function App() {
     setTab,
     isWindowsPlatform,
   });
+
+  const openServerManager = () => setServerManagerOpen(true);
+  const closeServerManager = () => setServerManagerOpen(false);
+
+  const connectToServer = async (url: string) => {
+    if (mode() !== "client") return;
+    const directory = clientDirectory().trim() || undefined;
+    await workspaceStore.connectToServer(url, directory, {
+      workspaceType: "remote",
+      targetRoot: directory ?? "",
+    });
+  };
+
+  const handleServerSelect = async (url: string) => {
+    const normalized = normalizeServerUrl(url);
+    if (!normalized) return;
+    server.setActive(normalized);
+    setBaseUrl(normalized);
+    await connectToServer(normalized);
+  };
+
+  const handleServerAdd = async (url: string) => {
+    const normalized = normalizeServerUrl(url);
+    if (!normalized) return;
+    server.add(normalized);
+    setBaseUrl(normalized);
+    await connectToServer(normalized);
+  };
+
+  const handleServerReconnect = async () => {
+    if (mode() !== "client") return;
+    const target = normalizeServerUrl(server.url);
+    if (!target) return;
+    await connectToServer(target);
+  };
 
   const commandState = createCommandState({
     client,
@@ -2079,6 +2137,7 @@ export default function App() {
     newTaskDisabled: newTaskDisabled(),
     headerStatus: headerStatus(),
     error: error(),
+    openServerManager,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     workspaceSearch: workspaceStore.workspaceSearch(),
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
@@ -2404,6 +2463,21 @@ export default function App() {
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
         onClose={() => setModelPickerOpen(false)}
+      />
+
+      <ServerManagerModal
+        open={serverManagerOpen()}
+        servers={server.list}
+        activeUrl={server.url}
+        healthy={server.healthy()}
+        version={server.version()}
+        busy={busy()}
+        mode={mode()}
+        onClose={closeServerManager}
+        onAdd={handleServerAdd}
+        onRemove={server.remove}
+        onSetActive={handleServerSelect}
+        onReconnect={handleServerReconnect}
       />
 
       <ResetModal

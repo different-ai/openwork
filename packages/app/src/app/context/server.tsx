@@ -18,6 +18,7 @@ type ServerContextValue = {
   name: string;
   list: string[];
   healthy: () => boolean | undefined;
+  version: () => string | null;
   setActive: (url: string) => void;
   add: (url: string) => void;
   remove: (url: string) => void;
@@ -29,6 +30,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
   const [list, setList] = createSignal<string[]>([]);
   const [active, setActiveRaw] = createSignal("");
   const [healthy, setHealthy] = createSignal<boolean | undefined>(undefined);
+  const [version, setVersion] = createSignal<string | null>(null);
   const [ready, setReady] = createSignal(false);
 
   const readStoredList = () => {
@@ -88,8 +90,8 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     });
     return client.global
       .health()
-      .then((result) => result.data?.healthy === true)
-      .catch(() => false);
+      .then((result) => result.data ?? null)
+      .catch(() => null);
   };
 
   createEffect(() => {
@@ -97,6 +99,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     if (!url) return;
 
     setHealthy(undefined);
+    setVersion(null);
 
     let activeRun = true;
     let busy = false;
@@ -107,7 +110,13 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       void checkHealth(url)
         .then((next) => {
           if (!activeRun) return;
-          setHealthy(next);
+          if (!next) {
+            setHealthy(false);
+            setVersion(null);
+            return;
+          }
+          setHealthy(next.healthy === true);
+          setVersion(typeof next.version === "string" ? next.version : null);
         })
         .finally(() => {
           busy = false;
@@ -163,6 +172,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       return list();
     },
     healthy,
+    version,
     setActive,
     add,
     remove,

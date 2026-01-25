@@ -12,6 +12,7 @@ export type SettingsViewProps = {
   busy: boolean;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
+  openServerManager: () => void;
   stopHost: () => void;
   engineSource: "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
@@ -107,6 +108,9 @@ export default function SettingsView(props: SettingsViewProps) {
         <div class="text-xs text-gray-10">{props.headerStatus}</div>
         <div class="text-xs text-gray-7 font-mono">{props.baseUrl}</div>
         <div class="pt-2 flex flex-wrap gap-2">
+          <Button variant="outline" onClick={props.openServerManager}>
+            Manage servers
+          </Button>
           <Button variant="secondary" onClick={props.toggleDeveloperMode}>
             <Shield size={16} />
             {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}

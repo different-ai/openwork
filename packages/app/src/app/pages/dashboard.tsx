@@ -44,6 +44,7 @@ export type DashboardViewProps = {
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
+  openServerManager: () => void;
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaceSearch: string;
   setWorkspaceSearch: (value: string) => void;
@@ -767,6 +768,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   busy={props.busy}
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}
+                  openServerManager={props.openServerManager}
                   stopHost={props.stopHost}
                   engineSource={props.engineSource}
                   setEngineSource={props.setEngineSource}
