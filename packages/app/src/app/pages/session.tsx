@@ -3,6 +3,7 @@ import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
+  ComposerDraft,
   MessageGroup,
   MessageWithParts,
   PendingPermission,
@@ -42,7 +43,7 @@ export type SessionViewProps = {
   headerStatus: string;
   busyHint: string | null;
   createSessionAndOpen: () => void;
-  sendPromptAsync: () => Promise<void>;
+  sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   newTaskDisabled: boolean;
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
@@ -67,7 +68,6 @@ export type SessionViewProps = {
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
-  sendPrompt: () => Promise<void>;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
   activePermission: PendingPermission | null;
@@ -539,6 +539,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "models",
       description: "Choose a model",
+      needsArgs: false,
       run: () => {
         props.openSessionModelPicker();
         clearPrompt();
@@ -547,6 +548,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "connect",
       description: "Connect a provider",
+      needsArgs: false,
       run: async () => {
         try {
           await props.openProviderAuthModal();
@@ -561,6 +563,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "new",
       description: "Start a new task",
+      needsArgs: false,
       run: () => {
         props.createSessionAndOpen();
         clearPrompt();
@@ -569,6 +572,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "agent",
       description: "Choose an agent",
+      needsArgs: false,
       run: async () => {
         const sessionId = requireSessionId();
         if (!sessionId) return;
@@ -626,6 +630,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "export",
       description: "Export session JSON",
+      needsArgs: false,
       run: async () => {
         const sessionId = requireSessionId();
         if (!sessionId) return;
@@ -643,6 +648,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "rename",
       description: "Rename this session",
+      needsArgs: false,
       run: () => {
         openRenameModal();
         clearPrompt();
@@ -651,6 +657,7 @@ export default function SessionView(props: SessionViewProps) {
     {
       id: "help",
       description: "Show available commands",
+      needsArgs: false,
       run: () => {
         const preview = buildHelpPreview();
         setCommandToast(preview ? `Commands: ${preview}` : "No commands available");
@@ -666,6 +673,7 @@ export default function SessionView(props: SessionViewProps) {
       .map((command) => ({
         id: command.name,
         description: command.description || "Run a saved command",
+        needsArgs: commandNeedsDetails(command),
         run: () => runOpenCodeCommand(command),
       }));
   });
@@ -688,17 +696,38 @@ export default function SessionView(props: SessionViewProps) {
      }
   };
 
-  const handleSendPrompt = () => {
-    if (props.prompt.trim().startsWith("/")) {
+  const handleInsertCommand = (commandId: string) => {
+    props.setPrompt(`/${commandId} `);
+    window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+  };
+
+  const handleSendPrompt = (draft: ComposerDraft) => {
+    const trimmed = draft.text.trim();
+    if (draft.mode === "prompt" && trimmed.startsWith("/")) {
       const active = commandMatches()[0];
       if (active) {
-        active.run();
+        const args = extractCommandArgs(trimmed);
+        if (active.needsArgs && !args) {
+          handleInsertCommand(active.id);
+        } else {
+          active.run();
+        }
       }
       return;
     }
 
     startRun();
-    props.sendPromptAsync().catch(() => undefined);
+    props.sendPromptAsync(draft).catch(() => undefined);
+  };
+
+  const handleDraftChange = (draft: ComposerDraft) => {
+    props.setPrompt(draft.text);
+  };
+
+  const searchFiles = async (query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    return props.workingFiles.filter((file) => file.toLowerCase().includes(q));
   };
 
   return (
@@ -878,18 +907,24 @@ export default function SessionView(props: SessionViewProps) {
           </aside>
         </div>
 
-        <Composer 
-           prompt={props.prompt}
-           setPrompt={props.setPrompt}
-           busy={props.busy}
-           onSend={handleSendPrompt}
-           commandMatches={commandMatches()}
-           onRunCommand={handleRunCommand}
-           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-           onModelClick={props.openSessionModelPicker}
-           showNotionBanner={props.showTryNotionPrompt}
-           onNotionBannerClick={props.onTryNotionPrompt}
-           toast={commandToast()}
+        <Composer
+          prompt={props.prompt}
+          busy={props.busy}
+          onSend={handleSendPrompt}
+          onDraftChange={handleDraftChange}
+          commandMatches={commandMatches()}
+          onRunCommand={handleRunCommand}
+          onInsertCommand={handleInsertCommand}
+          selectedModelLabel={props.selectedSessionModelLabel || "Model"}
+          onModelClick={props.openSessionModelPicker}
+          showNotionBanner={props.showTryNotionPrompt}
+          onNotionBannerClick={props.onTryNotionPrompt}
+          toast={commandToast()}
+          onToast={(message) => setCommandToast(message)}
+          listAgents={props.listAgents}
+          recentFiles={props.workingFiles}
+          searchFiles={searchFiles}
+          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         />
 
         <ProviderAuthModal
