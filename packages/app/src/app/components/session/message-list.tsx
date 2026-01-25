@@ -1,10 +1,10 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File, Github, Sparkles } from "lucide-solid";
+import { Check, ChevronDown, Circle, Clock, Copy, File, Github, Sparkles } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
-import { groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
+import { formatElapsedTime, groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
 import PartView from "../part-view";
 
 export type MessageListProps = {
@@ -445,9 +445,27 @@ export default function MessageList(props: MessageListProps) {
                   )}
                 </For>
                 <Show when={!block.isUser}>
-                  <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
-                    {copyButton}
-                  </div>
+                  {(() => {
+                    const info = block.message.info as any;
+                    const created = info?.time?.created;
+                    const completed = info?.time?.completed;
+                    const duration = created && completed ? completed - created : null;
+                    
+                    return (
+                      <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
+                        <Show when={duration && duration > 0}>
+                          <div class="flex items-center gap-1.5 opacity-60">
+                            <Clock size={12} />
+                            <span>{formatElapsedTime(duration!)}</span>
+                          </div>
+                        </Show>
+                        <div class="flex-1" />
+                        <div class="opacity-0 group-hover:opacity-100 transition-opacity">
+                          {copyButton}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Show>
               </div>
             </div>
