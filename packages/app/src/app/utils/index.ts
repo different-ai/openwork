@@ -411,7 +411,8 @@ export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | 
 }
 
 export function isStepPart(part: Part) {
-  return part.type === "reasoning" || part.type === "tool" || part.type === "step-start" || part.type === "step-finish";
+  // Only count reasoning and tool as real steps, ignore step-start/step-finish markers
+  return part.type === "reasoning" || part.type === "tool";
 }
 
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
@@ -660,12 +661,6 @@ export function summarizeStep(part: Part): StepSummary {
 
   if (part.type === "reasoning") {
     return { title: "Thinking" };
-  }
-
-  if (part.type === "step-start" || part.type === "step-finish") {
-    return {
-      title: part.type === "step-start" ? "Step started" : "Step finished",
-    };
   }
 
   return { title: "Step" };
