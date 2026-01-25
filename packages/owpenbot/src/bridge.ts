@@ -83,8 +83,24 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   );
   store.prunePairingRequests();
 
+  logger.debug(
+    {
+      configPath: config.configPath,
+      opencodeUrl: config.opencodeUrl,
+      opencodeDirectory: config.opencodeDirectory,
+      telegramEnabled: config.telegramEnabled,
+      telegramTokenPresent: Boolean(config.telegramToken),
+      whatsappEnabled: config.whatsappEnabled,
+      groupsEnabled: config.groupsEnabled,
+      permissionMode: config.permissionMode,
+      toolUpdatesEnabled: config.toolUpdatesEnabled,
+    },
+    "bridge config",
+  );
+
   const adapters = new Map<ChannelName, Adapter>();
   if (config.telegramEnabled && config.telegramToken) {
+    logger.debug("telegram adapter enabled");
     adapters.set("telegram", createTelegramAdapter(config, logger, handleInbound));
   } else {
     logger.info("telegram adapter disabled");
@@ -92,6 +108,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   }
 
   if (config.whatsappEnabled) {
+    logger.debug("whatsapp adapter enabled");
     adapters.set(
       "whatsapp",
       createWhatsAppAdapter(config, logger, handleInbound, { printQr: true, onStatus: reportStatus }),
@@ -306,6 +323,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     const adapter = adapters.get(channel);
     if (!adapter) return;
     const kind = options.kind ?? "system";
+    logger.debug({ channel, peerId, kind, length: text.length }, "sendText requested");
     if (options.display !== false) {
       reporter?.onOutbound?.({ channel, peerId, text, kind });
     }
@@ -320,6 +338,16 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     const adapter = adapters.get(message.channel);
     if (!adapter) return;
     let inbound = message;
+    logger.debug(
+      {
+        channel: inbound.channel,
+        peerId: inbound.peerId,
+        fromMe: inbound.fromMe,
+        length: inbound.text.length,
+        preview: truncateText(inbound.text.trim(), 120),
+      },
+      "inbound received",
+    );
     logger.info(
       { channel: inbound.channel, peerId: inbound.peerId, length: inbound.text.length },
       "received message",
@@ -333,6 +361,10 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       const allowAll = config.whatsappDmPolicy === "open" || config.whatsappAllowFrom.has("*");
       const isSelf = Boolean(inbound.fromMe && config.whatsappSelfChatMode);
       const allowed = allowAll || isSelf || store.isAllowed("whatsapp", peerKey);
+      logger.debug(
+        { allowAll, isSelf, allowed, dmPolicy: config.whatsappDmPolicy, peerKey },
+        "whatsapp allowlist check",
+      );
       if (!allowed) {
         if (config.whatsappDmPolicy === "allowlist") {
           await sendText(
@@ -371,6 +403,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       }
     } else if (config.allowlist[inbound.channel].size > 0) {
       if (!store.isAllowed(inbound.channel, peerKey)) {
+        logger.debug({ channel: inbound.channel, peerKey }, "telegram allowlist denied");
         await sendText(inbound.channel, inbound.peerId, "Access denied.", { kind: "system" });
         return;
       }
@@ -385,6 +418,15 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
     const session = store.getSession(inbound.channel, peerKey);
     const sessionID = session?.session_id ?? (await createSession({ ...inbound, peerId: peerKey }));
+    logger.debug(
+      {
+        sessionID,
+        channel: inbound.channel,
+        peerId: inbound.peerId,
+        reused: Boolean(session?.session_id),
+      },
+      "session resolved",
+    );
 
     enqueue(sessionID, async () => {
       const runState: RunState = {
@@ -398,11 +440,21 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       reportThinking(runState);
       startTyping(runState);
       try {
+        logger.debug({ sessionID, length: inbound.text.length }, "prompt start");
         const response = await client.session.prompt({
           sessionID,
           parts: [{ type: "text", text: inbound.text }],
         });
         const parts = (response as { parts?: Array<{ type?: string; text?: string; ignored?: boolean }> }).parts ?? [];
+        const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
+        logger.debug(
+          {
+            sessionID,
+            partCount: parts.length,
+            textCount: textParts.length,
+          },
+          "prompt response",
+        );
         const reply = parts
           .filter((part) => part.type === "text" && !part.ignored)
           .map((part) => part.text ?? "")
@@ -410,8 +462,10 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           .trim();
 
         if (reply) {
+          logger.debug({ sessionID, replyLength: reply.length }, "reply built");
           await sendText(inbound.channel, inbound.peerId, reply, { kind: "reply" });
         } else {
+          logger.debug({ sessionID }, "reply empty");
           await sendText(inbound.channel, inbound.peerId, "No response generated. Try again.", {
             kind: "system",
           });
