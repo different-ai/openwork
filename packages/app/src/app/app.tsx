@@ -352,6 +352,18 @@ export default function App() {
     const sessionID = selectedSessionId();
     if (!c || !sessionID) return;
 
+    if (developerMode()) {
+      console.log("[prompt] send", {
+        sessionID,
+        baseUrl: baseUrl(),
+        serverUrl: server.url,
+        clientDirectory: clientDirectory(),
+        activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+        activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot(),
+        mode: mode(),
+      });
+    }
+
     if (!activeSessionReady() && !optionsOverride?.skipQueue) {
       setQueuedPrompt({ sessionId: sessionID, text: content });
       return;
@@ -1948,9 +1960,19 @@ export default function App() {
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
         mark("creating session");
-        rawResult = await c.session.create({
-          directory: workspaceStore.activeWorkspaceRoot().trim(),
-        });
+        const modeValue = mode();
+        const activeInfo = workspaceStore.workspaces().find((ws) => ws.id === workspaceStore.activeWorkspaceId()) ?? null;
+        const fallbackDirectory = workspaceStore.activeWorkspaceRoot().trim();
+        const preferredDirectory =
+          modeValue === "client"
+            ? clientDirectory().trim() || (activeInfo?.workspaceType === "remote" ? activeInfo.directory?.trim() ?? "" : "")
+            : fallbackDirectory;
+        const createPayload: { directory?: string } = {};
+        if (preferredDirectory) {
+          createPayload.directory = preferredDirectory;
+        }
+        mark("session.create payload", createPayload);
+        rawResult = await c.session.create(createPayload);
         mark("session created");
       } catch (createErr) {
         mark("session create error", createErr);
