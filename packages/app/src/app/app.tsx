@@ -434,6 +434,23 @@ export default function App() {
     }
   }
 
+  async function cancelRun() {
+    const c = client();
+    const sessionID = selectedSessionId();
+    if (!c || !sessionID) return;
+
+    try {
+      await c.session.abort({ sessionID });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(message);
+    } finally {
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+    }
+  }
+
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -2848,6 +2865,7 @@ export default function App() {
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
+    cancelRun: cancelRun,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
     respondPermission: respondPermission,

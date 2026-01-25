@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowRight, AtSign, ChevronDown, File, Paperclip, X, Zap } from "lucide-solid";
+import { ArrowRight, AtSign, ChevronDown, File, Paperclip, Square, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode } from "../../types";
 
@@ -28,6 +28,7 @@ type ComposerProps = {
   busy: boolean;
   onSend: (draft: ComposerDraft) => void;
   onDraftChange: (draft: ComposerDraft) => void;
+  onCancel: () => void;
   commandMatches: CommandItem[];
   onRunCommand: (commandId: string) => void;
   onInsertCommand: (commandId: string) => void;
@@ -1146,14 +1147,27 @@ export default function Composer(props: ComposerProps) {
                         <Paperclip size={16} />
                       </button>
 
-                      <button
-                        disabled={!props.prompt.trim() && !attachments().length}
-                        onClick={sendDraft}
-                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
-                        title="Run"
+                      <Show
+                        when={props.busy}
+                        fallback={
+                          <button
+                            disabled={!props.prompt.trim() && !attachments().length}
+                            onClick={sendDraft}
+                            class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
+                            title="Run"
+                          >
+                            <ArrowRight size={18} />
+                          </button>
+                        }
                       >
-                        <ArrowRight size={18} />
-                      </button>
+                        <button
+                          onClick={props.onCancel}
+                          class="p-2 bg-red-9 text-white rounded-xl hover:bg-red-10 hover:scale-105 active:scale-95 transition-all shadow-lg shrink-0 flex items-center justify-center"
+                          title="Stop"
+                        >
+                          <Square size={16} fill="currentColor" />
+                        </button>
+                      </Show>
                     </div>
                   </div>
                 </div>
