@@ -71,6 +71,7 @@ export type SessionViewProps = {
   prompt: string;
   setPrompt: (value: string) => void;
   selectedSessionModelLabel: string;
+  modelSelectionRequired: boolean;
   openSessionModelPicker: () => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
@@ -791,6 +792,12 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
+    if (props.modelSelectionRequired) {
+      setCommandToast("Select a model before sending a prompt.");
+      props.openSessionModelPicker();
+      return;
+    }
+
     startRun();
     props.sendPromptAsync(draft).catch(() => undefined);
   };
@@ -992,6 +999,7 @@ export default function SessionView(props: SessionViewProps) {
           onInsertCommand={handleInsertCommand}
           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
           onModelClick={props.openSessionModelPicker}
+          modelSelectionRequired={props.modelSelectionRequired}
           showNotionBanner={props.showTryNotionPrompt}
           onNotionBannerClick={props.onTryNotionPrompt}
           toast={commandToast()}

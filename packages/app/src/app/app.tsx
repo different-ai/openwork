@@ -1342,8 +1342,14 @@ export default function App() {
     return sessionAgentById()[id] ?? null;
   });
 
+  const modelSelectionRequired = createMemo(() =>
+    !isDemoMode() && workspaceDefaultModelReady() && !defaultModelExplicit()
+  );
+
   const selectedSessionModelLabel = createMemo(() =>
-    formatModelLabel(selectedSessionModel(), providers())
+    modelSelectionRequired()
+      ? "Select a model"
+      : formatModelLabel(selectedSessionModel(), providers())
   );
 
   const modelPickerCurrent = createMemo(() =>
@@ -1354,15 +1360,41 @@ export default function App() {
     const allProviders = providers();
     const defaults = providerDefaults();
     const currentDefault = defaultModel();
+    const locale = currentLocale();
+    type ProviderModel = NonNullable<Provider["models"]>[string];
+
+    const formatCost = (value: number) =>
+      new Intl.NumberFormat(locale, { maximumFractionDigits: 4 }).format(value);
+
+    const extractMetadata = (model: ProviderModel) => {
+      const metadata: string[] = [];
+      const input = model.cost?.input;
+      const output = model.cost?.output;
+      if (typeof input === "number" && typeof output === "number") {
+        metadata.push(`$${formatCost(input)} in · $${formatCost(output)} out`);
+      }
+
+      const contextWindow = (model as { context?: number; contextWindow?: number; maxTokens?: number }).context
+        ?? (model as { contextWindow?: number }).contextWindow
+        ?? (model as { maxTokens?: number }).maxTokens;
+
+      if (typeof contextWindow === "number" && Number.isFinite(contextWindow)) {
+        metadata.push(`${Math.round(contextWindow).toLocaleString(locale)} ctx`);
+      }
+
+      return metadata;
+    };
 
     if (!allProviders.length) {
       return [
         {
           providerID: DEFAULT_MODEL.providerID,
           modelID: DEFAULT_MODEL.modelID,
+          providerName: DEFAULT_MODEL.providerID,
           title: DEFAULT_MODEL.modelID,
           description: DEFAULT_MODEL.providerID,
           footer: t("settings.model_fallback", currentLocale()),
+          tags: [t("settings.model_fallback", currentLocale())],
           isFree: true,
           isConnected: false,
         },
@@ -1380,6 +1412,7 @@ export default function App() {
 
     for (const provider of sortedProviders) {
       const defaultModelID = defaults[provider.id];
+      const providerName = provider.name ?? provider.id;
       const isConnected = providerConnectedIds().includes(provider.id);
       const models = Object.values(provider.models ?? {}).filter(
         (m) => m.status !== "deprecated"
@@ -1397,32 +1430,54 @@ export default function App() {
         const isDefault =
           provider.id === currentDefault.providerID && model.id === currentDefault.modelID;
         const footerBits: string[] = [];
+        const tags = new Set<string>();
         if (defaultModelID === model.id || isDefault) {
-          footerBits.push(t("settings.model_default", currentLocale()));
+          const tag = t("settings.model_default", locale);
+          footerBits.push(tag);
+          tags.add(tag);
         }
-        if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
-        if (model.capabilities?.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
+        if (isFree) {
+          const tag = t("settings.model_free", locale);
+          footerBits.push(tag);
+          tags.add(tag);
+        }
+        if (model.capabilities?.reasoning) {
+          const tag = t("settings.model_reasoning", locale);
+          footerBits.push(tag);
+          tags.add(tag);
+        }
+        if (!isConnected) {
+          tags.add("Needs auth");
+        }
+
+        const modelTags = (model as { tags?: string[] }).tags;
+        if (Array.isArray(modelTags)) {
+          for (const tag of modelTags) {
+            if (typeof tag === "string" && tag.trim()) {
+              tags.add(tag.trim());
+            }
+          }
+        }
+
+        const modelDescription = (model as { description?: string }).description;
 
         next.push({
           providerID: provider.id,
           modelID: model.id,
+          providerName,
           title: model.name ?? model.id,
-          description: provider.name,
+          description: modelDescription,
           footer: footerBits.length
             ? footerBits.slice(0, 2).join(" · ")
             : undefined,
           disabled: !isConnected,
+          tags: tags.size ? Array.from(tags) : undefined,
+          metadata: extractMetadata(model),
           isFree,
           isConnected,
         });
       }
     }
-
-    next.sort((a, b) => {
-      if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
-      if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
-      return a.title.localeCompare(b.title);
-    });
 
     return next;
   });
@@ -1437,6 +1492,9 @@ export default function App() {
         opt.title,
         opt.description ?? "",
         opt.footer ?? "",
+        opt.providerName,
+        ...(opt.tags ?? []),
+        ...(opt.metadata ?? []),
         `${opt.providerID}/${opt.modelID}`,
         opt.isConnected ? "connected" : "disconnected",
         opt.isFree ? "free" : "paid",
@@ -2671,6 +2729,7 @@ export default function App() {
     headerStatus: headerStatus(),
     busyHint: busyHint(),
     selectedSessionModelLabel: selectedSessionModelLabel(),
+    modelSelectionRequired: modelSelectionRequired(),
     openSessionModelPicker: openSessionModelPicker,
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
@@ -2853,6 +2912,11 @@ export default function App() {
         setQuery={setModelPickerQuery}
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
+        providers={providers()}
+        connectedProviderIds={providerConnectedIds()}
+        modelVariant={modelVariant()}
+        setModelVariant={setModelVariant}
+        onConnectProvider={startProviderAuth}
         onSelect={applyModelSelection}
         onClose={() => setModelPickerOpen(false)}
       />

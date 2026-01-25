@@ -33,6 +33,7 @@ type ComposerProps = {
   onInsertCommand: (commandId: string) => void;
   selectedModelLabel: string;
   onModelClick: () => void;
+  modelSelectionRequired: boolean;
   showNotionBanner: boolean;
   onNotionBannerClick: () => void;
   toast: string | null;
@@ -621,6 +622,11 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
+      if (props.modelSelectionRequired) {
+        props.onToast("Select a model before sending a prompt.");
+        props.onModelClick();
+        return;
+      }
       if (!editorRef) return;
       const parts = buildPartsFromEditor(editorRef);
       const text = normalizeText(partsToText(parts));
@@ -951,8 +957,13 @@ export default function Composer(props: ComposerProps) {
                   </button>
 
                   <button
-                    disabled={!props.prompt.trim() && !attachments().length}
+                    disabled={props.modelSelectionRequired || (!props.prompt.trim() && !attachments().length)}
                     onClick={() => {
+                      if (props.modelSelectionRequired) {
+                        props.onToast("Select a model before sending a prompt.");
+                        props.onModelClick();
+                        return;
+                      }
                       if (!editorRef) return;
                       const parts = buildPartsFromEditor(editorRef);
                       const text = normalizeText(partsToText(parts));
@@ -961,7 +972,7 @@ export default function Composer(props: ComposerProps) {
                       props.onSend(draft);
                     }}
                     class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
-                    title="Run"
+                    title={props.modelSelectionRequired ? "Select a model" : "Run"}
                   >
                     <ArrowRight size={18} />
                   </button>

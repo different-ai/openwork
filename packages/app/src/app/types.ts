@@ -212,10 +212,13 @@ export type ModelRef = {
 export type ModelOption = {
   providerID: string;
   modelID: string;
+  providerName: string;
   title: string;
   description?: string;
   footer?: string;
   disabled?: boolean;
+  tags?: string[];
+  metadata?: string[];
   isFree: boolean;
   isConnected: boolean;
 };
