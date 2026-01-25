@@ -2271,6 +2271,9 @@ export default function App() {
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
+    commands: commands(),
+    runCommand: runCommand,
+    openCommandRunModal: openRunModal,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);
