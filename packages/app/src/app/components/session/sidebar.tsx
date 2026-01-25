@@ -1,5 +1,5 @@
 import { For, Show, createMemo } from "solid-js";
-import { Check, ChevronDown, Plus } from "lucide-solid";
+import { Check, ChevronDown, Loader2, Plus } from "lucide-solid";
 
 import type { TodoItem } from "../../types";
 
@@ -25,6 +25,7 @@ export type SidebarProps = {
   selectedSessionId: string | null;
   onSelectSession: (workspaceId: string, sessionId: string) => void;
   sessionStatusById: Record<string, string>;
+  sessionLoadState: Record<string, "idle" | "loading" | "ready" | "error">;
   onCreateSession: () => void;
   newTaskDisabled: boolean;
 };
@@ -95,6 +96,9 @@ export default function SessionSidebar(props: SidebarProps) {
                           }`}
                         />
                       </span>
+                    </Show>
+                    <Show when={props.sessionLoadState[session.id] === "loading"}>
+                      <Loader2 class="h-3 w-3 text-gray-8 animate-spin" />
                     </Show>
                   </div>
                 </button>

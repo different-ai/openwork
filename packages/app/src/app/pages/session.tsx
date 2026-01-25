@@ -55,6 +55,10 @@ export type SessionViewProps = {
   selectSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
   todos: TodoItem[];
+  sessionLoadState: Record<string, "idle" | "loading" | "ready" | "error">;
+  activeSessionLoadState: "idle" | "loading" | "ready" | "error";
+  sessionReady: boolean;
+  queuedPrompt: boolean;
   busyLabel: string | null;
   developerMode: boolean;
   showThinking: boolean;
@@ -740,6 +744,10 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
+    if (!props.sessionReady) {
+      props.sendPromptAsync().catch(() => undefined);
+      return;
+    }
     startRun();
     props.sendPromptAsync().catch(() => undefined);
   };
@@ -794,12 +802,18 @@ export default function SessionView(props: SessionViewProps) {
                  <span class="text-[10px] text-gray-8 font-mono">v{props.serverVersion}</span>
                </Show>
              </Button>
-             <Show when={props.developerMode}>
-               <span class="text-xs text-gray-7">{props.headerStatus}</span>
-             </Show>
-             <Show when={props.busyHint}>
-               <span class="text-xs text-gray-10">· {props.busyHint}</span>
-             </Show>
+              <Show when={props.developerMode}>
+                <span class="text-xs text-gray-7">{props.headerStatus}</span>
+              </Show>
+              <Show when={props.activeSessionLoadState === "loading"}>
+                <span class="text-xs text-gray-9 flex items-center gap-1">
+                  <span class="h-1.5 w-1.5 rounded-full bg-gray-7 animate-pulse" />
+                  Loading session...
+                </span>
+              </Show>
+              <Show when={props.busyHint}>
+                <span class="text-xs text-gray-10">· {props.busyHint}</span>
+              </Show>
 
           </div>
         </header>
@@ -820,12 +834,13 @@ export default function SessionView(props: SessionViewProps) {
                  onToggleSection={(section) => {
                    props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
                  }}
-                 sessionEntries={props.sessionEntries}
-                 activeWorkspaceId={props.activeWorkspaceId}
-                 selectedSessionId={props.selectedSessionId}
-                 onSelectSession={async (workspaceId, id) => {
-                   await props.selectSession(workspaceId, id);
-                   props.setView("session", id);
+                  sessionEntries={props.sessionEntries}
+                  activeWorkspaceId={props.activeWorkspaceId}
+                  selectedSessionId={props.selectedSessionId}
+                  sessionLoadState={props.sessionLoadState}
+                  onSelectSession={async (workspaceId, id) => {
+                    await props.selectSession(workspaceId, id);
+                    props.setView("session", id);
                    props.setTab("sessions");
                  }}
                  sessionStatusById={props.sessionStatusById}
@@ -937,6 +952,8 @@ export default function SessionView(props: SessionViewProps) {
            prompt={props.prompt}
            setPrompt={props.setPrompt}
            busy={props.busy}
+           sessionReady={props.sessionReady}
+           queuedPrompt={props.queuedPrompt}
            onSend={handleSendPrompt}
            commandMatches={commandMatches()}
            onRunCommand={handleRunCommand}

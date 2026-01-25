@@ -250,6 +250,7 @@ export default function App() {
   const {
     sessions,
     sessionStatusById,
+    sessionLoadState,
     selectedSession,
     selectedSessionStatus,
     messages,
@@ -319,9 +320,26 @@ export default function App() {
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
+  const [queuedPrompt, setQueuedPrompt] = createSignal<{ sessionId: string; text: string } | null>(null);
 
-  async function sendPrompt() {
-    const content = prompt().trim();
+  const activeSessionLoadState = createMemo(() => {
+    if (isDemoMode()) return "ready" as const;
+    const id = activeSessionId();
+    if (!id) return "idle" as const;
+    return sessionLoadState()[id] ?? "idle";
+  });
+
+  const activeSessionReady = createMemo(() => activeSessionLoadState() === "ready");
+  const queuedPromptActive = createMemo(() => {
+    const queued = queuedPrompt();
+    return Boolean(queued && queued.sessionId === selectedSessionId());
+  });
+
+  async function sendPrompt(
+    override?: string,
+    optionsOverride?: { skipQueue?: boolean }
+  ) {
+    const content = (override ?? prompt()).trim();
     if (!content) return;
 
     if (isDemoMode()) {
@@ -333,6 +351,15 @@ export default function App() {
     const c = client();
     const sessionID = selectedSessionId();
     if (!c || !sessionID) return;
+
+    if (!activeSessionReady() && !optionsOverride?.skipQueue) {
+      setQueuedPrompt({ sessionId: sessionID, text: content });
+      return;
+    }
+
+    if (queuedPrompt()?.sessionId === sessionID) {
+      setQueuedPrompt(null);
+    }
 
     setBusy(true);
     setBusyLabel("status.running");
@@ -376,6 +403,15 @@ export default function App() {
       setBusyStartedAt(null);
     }
   }
+
+  createEffect(() => {
+    const queued = queuedPrompt();
+    if (!queued) return;
+    if (queued.sessionId !== selectedSessionId()) return;
+    if (!activeSessionReady() || busy()) return;
+    setQueuedPrompt(null);
+    void sendPrompt(queued.text, { skipQueue: true });
+  });
 
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
@@ -2658,6 +2694,10 @@ export default function App() {
     selectSession: selectSessionForWorkspace,
     messages: activeMessages(),
     todos: activeTodos(),
+    sessionLoadState: sessionLoadState(),
+    activeSessionLoadState: activeSessionLoadState(),
+    sessionReady: activeSessionReady(),
+    queuedPrompt: queuedPromptActive(),
     busyLabel: busyLabel(),
     developerMode: developerMode(),
     showThinking: showThinking(),

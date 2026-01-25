@@ -32,9 +32,12 @@ export type SessionModelState = {
 
 export type SessionStore = ReturnType<typeof createSessionStore>;
 
+type SessionLoadState = "idle" | "loading" | "ready" | "error";
+
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
+  sessionLoadState: Record<string, SessionLoadState>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
   todos: Record<string, TodoItem[]>;
@@ -118,6 +121,7 @@ export function createSessionStore(options: {
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
     sessionStatus: {},
+    sessionLoadState: {},
     messages: {},
     parts: {},
     todos: {},
@@ -126,6 +130,7 @@ export function createSessionStore(options: {
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const reloadDetectionSet = new Set<string>();
+  const sessionLoadSeq = new Map<string, number>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.json\b/i;
@@ -192,6 +197,7 @@ export function createSessionStore(options: {
 
   const sessions = () => store.sessions;
   const sessionStatusById = () => store.sessionStatus;
+  const sessionLoadState = () => store.sessionLoadState;
   const pendingPermissions = () => store.pendingPermissions;
   const events = () => store.events;
 
@@ -278,6 +284,13 @@ export function createSessionStore(options: {
     const c = options.client();
     if (!c) return;
 
+    const seq = (sessionLoadSeq.get(sessionID) ?? 0) + 1;
+    sessionLoadSeq.set(sessionID, seq);
+    const setLoadState = (state: SessionLoadState) => {
+      if (sessionLoadSeq.get(sessionID) !== seq) return;
+      setStore("sessionLoadState", sessionID, state);
+    };
+
     const runId = (() => {
       const key = "__openwork_select_session_run__";
       const w = window as typeof window & { [key]?: number };
@@ -292,6 +305,7 @@ export function createSessionStore(options: {
     mark("start");
     options.setSelectedSessionId(sessionID);
     options.setError(null);
+    setLoadState("loading");
 
     mark("checking health");
     try {
@@ -299,17 +313,27 @@ export function createSessionStore(options: {
       mark("health ok");
     } catch {
       mark("health FAILED");
+      setLoadState("error");
       throw new Error("Server connection lost. Please reload.");
     }
 
     mark("calling session.messages");
-    const msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12000, "session.messages"));
+    let msgs: MessageWithParts[];
+    try {
+      msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12000, "session.messages"));
+    } catch (error) {
+      mark("session.messages FAILED");
+      setLoadState("error");
+      throw error;
+    }
     mark("session.messages done");
     if (options.selectedSessionId() !== sessionID) {
       mark("aborting: selection changed before messages applied");
+      setLoadState("idle");
       return;
     }
     setMessagesForSession(sessionID, msgs);
+    setLoadState("ready");
 
     const model = options.lastUserModelFromMessages(msgs);
     if (model) {
@@ -665,6 +689,7 @@ export function createSessionStore(options: {
   return {
     sessions,
     sessionStatusById,
+    sessionLoadState,
     selectedSession,
     selectedSessionStatus,
     messages,

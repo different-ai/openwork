@@ -10,6 +10,8 @@ export type ComposerProps = {
   prompt: string;
   setPrompt: (value: string) => void;
   busy: boolean;
+  sessionReady: boolean;
+  queuedPrompt: boolean;
   onSend: () => void;
   commandMatches: CommandItem[];
   onRunCommand: (commandId: string) => void;
@@ -25,7 +27,7 @@ export default function Composer(props: ComposerProps) {
   const [commandIndex, setCommandIndex] = createSignal(0);
 
   const commandMenuOpen = createMemo(() => {
-    return props.prompt.startsWith("/") && !props.busy;
+    return props.prompt.startsWith("/") && !props.busy && props.sessionReady;
   });
 
   const syncHeight = () => {
@@ -192,7 +194,7 @@ export default function Composer(props: ComposerProps) {
                 />
 
                 <button
-                  disabled={!props.prompt.trim() || props.busy}
+                  disabled={!props.prompt.trim() || props.busy || !props.sessionReady}
                   onClick={props.onSend}
                   class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
                   title="Run"
@@ -200,6 +202,11 @@ export default function Composer(props: ComposerProps) {
                   <ArrowRight size={18} />
                 </button>
               </div>
+              <Show when={!props.sessionReady || props.queuedPrompt}>
+                <div class="mt-2 text-[11px] text-gray-9">
+                  {props.queuedPrompt ? "Queued to send when ready" : "Loading session..."}
+                </div>
+              </Show>
             </div>
           </div>
         </div>
