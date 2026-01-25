@@ -16,7 +16,7 @@ It’s a native desktop app that runs **OpenCode** under the hood, but presents 
 - start a run
 - watch progress + plan updates
 - approve permissions when needed
-- reuse what works (templates + skills)
+- reuse what works (commands + skills)
 
 The goal: make “agentic work” feel like a product, not a terminal.
 
@@ -51,9 +51,9 @@ OpenWork is designed to be:
 - **Permissions**: surface permission requests and reply (allow once / always / deny).
 - **Templates**: save and re-run common workflows (stored locally).
 - **Skills manager**:
-  - list installed `.opencode/skill` folders
+  - list installed `.opencode/skills` folders
   - install from OpenPackage (`opkg install ...`)
-  - import a local skill folder into `.opencode/skill/<skill-name>`
+  - import a local skill folder into `.opencode/skills/<skill-name>`
  
 
 ## Skill Manager    
@@ -91,6 +91,12 @@ pnpm dev
 
 ```bash
 pnpm dev:ui
+```
+
+### Arch Users:
+
+```bash
+yay -s opencode # Releases version
 ```
 
 ## Architecture (high-level)
@@ -150,6 +156,7 @@ pnpm test:e2e
 ## Troubleshooting
 
 ### Linux / Wayland (Hyprland)
+
 If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
 
 ```bash
@@ -170,7 +177,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 - Review `AGENTS.md` and `MOTIVATIONS-PHILOSOPHY.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
-- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skill/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+- Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## License
 

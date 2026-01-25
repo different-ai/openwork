@@ -79,8 +79,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    // Host/Tauri mode: read directly from `.opencode/skill(s)` so the UI still works
-    // even if the OpenCode engine is stopped or unreachable.
+    // Host/Tauri mode: read directly from `.opencode/skills` or `.claude/skills`
+    // so the UI still works even if the OpenCode engine is stopped or unreachable.
     if (options.mode() === "host" && isTauriRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
@@ -432,8 +432,9 @@ export function createExtensionsStore(options: {
 
     try {
       const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      const plural = await join(root, ".opencode", "skills");
-      const singular = await join(root, ".opencode", "skill");
+      const opencodeSkills = await join(root, ".opencode", "skills");
+      const claudeSkills = await join(root, ".claude", "skills");
+      const legacySkills = await join(root, ".opencode", "skill");
 
       const tryOpen = async (target: string) => {
         try {
@@ -445,9 +446,10 @@ export function createExtensionsStore(options: {
       };
 
       // Prefer opening the folder. `revealItemInDir` expects a file path on macOS.
-      if (await tryOpen(plural)) return;
-      if (await tryOpen(singular)) return;
-      await revealItemInDir(singular);
+      if (await tryOpen(opencodeSkills)) return;
+      if (await tryOpen(claudeSkills)) return;
+      if (await tryOpen(legacySkills)) return;
+      await revealItemInDir(opencodeSkills);
     } catch (e) {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.reveal_failed"));
     }

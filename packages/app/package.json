@@ -1,7 +1,7 @@
 {
   "name": "@different-ai/openwork-ui",
   "private": true,
-  "version": "0.3.6",
+  "version": "0.3.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -29,6 +29,7 @@
     "@radix-ui/colors": "^3.0.0",
     "@solid-primitives/event-bus": "^1.1.2",
     "@solid-primitives/storage": "^4.3.3",
+    "@solidjs/router": "^0.15.4",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "~2.6.0",
     "@tauri-apps/plugin-opener": "^2.5.3",

@@ -37,7 +37,7 @@ pub fn import_skill(project_dir: String, source_dir: String, overwrite: bool) ->
 
   let dest = std::path::PathBuf::from(&project_dir)
     .join(".opencode")
-    .join("skill")
+    .join("skills")
     .join(name);
 
   if dest.exists() {

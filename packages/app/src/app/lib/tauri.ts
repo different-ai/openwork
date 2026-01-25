@@ -110,13 +110,13 @@ export async function workspaceAddAuthorizedRoot(input: {
   });
 }
 
-export type WorkspaceTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  createdAt: number;
-  scope?: "workspace" | "global";
+export type OpencodeCommandDraft = {
+  name: string;
+  description?: string;
+  template: string;
+  agent?: string;
+  model?: string;
+  subtask?: boolean;
 };
 
 export type WorkspaceOpenworkConfig = {
@@ -147,23 +147,37 @@ export async function workspaceOpenworkWrite(input: {
   });
 }
 
-export async function workspaceTemplateWrite(input: {
-  workspacePath: string;
-  template: WorkspaceTemplate;
-}): Promise<ExecResult> {
-  return invoke<ExecResult>("workspace_template_write", {
-    workspacePath: input.workspacePath,
-    template: input.template,
+export async function opencodeCommandList(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+}): Promise<string[]> {
+  return invoke<string[]>("opencode_command_list", {
+    scope: input.scope,
+    projectDir: input.projectDir,
   });
 }
 
-export async function workspaceTemplateDelete(input: {
-  workspacePath: string;
-  templateId: string;
+export async function opencodeCommandWrite(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+  command: OpencodeCommandDraft;
 }): Promise<ExecResult> {
-  return invoke<ExecResult>("workspace_template_delete", {
-    workspacePath: input.workspacePath,
-    templateId: input.templateId,
+  return invoke<ExecResult>("opencode_command_write", {
+    scope: input.scope,
+    projectDir: input.projectDir,
+    command: input.command,
+  });
+}
+
+export async function opencodeCommandDelete(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+  name: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("opencode_command_delete", {
+    scope: input.scope,
+    projectDir: input.projectDir,
+    name: input.name,
   });
 }
 

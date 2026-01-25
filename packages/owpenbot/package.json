@@ -1,6 +1,6 @@
 {
   "name": "owpenwork",
-  "version": "0.1.2",
+  "version": "0.1.16",
   "description": "WhatsApp bridge for a running OpenCode server",
   "private": false,
   "type": "module",
@@ -35,9 +35,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "setup": "node scripts/setup.mjs",
     "test:unit": "pnpm build && node --test test/*.test.js",
-    "test:smoke": "node scripts/smoke.mjs"
+    "test:smoke": "node scripts/smoke.mjs",
+    "test:cli": "pnpm build && node scripts/test-cli.mjs",
+    "test:npx": "node scripts/test-npx.mjs"
   },
   "dependencies": {
+    "@clack/prompts": "^0.11.0",
     "@opencode-ai/sdk": "^1.1.19",
     "@whiskeysockets/baileys": "7.0.0-rc.9",
     "better-sqlite3": "^11.7.0",

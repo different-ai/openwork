@@ -64,7 +64,7 @@ export type Mode = "host" | "client";
 
 export type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
-export type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "mcp" | "settings";
+export type DashboardTab = "home" | "sessions" | "commands" | "skills" | "plugins" | "mcp" | "settings";
 
 export type DemoSequence = "cold-open" | "scheduler" | "summaries" | "groceries";
 
@@ -72,8 +72,19 @@ export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type ResetOpenworkMode = "onboarding" | "all";
 
-export type WorkspaceTemplate = Template & {
-  scope: "workspace" | "global";
+export type CommandScope = "workspace" | "global" | "unknown";
+
+export type CommandDefinition = {
+  name: string;
+  description?: string;
+  template: string;
+  agent?: string;
+  model?: string;
+  subtask?: boolean;
+};
+
+export type WorkspaceCommand = CommandDefinition & {
+  scope: CommandScope;
 };
 
 export type WorkspaceOpenworkConfig = {
@@ -84,14 +95,6 @@ export type WorkspaceOpenworkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
-};
-
-export type Template = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  createdAt: number;
 };
 
 export type SkillCard = {
@@ -193,10 +196,9 @@ export type PluginState = {
   list: string[];
 };
 
-export type TemplateState = {
-  items: WorkspaceTemplate[];
-  workspaceLoaded: boolean;
-  globalLoaded: boolean;
+export type CommandState = {
+  items: WorkspaceCommand[];
+  loaded: boolean;
 };
 
 export type WorkspaceDisplay = WorkspaceInfo & {

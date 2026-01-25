@@ -16,6 +16,8 @@ export type DmPolicy = "pairing" | "allowlist" | "open" | "disabled";
 
 export type OwpenbotConfigFile = {
   version: number;
+  opencodeUrl?: string;
+  opencodeDirectory?: string;
   channels?: {
     whatsapp?: {
       dmPolicy?: DmPolicy;
@@ -28,6 +30,10 @@ export type OwpenbotConfigFile = {
           sendReadReceipts?: boolean;
         }
       >;
+    };
+    telegram?: {
+      token?: string;
+      enabled?: boolean;
     };
   };
 };
@@ -49,6 +55,7 @@ export type Config = {
   whatsappEnabled: boolean;
   dataDir: string;
   dbPath: string;
+  logFile: string;
   allowlist: Record<ChannelName, Set<string>>;
   toolUpdatesEnabled: boolean;
   groupsEnabled: boolean;
@@ -176,16 +183,17 @@ export function loadConfig(
   options: { requireOpencode?: boolean } = {},
 ): Config {
   const requireOpencode = options.requireOpencode ?? false;
-  const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() ?? "";
+
+  const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? "~/.owpenbot");
+  const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
+  const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
+  const configPath = resolveConfigPath(dataDir, env);
+  const { config: configFile } = readConfigFile(configPath);
+  const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory || "";
   if (!opencodeDirectory && requireOpencode) {
     throw new Error("OPENCODE_DIRECTORY is required");
   }
   const resolvedDirectory = opencodeDirectory || process.cwd();
-
-  const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? "~/.owpenbot");
-  const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
-  const configPath = resolveConfigPath(dataDir, env);
-  const { config: configFile } = readConfigFile(configPath);
   const whatsappFile = configFile.channels?.whatsapp ?? {};
   const whatsappAccountId = env.WHATSAPP_ACCOUNT_ID?.trim() || "default";
   const accountAuthDir = whatsappFile.accounts?.[whatsappAccountId]?.authDir;
@@ -208,15 +216,20 @@ export function loadConfig(
   const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
   const permissionMode = env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
 
+  const telegramToken = env.TELEGRAM_BOT_TOKEN?.trim() || configFile.channels?.telegram?.token || undefined;
+
   return {
     configPath,
     configFile,
-    opencodeUrl: env.OPENCODE_URL?.trim() ?? "http://127.0.0.1:4096",
+    opencodeUrl: env.OPENCODE_URL?.trim() || configFile.opencodeUrl || "http://127.0.0.1:4096",
     opencodeDirectory: resolvedDirectory,
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodePassword: env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
-    telegramToken: env.TELEGRAM_BOT_TOKEN?.trim() || undefined,
-    telegramEnabled: parseBoolean(env.TELEGRAM_ENABLED, Boolean(env.TELEGRAM_BOT_TOKEN?.trim())),
+    telegramToken,
+    telegramEnabled: parseBoolean(
+      env.TELEGRAM_ENABLED,
+      configFile.channels?.telegram?.enabled ?? Boolean(telegramToken),
+    ),
     whatsappAuthDir,
     whatsappAccountId,
     whatsappDmPolicy: dmPolicy,
@@ -225,6 +238,7 @@ export function loadConfig(
     whatsappEnabled: parseBoolean(env.WHATSAPP_ENABLED, true),
     dataDir,
     dbPath,
+    logFile,
     allowlist: envAllowlist,
     toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
     groupsEnabled: parseBoolean(env.GROUPS_ENABLED, false),

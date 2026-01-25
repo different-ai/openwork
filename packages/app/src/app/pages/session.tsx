@@ -8,6 +8,7 @@ import type {
   PendingPermission,
   TodoItem,
   View,
+  WorkspaceCommand,
   WorkspaceDisplay,
 } from "../types";
 
@@ -24,17 +25,16 @@ import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
 import WorkspaceChip from "../components/workspace-chip";
 import ProviderAuthModal from "../components/provider-auth-modal";
-import { isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import MessageList from "../components/session/message-list";
-import Composer, { type CommandItem } from "../components/session/composer";
+import Composer from "../components/session/composer";
 import SessionSidebar, { type SidebarSectionState } from "../components/session/sidebar";
-import Minimap from "../components/session/minimap";
+import ContextPanel from "../components/session/context-panel";
 import FlyoutItem from "../components/flyout-item";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
-  setView: (view: View) => void;
+  setView: (view: View, sessionId?: string) => void;
   setTab: (tab: DashboardTab) => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   setWorkspaceSearch: (value: string) => void;
@@ -94,18 +94,24 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  commands: WorkspaceCommand[];
+  runCommand: (command: WorkspaceCommand, details?: string) => Promise<void>;
+  openCommandRunModal: (command: WorkspaceCommand) => void;
 };
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
 
-  const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
   const [commandToast, setCommandToast] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+
+  const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
+
+  const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
 
   type Flyout = {
     id: string;
@@ -116,7 +122,6 @@ export default function SessionView(props: SessionViewProps) {
   };
   const [flyouts, setFlyouts] = createSignal<Flyout[]>([]);
   const [prevTodoCount, setPrevTodoCount] = createSignal(0);
-  const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
   const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
@@ -127,8 +132,6 @@ export default function SessionView(props: SessionViewProps) {
     partCount: 0,
   });
   const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
-  
-  const pendingArtifactRafIds = new Set<number>();
 
   const lastAssistantSnapshot = createMemo(() => {
     for (let i = props.messages.length - 1; i >= 0; i -= 1) {
@@ -406,31 +409,6 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    const artifacts = props.artifacts;
-    const count = artifacts.length;
-    const prev = prevArtifactCount();
-    if (count > prev && prev > 0) {
-      const last = artifacts[artifacts.length - 1];
-      const scheduleAttempt = (attempts: number) => {
-        const rafId = requestAnimationFrame(() => {
-          pendingArtifactRafIds.delete(rafId);
-          const card = document.querySelector(`[data-artifact-id="${last.id}"]`);
-          if (card) {
-            triggerFlyout(card, "sidebar-artifacts", last.name, "file");
-            return;
-          }
-          if (attempts > 0) {
-            scheduleAttempt(attempts - 1);
-          }
-        });
-        pendingArtifactRafIds.add(rafId);
-      };
-      scheduleAttempt(3);
-    }
-    setPrevArtifactCount(count);
-  });
-  
-  createEffect(() => {
      const files = props.workingFiles;
      const count = files.length;
      const prev = prevFileCount();
@@ -442,59 +420,10 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    if (!artifactToast()) return;
-    const id = window.setTimeout(() => setArtifactToast(null), 3000);
-    return () => window.clearTimeout(id);
-  });
-
-  createEffect(() => {
     if (!commandToast()) return;
     const id = window.setTimeout(() => setCommandToast(null), 2400);
     return () => window.clearTimeout(id);
   });
-
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
-
-  const resolveArtifactPath = (artifact: ArtifactItem) => {
-    const rawPath = artifact.path?.trim();
-    if (!rawPath) return null;
-    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\/)/.test(rawPath)) {
-      return rawPath;
-    }
-
-    const root = props.activeWorkspaceDisplay.path?.trim();
-    if (!root) return rawPath;
-
-    const separator = root.includes("\\") ? "\\" : "/";
-    const trimmedRoot = root.replace(/[\\/]+$/, "");
-    const trimmedPath = rawPath.replace(/^[\\/]+/, "");
-    return `${trimmedRoot}${separator}${trimmedPath}`;
-  };
-
-  const handleOpenArtifact = async (artifact: ArtifactItem) => {
-    const resolvedPath = resolveArtifactPath(artifact);
-    if (!resolvedPath) {
-      setArtifactToast("Artifact path missing.");
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setArtifactToast("Open is only available in the desktop app.");
-      return;
-    }
-
-    try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      if (isWindowsPlatform()) {
-        await openPath(resolvedPath);
-      } else {
-        await revealItemInDir(resolvedPath);
-      }
-      setArtifactToast(artifactActionToast());
-    } catch (error) {
-      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
-    }
-  };
 
   const selectedSessionTitle = createMemo(() => {
     const id = props.selectedSessionId;
@@ -581,7 +510,32 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const commandList = createMemo(() => [
+  const runOpenCodeCommand = (command: WorkspaceCommand) => {
+    const details = extractCommandArgs(props.prompt);
+
+    if (details) {
+      void props.runCommand(command, details);
+      clearPrompt();
+      return;
+    }
+
+    if (commandNeedsDetails(command)) {
+      props.openCommandRunModal(command);
+      clearPrompt();
+      return;
+    }
+
+    void props.runCommand(command);
+    clearPrompt();
+  };
+
+  const buildHelpPreview = () => {
+    const builtIn = builtInCommands().map((command) => `/${command.id}`);
+    const extra = opencodeCommands().map((command) => `/${command.id}`);
+    return formatListHint([...builtIn, ...extra]);
+  };
+
+  const builtInCommands = () => [
     {
       id: "models",
       description: "Choose a model",
@@ -698,11 +652,25 @@ export default function SessionView(props: SessionViewProps) {
       id: "help",
       description: "Show available commands",
       run: () => {
-        setCommandToast("Commands: /models, /connect, /new, /agent, /export, /rename, /help");
+        const preview = buildHelpPreview();
+        setCommandToast(preview ? `Commands: ${preview}` : "No commands available");
         clearPrompt();
       },
     },
-  ]);
+  ];
+
+  const opencodeCommands = createMemo(() => {
+    const reserved = new Set(builtInCommands().map((command) => command.id));
+    return props.commands
+      .filter((command) => !reserved.has(command.name))
+      .map((command) => ({
+        id: command.name,
+        description: command.description || "Run a saved command",
+        run: () => runOpenCodeCommand(command),
+      }));
+  });
+
+  const commandList = createMemo(() => [...builtInCommands(), ...opencodeCommands()]);
 
   const commandMatches = createMemo(() => {
     const value = props.prompt;
@@ -721,6 +689,14 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleSendPrompt = () => {
+    if (props.prompt.trim().startsWith("/")) {
+      const active = commandMatches()[0];
+      if (active) {
+        active.run();
+      }
+      return;
+    }
+
     startRun();
     props.sendPromptAsync().catch(() => undefined);
   };
@@ -734,8 +710,8 @@ export default function SessionView(props: SessionViewProps) {
             <div class="text-lg font-medium">No session selected</div>
             <Button
               onClick={() => {
-                props.setView("dashboard");
                 props.setTab("sessions");
+                props.setView("dashboard");
               }}
             >
               Back to dashboard
@@ -751,8 +727,8 @@ export default function SessionView(props: SessionViewProps) {
               variant="ghost"
               class="!p-2 rounded-full"
               onClick={() => {
-                props.setView("dashboard");
                 props.setTab("sessions");
+                props.setView("dashboard");
               }}
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
@@ -786,23 +762,17 @@ export default function SessionView(props: SessionViewProps) {
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
              <SessionSidebar
                todos={props.todos}
-               artifacts={props.artifacts}
-               activePlugins={props.activePlugins}
-               activePluginStatus={props.activePluginStatus}
-               authorizedDirs={props.authorizedDirs}
-               workingFiles={props.workingFiles}
                expandedSections={props.expandedSidebarSections}
                onToggleSection={(section) => {
                  props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
                }}
-               onOpenArtifact={handleOpenArtifact}
                sessions={props.sessions}
                selectedSessionId={props.selectedSessionId}
-               onSelectSession={async (id) => {
-                 await props.selectSession(id);
-                 props.setView("session");
-                 props.setTab("sessions");
-               }}
+                onSelectSession={async (id) => {
+                  await props.selectSession(id);
+                  props.setView("session", id);
+                  props.setTab("sessions");
+                }}
                sessionStatusById={props.sessionStatusById}
                onCreateSession={props.createSessionAndOpen}
                newTaskDisabled={props.newTaskDisabled}
@@ -810,21 +780,9 @@ export default function SessionView(props: SessionViewProps) {
           </aside>
 
           <div
-            class="flex-1 overflow-y-auto pt-6 md:pt-10 scroll-smooth relative no-scrollbar"
+            class="flex-1 overflow-y-auto pt-6 md:pt-10 scroll-smooth relative"
             ref={(el) => (chatContainerEl = el)}
           >
-            <style>
-              {`
-                .no-scrollbar::-webkit-scrollbar {
-                  display: none;
-                }
-                .no-scrollbar {
-                  -ms-overflow-style: none;
-                  scrollbar-width: none;
-                }
-              `}
-            </style>
-            
             <Show when={props.messages.length === 0}>
               <div class="text-center py-20 space-y-4">
                 <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
@@ -839,12 +797,10 @@ export default function SessionView(props: SessionViewProps) {
 
             <MessageList 
               messages={props.messages}
-              artifacts={props.artifacts}
               developerMode={props.developerMode}
               showThinking={props.showThinking}
               expandedStepIds={props.expandedStepIds}
               setExpandedStepIds={props.setExpandedStepIds}
-              onOpenArtifact={handleOpenArtifact}
               footer={
                 showRunIndicator() ? (
                   <div class="flex justify-start pl-2">
@@ -904,14 +860,22 @@ export default function SessionView(props: SessionViewProps) {
 
             <div ref={(el) => (messagesEndEl = el)} />
           </div>
-          
-          <Minimap containerRef={() => chatContainerEl} messages={props.messages} />
 
-          <Show when={artifactToast()}>
-            <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-gray-2 border border-gray-6 px-4 py-2 text-xs text-gray-11 shadow-lg">
-              {artifactToast()}
-            </div>
-          </Show>
+          <aside class="hidden lg:flex w-72 border-l border-gray-6 bg-gray-1 flex-col">
+            <ContextPanel
+              activePlugins={props.activePlugins}
+              activePluginStatus={props.activePluginStatus}
+              authorizedDirs={props.authorizedDirs}
+              workingFiles={props.workingFiles}
+              expanded={props.expandedSidebarSections.context}
+              onToggle={() =>
+                props.setExpandedSidebarSections((curr) => ({
+                  ...curr,
+                  context: !curr.context,
+                }))
+              }
+            />
+          </aside>
         </div>
 
         <Composer 

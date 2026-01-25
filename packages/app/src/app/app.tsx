@@ -1,6 +1,5 @@
 import {
   Match,
-  Show,
   Switch,
   createEffect,
   createMemo,
@@ -10,6 +9,8 @@ import {
   untrack,
 } from "solid-js";
 
+import { useLocation, useNavigate } from "@solidjs/router";
+
 import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
@@ -17,7 +18,8 @@ import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
-import TemplateModal from "./components/template-modal";
+import CommandModal from "./components/command-modal";
+import CommandRunModal from "./components/command-run-modal";
 import WorkspacePicker from "./components/workspace-picker";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
@@ -58,7 +60,7 @@ import type {
   WorkspaceDisplay,
   McpServerEntry,
   McpStatusMap,
-  WorkspaceTemplate,
+  WorkspaceCommand,
   UpdateHandle,
 } from "./types";
 import {
@@ -90,7 +92,7 @@ import {
   type ThemeMode,
 } from "./theme";
 import { createDemoState } from "./demo-state";
-import { createTemplateState } from "./template-state";
+import { createCommandState } from "./command-state";
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
@@ -105,35 +107,73 @@ import {
 export default function App() {
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
 
-  const initialView: View = (() => {
-    if (typeof window === "undefined") return "onboarding";
-    try {
-      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
-        ? "dashboard"
-        : "onboarding";
-    } catch {
-      return "onboarding";
-    }
-  })();
+  const location = useLocation();
+  const navigate = useNavigate();
 
-  const [view, _setView] = createSignal<View>(initialView);
   const [creatingSession, setCreatingSession] = createSignal(false);
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
-  const setView = (next: View) => {
-    // Guard: Don't allow view to change to dashboard while creating session.
+  const currentView = createMemo<View>(() => {
+    const path = location.pathname.toLowerCase();
+    if (path.startsWith("/onboarding")) return "onboarding";
+    if (path.startsWith("/session")) return "session";
+    return "dashboard";
+  });
+
+  const [tab, setTabState] = createSignal<DashboardTab>("home");
+
+  const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
+    setTabState(nextTab);
+    navigate(`/dashboard/${nextTab}`, options);
+  };
+
+  const setTab = (nextTab: DashboardTab) => {
+    if (currentView() === "dashboard") {
+      goToDashboard(nextTab);
+      return;
+    }
+    setTabState(nextTab);
+  };
+
+  const setView = (next: View, sessionId?: string) => {
     if (next === "dashboard" && creatingSession()) {
       return;
     }
     if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
       return;
     }
-    _setView(next);
+    if (next === "onboarding") {
+      navigate("/onboarding");
+      return;
+    }
+    if (next === "session") {
+      if (sessionId) {
+        goToSession(sessionId);
+        return;
+      }
+      const fallback = activeSessionId();
+      if (fallback) {
+        goToSession(fallback);
+        return;
+      }
+      navigate("/session");
+      return;
+    }
+    goToDashboard(tab());
   };
+
+  const goToSession = (sessionId: string, options?: { replace?: boolean }) => {
+    const trimmed = sessionId.trim();
+    if (!trimmed) {
+      navigate("/session", options);
+      return;
+    }
+    navigate(`/session/${trimmed}`, options);
+  };
+
   const [mode, setMode] = createSignal<Mode | null>(null);
   const [onboardingStep, setOnboardingStep] =
     createSignal<OnboardingStep>("mode");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
-  const [tab, setTab] = createSignal<DashboardTab>("home");
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar">(
@@ -153,6 +193,7 @@ export default function App() {
   const [busyLabel, setBusyLabel] = createSignal<string | null>(null);
   const [busyStartedAt, setBusyStartedAt] = createSignal<number | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [booting, setBooting] = createSignal(true);
   const [developerMode, setDeveloperMode] = createSignal(false);
   let markReloadRequiredRef: (reason: ReloadReason) => void = () => {};
 
@@ -643,7 +684,7 @@ export default function App() {
   const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
-  let loadWorkspaceTemplatesRef: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void> = async () => {};
+  let loadCommandsRef: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void> = async () => {};
 
   const workspaceStore = createWorkspaceStore({
     mode,
@@ -666,7 +707,7 @@ export default function App() {
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
-    loadWorkspaceTemplates: (options) => loadWorkspaceTemplatesRef(options),
+    loadCommands: (options) => loadCommandsRef(options),
     loadSessions,
     refreshPendingPermissions,
     selectedSessionId,
@@ -687,7 +728,7 @@ export default function App() {
     isWindowsPlatform,
   });
 
-  const templateState = createTemplateState({
+  const commandState = createCommandState({
     client,
     selectedSession,
     prompt,
@@ -695,6 +736,7 @@ export default function App() {
     loadSessions,
     selectSession,
     setSessionModelById,
+    setSessionAgent,
     defaultModel,
     modelVariant,
     setView,
@@ -707,32 +749,38 @@ export default function App() {
   });
 
   const {
-    templates,
-    setTemplates,
-    workspaceTemplatesLoaded,
-    setWorkspaceTemplatesLoaded,
-    globalTemplatesLoaded,
-    setGlobalTemplatesLoaded,
-    templateModalOpen,
-    setTemplateModalOpen,
-    templateDraftTitle,
-    setTemplateDraftTitle,
-    templateDraftDescription,
-    setTemplateDraftDescription,
-    templateDraftPrompt,
-    setTemplateDraftPrompt,
-    templateDraftScope,
-    setTemplateDraftScope,
-    workspaceTemplates,
-    globalTemplates,
-    openTemplateModal,
-    saveTemplate,
-    deleteTemplate,
-    runTemplate,
-    loadWorkspaceTemplates,
-  } = templateState;
+    commands,
+    setCommands,
+    commandsLoaded,
+    setCommandsLoaded,
+    commandModalOpen,
+    setCommandModalOpen,
+    commandDraftName,
+    setCommandDraftName,
+    commandDraftDescription,
+    setCommandDraftDescription,
+    commandDraftTemplate,
+    setCommandDraftTemplate,
+    commandDraftScope,
+    setCommandDraftScope,
+    runModalOpen,
+    runModalCommand,
+    runModalDetails,
+    setRunModalDetails,
+    workspaceCommands,
+    globalCommands,
+    otherCommands,
+    openCommandModal,
+    saveCommand,
+    deleteCommand,
+    runCommand,
+    loadCommands,
+    openRunModal,
+    confirmRunModal,
+    closeRunModal,
+  } = commandState;
 
-  loadWorkspaceTemplatesRef = loadWorkspaceTemplates;
+  loadCommandsRef = loadCommands;
 
   const systemState = createSystemState({
     client,
@@ -899,7 +947,7 @@ export default function App() {
   createEffect(() => {
     // If we lose the client (disconnect / stop engine), don't strand the user
     // in a session view that can't operate.
-    if (view() !== "session") return;
+    if (currentView() !== "session") return;
     if (isDemoMode()) return;
     if (creatingSession()) return;
     if (client()) return;
@@ -1064,7 +1112,7 @@ export default function App() {
     setDefaultModel(next);
     setModelPickerOpen(false);
 
-    if (typeof window !== "undefined" && view() === "session") {
+    if (typeof window !== "undefined" && currentView() === "session") {
       requestAnimationFrame(() => {
         window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
       });
@@ -1343,7 +1391,12 @@ export default function App() {
     console.log("[DEBUG] current baseUrl:", baseUrl());
     console.log("[DEBUG] engine info:", engine());
     if (isDemoMode()) {
-      setView("session");
+      const demoId = activeSessionId();
+      if (demoId) {
+        goToSession(demoId);
+      } else {
+        setView("session");
+      }
       return;
     }
 
@@ -1451,7 +1504,7 @@ export default function App() {
       // Now switch view AFTER session is selected
       mark("view set to session");
       // setSessionViewLockUntil(Date.now() + 1200);
-      setView("session");
+      goToSession(session.id);
     } catch (e) {
       mark("error caught", e);
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
@@ -1613,9 +1666,6 @@ export default function App() {
         // ignore
       }
 
-      // Mark global templates as loaded even if nothing was stored.
-      setGlobalTemplatesLoaded(true);
-
       try {
         setUpdateEnv(await updaterEnvironment());
       } catch {
@@ -1632,7 +1682,7 @@ export default function App() {
       }
     }
 
-    void workspaceStore.bootstrapOnboarding();
+    void workspaceStore.bootstrapOnboarding().finally(() => setBooting(false));
   });
 
   createEffect(() => {
@@ -1805,31 +1855,6 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (!globalTemplatesLoaded()) return;
-
-    try {
-      const payload = templates()
-        .filter((t) => t.scope === "global")
-        .map((t) => ({
-          id: t.id,
-          title: t.title,
-          description: t.description,
-          prompt: t.prompt,
-          createdAt: t.createdAt,
-          scope: t.scope,
-        }));
-
-      window.localStorage.setItem(
-        "openwork.templates",
-        JSON.stringify(payload)
-      );
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
         MODEL_PREF_KEY,
@@ -1936,6 +1961,7 @@ export default function App() {
   });
 
   const workspaceSwitchOpen = createMemo(() => {
+    if (booting()) return true;
     if (workspaceStore.connectingWorkspaceId()) return true;
     if (!busy() || !busyLabel()) return false;
     const label = busyLabel();
@@ -1954,6 +1980,7 @@ export default function App() {
     }
     if (label === "status.loading_session") return "workspace.switching_status_loading";
     if (workspaceStore.connectingWorkspaceId()) return "workspace.switching_status_loading";
+    if (booting()) return "workspace.switching_status_preparing";
     return "workspace.switching_status_preparing";
   });
 
@@ -2031,8 +2058,8 @@ export default function App() {
       workspaceStore.setEngineInstallLogs(notes || null);
     },
     onOpenSettings: () => {
-      setView("dashboard");
       setTab("settings");
+      setView("dashboard");
     },
     themeMode: themeMode(),
     setThemeMode,
@@ -2041,7 +2068,7 @@ export default function App() {
   const dashboardProps = () => ({
     tab: tab(),
     setTab,
-    view: view(),
+    view: currentView(),
     setView,
     mode: mode(),
     baseUrl: baseUrl(),
@@ -2077,21 +2104,22 @@ export default function App() {
     activeWorkspaceRoot: isDemoMode()
       ? demoActiveWorkspaceDisplay().path
       : workspaceStore.activeWorkspaceRoot().trim(),
-    workspaceTemplates: workspaceTemplates(),
-    globalTemplates: globalTemplates(),
-    setTemplateDraftTitle,
-    setTemplateDraftDescription,
-    setTemplateDraftPrompt,
-    setTemplateDraftScope,
-    resetTemplateDraft: (scope: "workspace" | "global" = "workspace") => {
-      setTemplateDraftTitle("");
-      setTemplateDraftDescription("");
-      setTemplateDraftPrompt("");
-      setTemplateDraftScope(scope);
+    workspaceCommands: workspaceCommands(),
+    globalCommands: globalCommands(),
+    otherCommands: otherCommands(),
+    setCommandDraftName,
+    setCommandDraftDescription,
+    setCommandDraftTemplate,
+    setCommandDraftScope,
+    resetCommandDraft: (scope: "workspace" | "global" = "workspace") => {
+      setCommandDraftName("");
+      setCommandDraftDescription("");
+      setCommandDraftTemplate("");
+      setCommandDraftScope(scope);
     },
-    openTemplateModal,
-    runTemplate,
-    deleteTemplate,
+    openCommandModal,
+    runCommand: openRunModal,
+    deleteCommand,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),
@@ -2183,87 +2211,177 @@ export default function App() {
     setLanguage: setLocale,
   });
 
+  const sessionProps = () => ({
+    selectedSessionId: activeSessionId(),
+    setView,
+    setTab,
+    activeWorkspaceDisplay: activeWorkspaceDisplay(),
+    setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
+    setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
+    headerStatus: headerStatus(),
+    busyHint: busyHint(),
+    selectedSessionModelLabel: selectedSessionModelLabel(),
+    openSessionModelPicker: openSessionModelPicker,
+    activePlugins: sidebarPluginList(),
+    activePluginStatus: sidebarPluginStatus(),
+    createSessionAndOpen: createSessionAndOpen,
+    sendPromptAsync: sendPrompt,
+    newTaskDisabled: newTaskDisabled(),
+    sessions: activeSessions().map((session) => ({
+      id: session.id,
+      title: session.title,
+      slug: session.slug,
+    })),
+    selectSession: isDemoMode() ? selectDemoSession : selectSession,
+    messages: activeMessages(),
+    todos: activeTodos(),
+    busyLabel: busyLabel(),
+    developerMode: developerMode(),
+    showThinking: showThinking(),
+    groupMessageParts,
+    summarizeStep,
+    expandedStepIds: expandedStepIds(),
+    setExpandedStepIds: setExpandedStepIds,
+    expandedSidebarSections: expandedSidebarSections(),
+    setExpandedSidebarSections: setExpandedSidebarSections,
+    artifacts: activeArtifacts(),
+    workingFiles: activeWorkingFiles(),
+    authorizedDirs: activeAuthorizedDirs(),
+    busy: busy(),
+    prompt: prompt(),
+    setPrompt: setPrompt,
+    sendPrompt: sendPrompt,
+    activePermission: activePermissionMemo(),
+    permissionReplyBusy: permissionReplyBusy(),
+    respondPermission: respondPermission,
+    respondPermissionAndRemember: respondPermissionAndRemember,
+    safeStringify: safeStringify,
+    showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
+    openConnect: openConnectFlow,
+    startProviderAuth: startProviderAuth,
+    openProviderAuthModal: openProviderAuthModal,
+    closeProviderAuthModal: closeProviderAuthModal,
+    providerAuthModalOpen: providerAuthModalOpen(),
+    providerAuthBusy: providerAuthBusy(),
+    providerAuthError: providerAuthError(),
+    providerAuthMethods: providerAuthMethods(),
+    providers: providers(),
+    providerConnectedIds: providerConnectedIds(),
+    listAgents: listAgents,
+    setSessionAgent: setSessionAgent,
+    saveSession: saveSessionExport,
+    sessionStatusById: activeSessionStatusById(),
+    commands: commands(),
+    runCommand: runCommand,
+    openCommandRunModal: openRunModal,
+    onTryNotionPrompt: () => {
+      setPrompt("setup my crm");
+      setTryNotionPromptVisible(false);
+      setNotionSkillInstalled(true);
+      try {
+        window.localStorage.setItem("openwork.notionSkillInstalled", "1");
+      } catch {
+        // ignore
+      }
+    },
+    sessionStatus: selectedSessionStatus(),
+    renameSession: renameSessionTitle,
+    error: error(),
+  });
+
+  const dashboardTabs = new Set<DashboardTab>([
+    "home",
+    "sessions",
+    "commands",
+    "skills",
+    "plugins",
+    "mcp",
+    "settings",
+  ]);
+
+  const resolveDashboardTab = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (dashboardTabs.has(normalized as DashboardTab)) {
+      return normalized as DashboardTab;
+    }
+    return "home";
+  };
+
+  const initialRoute = () => {
+    if (typeof window === "undefined") return "/onboarding";
+    try {
+      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
+        ? "/dashboard/home"
+        : "/onboarding";
+    } catch {
+      return "/onboarding";
+    }
+  };
+
+  createEffect(() => {
+    const rawPath = location.pathname.trim();
+    const path = rawPath.toLowerCase();
+
+    if (path === "" || path === "/") {
+      navigate(initialRoute(), { replace: true });
+      return;
+    }
+
+    if (path.startsWith("/dashboard")) {
+      const [, , tabSegment] = path.split("/");
+      const resolvedTab = resolveDashboardTab(tabSegment);
+
+      if (resolvedTab !== tab()) {
+        setTabState(resolvedTab);
+      }
+      if (!tabSegment || tabSegment !== resolvedTab) {
+        goToDashboard(resolvedTab, { replace: true });
+      }
+      return;
+    }
+
+    if (path.startsWith("/session")) {
+      const [, , sessionSegment] = rawPath.split("/");
+      const id = (sessionSegment ?? "").trim();
+
+      if (!id) {
+        const fallback = activeSessionId();
+        if (fallback) {
+          goToSession(fallback, { replace: true });
+        } else {
+          goToDashboard("sessions", { replace: true });
+        }
+        return;
+      }
+
+      if (isDemoMode()) {
+        if (activeSessionId() !== id) {
+          selectDemoSession(id);
+        }
+        return;
+      }
+
+      if (selectedSessionId() !== id) {
+        void selectSession(id);
+      }
+      return;
+    }
+
+    if (path.startsWith("/onboarding")) {
+      return;
+    }
+
+    navigate("/dashboard/home", { replace: true });
+  });
+
   return (
     <>
       <Switch>
-        <Match when={view() === "onboarding"}>
+        <Match when={currentView() === "onboarding"}>
           <OnboardingView {...onboardingProps()} />
         </Match>
-        <Match when={view() === "session"}>
-          <SessionView
-              selectedSessionId={activeSessionId()}
-              setView={setView}
-              setTab={setTab}
-              activeWorkspaceDisplay={activeWorkspaceDisplay()}
-              setWorkspaceSearch={workspaceStore.setWorkspaceSearch}
-              setWorkspacePickerOpen={workspaceStore.setWorkspacePickerOpen}
-              headerStatus={headerStatus()}
-              busyHint={busyHint()}
-              selectedSessionModelLabel={selectedSessionModelLabel()}
-              openSessionModelPicker={openSessionModelPicker}
-              activePlugins={sidebarPluginList()}
-              activePluginStatus={sidebarPluginStatus()}
-              createSessionAndOpen={createSessionAndOpen}
-              sendPromptAsync={sendPrompt}
-              newTaskDisabled={newTaskDisabled()}
-              sessions={activeSessions().map((session) => ({
-                id: session.id,
-                title: session.title,
-                slug: session.slug,
-              }))}
-              selectSession={isDemoMode() ? selectDemoSession : selectSession}
-              messages={activeMessages()}
-              todos={activeTodos()}
-              busyLabel={busyLabel()}
-              developerMode={developerMode()}
-              showThinking={showThinking()}
-              groupMessageParts={groupMessageParts}
-              summarizeStep={summarizeStep}
-              expandedStepIds={expandedStepIds()}
-              setExpandedStepIds={setExpandedStepIds}
-              expandedSidebarSections={expandedSidebarSections()}
-              setExpandedSidebarSections={setExpandedSidebarSections}
-              artifacts={activeArtifacts()}
-              workingFiles={activeWorkingFiles()}
-              authorizedDirs={activeAuthorizedDirs()}
-              busy={busy()}
-              prompt={prompt()}
-              setPrompt={setPrompt}
-              sendPrompt={sendPrompt}
-              activePermission={activePermissionMemo()}
-              permissionReplyBusy={permissionReplyBusy()}
-              respondPermission={respondPermission}
-              respondPermissionAndRemember={respondPermissionAndRemember}
-              safeStringify={safeStringify}
-              showTryNotionPrompt={tryNotionPromptVisible() && notionIsActive()}
-              openConnect={openConnectFlow}
-              startProviderAuth={startProviderAuth}
-              openProviderAuthModal={openProviderAuthModal}
-              closeProviderAuthModal={closeProviderAuthModal}
-              providerAuthModalOpen={providerAuthModalOpen()}
-              providerAuthBusy={providerAuthBusy()}
-              providerAuthError={providerAuthError()}
-              providerAuthMethods={providerAuthMethods()}
-              providers={providers()}
-              providerConnectedIds={providerConnectedIds()}
-              listAgents={listAgents}
-              setSessionAgent={setSessionAgent}
-              saveSession={saveSessionExport}
-              sessionStatusById={activeSessionStatusById()}
-              onTryNotionPrompt={() => {
-                setPrompt("setup my crm");
-                setTryNotionPromptVisible(false);
-                setNotionSkillInstalled(true);
-                try {
-                  window.localStorage.setItem("openwork.notionSkillInstalled", "1");
-                } catch {
-                  // ignore
-                }
-              }}
-              sessionStatus={selectedSessionStatus()}
-              renameSession={renameSessionTitle}
-            error={error()}
-          />
+        <Match when={currentView() === "session"}>
+          <SessionView {...sessionProps()} />
         </Match>
         <Match when={true}>
           <DashboardView {...dashboardProps()} />
@@ -2326,18 +2444,27 @@ export default function App() {
         onReloadEngine={() => reloadWorkspaceEngine()}
       />
 
-      <TemplateModal
-        open={templateModalOpen()}
-        title={templateDraftTitle()}
-        description={templateDraftDescription()}
-        prompt={templateDraftPrompt()}
-        scope={templateDraftScope()}
-        onClose={() => setTemplateModalOpen(false)}
-        onSave={saveTemplate}
-        onTitleChange={setTemplateDraftTitle}
-        onDescriptionChange={setTemplateDraftDescription}
-        onPromptChange={setTemplateDraftPrompt}
-        onScopeChange={setTemplateDraftScope}
+      <CommandModal
+        open={commandModalOpen()}
+        name={commandDraftName()}
+        description={commandDraftDescription()}
+        template={commandDraftTemplate()}
+        scope={commandDraftScope()}
+        onClose={() => setCommandModalOpen(false)}
+        onSave={saveCommand}
+        onNameChange={setCommandDraftName}
+        onDescriptionChange={setCommandDraftDescription}
+        onTemplateChange={setCommandDraftTemplate}
+        onScopeChange={setCommandDraftScope}
+      />
+
+      <CommandRunModal
+        open={runModalOpen()}
+        command={runModalCommand()}
+        details={runModalDetails()}
+        onDetailsChange={setRunModalDetails}
+        onClose={closeRunModal}
+        onRun={confirmRunModal}
       />
 
       <ReloadWorkspaceToast

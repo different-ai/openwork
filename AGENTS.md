@@ -31,7 +31,7 @@ OpenWork is an open-source alternative to Claude Cowork.
 
 ## Repository Guidance
 
-- Write new PRDs under `packages/app/pr/<prd-name>.md` (see `.opencode/skill/prd-conventions/SKILL.md`).
+- Write new PRDs under `packages/app/pr/<prd-name>.md` (see `.opencode/skills/prd-conventions/SKILL.md`).
 - Use MOTIVATIONS-PHILOSOPHY.md to understand the "why" of OpenWork so you can guide your decisions.
 
 
@@ -90,7 +90,7 @@ Key primitives to expose:
 
 When editing SolidJS UI (`packages/app/src/**/*.tsx`), consult:
 
-- `.opencode/skill/solidjs-patterns/SKILL.md`
+- `.opencode/skills/solidjs-patterns/SKILL.md`
 
 This captures OpenWork’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
 

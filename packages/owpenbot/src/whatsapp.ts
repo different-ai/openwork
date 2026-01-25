@@ -1,19 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import {
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  isJidGroup,
-  makeCacheableSignalKeyStore,
-  makeWASocket,
-  useMultiFileAuthState,
-  type WAMessage,
-} from "@whiskeysockets/baileys";
-import qrcode from "qrcode-terminal";
+import { DisconnectReason, isJidGroup, type WAMessage } from "@whiskeysockets/baileys";
 import type { Logger } from "pino";
 
 import type { Config } from "./config.js";
+import {
+  closeWhatsAppSocket,
+  createWhatsAppSocket,
+  getStatusCode,
+  hasWhatsAppCreds,
+  waitForWhatsAppConnection,
+  type WhatsAppSocket,
+} from "./whatsapp-session.js";
 
 export type InboundMessage = {
   channel: "whatsapp";
@@ -31,9 +30,11 @@ export type WhatsAppAdapter = {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(peerId: string, text: string): Promise<void>;
+  sendTyping(peerId: string): Promise<void>;
 };
 
 const MAX_TEXT_LENGTH = 3800;
+const SENT_MESSAGE_TTL_MS = 10 * 60_000;
 
 function extractText(message: WAMessage): string {
   const content = message.message;
@@ -48,90 +49,151 @@ function extractText(message: WAMessage): string {
   );
 }
 
-function ensureDir(dir: string) {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
 export function createWhatsAppAdapter(
   config: Config,
   logger: Logger,
   onMessage: MessageHandler,
-  opts: { printQr?: boolean } = {},
+  opts: { printQr?: boolean; onStatus?: (message: string) => void } = {},
 ): WhatsAppAdapter {
-  let socket: ReturnType<typeof makeWASocket> | null = null;
+  let socket: WhatsAppSocket | null = null;
   let stopped = false;
+  let connecting = false;
+  let reconnectAttempts = 0;
+  let reconnectTimer: NodeJS.Timeout | null = null;
+  const sentMessageIds = new Map<string, number>();
 
   const log = logger.child({ channel: "whatsapp" });
   const authDir = path.resolve(config.whatsappAuthDir);
-  ensureDir(authDir);
 
-  async function connect() {
-    const { state, saveCreds } = await useMultiFileAuthState(authDir);
-    const { version } = await fetchLatestBaileysVersion();
+  const reconnectPolicy = {
+    initialMs: 1500,
+    maxMs: 30_000,
+    factor: 1.6,
+    jitter: 0.25,
+    maxAttempts: 10,
+  };
 
-    const sock = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, log),
-      },
-      version,
-      logger: log,
-      printQRInTerminal: false,
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      browser: ["owpenbot", "cli", "0.1.0"],
-    });
+  const computeDelay = (attempt: number) => {
+    const base = reconnectPolicy.initialMs * Math.pow(reconnectPolicy.factor, Math.max(0, attempt - 1));
+    const capped = Math.min(base, reconnectPolicy.maxMs);
+    const jitter = capped * reconnectPolicy.jitter * (Math.random() * 2 - 1);
+    return Math.max(250, Math.round(capped + jitter));
+  };
 
-    sock.ev.on("creds.update", saveCreds);
-    sock.ev.on("connection.update", (update: { connection?: string; lastDisconnect?: unknown; qr?: string }) => {
-      if (update.qr && opts.printQr) {
-        qrcode.generate(update.qr, { small: true });
-        log.info("scan the QR code to connect WhatsApp");
+  const resetReconnect = () => {
+    reconnectAttempts = 0;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+  };
+
+  const scheduleReconnect = (statusCode?: number) => {
+    if (stopped || reconnectTimer) return;
+    reconnectAttempts += 1;
+    if (reconnectAttempts > reconnectPolicy.maxAttempts) {
+      log.warn({ attempts: reconnectAttempts }, "whatsapp reconnect attempts exhausted");
+      opts.onStatus?.("WhatsApp reconnect attempts exhausted. Run: owpenwork whatsapp login.");
+      return;
+    }
+    const delayMs = statusCode === 515 ? 1000 : computeDelay(reconnectAttempts);
+    log.warn({ delayMs, statusCode }, "whatsapp reconnect scheduled");
+    opts.onStatus?.(`WhatsApp reconnecting in ${Math.round(delayMs / 1000)}s...`);
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      void connect({ printQr: false });
+    }, delayMs);
+  };
+
+  const recordSentMessage = (messageId?: string | null) => {
+    if (!messageId) return;
+    sentMessageIds.set(messageId, Date.now());
+  };
+
+  const pruneSentMessages = () => {
+    const now = Date.now();
+    for (const [id, timestamp] of sentMessageIds) {
+      if (now - timestamp > SENT_MESSAGE_TTL_MS) {
+        sentMessageIds.delete(id);
       }
+    }
+  };
 
-      if (update.connection === "open") {
-        log.info("whatsapp connected");
+  async function connect(options: { printQr?: boolean } = {}) {
+    if (stopped || connecting) return;
+    connecting = true;
+    try {
+      if (socket) {
+        closeWhatsAppSocket(socket);
+        socket = null;
       }
+      const sock = await createWhatsAppSocket({
+        authDir,
+        logger: log,
+        printQr: options.printQr ?? opts.printQr,
+        onStatus: opts.onStatus,
+      });
 
-      if (update.connection === "close") {
-        const lastDisconnect = update.lastDisconnect as
-          | { error?: { output?: { statusCode?: number } } }
-          | undefined;
-        const statusCode = lastDisconnect?.error?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-        if (shouldReconnect && !stopped) {
-          log.warn("whatsapp connection closed, reconnecting");
-          void connect();
-        } else if (!shouldReconnect) {
-          log.warn("whatsapp logged out, run 'owpenbot whatsapp login'");
+      sock.ev.on(
+        "connection.update",
+        (update: Partial<import("@whiskeysockets/baileys").ConnectionState>) => {
+          if (update.connection === "open") {
+            resetReconnect();
+          }
+          if (update.connection === "close") {
+            const statusCode = getStatusCode(
+              (update.lastDisconnect as { error?: unknown } | undefined)?.error ?? update.lastDisconnect,
+            );
+            if (statusCode === DisconnectReason.loggedOut) {
+              log.warn("whatsapp logged out, run 'owpenbot whatsapp login'");
+              opts.onStatus?.("WhatsApp logged out. Run: owpenwork whatsapp login.");
+              return;
+            }
+            if (statusCode === 515) {
+              opts.onStatus?.("WhatsApp asked for a restart; reconnecting.");
+            }
+            scheduleReconnect(statusCode);
+          }
+        },
+      );
+
+      sock.ev.on("messages.upsert", async ({ messages }: { messages: WAMessage[] }) => {
+        pruneSentMessages();
+        for (const msg of messages) {
+          if (!msg.message) continue;
+          const fromMe = Boolean(msg.key.fromMe);
+          const messageId = msg.key.id;
+          if (fromMe && messageId && sentMessageIds.has(messageId)) {
+            sentMessageIds.delete(messageId);
+            continue;
+          }
+          if (fromMe && !config.whatsappSelfChatMode) continue;
+          const peerId = msg.key.remoteJid;
+          if (!peerId) continue;
+          if (isJidGroup(peerId) && !config.groupsEnabled) {
+            continue;
+          }
+          const text = extractText(msg);
+          if (!text.trim()) continue;
+
+          try {
+            await onMessage({
+              channel: "whatsapp",
+              peerId,
+              text,
+              raw: msg,
+              fromMe,
+            });
+          } catch (error) {
+            log.error({ error, peerId }, "whatsapp inbound handler failed");
+          }
         }
-      }
-    });
+      });
 
-    sock.ev.on("messages.upsert", async ({ messages }: { messages: WAMessage[] }) => {
-      for (const msg of messages) {
-        if (!msg.message) continue;
-        const fromMe = Boolean(msg.key.fromMe);
-        if (fromMe && !config.whatsappSelfChatMode) continue;
-        const peerId = msg.key.remoteJid;
-        if (!peerId) continue;
-        if (isJidGroup(peerId) && !config.groupsEnabled) {
-          continue;
-        }
-        const text = extractText(msg);
-        if (!text.trim()) continue;
-
-        await onMessage({
-          channel: "whatsapp",
-          peerId,
-          text,
-          raw: msg,
-          fromMe,
-        });
-      }
-    });
-
-    socket = sock;
+      socket = sock;
+    } finally {
+      connecting = false;
+    }
   }
 
   return {
@@ -142,69 +204,90 @@ export function createWhatsAppAdapter(
     },
     async stop() {
       stopped = true;
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       if (socket) {
-        socket.end(undefined);
+        closeWhatsAppSocket(socket);
         socket = null;
       }
     },
     async sendText(peerId: string, text: string) {
       if (!socket) throw new Error("WhatsApp socket not initialized");
-      await socket.sendMessage(peerId, { text });
+      const sent = await socket.sendMessage(peerId, { text });
+      recordSentMessage(sent?.key?.id);
+    },
+    async sendTyping(peerId: string) {
+      if (!socket) return;
+      try {
+        await socket.sendPresenceUpdate("composing", peerId);
+      } catch (error) {
+        log.warn({ error, peerId }, "whatsapp typing update failed");
+      }
     },
   };
 }
 
-export async function loginWhatsApp(config: Config, logger: Logger) {
+export async function loginWhatsApp(
+  config: Config,
+  logger: Logger,
+  options: { onStatus?: (message: string) => void; timeoutMs?: number } = {},
+) {
   const authDir = path.resolve(config.whatsappAuthDir);
-  ensureDir(authDir);
   const log = logger.child({ channel: "whatsapp" });
-  const { state, saveCreds } = await useMultiFileAuthState(authDir);
-  const { version } = await fetchLatestBaileysVersion();
+  const timeoutMs = options.timeoutMs ?? 120_000;
 
-  await new Promise<void>((resolve) => {
-    let finished = false;
-    const sock = makeWASocket({
-      auth: {
-        creds: state.creds,
-        keys: makeCacheableSignalKeyStore(state.keys, log),
-      },
-      version,
+  const attemptLogin = async (phase: "initial" | "restart", printQr: boolean) => {
+    const sock = await createWhatsAppSocket({
+      authDir,
       logger: log,
-      printQRInTerminal: false,
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      browser: ["owpenbot", "cli", "0.1.0"],
+      printQr,
+      onStatus: options.onStatus,
     });
-
-    const finish = (reason: string) => {
-      if (finished) return;
-      finished = true;
-      log.info({ reason }, "whatsapp login finished");
-      sock.end(undefined);
-      resolve();
-    };
-
-    sock.ev.on("creds.update", async () => {
-      await saveCreds();
-      if (state.creds?.registered) {
-        finish("creds.registered");
+    try {
+      if (phase === "initial") {
+        options.onStatus?.("Waiting for WhatsApp scan...");
+      } else {
+        options.onStatus?.("Reconnecting WhatsApp session...");
       }
-    });
-    sock.ev.on("connection.update", (update: { connection?: string; qr?: string }) => {
-      if (update.qr) {
-        qrcode.generate(update.qr, { small: true });
-        log.info("scan the QR code to connect WhatsApp");
-      }
+      await waitForWhatsAppConnection(sock, { timeoutMs });
+      options.onStatus?.("WhatsApp linked.");
+      return { ok: true } as const;
+    } catch (error) {
+      const statusCode = getStatusCode(error);
+      return { ok: false, error, statusCode } as const;
+    } finally {
+      setTimeout(() => closeWhatsAppSocket(sock), 500);
+    }
+  };
 
-      if (update.connection === "open") {
-        finish("connection.open");
-      }
+  const initial = await attemptLogin("initial", true);
+  if (initial.ok) return;
 
-      if (update.connection === "close" && state.creds?.registered) {
-        finish("connection.close.registered");
-      }
-    });
-  });
+  if (initial.statusCode === DisconnectReason.loggedOut) {
+    options.onStatus?.("WhatsApp logged out. Run: owpenwork whatsapp login.");
+    throw new Error("WhatsApp logged out");
+  }
+
+  const shouldRetry =
+    initial.statusCode === 515 || (initial.statusCode === undefined && hasWhatsAppCreds(authDir));
+
+  if (shouldRetry) {
+    options.onStatus?.("WhatsApp asked for a restart; retrying connection...");
+    const retry = await attemptLogin("restart", false);
+    if (retry.ok) return;
+    if (retry.statusCode === DisconnectReason.loggedOut) {
+      options.onStatus?.("WhatsApp logged out. Run: owpenwork whatsapp login.");
+    }
+    throw new Error(`WhatsApp login failed after restart: ${String(retry.error)}`);
+  }
+
+  if (!initial.statusCode && !hasWhatsAppCreds(authDir)) {
+    options.onStatus?.("Timed out waiting for QR scan. Run login again for a fresh QR.");
+  }
+
+  throw new Error(`WhatsApp login failed: ${String(initial.error)}`);
 }
 
 export function unpairWhatsApp(config: Config, logger: Logger) {

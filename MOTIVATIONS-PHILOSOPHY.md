@@ -1,8 +1,17 @@
 # OpenWork Motivations and Philosophy
 
+OpenWork helps users ship agentic workflows to their team. Today it makes it easy for teams to re-use their existing opencode workflows and share it with their team.
 
+It works on top of opencode (opencode.ai) an agentic coding platform that exposes apis and sdks. We care about maximally using the opencode primitives. And build the thinest possible layer – always favoring opencode apis over custom built ones.
+
+Decision framework for adding new features or fixing bugs:
+- is it easy to test? how can we make it more easy ? (e.g. we can use the chrome mcp  and pnpm:dev to test ui take screenshots)
+- is there an existing opencode equivalent for this feature? (we should use it if we can) if not how does it map to a better user experience for bob *or* susan (see below)
+- if it's a bug what were you testing? what were you trying to achieve? what did you observe we can't move on before having a core undesrtanding
+
+In other words:
 - OpenCode is the **engine**.
-- OpenWork is the **experience**: onboarding, safety, permissions, progress, artifacts, and a premium-feeling UI.
+- OpenWork is the **experience** : onboarding, safety, permissions, progress, artifacts, and a premium-feeling UI.
 
 OpenWork competes directly with Anthropic’s Cowork conceptually, but stays open, local-first, and standards-based.
 
@@ -48,7 +57,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 ## Core Concepts of OpenWork
 
 - uses all these primitives
-- adds new concept of "template"  simple files stored in .openwork/templates in markdown (look at repo to see how)
+- uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
 - adds a new abstraction "workspace" is a project fodler and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
   - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
 
@@ -228,7 +237,7 @@ OpenWork’s settings pages use:
 OpenWork exposes two extension surfaces:
 
 1. **Skills (OpenPackage)**
-   - Installed into `.opencode/skill/*`.
+   - Installed into `.opencode/skills/*`.
    - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
 
 2. **Plugins (OpenCode)**
@@ -395,14 +404,14 @@ Every run provides an exportable audit log:
 - allow once/session
 - audit of decisions
 
-### Templates
+### Commands
 
-- save a task as template
-- variables + quick run
+- save a task as a command
+- arguments + quick run
 
 ### Scheduling (Future)
 
-- schedule template runs
+- schedule command runs
 - notify on completion
 
 ---
@@ -425,7 +434,7 @@ Every run provides an exportable audit log:
 4. Provider/model configuration.
 5. `global.health()` check.
 6. Run a test session using `session.create()` + `session.prompt()`.
-7. Success + sample templates.
+7. Success + sample commands.
 
 ### 2. Pairing Onboarding (Client / Mobile)
 
@@ -497,10 +506,10 @@ Every run provides an exportable audit log:
 2. Open file: `file.read()`.
 3. Show changed files: `file.status()`.
 
-### 12. Templates
+### 12. Commands
 
-1. Save a plan + prompt as a template.
-2. Re-run template creates a new session.
+1. Save a plan + prompt as a command.
+2. Re-run command creates a new session.
 
 ### 13. Multi-user (Future)
 

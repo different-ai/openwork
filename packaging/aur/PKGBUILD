@@ -1,23 +1,32 @@
 pkgname=openwork
-pkgver=0.3.5
-pkgrel=1
+pkgver=0.3.6
+pkgrel=2 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
 pkgdesc="An Open source alternative to Claude Cowork"
 arch=('x86_64')
 url="https://github.com/different-ai/openwork"
 license=('MIT')
-depends=(
-  'gtk3'
-  'glib2'
-  'libayatana-appindicator'
-  'libsoup3'
-  'webkit2gtk-4.1'
-  'openssl'
-  'dbus'
-  'librsvg'
-)
-source=("openwork-desktop-linux-amd64.deb::https://github.com/different-ai/openwork/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
-sha256sums=('01b7f2fe78d870143b7b370e1b569cea218bfaa0549c4af32ab495a5ee3d349f')
+depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'openssl' 'dbus' 'librsvg')
+
+# Renaming to ${pkgname}-${pkgver}.deb
+source=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
+sha256sums=('991cd6f6eaa3d871de42b6016b58c69360fceeea4f23a9c82b0101a98252b6c8')
+# Makes sure makepkg doesn't extract the .deb since it will break
+noextract=("${pkgname}-${pkgver}.deb")
 
 package() {
-  bsdtar -xf "${srcdir}/openwork-desktop-linux-amd64.deb" -C "${pkgdir}"
+  # cd cwd
+  cd "${srcdir}"
+
+  # Extract the internal data archive directly to the cwd.
+  bsdtar -O -xf "${pkgname}-${pkgver}.deb" 'data.tar*' | bsdtar -C "${pkgdir}" -xf -
 }
+
+# .deb Internal Structure Reference:
+# └── openwork-desktop-linux-amd64.deb
+#     ├── debian-binary
+#     ├── control.tar.zst
+#     └── data.tar.zst (Extracted to $pkgdir)
+#         ├── opt/openwork/ (App files)
+#         └── usr/bin/
+#             ├── opencode (Terminal agent)
+#             └── openwork (GUI launcher)

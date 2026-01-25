@@ -17,7 +17,7 @@ export default function OnboardingWorkspaceSelector(props: {
     {
       id: "starter" as const,
       name: "Starter workspace",
-      desc: "Preconfigured to show you how to use plugins, templates, and skills.",
+      desc: "Preconfigured to show you how to use plugins, commands, and skills.",
     },
     {
       id: "minimal" as const,

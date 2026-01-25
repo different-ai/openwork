@@ -57,7 +57,7 @@ export function createWorkspaceStore(options: {
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
-  loadWorkspaceTemplates: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void>;
+  loadCommands: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void>;
   loadSessions: (scopeRoot?: string) => Promise<void>;
   refreshPendingPermissions: () => Promise<void>;
   selectedSessionId: () => string | null;
@@ -267,7 +267,7 @@ export function createWorkspaceStore(options: {
     }
 
     if (!isRemote) {
-      await options.loadWorkspaceTemplates({ workspaceRoot: next.path }).catch(() => undefined);
+      await options.loadCommands({ workspaceRoot: next.path }).catch(() => undefined);
     }
 
     if (!isRemote && workspaceChanged && options.client() && !wasHostMode) {
@@ -399,17 +399,17 @@ export function createWorkspaceStore(options: {
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
-      // Load workspace templates for all workspace types (local and remote)
+      // Load workspace commands for all workspace types (local and remote)
       if (targetRoot) {
         await options
-          .loadWorkspaceTemplates({ workspaceRoot: targetRoot, quiet: true })
+          .loadCommands({ workspaceRoot: targetRoot, quiet: true })
           .catch(() => undefined);
       }
 
       options.refreshSkills({ force: true }).catch(() => undefined);
       if (!options.selectedSessionId()) {
-        options.setView("dashboard");
         options.setTab("home");
+        options.setView("dashboard");
       }
 
       // If the user successfully connected, treat onboarding as complete so we
@@ -458,16 +458,16 @@ export function createWorkspaceStore(options: {
       syncActiveWorkspaceId(ws.activeId);
 
       const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-      if (active) {
-        setProjectDir(active.path);
-        setAuthorizedDirs([active.path]);
-        await options.loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
-      }
+        if (active) {
+          setProjectDir(active.path);
+          setAuthorizedDirs([active.path]);
+          await options.loadCommands({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
+        }
 
       setWorkspacePickerOpen(false);
       setCreateWorkspaceOpen(false);
-      options.setView("dashboard");
       options.setTab("home");
+      options.setView("dashboard");
       markOnboardingComplete();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -484,11 +484,6 @@ export function createWorkspaceStore(options: {
     directory?: string | null;
     displayName?: string | null;
   }) {
-    if (!isTauriRuntime()) {
-      options.setError(t("app.error.tauri_required", currentLocale()));
-      return false;
-    }
-
     const baseUrl = input.baseUrl.trim();
     if (!baseUrl) {
       options.setError(t("app.error.remote_base_url_required", currentLocale()));
@@ -518,14 +513,37 @@ export function createWorkspaceStore(options: {
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
 
+    const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
+    const displayName = input.displayName?.trim() || null;
+    const workspaceId = `remote:${normalizedBaseUrl}:${resolvedDirectory}`;
+
     try {
-      const ws = await workspaceCreateRemote({
-        baseUrl,
-        directory: resolvedDirectory ? resolvedDirectory : null,
-        displayName: input.displayName?.trim() ? input.displayName.trim() : null,
-      });
-      setWorkspaces(ws.workspaces);
-      syncActiveWorkspaceId(ws.activeId);
+      if (isTauriRuntime()) {
+        const ws = await workspaceCreateRemote({
+          baseUrl: normalizedBaseUrl,
+          directory: resolvedDirectory ? resolvedDirectory : null,
+          displayName,
+        });
+        setWorkspaces(ws.workspaces);
+        syncActiveWorkspaceId(ws.activeId);
+      } else {
+        const nextWorkspace: WorkspaceInfo = {
+          id: workspaceId,
+          name: displayName ?? normalizedBaseUrl,
+          path: "",
+          preset: "remote",
+          workspaceType: "remote",
+          baseUrl: normalizedBaseUrl,
+          directory: resolvedDirectory || null,
+          displayName,
+        };
+
+        setWorkspaces((prev) => {
+          const withoutMatch = prev.filter((workspace) => workspace.id !== workspaceId);
+          return [...withoutMatch, nextWorkspace];
+        });
+        syncActiveWorkspaceId(workspaceId);
+      }
 
       setProjectDir(resolvedDirectory);
       setWorkspaceConfig(null);
@@ -971,7 +989,7 @@ export function createWorkspaceStore(options: {
             }
 
             await options
-              .loadWorkspaceTemplates({ workspaceRoot: active.path, quiet: true })
+              .loadCommands({ workspaceRoot: active.path, quiet: true })
               .catch(() => undefined);
           }
         }

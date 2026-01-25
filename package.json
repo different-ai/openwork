@@ -32,7 +32,10 @@
       "better-sqlite3",
       "esbuild",
       "protobufjs"
-    ]
+    ],
+    "patchedDependencies": {
+      "@solidjs/router@0.15.4": "patches/@solidjs__router@0.15.4.patch"
+    }
   },
   "packageManager": "pnpm@10.27.0"
 }

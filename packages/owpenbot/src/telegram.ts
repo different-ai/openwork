@@ -31,6 +31,7 @@ export function createTelegramAdapter(
     throw new Error("TELEGRAM_BOT_TOKEN is required for Telegram adapter");
   }
 
+  logger.debug({ tokenPresent: true }, "telegram adapter init");
   const bot = new Bot(config.telegramToken);
 
   bot.catch((err: BotError<Context>) => {
@@ -44,24 +45,35 @@ export function createTelegramAdapter(
     const chatType = msg.chat.type as string;
     const isGroup = chatType === "group" || chatType === "supergroup" || chatType === "channel";
     if (isGroup && !config.groupsEnabled) {
+      logger.debug({ chatId: msg.chat.id, chatType }, "telegram message ignored (group disabled)");
       return;
     }
 
     const text = msg.text ?? msg.caption ?? "";
     if (!text.trim()) return;
 
-    await onMessage({
-      channel: "telegram",
-      peerId: String(msg.chat.id),
-      text,
-      raw: msg,
-    });
+    logger.debug(
+      { chatId: msg.chat.id, chatType, length: text.length, preview: text.slice(0, 120) },
+      "telegram message received",
+    );
+
+    try {
+      await onMessage({
+        channel: "telegram",
+        peerId: String(msg.chat.id),
+        text,
+        raw: msg,
+      });
+    } catch (error) {
+      logger.error({ error, peerId: msg.chat.id }, "telegram inbound handler failed");
+    }
   });
 
   return {
     name: "telegram",
     maxTextLength: MAX_TEXT_LENGTH,
     async start() {
+      logger.debug("telegram adapter starting");
       await bot.start();
       logger.info("telegram adapter started");
     },
