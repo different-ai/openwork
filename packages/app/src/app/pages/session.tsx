@@ -7,6 +7,7 @@ import type {
   CommandRegistryItem,
   CommandTriggerContext,
   MessageGroup,
+  MessageTiming,
   MessageWithParts,
   McpServerEntry,
   McpStatusMap,
@@ -60,6 +61,7 @@ export type SessionViewProps = {
   sessions: Array<{ id: string; title: string; slug?: string | null; workspaceLabel?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
+  messageTimings: Record<string, MessageTiming>;
   todos: TodoItem[];
   busyLabel: string | null;
   developerMode: boolean;
@@ -1247,6 +1249,7 @@ export default function SessionView(props: SessionViewProps) {
 
             <MessageList 
               messages={props.messages}
+              messageTimings={props.messageTimings}
               developerMode={props.developerMode}
               showThinking={props.showThinking}
               expandedStepIds={props.expandedStepIds}
