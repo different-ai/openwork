@@ -502,29 +502,21 @@ export default function SessionView(props: SessionViewProps) {
     }
   });
 
-  createEffect(
-    on(
-      () => [
-        props.messages.length,
-        props.todos.length,
-        props.messages.reduce((acc, m) => acc + m.parts.length, 0),
-      ],
-      (current, previous) => {
-        if (!previous) return;
-        const [mLen, tLen, pCount] = current;
-        const [prevM, prevT, prevP] = previous;
-        if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
-          if (shouldScroll) {
-            scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
-          }
-          if (scrollOnNextUpdate()) {
-            setScrollOnNextUpdate(false);
-          }
-        }
-      },
-    ),
-  );
+  const [prevMessageCount, setPrevMessageCount] = createSignal(0);
+  createEffect(() => {
+    const currentCount = props.messages.length;
+    const prev = prevMessageCount();
+    if (currentCount > prev) {
+      const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
+      if (shouldScroll) {
+        scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
+      }
+      if (scrollOnNextUpdate()) {
+        setScrollOnNextUpdate(false);
+      }
+    }
+    setPrevMessageCount(currentCount);
+  });
 
   const triggerFlyout = (
     sourceEl: Element | null,
