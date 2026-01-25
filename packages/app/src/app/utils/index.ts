@@ -462,33 +462,102 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  bash: "Bash",
+  read: "Read",
+  write: "Write",
+  edit: "Edit",
+  patch: "Patch",
+  multiedit: "MultiEdit",
+  grep: "Grep",
+  glob: "Glob",
+  task: "Task",
+  webfetch: "Fetch",
+  FetchUrl: "Fetch",
+  WebSearch: "Search",
+  Execute: "Execute",
+  Create: "Create",
+  LS: "List",
+  Skill: "Skill",
+  todowrite: "Todo",
+  TodoWrite: "Todo",
+};
+
+function extractToolKeyParam(toolName: string, input: Record<string, unknown>): string | null {
+  const paramPriority: Record<string, string[]> = {
+    webfetch: ["url"],
+    FetchUrl: ["url"],
+    WebSearch: ["query"],
+    read: ["file_path", "path"],
+    Read: ["file_path", "path"],
+    write: ["file_path", "path"],
+    Write: ["file_path", "path"],
+    edit: ["file_path", "path"],
+    Edit: ["file_path", "path"],
+    Create: ["file_path", "path"],
+    grep: ["pattern", "query"],
+    Grep: ["pattern", "query"],
+    glob: ["pattern", "patterns"],
+    Glob: ["pattern", "patterns"],
+    bash: ["command"],
+    Execute: ["command"],
+    LS: ["directory_path", "path"],
+  };
+
+  const keys = paramPriority[toolName] ?? Object.keys(input).slice(0, 1);
+  for (const key of keys) {
+    const val = input[key];
+    if (typeof val === "string" && val.trim()) {
+      const trimmed = val.trim();
+      return trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+    }
+    if (Array.isArray(val) && val.length > 0) {
+      const first = String(val[0]);
+      return first.length > 60 ? `${first.slice(0, 60)}…` : first;
+    }
+  }
+  return null;
+}
+
 export function summarizeStep(part: Part): { title: string; detail?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
-    const state = record.state ?? {};
-    const title = state.title ? String(state.title) : toolName;
-    const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
-    if (output) {
-      const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-      return { title, detail: short };
+    const label = TOOL_LABELS[toolName] ?? toolName;
+    
+    // Some tools don't need detail (e.g., todowrite shows in sidebar)
+    const noDetailTools = ["todowrite", "TodoWrite"];
+    if (noDetailTools.includes(toolName)) {
+      return { title: label };
     }
-    return { title };
+    
+    const state = record.state ?? {};
+    const input = typeof state.input === "object" && state.input ? state.input : {};
+    
+    // Try to extract key param from input first
+    let keyParam = extractToolKeyParam(toolName, input);
+    
+    // Fallback to state.title if no key param found
+    if (!keyParam && state.title) {
+      const titleStr = typeof state.title === "string" 
+        ? state.title 
+        : typeof state.title === "object" 
+          ? JSON.stringify(state.title).slice(0, 80)
+          : String(state.title);
+      const title = titleStr.trim();
+      keyParam = title.length > 80 ? `${title.slice(0, 80)}…` : title;
+    }
+    
+    return { title: label, detail: keyParam ?? undefined };
   }
 
   if (part.type === "reasoning") {
-    const record = part as any;
-    const text = typeof record.text === "string" ? record.text.trim() : "";
-    if (!text) return { title: "Planning" };
-    const short = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    return { title: "Thinking", detail: short };
+    return { title: "Thinking" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
-    const reason = (part as any).reason;
     return {
       title: part.type === "step-start" ? "Step started" : "Step finished",
-      detail: reason ? String(reason) : undefined,
     };
   }
 

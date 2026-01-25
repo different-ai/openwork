@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File } from "lucide-solid";
+import { Check, ChevronDown, Circle, Copy } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep } from "../../utils";
@@ -178,32 +178,37 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  const getToolStatus = (part: Part) => {
+    if (part.type !== "tool") return null;
+    const state = (part as any).state ?? {};
+    return state.status as string | undefined;
+  };
+
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
-    <div class="space-y-3">
+    <div class="space-y-1.5">
       <For each={listProps.parts}>
         {(part) => {
           const summary = summarizeStep(part);
+          const status = getToolStatus(part);
+          const isCompleted = status === "completed";
+          const isError = status === "error";
+          const isRunning = status === "running";
           return (
-            <div class="flex items-start gap-3 text-xs text-gray-11">
-              <div class="mt-0.5 h-5 w-5 rounded-full border border-gray-7 flex items-center justify-center text-gray-10">
-                {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+            <div class="flex items-center gap-2 text-xs">
+              <div class={`flex-shrink-0 ${
+                isCompleted ? "text-green-10" : 
+                isError ? "text-red-10" : 
+                isRunning ? "text-blue-10" : "text-gray-10"
+              }`}>
+                {isCompleted ? <Check size={14} /> : 
+                 isError ? <Circle size={14} /> :
+                 isRunning ? <Circle size={14} class="animate-pulse" /> :
+                 <Circle size={14} />}
               </div>
-              <div>
-                <div class="text-gray-12">{summary.title}</div>
-                <Show when={summary.detail}>
-                  <div class="mt-1 text-gray-10">{summary.detail}</div>
-                </Show>
-                <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
-                  <div class="mt-2 text-xs text-gray-10">
-                    <PartView
-                      part={part}
-                      developerMode={props.developerMode}
-                      showThinking={props.showThinking}
-                      tone={listProps.isUser ? "dark" : "light"}
-                    />
-                  </div>
-                </Show>
-              </div>
+              <span class="text-gray-12 font-medium">{summary.title}</span>
+              <Show when={summary.detail}>
+                <span class="text-gray-10 truncate max-w-[300px]">{summary.detail}</span>
+              </Show>
             </div>
           );
         }}
