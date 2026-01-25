@@ -97,6 +97,7 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
+import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
@@ -593,13 +594,19 @@ export default function App() {
     abortRefreshes,
   } = extensionsStore;
 
-  const [providers, setProviders] = createSignal<Provider[]>([]);
-  const [providerDefaults, setProviderDefaults] = createSignal<
-    Record<string, string>
-  >({});
-  const [providerConnectedIds, setProviderConnectedIds] = createSignal<
-    string[]
-  >([]);
+  const globalSync = useGlobalSync();
+  const providers = createMemo(() => globalSync.data.provider.all ?? []);
+  const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
+  const providerConnectedIds = createMemo(() => globalSync.data.provider.connected ?? []);
+  const setProviders = (value: Provider[]) => {
+    globalSync.set("provider", "all", value);
+  };
+  const setProviderDefaults = (value: Record<string, string>) => {
+    globalSync.set("provider", "default", value);
+  };
+  const setProviderConnectedIds = (value: string[]) => {
+    globalSync.set("provider", "connected", value);
+  };
 
   const [defaultModel, setDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
   const sessionModelOverridesKey = (workspaceId: string) =>
