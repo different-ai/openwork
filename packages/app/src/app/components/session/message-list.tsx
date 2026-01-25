@@ -219,7 +219,7 @@ export default function MessageList(props: MessageListProps) {
     const end = timing?.endAt ?? (typeof completed === "number" ? completed : null);
     if (typeof start !== "number" || typeof end !== "number") return null;
     const duration = end - start;
-    if (duration <= 0) return null;
+    if (duration < 0) return null;
     const reason = timing?.endReason ?? (typeof completed === "number" ? "completed" : undefined);
     return { start, end, duration, reason };
   };
@@ -247,7 +247,7 @@ export default function MessageList(props: MessageListProps) {
 
     if (start === null || end === null) return null;
     const duration = end - start;
-    if (duration <= 0) return null;
+    if (duration < 0) return null;
     return { duration, reason };
   };
 
@@ -390,15 +390,19 @@ export default function MessageList(props: MessageListProps) {
                       />
                     </button>
                     <Show when={!block.isUser && clusterTiming()}>
-                      {(timing) => (
-                        <div class="mt-2 flex items-center gap-1.5 text-xs text-gray-9">
-                          <Clock size={12} />
-                          <span>{formatElapsedTime(timing().duration)}</span>
-                          <Show when={timing().reason && timing().reason !== "completed"}>
-                            <span class="text-gray-9/80">· {formatReasonLabel(timing().reason!)}</span>
-                          </Show>
-                        </div>
-                      )}
+                      {(timing) => {
+                        const reason = timing().reason;
+                        const reasonLabel = reason && reason !== "completed" ? formatReasonLabel(reason) : null;
+                        return (
+                          <div class="mt-2 flex items-center gap-1.5 text-xs text-gray-9">
+                            <Clock size={12} />
+                            <span>{formatElapsedTime(timing().duration)}</span>
+                            <Show when={reasonLabel}>
+                              <span class="text-gray-9/80">· {reasonLabel}</span>
+                            </Show>
+                          </div>
+                        );
+                      }}
                     </Show>
                     <Show when={expanded()}>
                       <div
@@ -544,18 +548,22 @@ export default function MessageList(props: MessageListProps) {
                     return (
                       <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
                         <Show when={timing()}>
-                          {(resolved) => (
-                            <div class="flex items-center gap-1.5 opacity-60">
-                              <Clock size={12} />
-                              <span>{formatElapsedTime(resolved().duration)}</span>
-                              <Show when={resolved().reason && resolved().reason !== "completed"}>
-                                <span class="text-gray-9/80">· {formatReasonLabel(resolved().reason!)}</span>
-                              </Show>
-                            </div>
-                          )}
+                          {(resolved) => {
+                            const reason = resolved().reason;
+                            const reasonLabel = reason && reason !== "completed" ? formatReasonLabel(reason) : null;
+                            return (
+                              <div class="flex items-center gap-1.5 opacity-60">
+                                <Clock size={12} />
+                                <span>{formatElapsedTime(resolved().duration)}</span>
+                                <Show when={reasonLabel}>
+                                  <span class="text-gray-9/80">· {reasonLabel}</span>
+                                </Show>
+                              </div>
+                            );
+                          }}
                         </Show>
                         <div class="flex-1" />
-                        <div class="opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div>
                           {copyButton}
                         </div>
                       </div>

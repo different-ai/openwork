@@ -719,6 +719,12 @@ export function summarizeStep(part: Part): StepSummary {
     return { title: "Thinking" };
   }
 
+  if (part.type === "step-start" || part.type === "step-finish") {
+    return {
+      title: part.type === "step-start" ? "Step started" : "Step finished",
+    };
+  }
+
   return { title: "Step" };
 }
 
