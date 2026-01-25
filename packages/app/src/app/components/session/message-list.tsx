@@ -1,11 +1,30 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, Github } from "lucide-solid";
+import { Check, ChevronDown, Circle, Clock, Copy, Github } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
 import PartView from "../part-view";
+
+function formatElapsedTime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  if (minutes > 0) {
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  if (seconds > 0) {
+    return `${seconds}s`;
+  }
+  return `${ms}ms`;
+}
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -408,9 +427,27 @@ export default function MessageList(props: MessageListProps) {
                   )}
                 </For>
                 <Show when={!block.isUser}>
-                  <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
-                    {copyButton}
-                  </div>
+                  {(() => {
+                    const info = block.message.info as any;
+                    const created = info?.time?.created;
+                    const completed = info?.time?.completed;
+                    const duration = created && completed ? completed - created : null;
+                    
+                    return (
+                      <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
+                        <Show when={duration && duration > 0}>
+                          <div class="flex items-center gap-1.5 opacity-60">
+                            <Clock size={12} />
+                            <span>{formatElapsedTime(duration!)}</span>
+                          </div>
+                        </Show>
+                        <div class="flex-1" />
+                        <div class="opacity-0 group-hover:opacity-100 transition-opacity">
+                          {copyButton}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </Show>
               </div>
             </div>
