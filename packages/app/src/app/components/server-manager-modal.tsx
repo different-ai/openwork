@@ -20,6 +20,7 @@ export type ServerManagerModalProps = {
   onSetActive: (url: string) => void;
   onReconnect: () => void;
   onRestart?: () => void;
+  onDiscoverProjects?: () => void;
 };
 
 export default function ServerManagerModal(props: ServerManagerModalProps) {
@@ -55,6 +56,7 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
 
   const showReconnect = createMemo(() => props.mode === "client" && props.healthy === false);
   const showRestart = createMemo(() => props.mode === "host" && props.healthy === false && props.onRestart);
+  const showDiscover = createMemo(() => Boolean(props.mode) && props.onDiscoverProjects);
 
   return (
     <Show when={props.open}>
@@ -99,6 +101,16 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
                   >
                     <RefreshCcw size={12} />
                     Restart
+                  </Button>
+                </Show>
+                <Show when={showDiscover()}>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-7 px-2"
+                    onClick={() => props.onDiscoverProjects?.()}
+                    disabled={props.busy || !props.activeUrl}
+                  >
+                    Discover projects
                   </Button>
                 </Show>
               </div>

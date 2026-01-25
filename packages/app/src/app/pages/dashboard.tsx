@@ -7,9 +7,10 @@ import type {
   SkillCard,
   WorkspaceCommand,
 } from "../types";
+import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
-import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
+import { formatRelativeTime } from "../utils";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -62,14 +63,25 @@ export type DashboardViewProps = {
     folder: string | null
   ) => void;
   pickWorkspaceFolder: () => Promise<string | null>;
-  sessions: Array<{
-    id: string;
-    slug?: string | null;
-    title: string;
-    time: { updated: number };
-    directory?: string | null;
-  }>;
   sessionStatusById: Record<string, string>;
+  projectGroups: Array<{
+    workspace: WorkspaceInfo;
+    workspaceName: string;
+    directory: string;
+    connected: boolean;
+    status: string;
+    error: string | null;
+    updatedAt: number | null;
+    sessions: Session[];
+  }>;
+  allSessions: Array<{
+    session: Session;
+    workspace: WorkspaceInfo;
+    workspaceName: string;
+    connected: boolean;
+  }>;
+  openProjectSession: (workspaceId: string, sessionId: string) => void;
+  createSessionInWorkspace: (workspaceId: string) => void;
   activeWorkspaceRoot: string;
   workspaceCommands: WorkspaceCommand[];
   globalCommands: WorkspaceCommand[];
@@ -132,7 +144,6 @@ export type DashboardViewProps = {
   reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
-  selectSession: (sessionId: string) => Promise<void> | void;
   defaultModelLabel: string;
   defaultModelRef: string;
   openDefaultModelPicker: () => void;
@@ -210,10 +221,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const quickCommands = createMemo(() => props.workspaceCommands.slice(0, 3));
 
-  const openSessionFromList = (sessionId: string) => {
+  const openSessionFromList = (workspaceId: string, sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
     window.setTimeout(() => {
-      void props.selectSession(sessionId);
+      props.openProjectSession(workspaceId, sessionId);
       props.setTab("sessions");
       props.setView("session", sessionId);
     }, 0);
@@ -562,11 +573,11 @@ export default function DashboardView(props: DashboardViewProps) {
                 </h3>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
-                  <For each={props.sessions.slice(0, 3)}>
-                    {(s, idx) => (
+                  <For each={props.allSessions.slice(0, 3)}>
+                    {(entry, idx) => (
                       <button
                         class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
-                          idx() !== Math.min(props.sessions.length, 3) - 1
+                          idx() !== Math.min(props.allSessions.length, 3) - 1
                             ? "border-b border-gray-6/50"
                             : ""
                         }`}
@@ -574,30 +585,33 @@ export default function DashboardView(props: DashboardViewProps) {
                           e.currentTarget.setPointerCapture?.(e.pointerId);
                         }}
                         onPointerUp={() => {
-                          openSessionFromList(s.id);
+                          openSessionFromList(entry.workspace.id, entry.session.id);
                         }}
                       >
                         <div class="flex items-center gap-4">
                           <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
-                            #{s.slug?.slice(0, 2) ?? ".."}
+                            #{entry.session.slug?.slice(0, 2) ?? ".."}
                           </div>
                           <div>
                             <div class="font-medium text-sm text-gray-12">
-                              {s.title}
+                              {entry.session.title}
                             </div>
                             <div class="text-xs text-gray-10 flex items-center gap-2">
                               <span class="flex items-center gap-1">
-                                {formatRelativeTime(s.time.updated)}
+                                {formatRelativeTime(entry.session.time.updated)}
                               </span>
                               <Show
                                 when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
+                                  entry.workspace.id === props.activeWorkspaceId
                                 }
                               >
                                 <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
                                   this workspace
+                                </span>
+                              </Show>
+                              <Show when={entry.workspace.id !== props.activeWorkspaceId}>
+                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/40 text-gray-9">
+                                  {entry.workspaceName}
                                 </span>
                               </Show>
                             </div>
@@ -606,14 +620,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         <div class="flex items-center gap-4">
                           <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
                             <span class="w-1.5 h-1.5 rounded-full bg-current" />
-                            {props.sessionStatusById[s.id] ?? "idle"}
+                            {props.sessionStatusById[entry.session.id] ?? "idle"}
                           </span>
                         </div>
                       </button>
                     )}
                   </For>
 
-                  <Show when={!props.sessions.length}>
+                  <Show when={!props.allSessions.length}>
                     <div class="p-6 text-sm text-gray-10">
                       No sessions yet.
                     </div>
@@ -624,65 +638,106 @@ export default function DashboardView(props: DashboardViewProps) {
 
             <Match when={props.tab === "sessions"}>
               <section>
-                <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
-                  Recent Sessions
-                </h3>
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
+                    All Projects
+                  </h3>
+                  <span class="text-xs text-gray-9">
+                    {props.projectGroups.length} projects
+                  </span>
+                </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
-                  <For each={props.sessions.slice(0, 3)}>
-                    {(s, idx) => (
-                      <button
-                        class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
-                          idx() !== Math.min(props.sessions.length, 3) - 1
-                            ? "border-b border-gray-6/50"
-                            : ""
-                        }`}
-                        onPointerDown={(e) => {
-                          e.currentTarget.setPointerCapture?.(e.pointerId);
-                        }}
-                        onPointerUp={() => {
-                          openSessionFromList(s.id);
-                        }}
-                      >
-                        <div class="flex items-center gap-4">
-                          <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
-                            #{s.slug?.slice(0, 2) ?? ".."}
-                          </div>
-                          <div>
-                            <div class="font-medium text-sm text-gray-12">
-                              {s.title}
+                <div class="space-y-4">
+                  <For each={props.projectGroups}>
+                    {(group) => (
+                      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
+                        <div class="px-5 py-4 flex items-center justify-between gap-4 border-b border-gray-6/50">
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium text-gray-12 truncate">
+                              {group.workspaceName}
                             </div>
-                            <div class="text-xs text-gray-10 flex items-center gap-2">
-                              <span class="flex items-center gap-1">
-                                {formatRelativeTime(s.time.updated)}
-                              </span>
-                              <Show
-                                when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
-                                }
+                            <div class="text-xs text-gray-9 font-mono truncate">
+                              {group.directory || group.workspace.baseUrl || ""}
+                            </div>
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <span
+                              class={`text-[11px] px-2 py-0.5 rounded-full border ${
+                                group.connected
+                                  ? "border-green-7/40 text-green-11"
+                                  : "border-gray-7/40 text-gray-9"
+                              }`}
+                            >
+                              {group.connected ? "online" : "offline"}
+                            </span>
+                            <span class="text-[11px] text-gray-9">
+                              {group.sessions.length} sessions
+                            </span>
+                            <Button
+                              variant="outline"
+                              class="text-xs h-8 px-3"
+                              onClick={() => props.createSessionInWorkspace(group.workspace.id)}
+                              disabled={props.newTaskDisabled}
+                            >
+                              New session
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div>
+                          <For each={group.sessions}>
+                            {(session, idx) => (
+                              <button
+                                class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
+                                  idx() !== group.sessions.length - 1
+                                    ? "border-b border-gray-6/50"
+                                    : ""
+                                }`}
+                                onPointerDown={(e) => {
+                                  e.currentTarget.setPointerCapture?.(e.pointerId);
+                                }}
+                                onPointerUp={() => {
+                                  openSessionFromList(group.workspace.id, session.id);
+                                }}
                               >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                  this workspace
-                                </span>
-                              </Show>
+                                <div class="flex items-center gap-4">
+                                  <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
+                                    #{session.slug?.slice(0, 2) ?? ".."}
+                                  </div>
+                                  <div>
+                                    <div class="font-medium text-sm text-gray-12">
+                                      {session.title}
+                                    </div>
+                                    <div class="text-xs text-gray-10 flex items-center gap-2">
+                                      <span class="flex items-center gap-1">
+                                        {formatRelativeTime(session.time.updated)}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                  <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-current" />
+                                    {props.sessionStatusById[session.id] ?? "idle"}
+                                  </span>
+                                </div>
+                              </button>
+                            )}
+                          </For>
+
+                          <Show when={!group.sessions.length}>
+                            <div class="p-6 text-sm text-gray-10">
+                              {group.connected ? "No sessions yet." : "Connect to load sessions."}
                             </div>
-                          </div>
+                          </Show>
                         </div>
-                        <div class="flex items-center gap-4">
-                          <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
-                            <span class="w-1.5 h-1.5 rounded-full bg-current" />
-                            {props.sessionStatusById[s.id] ?? "idle"}
-                          </span>
-                        </div>
-                      </button>
+                      </div>
                     )}
                   </For>
 
-                  <Show when={!props.sessions.length}>
+                  <Show when={!props.projectGroups.length}>
                     <div class="p-6 text-sm text-gray-10">
-                      No sessions yet.
+                      No projects available.
                     </div>
                   </Show>
                 </div>

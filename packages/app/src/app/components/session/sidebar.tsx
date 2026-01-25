@@ -13,9 +13,17 @@ export type SidebarProps = {
   todos: TodoItem[];
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
-  sessions: Array<{ id: string; title: string; slug?: string | null }>;
+  sessionEntries: Array<{
+    id: string;
+    title: string;
+    slug?: string | null;
+    workspaceId: string;
+    workspaceName: string;
+    updatedAt: number;
+  }>;
+  activeWorkspaceId: string;
   selectedSessionId: string | null;
-  onSelectSession: (id: string) => void;
+  onSelectSession: (workspaceId: string, sessionId: string) => void;
   sessionStatusById: Record<string, string>;
   onCreateSession: () => void;
   newTaskDisabled: boolean;
@@ -49,7 +57,7 @@ export default function SessionSidebar(props: SidebarProps) {
         <div>
           <div class="text-[10px] text-gray-9 uppercase tracking-widest font-semibold mb-3 px-2">Recents</div>
           <div class="space-y-1">
-            <For each={props.sessions.slice(0, 8)}>
+            <For each={props.sessionEntries.slice(0, 12)}>
               {(session) => (
                 <button
                   class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
@@ -57,10 +65,15 @@ export default function SessionSidebar(props: SidebarProps) {
                       ? "bg-gray-3 text-gray-12 font-medium"
                       : "text-gray-11 hover:text-gray-12 hover:bg-gray-2"
                   }`}
-                  onClick={() => props.onSelectSession(session.id)}
+                  onClick={() => props.onSelectSession(session.workspaceId, session.id)}
                 >
                   <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
-                    <span class="truncate">{session.title}</span>
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate">{session.title}</div>
+                      <Show when={session.workspaceId !== props.activeWorkspaceId}>
+                        <div class="text-[10px] text-gray-8 mt-1 truncate">{session.workspaceName}</div>
+                      </Show>
+                    </div>
                     <Show
                       when={
                         props.sessionStatusById[session.id] &&

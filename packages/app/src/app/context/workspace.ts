@@ -676,6 +676,7 @@ export function createWorkspaceStore(options: {
       if (info.baseUrl) {
         const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
         if (!ok) return false;
+        await discoverLocalProjects(info.baseUrl, { quiet: true });
       }
 
       markOnboardingComplete();
@@ -781,6 +782,143 @@ export function createWorkspaceStore(options: {
       options.setBusy(false);
       options.setBusyLabel(null);
       options.setBusyStartedAt(null);
+    }
+  }
+
+  async function discoverRemoteProjects(baseUrlInput: string) {
+    const baseUrl = baseUrlInput.trim();
+    if (!baseUrl) {
+      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      return false;
+    }
+
+    options.setError(null);
+    options.setBusy(true);
+    options.setBusyLabel("status.connecting");
+    options.setBusyStartedAt(Date.now());
+
+    try {
+      const client = createClient(baseUrl);
+      const projects = unwrap(await client.project.list());
+      if (!projects.length) {
+        options.setError("No projects found on that server.");
+        return false;
+      }
+
+      const previousActiveId = activeWorkspaceId();
+      for (const project of projects) {
+        const directory = project.worktree?.trim();
+        if (!directory) continue;
+        if (isTauriRuntime()) {
+          const ws = await workspaceCreateRemote({
+            baseUrl,
+            directory,
+            displayName: project.name ?? null,
+          });
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+        } else {
+          const workspaceId = `remote:${baseUrl}:${directory}`;
+          const nextWorkspace: WorkspaceInfo = {
+            id: workspaceId,
+            name: project.name ?? baseUrl,
+            path: "",
+            preset: "remote",
+            workspaceType: "remote",
+            baseUrl,
+            directory,
+            displayName: project.name ?? null,
+          };
+          setWorkspaces((prev) => {
+            const withoutMatch = prev.filter((workspace) => workspace.id !== workspaceId);
+            return [...withoutMatch, nextWorkspace];
+          });
+        }
+      }
+
+      if (isTauriRuntime() && previousActiveId) {
+        try {
+          const ws = await workspaceSetActive(previousActiveId);
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+        } catch {
+          // ignore
+        }
+      }
+
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      return false;
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
+  async function discoverLocalProjects(
+    baseUrlInput: string,
+    optionsOverride?: { quiet?: boolean }
+  ) {
+    const baseUrl = baseUrlInput.trim();
+    if (!baseUrl) return false;
+
+    const quiet = optionsOverride?.quiet ?? false;
+    options.setError(null);
+    if (!quiet) {
+      options.setBusy(true);
+      options.setBusyLabel("status.connecting");
+      options.setBusyStartedAt(Date.now());
+    }
+
+    try {
+      const client = createClient(baseUrl);
+      const projects = unwrap(await client.project.list());
+      if (!projects.length) return false;
+
+      const existingPaths = new Set(
+        workspaces()
+          .filter((workspace) => workspace.workspaceType !== "remote")
+          .map((workspace) => workspace.path?.trim() ?? "")
+          .filter(Boolean)
+      );
+      const previousActiveId = activeWorkspaceId();
+      for (const project of projects) {
+        const directory = project.worktree?.trim();
+        if (!directory) continue;
+        if (existingPaths.has(directory)) continue;
+        if (isTauriRuntime()) {
+          const name = directory.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
+          const ws = await workspaceCreate({ folderPath: directory, name, preset: "starter" });
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+          existingPaths.add(directory);
+        }
+      }
+
+      if (isTauriRuntime() && previousActiveId) {
+        try {
+          const ws = await workspaceSetActive(previousActiveId);
+          setWorkspaces(ws.workspaces);
+          syncActiveWorkspaceId(ws.activeId);
+        } catch {
+          // ignore
+        }
+      }
+
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      return false;
+    } finally {
+      if (!quiet) {
+        options.setBusy(false);
+        options.setBusyLabel(null);
+        options.setBusyStartedAt(null);
+      }
     }
   }
 
@@ -933,29 +1071,6 @@ export function createWorkspaceStore(options: {
   }
 
   async function bootstrapOnboarding() {
-    const modePref = (() => {
-      try {
-        return window.localStorage.getItem("openwork.modePref") as Mode | null;
-      } catch {
-        return null;
-      }
-    })();
-    const onboardingComplete = (() => {
-      try {
-        return window.localStorage.getItem("openwork.onboardingComplete") === "1";
-      } catch {
-        return false;
-      }
-    })();
-
-    if (isTauriRuntime()) {
-      try {
-        setWorkspaces((await workspaceBootstrap()).workspaces);
-      } catch {
-        // ignore
-      }
-    }
-
     await refreshEngine();
     await refreshEngineDoctor();
 
@@ -988,9 +1103,7 @@ export function createWorkspaceStore(options: {
               setAuthorizedDirs([active.path]);
             }
 
-            await options
-              .loadCommands({ workspaceRoot: active.path, quiet: true })
-              .catch(() => undefined);
+            await options.loadCommands({ workspaceRoot: active.path, quiet: true }).catch(() => undefined);
           }
         }
       } catch {
@@ -1003,93 +1116,43 @@ export function createWorkspaceStore(options: {
       options.setBaseUrl(info.baseUrl);
     }
 
+    markOnboardingComplete();
+    options.setView("dashboard");
+    options.setTab("sessions");
+
     const activeWorkspace = activeWorkspaceInfo();
-    if (activeWorkspace?.workspaceType === "remote") {
+    if (!activeWorkspace) return;
+
+    if (activeWorkspace.workspaceType === "remote") {
       options.setMode("client");
-      const baseUrl = activeWorkspace.baseUrl?.trim() ?? "";
-      if (!baseUrl) {
-        options.setOnboardingStep("client");
-        return;
-      }
+      const baseUrl = activeWorkspace.baseUrl?.trim() ?? options.baseUrl().trim();
+      if (!baseUrl) return;
 
       options.setOnboardingStep("connecting");
-      const ok = await connectToServer(baseUrl, activeWorkspace.directory?.trim() || undefined, {
+      await connectToServer(baseUrl, activeWorkspace.directory?.trim() || undefined, {
         workspaceId: activeWorkspace.id,
         workspaceType: activeWorkspace.workspaceType,
       });
-      if (!ok) {
-        options.setOnboardingStep("client");
-      }
       return;
     }
 
-    if (!modePref && onboardingComplete && activeWorkspacePath().trim()) {
-      options.setMode("host");
+    options.setMode("host");
+    if (!authorizedDirs().length && activeWorkspacePath().trim()) {
+      setAuthorizedDirs([activeWorkspacePath().trim()]);
+    }
 
-      if (info?.running && info.baseUrl) {
-        options.setOnboardingStep("connecting");
-        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
-        if (!ok) {
-          options.setMode(null);
-          options.setOnboardingStep("mode");
-        }
-        return;
-      }
-
+    if (info?.running && info.baseUrl) {
       options.setOnboardingStep("connecting");
-      const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
-      if (!ok) {
-        options.setOnboardingStep("host");
+      const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
+      if (ok) {
+        await discoverLocalProjects(info.baseUrl, { quiet: true });
       }
       return;
     }
 
-    if (!modePref) return;
-
-    if (modePref === "host") {
-      options.setMode("host");
-
-      if (info?.running && info.baseUrl) {
-        options.setOnboardingStep("connecting");
-        const ok = await connectToServer(info.baseUrl, info.projectDir ?? undefined);
-        if (!ok) {
-          options.setMode(null);
-          options.setOnboardingStep("mode");
-        }
-        return;
-      }
-
-      if (isTauriRuntime() && activeWorkspacePath().trim()) {
-        if (!authorizedDirs().length && activeWorkspacePath().trim()) {
-          setAuthorizedDirs([activeWorkspacePath().trim()]);
-        }
-
-        options.setOnboardingStep("connecting");
-        const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
-        if (!ok) {
-          options.setOnboardingStep("host");
-        }
-        return;
-      }
-
-      options.setOnboardingStep("host");
-      return;
-    }
-
-    options.setMode("client");
-    if (!options.baseUrl().trim()) {
-      options.setOnboardingStep("client");
-      return;
-    }
-
-    options.setOnboardingStep("connecting");
-    const ok = await connectToServer(
-      options.baseUrl().trim(),
-      options.clientDirectory().trim() ? options.clientDirectory().trim() : undefined,
-    );
-
-    if (!ok) {
-      options.setOnboardingStep("client");
+    if (isTauriRuntime() && activeWorkspacePath().trim()) {
+      options.setOnboardingStep("connecting");
+      await startHost({ workspacePath: activeWorkspacePath().trim() });
     }
   }
 
@@ -1121,10 +1184,15 @@ export function createWorkspaceStore(options: {
   async function onAttachHost() {
     options.setMode("host");
     options.setOnboardingStep("connecting");
-    const ok = await connectToServer(engine()?.baseUrl ?? "", engine()?.projectDir ?? undefined);
+    const baseUrl = engine()?.baseUrl ?? "";
+    const ok = await connectToServer(baseUrl, engine()?.projectDir ?? undefined);
     if (!ok) {
       options.setMode(null);
       options.setOnboardingStep("mode");
+      return;
+    }
+    if (baseUrl) {
+      await discoverLocalProjects(baseUrl, { quiet: true });
     }
   }
 
@@ -1196,6 +1264,8 @@ export function createWorkspaceStore(options: {
     connectToServer,
     createWorkspaceFlow,
     createRemoteWorkspaceFlow,
+    discoverRemoteProjects,
+    discoverLocalProjects,
     forgetWorkspace,
     pickWorkspaceFolder,
     startHost,

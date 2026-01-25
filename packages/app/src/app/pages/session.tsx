@@ -9,7 +9,6 @@ import type {
   TodoItem,
   View,
   WorkspaceCommand,
-  WorkspaceDisplay,
 } from "../types";
 
 import {
@@ -23,7 +22,6 @@ import {
 
 import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
-import WorkspaceChip from "../components/workspace-chip";
 import ProviderAuthModal from "../components/provider-auth-modal";
 
 import MessageList from "../components/session/message-list";
@@ -36,9 +34,6 @@ export type SessionViewProps = {
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
   setTab: (tab: DashboardTab) => void;
-  activeWorkspaceDisplay: WorkspaceDisplay;
-  setWorkspaceSearch: (value: string) => void;
-  setWorkspacePickerOpen: (open: boolean) => void;
   headerStatus: string;
   serverName: string;
   serverHealthy: boolean | undefined;
@@ -48,8 +43,16 @@ export type SessionViewProps = {
   createSessionAndOpen: () => void;
   sendPromptAsync: () => Promise<void>;
   newTaskDisabled: boolean;
-  sessions: Array<{ id: string; title: string; slug?: string | null }>;
-  selectSession: (sessionId: string) => Promise<void> | void;
+  activeWorkspaceId: string;
+  sessionEntries: Array<{
+    id: string;
+    title: string;
+    slug?: string | null;
+    workspaceId: string;
+    workspaceName: string;
+    updatedAt: number;
+  }>;
+  selectSession: (workspaceId: string, sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
   todos: TodoItem[];
   busyLabel: string | null;
@@ -432,7 +435,7 @@ export default function SessionView(props: SessionViewProps) {
   const selectedSessionTitle = createMemo(() => {
     const id = props.selectedSessionId;
     if (!id) return "";
-    return props.sessions.find((session) => session.id === id)?.title ?? "";
+    return props.sessionEntries.find((session) => session.id === id)?.title ?? "";
   });
 
   const renameCanSave = createMemo(() => {
@@ -737,13 +740,6 @@ export default function SessionView(props: SessionViewProps) {
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
             </Button>
-             <WorkspaceChip
-               workspace={props.activeWorkspaceDisplay}
-               onClick={() => {
-                 props.setWorkspaceSearch("");
-                 props.setWorkspacePickerOpen(true);
-               }}
-             />
              <Button
                variant="ghost"
                class="!px-2 !py-1 rounded-full flex items-center gap-2"
@@ -782,23 +778,24 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
-             <SessionSidebar
-               todos={props.todos}
-               expandedSections={props.expandedSidebarSections}
-               onToggleSection={(section) => {
-                 props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
-               }}
-               sessions={props.sessions}
-               selectedSessionId={props.selectedSessionId}
-                onSelectSession={async (id) => {
-                  await props.selectSession(id);
-                  props.setView("session", id);
-                  props.setTab("sessions");
-                }}
-               sessionStatusById={props.sessionStatusById}
-               onCreateSession={props.createSessionAndOpen}
-               newTaskDisabled={props.newTaskDisabled}
-             />
+               <SessionSidebar
+                 todos={props.todos}
+                 expandedSections={props.expandedSidebarSections}
+                 onToggleSection={(section) => {
+                   props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
+                 }}
+                 sessionEntries={props.sessionEntries}
+                 activeWorkspaceId={props.activeWorkspaceId}
+                 selectedSessionId={props.selectedSessionId}
+                 onSelectSession={async (workspaceId, id) => {
+                   await props.selectSession(workspaceId, id);
+                   props.setView("session", id);
+                   props.setTab("sessions");
+                 }}
+                 sessionStatusById={props.sessionStatusById}
+                 onCreateSession={props.createSessionAndOpen}
+                 newTaskDisabled={props.newTaskDisabled}
+               />
           </aside>
 
           <div

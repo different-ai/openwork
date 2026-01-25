@@ -8,10 +8,11 @@ import {
   onMount,
   untrack,
 } from "solid-js";
+import { createStore } from "solid-js/store";
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
-import type { Agent, Provider } from "@opencode-ai/sdk/v2/client";
+import type { Agent, Provider, Session } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { parse } from "jsonc-parser";
@@ -104,6 +105,7 @@ import {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 
 export default function App() {
@@ -751,6 +753,253 @@ export default function App() {
     isWindowsPlatform,
   });
 
+  const readSessionCache = () => {
+    if (typeof window === "undefined") return {} as Record<string, Session[]>;
+    try {
+      const raw = window.localStorage.getItem("openwork.session.cache");
+      const parsed = raw ? (JSON.parse(raw) as Record<string, Session[]>) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {} as Record<string, Session[]>;
+    }
+  };
+
+  const readOpenProjectIds = () => {
+    if (typeof window === "undefined") return [] as string[];
+    try {
+      const raw = window.localStorage.getItem("openwork.project.open");
+      const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+      return Array.isArray(parsed) ? parsed.filter((item) => typeof item === "string") : [];
+    } catch {
+      return [] as string[];
+    }
+  };
+
+  const [sessionCache, setSessionCache] = createStore<Record<string, Session[]>>(readSessionCache());
+  const [projectSessions, setProjectSessions] = createStore<Record<string, Session[]>>({});
+  const [projectSessionMeta, setProjectSessionMeta] = createStore<
+    Record<
+      string,
+      {
+        status: "idle" | "loading" | "offline" | "error" | "online";
+        connected: boolean;
+        error: string | null;
+        updatedAt: number | null;
+      }
+    >
+  >({});
+  const [openProjectIds, setOpenProjectIds] = createSignal<string[]>(readOpenProjectIds());
+
+  const connectedServerUrl = createMemo(() => normalizeServerUrl(server.url) ?? "");
+
+  const workspaceDirectory = (workspace: WorkspaceInfo) => {
+    if (workspace.workspaceType === "remote") return workspace.directory?.trim() ?? "";
+    return workspace.path?.trim() ?? "";
+  };
+
+  const workspaceBaseUrl = (workspace: WorkspaceInfo) => {
+    if (workspace.workspaceType === "remote") return normalizeServerUrl(workspace.baseUrl ?? "") ?? "";
+    return connectedServerUrl();
+  };
+
+  const workspaceDisplayName = (workspace: WorkspaceInfo) => {
+    const label = workspace.displayName?.trim() || workspace.name || workspace.baseUrl || workspace.path;
+    return label ?? "Workspace";
+  };
+
+  const isWorkspaceConnected = (workspace: WorkspaceInfo) => {
+    const serverUrl = connectedServerUrl();
+    if (!serverUrl) return false;
+    if (workspace.workspaceType === "remote") {
+      return mode() === "client" && normalizeServerUrl(workspace.baseUrl ?? "") === serverUrl;
+    }
+    return mode() === "host";
+  };
+
+  const loadProjectSessions = async (workspace: WorkspaceInfo) => {
+    const key = workspace.id;
+    const directory = workspaceDirectory(workspace);
+    const connected = isWorkspaceConnected(workspace);
+
+    if (!connected || !directory) {
+      setProjectSessionMeta(key, {
+        status: "offline",
+        connected: false,
+        error: null,
+        updatedAt: projectSessionMeta[key]?.updatedAt ?? null,
+      });
+      return;
+    }
+
+    const baseUrl = workspaceBaseUrl(workspace);
+    if (!baseUrl) {
+      setProjectSessionMeta(key, {
+        status: "offline",
+        connected: false,
+        error: null,
+        updatedAt: projectSessionMeta[key]?.updatedAt ?? null,
+      });
+      return;
+    }
+
+    setProjectSessionMeta(key, {
+      status: "loading",
+      connected: true,
+      error: null,
+      updatedAt: projectSessionMeta[key]?.updatedAt ?? null,
+    });
+
+    try {
+      const client = createClient(baseUrl, directory);
+      const list = unwrap(await client.session.list());
+      setProjectSessions(key, list);
+      setSessionCache(key, list);
+      setProjectSessionMeta(key, {
+        status: "online",
+        connected: true,
+        error: null,
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setProjectSessionMeta(key, {
+        status: "error",
+        connected: true,
+        error: message,
+        updatedAt: projectSessionMeta[key]?.updatedAt ?? null,
+      });
+    }
+  };
+
+  const refreshAllProjectSessions = async () => {
+    const list = workspaceStore.workspaces();
+    if (!list.length) return;
+    await Promise.allSettled(list.map((workspace) => loadProjectSessions(workspace)));
+  };
+
+  createEffect(() => {
+    const _server = connectedServerUrl();
+    const _mode = mode();
+    const list = workspaceStore.workspaces();
+    if (!list.length) return;
+    if (tab() !== "sessions" && tab() !== "home") return;
+    void refreshAllProjectSessions();
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("openwork.session.cache", JSON.stringify(sessionCache));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    const workspaceIds = workspaceStore.workspaces().map((workspace) => workspace.id);
+    if (!workspaceIds.length) return;
+
+    const stored = openProjectIds();
+    const next = stored.length ? stored.filter((id) => workspaceIds.includes(id)) : [...workspaceIds];
+    for (const id of workspaceIds) {
+      if (!next.includes(id)) next.push(id);
+    }
+    if (next.join("|") !== stored.join("|")) {
+      setOpenProjectIds(next);
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("openwork.project.open", JSON.stringify(openProjectIds()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const activeId = workspaceStore.activeWorkspaceId();
+    if (!activeId) return;
+    const key = connectedServerUrl() || "local";
+    try {
+      window.localStorage.setItem(`openwork.project.last:${key}`, activeId);
+    } catch {
+      // ignore
+    }
+  });
+
+  const projectGroups = createMemo(() => {
+    const openIds = new Set(openProjectIds());
+    return workspaceStore
+      .workspaces()
+      .filter((workspace) => openIds.has(workspace.id))
+      .map((workspace) => {
+        const meta = projectSessionMeta[workspace.id];
+        const connected = isWorkspaceConnected(workspace);
+        const sessionsForWorkspace = projectSessions[workspace.id]
+          ?? sessionCache[workspace.id]
+          ?? [];
+        const sortedSessions = sessionsForWorkspace
+          .slice()
+          .sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
+
+        return {
+          workspace,
+          workspaceName: workspaceDisplayName(workspace),
+          directory: workspaceDirectory(workspace),
+          connected,
+          status: meta?.status ?? (connected ? "idle" : "offline"),
+          error: meta?.error ?? null,
+          updatedAt: meta?.updatedAt ?? null,
+          sessions: sortedSessions,
+        };
+      });
+  });
+
+  const allSessions = createMemo(() => {
+    const entries: Array<{
+      session: Session;
+      workspace: WorkspaceInfo;
+      workspaceName: string;
+      connected: boolean;
+    }> = [];
+    for (const group of projectGroups()) {
+      if (!group.connected) continue;
+      for (const session of group.sessions) {
+        entries.push({
+          session,
+          workspace: group.workspace,
+          workspaceName: group.workspaceName,
+          connected: group.connected,
+        });
+      }
+    }
+    return entries.sort(
+      (a, b) => (b.session.time?.updated ?? 0) - (a.session.time?.updated ?? 0),
+    );
+  });
+
+  const sessionEntries = createMemo(() =>
+    allSessions().map((entry) => ({
+      id: entry.session.id,
+      title: entry.session.title,
+      slug: entry.session.slug,
+      workspaceId: entry.workspace.id,
+      workspaceName: entry.workspaceName,
+      updatedAt: entry.session.time?.updated ?? entry.session.time?.created ?? 0,
+    }))
+  );
+
+  const sessionWorkspaceMap = createMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of allSessions()) {
+      map.set(entry.session.id, entry.workspace.id);
+    }
+    return map;
+  });
+
   const openServerManager = () => setServerManagerOpen(true);
   const closeServerManager = () => setServerManagerOpen(false);
 
@@ -790,6 +1039,17 @@ export default function App() {
     server.add(normalized);
     setBaseUrl(normalized);
     await connectToServer(normalized);
+    const hasRemoteProjects = workspaceStore
+      .workspaces()
+      .some(
+        (workspace) =>
+          workspace.workspaceType === "remote" &&
+          normalizeServerUrl(workspace.baseUrl ?? "") === normalized,
+      );
+    if (!hasRemoteProjects) {
+      await workspaceStore.discoverRemoteProjects(normalized);
+      await refreshAllProjectSessions();
+    }
   };
 
   const handleServerReconnect = async () => {
@@ -803,6 +1063,42 @@ export default function App() {
     if (mode() !== "host") return;
     if (!confirmServerSwitch()) return;
     await workspaceStore.reloadWorkspaceEngine();
+  };
+
+  const handleDiscoverProjects = async () => {
+    const target = normalizeServerUrl(server.url);
+    if (!target) return;
+    if (mode() === "host") {
+      await workspaceStore.discoverLocalProjects(target);
+    } else {
+      await workspaceStore.discoverRemoteProjects(target);
+    }
+    await refreshAllProjectSessions();
+  };
+
+  const selectSessionForWorkspace = async (workspaceId: string, sessionId: string) => {
+    if (isDemoMode()) {
+      selectDemoSession(sessionId);
+      return;
+    }
+    if (workspaceStore.activeWorkspaceId() !== workspaceId) {
+      const ok = await workspaceStore.activateWorkspace(workspaceId);
+      if (!ok) return;
+    }
+    await selectSession(sessionId);
+  };
+
+  const createSessionForWorkspace = async (workspaceId: string) => {
+    if (workspaceStore.activeWorkspaceId() !== workspaceId) {
+      const ok = await workspaceStore.activateWorkspace(workspaceId);
+      if (!ok) return;
+    }
+    await createSessionAndOpen();
+  };
+
+  const openSessionFromProject = async (workspaceId: string, sessionId: string) => {
+    await selectSessionForWorkspace(workspaceId, sessionId);
+    setView("session", sessionId);
   };
 
   const commandState = createCommandState({
@@ -1582,6 +1878,7 @@ export default function App() {
       mark("view set to session");
       // setSessionViewLockUntil(Date.now() + 1200);
       goToSession(session.id);
+      void refreshAllProjectSessions();
     } catch (e) {
       mark("error caught", e);
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
@@ -2171,14 +2468,11 @@ export default function App() {
     setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
     createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
     pickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-    sessions: activeSessions().map((s) => ({
-      id: s.id,
-      slug: s.slug,
-      title: s.title,
-      time: s.time,
-      directory: s.directory,
-    })),
     sessionStatusById: activeSessionStatusById(),
+    projectGroups: projectGroups(),
+    allSessions: allSessions(),
+    openProjectSession: openSessionFromProject,
+    createSessionInWorkspace,
     activeWorkspaceRoot: isDemoMode()
       ? demoActiveWorkspaceDisplay().path
       : workspaceStore.activeWorkspaceRoot().trim(),
@@ -2221,7 +2515,6 @@ export default function App() {
     addPlugin,
     createSessionAndOpen,
     setPrompt,
-    selectSession: isDemoMode() ? selectDemoSession : selectSession,
     defaultModelLabel: formatModelLabel(defaultModel(), providers()),
     defaultModelRef: formatModelRef(defaultModel()),
     openDefaultModelPicker,
@@ -2293,9 +2586,6 @@ export default function App() {
     selectedSessionId: activeSessionId(),
     setView,
     setTab,
-    activeWorkspaceDisplay: activeWorkspaceDisplay(),
-    setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
-    setWorkspacePickerOpen: workspaceStore.setWorkspacePickerOpen,
     headerStatus: headerStatus(),
     serverName: server.name,
     serverHealthy: server.healthy(),
@@ -2309,12 +2599,9 @@ export default function App() {
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
     newTaskDisabled: newTaskDisabled(),
-    sessions: activeSessions().map((session) => ({
-      id: session.id,
-      title: session.title,
-      slug: session.slug,
-    })),
-    selectSession: isDemoMode() ? selectDemoSession : selectSession,
+    activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+    sessionEntries: sessionEntries(),
+    selectSession: selectSessionForWorkspace,
     messages: activeMessages(),
     todos: activeTodos(),
     busyLabel: busyLabel(),
@@ -2390,14 +2677,8 @@ export default function App() {
   };
 
   const initialRoute = () => {
-    if (typeof window === "undefined") return "/onboarding";
-    try {
-      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
-        ? "/dashboard/home"
-        : "/onboarding";
-    } catch {
-      return "/onboarding";
-    }
+    if (typeof window === "undefined") return "/dashboard/sessions";
+    return "/dashboard/sessions";
   };
 
   createEffect(() => {
@@ -2444,7 +2725,8 @@ export default function App() {
       }
 
       if (selectedSessionId() !== id) {
-        void selectSession(id);
+        const workspaceId = sessionWorkspaceMap().get(id) ?? workspaceStore.activeWorkspaceId();
+        void selectSessionForWorkspace(workspaceId, id);
       }
       return;
     }
@@ -2502,6 +2784,7 @@ export default function App() {
         onSetActive={handleServerSelect}
         onReconnect={handleServerReconnect}
         onRestart={handleServerRestart}
+        onDiscoverProjects={handleDiscoverProjects}
       />
 
       <ResetModal
