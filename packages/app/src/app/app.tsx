@@ -39,6 +39,7 @@ import {
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
+  SESSION_LIST_LIMIT,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -816,6 +817,12 @@ export default function App() {
     return mode() === "host";
   };
 
+  const sessionListQuery = (directory: string) => ({
+    directory,
+    roots: true,
+    limit: SESSION_LIST_LIMIT,
+  });
+
   const loadProjectSessions = async (workspace: WorkspaceInfo) => {
     const key = workspace.id;
     const directory = workspaceDirectory(workspace);
@@ -851,7 +858,7 @@ export default function App() {
 
     try {
       const client = createClient(baseUrl, directory);
-      const list = unwrap(await client.session.list());
+      const list = unwrap(await client.session.list(sessionListQuery(directory)));
       setProjectSessions(key, list);
       setSessionCache(key, list);
       setProjectSessionMeta(key, {

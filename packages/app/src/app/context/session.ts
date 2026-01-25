@@ -22,6 +22,7 @@ import {
   normalizeSessionStatus,
   safeStringify,
 } from "../utils";
+import { SESSION_LIST_LIMIT } from "../constants";
 import { unwrap } from "../lib/opencode";
 
 export type SessionModelState = {
@@ -222,10 +223,18 @@ export function createSessionStore(options: {
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
-    const list = unwrap(await c.session.list());
-    const root = normalizeDirectoryPath(scopeRoot);
-    const filtered = root
-      ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
+    const root = scopeRoot?.trim();
+    const query: { directory?: string; roots: boolean; limit: number } = {
+      roots: true,
+      limit: SESSION_LIST_LIMIT,
+    };
+    if (root) {
+      query.directory = root;
+    }
+    const list = unwrap(await c.session.list(query));
+    const normalizedRoot = normalizeDirectoryPath(root);
+    const filtered = normalizedRoot
+      ? list.filter((session) => normalizeDirectoryPath(session.directory) === normalizedRoot)
       : list;
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
   }
