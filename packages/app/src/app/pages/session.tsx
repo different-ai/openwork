@@ -85,6 +85,7 @@ export type SessionViewProps = {
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
+  cancelRun: () => Promise<void>;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
   modelVariantLabel: string;
@@ -1364,6 +1365,7 @@ export default function SessionView(props: SessionViewProps) {
           prompt={props.prompt}
           busy={props.busy}
           onSend={handleSendPrompt}
+          onCancel={() => props.cancelRun()}
           onDraftChange={handleDraftChange}
           commandMatches={commandMatches()}
           onRunCommand={handleRunCommand}
