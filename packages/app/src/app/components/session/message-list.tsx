@@ -62,6 +62,22 @@ export default function MessageList(props: MessageListProps) {
     }
   };
 
+  const partToText = (part: Part) => {
+    if (part.type === "text") {
+      return String((part as { text?: string }).text ?? "");
+    }
+    if (part.type === "agent") {
+      const name = (part as { name?: string }).name ?? "";
+      return name ? `@${name}` : "@agent";
+    }
+    if (part.type === "file") {
+      const record = part as { label?: string; path?: string; filename?: string };
+      const label = record.label ?? record.path ?? record.filename ?? "";
+      return label ? `@${label}` : "@file";
+    }
+    return "";
+  };
+
   const toggleSteps = (id: string, relatedIds: string[] = []) => {
     props.setExpandedStepIds((current) => {
       const next = new Set(current);
@@ -91,7 +107,7 @@ export default function MessageList(props: MessageListProps) {
         return props.developerMode;
       }
 
-      if (part.type === "text" || part.type === "tool") {
+      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
         return true;
       }
 
@@ -308,7 +324,7 @@ export default function MessageList(props: MessageListProps) {
                     title="Copy message"
                     onClick={() => {
                       const text = block.renderableParts
-                        .map((part) => ("text" in part ? (part as any).text : ""))
+                        .map((part) => partToText(part))
                         .join("\n");
                       handleCopy(text, block.messageId);
                     }}

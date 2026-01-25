@@ -17,6 +17,7 @@ import type {
 
 import {
   AlertTriangle,
+  AtSign,
   ArrowRight,
   ChevronDown,
   HardDrive,
@@ -93,6 +94,7 @@ export type SessionViewProps = {
   providers: Provider[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
+  selectedSessionAgent: string | null;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
@@ -106,16 +108,45 @@ export type SessionViewProps = {
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  let agentPickerRef: HTMLDivElement | undefined;
 
   const [commandToast, setCommandToast] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+  const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
+  const [agentPickerReady, setAgentPickerReady] = createSignal(false);
+  const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
+  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
 
   const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
 
   const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
+
+  const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
+
+  const loadAgentOptions = async (force = false) => {
+    if (agentPickerBusy()) return agentOptions();
+    if (agentPickerReady() && !force) return agentOptions();
+    setAgentPickerBusy(true);
+    setAgentPickerError(null);
+    try {
+      const agents = await props.listAgents();
+      const sorted = agents.slice().sort((a, b) => a.name.localeCompare(b.name));
+      setAgentOptions(sorted);
+      setAgentPickerReady(true);
+      return sorted;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load agents";
+      setAgentPickerError(message);
+      setAgentOptions([]);
+      return [];
+    } finally {
+      setAgentPickerBusy(false);
+    }
+  };
 
   type Flyout = {
     id: string;
@@ -511,6 +542,64 @@ export default function SessionView(props: SessionViewProps) {
     return items.length > 4 ? `${preview}, ...` : preview;
   };
 
+  const openAgentPicker = () => {
+    setAgentPickerOpen((current) => !current);
+    if (!agentPickerReady()) {
+      void loadAgentOptions();
+    }
+  };
+
+  const applySessionAgent = (agent: string | null) => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    props.setSessionAgent(sessionId, agent);
+    setCommandToast(agent ? `Agent set to ${agent}` : "Agent cleared");
+  };
+
+  const cycleAgent = async (direction: "next" | "prev") => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    try {
+      const agents = await loadAgentOptions(true);
+      if (!agents.length) {
+        setCommandToast("No agents available");
+        return;
+      }
+      const names = agents.map((agent) => agent.name);
+      const current = props.selectedSessionAgent ?? "";
+      const currentIndex = current ? names.findIndex((name) => name === current) : -1;
+      let nextIndex = 0;
+      if (currentIndex === -1) {
+        nextIndex = direction === "next" ? 0 : names.length - 1;
+      } else if (direction === "next") {
+        nextIndex = (currentIndex + 1) % names.length;
+      } else {
+        nextIndex = (currentIndex - 1 + names.length) % names.length;
+      }
+      const nextAgent = names[nextIndex] ?? null;
+      if (!nextAgent) {
+        setCommandToast("No agents available");
+        return;
+      }
+      props.setSessionAgent(sessionId, nextAgent);
+      setCommandToast(`Agent set to ${nextAgent}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent selection failed";
+      setCommandToast(message);
+    }
+  };
+
+  createEffect(() => {
+    if (!agentPickerOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!agentPickerRef) return;
+      if (agentPickerRef.contains(event.target as Node)) return;
+      setAgentPickerOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
   const handleProviderAuthSelect = async (providerId: string) => {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
@@ -607,6 +696,11 @@ export default function SessionView(props: SessionViewProps) {
 
           try {
             const rawArg = extractCommandArgs(props.prompt);
+            if (/^(next|prev|previous)$/i.test(rawArg)) {
+              await cycleAgent(/^prev/i.test(rawArg) ? "prev" : "next");
+              clearPrompt();
+              return;
+            }
             if (/^(none|clear|default)$/i.test(rawArg)) {
               props.setSessionAgent(sessionId, null);
               setCommandToast("Agent cleared");
@@ -653,6 +747,30 @@ export default function SessionView(props: SessionViewProps) {
             const message = error instanceof Error ? error.message : "Agent selection failed";
             setCommandToast(message);
           }
+        },
+      },
+      {
+        id: "session.agent.next",
+        title: "Next agent",
+        category: "Session",
+        description: "Cycle to the next agent",
+        slash: "agent-next",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("next");
+          clearPrompt();
+        },
+      },
+      {
+        id: "session.agent.prev",
+        title: "Previous agent",
+        category: "Session",
+        description: "Cycle to the previous agent",
+        slash: "agent-prev",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("prev");
+          clearPrompt();
         },
       },
       {
@@ -851,6 +969,91 @@ export default function SessionView(props: SessionViewProps) {
                <span class="text-xs text-gray-10">· {props.busyHint}</span>
              </Show>
 
+          </div>
+          <div class="relative flex items-center gap-2" ref={(el) => (agentPickerRef = el)}>
+            <button
+              type="button"
+              class="flex items-center gap-2 pl-3 pr-2 py-1.5 bg-gray-2 border border-gray-6 rounded-lg hover:border-gray-7 hover:bg-gray-4 transition-all group"
+              onClick={openAgentPicker}
+              aria-expanded={agentPickerOpen()}
+            >
+              <div class="p-1 rounded bg-gray-4 text-gray-10">
+                <AtSign size={14} />
+              </div>
+              <div class="flex flex-col items-start mr-2 min-w-0">
+                <span class="text-xs font-medium text-gray-12 leading-none truncate max-w-[10rem]">
+                  {agentLabel()}
+                </span>
+                <span class="text-[10px] text-gray-10 font-mono leading-none">
+                  {props.selectedSessionAgent ? "Agent" : "Default"}
+                </span>
+              </div>
+              <ChevronDown size={14} class="text-gray-10 group-hover:text-gray-11" />
+            </button>
+
+            <Show when={agentPickerOpen()}>
+              <div class="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-gray-6 bg-gray-1/95 shadow-2xl backdrop-blur-md overflow-hidden">
+                <div class="px-4 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30">
+                  Session agent
+                </div>
+                <div class="max-h-64 overflow-auto p-2 space-y-1">
+                  <button
+                    type="button"
+                    class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                      props.selectedSessionAgent
+                        ? "text-gray-11 hover:bg-gray-12/5"
+                        : "bg-gray-12/10 text-gray-12"
+                    }`}
+                    onClick={() => {
+                      applySessionAgent(null);
+                      setAgentPickerOpen(false);
+                    }}
+                  >
+                    <span>Default agent</span>
+                    <Show when={!props.selectedSessionAgent}>
+                      <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                    </Show>
+                  </button>
+                  <Show
+                    when={!agentPickerBusy()}
+                    fallback={<div class="px-3 py-2 text-xs text-gray-9">Loading agents...</div>}
+                  >
+                    <Show
+                      when={agentOptions().length}
+                      fallback={<div class="px-3 py-2 text-xs text-gray-9">No agents available.</div>}
+                    >
+                      <For each={agentOptions()}>
+                        {(agent: Agent) => (
+                          <button
+                            type="button"
+                            class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                              props.selectedSessionAgent === agent.name
+                                ? "bg-gray-12/10 text-gray-12"
+                                : "text-gray-11 hover:bg-gray-12/5"
+                            }`}
+                            onClick={() => {
+                              applySessionAgent(agent.name);
+                              setAgentPickerOpen(false);
+                            }}
+                          >
+                            <span>{agent.name}</span>
+                            <Show when={props.selectedSessionAgent === agent.name}>
+                              <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                            </Show>
+                          </button>
+                        )}
+                      </For>
+                    </Show>
+                  </Show>
+                  <Show when={agentPickerError()}>
+                    <div class="px-3 py-2 text-xs text-red-11">{agentPickerError()}</div>
+                  </Show>
+                </div>
+                <div class="border-t border-gray-6/40 px-4 py-2 text-[10px] text-gray-9">
+                  Tip: use /agent-next or /agent-prev to cycle.
+                </div>
+              </div>
+            </Show>
           </div>
         </header>
 

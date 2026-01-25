@@ -417,20 +417,38 @@ export function isStepPart(part: Part) {
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const steps: Part[] = [];
+  let textBuffer = "";
+
+  const flushText = () => {
+    if (!textBuffer) return;
+    groups.push({ kind: "text", part: { type: "text", text: textBuffer } as Part });
+    textBuffer = "";
+  };
 
   parts.forEach((part) => {
     if (part.type === "text") {
-      groups.push({ kind: "text", part });
+      textBuffer += (part as { text?: string }).text ?? "";
       return;
     }
 
-    if (isStepPart(part)) {
-      steps.push(part);
+    if (part.type === "agent") {
+      const name = (part as { name?: string }).name ?? "";
+      textBuffer += name ? `@${name}` : "@agent";
       return;
     }
 
+    if (part.type === "file") {
+      const record = part as { label?: string; path?: string; filename?: string };
+      const label = record.label ?? record.path ?? record.filename ?? "";
+      textBuffer += label ? `@${label}` : "@file";
+      return;
+    }
+
+    flushText();
     steps.push(part);
   });
+
+  flushText();
 
   if (steps.length) {
     groups.push({ kind: "steps", id: `steps-${messageId}`, parts: steps });
