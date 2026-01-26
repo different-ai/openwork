@@ -30,7 +30,6 @@ import CreateWorkspaceModal from "./components/create-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import ServerManagerModal from "./components/server-manager-modal";
 import ReloadWorkspaceToast from "./components/reload-workspace-toast";
-import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
@@ -125,7 +124,6 @@ export default function App() {
   const [sessionViewLockUntil, setSessionViewLockUntil] = createSignal(0);
   const currentView = createMemo<View>(() => {
     const path = location.pathname.toLowerCase();
-    if (path.startsWith("/onboarding")) return "onboarding";
     if (path.startsWith("/session")) return "session";
     return "dashboard";
   });
@@ -153,7 +151,8 @@ export default function App() {
       return;
     }
     if (next === "onboarding") {
-      navigate("/onboarding");
+      setServerManagerOpen(true);
+      navigate("/dashboard/sessions", { replace: true });
       return;
     }
     if (next === "session") {
@@ -181,9 +180,9 @@ export default function App() {
     navigate(`/session/${trimmed}`, options);
   };
 
-  const [mode, setMode] = createSignal<Mode | null>(null);
+  const [mode, setMode] = createSignal<Mode>("client");
   const [onboardingStep, setOnboardingStep] =
-    createSignal<OnboardingStep>("mode");
+    createSignal<OnboardingStep>("client");
   const [rememberModeChoice, setRememberModeChoice] = createSignal(false);
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
@@ -642,9 +641,10 @@ export default function App() {
   }
 
   async function openConnectFlow() {
-    setView("onboarding");
     setMode("client");
-    setOnboardingStep("client");
+    setTab("sessions");
+    setView("dashboard");
+    setServerManagerOpen(true);
   }
 
   async function listAgents(): Promise<Agent[]> {
@@ -1077,9 +1077,9 @@ export default function App() {
     const serverUrl = connectedServerUrl();
     if (!serverUrl) return false;
     if (workspace.workspaceType === "remote") {
-      return mode() === "client" && normalizeServerUrl(workspace.baseUrl ?? "") === serverUrl;
+      return normalizeServerUrl(workspace.baseUrl ?? "") === serverUrl;
     }
-    return mode() === "host";
+    return true;
   };
 
   if (!workspaceStoreReady()) {
@@ -1437,6 +1437,17 @@ export default function App() {
 
   const openServerManager = () => setServerManagerOpen(true);
   const closeServerManager = () => setServerManagerOpen(false);
+  const [autoOpenServerManager, setAutoOpenServerManager] = createSignal(true);
+
+  createEffect(() => {
+    if (!autoOpenServerManager()) return;
+    if (busy()) return;
+    if (serverManagerOpen()) return;
+    if (isDemoMode()) return;
+    if (client()) return;
+    setAutoOpenServerManager(false);
+    setServerManagerOpen(true);
+  });
 
   const confirmServerSwitch = () => {
     if (isDemoMode()) return true;
@@ -2821,87 +2832,6 @@ export default function App() {
     return "workspace.switching_status_preparing";
   });
 
-  const localHostLabel = createMemo(() => {
-    const info = engine();
-    if (info?.hostname && info?.port) {
-      return `${info.hostname}:${info.port}`;
-    }
-
-    try {
-      return new URL(baseUrl()).host;
-    } catch {
-      return "localhost:4096";
-    }
-  });
-
-  const onboardingProps = () => ({
-    mode: mode(),
-    onboardingStep: onboardingStep(),
-    rememberModeChoice: rememberModeChoice(),
-    busy: busy(),
-    baseUrl: baseUrl(),
-    clientDirectory: clientDirectory(),
-    newAuthorizedDir: newAuthorizedDir(),
-    authorizedDirs: workspaceStore.authorizedDirs(),
-    activeWorkspacePath: workspaceStore.activeWorkspacePath(),
-    workspaces: workspaceStore.workspaces(),
-    localHostLabel: localHostLabel(),
-    engineRunning: Boolean(engine()?.running),
-    developerMode: developerMode(),
-    engineBaseUrl: engine()?.baseUrl ?? null,
-    engineDoctorFound: engineDoctorResult()?.found ?? null,
-    engineDoctorSupportsServe: engineDoctorResult()?.supportsServe ?? null,
-    engineDoctorVersion: engineDoctorResult()?.version ?? null,
-    engineDoctorResolvedPath: engineDoctorResult()?.resolvedPath ?? null,
-    engineDoctorNotes: engineDoctorResult()?.notes ?? [],
-    engineDoctorServeHelpStdout: engineDoctorResult()?.serveHelpStdout ?? null,
-    engineDoctorServeHelpStderr: engineDoctorResult()?.serveHelpStderr ?? null,
-    engineDoctorCheckedAt: engineDoctorCheckedAt(),
-    engineInstallLogs: engineInstallLogs(),
-    error: error(),
-    isWindows: isWindowsPlatform(),
-    onBaseUrlChange: setBaseUrl,
-    onClientDirectoryChange: setClientDirectory,
-    onModeSelect: (nextMode: Mode) => {
-      if (nextMode === "host" && rememberModeChoice()) {
-        writeModePreference("host");
-      }
-      if (nextMode === "client" && rememberModeChoice()) {
-        writeModePreference("client");
-      }
-      setMode(nextMode);
-      setOnboardingStep(nextMode === "host" ? "host" : "client");
-    },
-    onRememberModeToggle: () => setRememberModeChoice((v) => !v),
-    onStartHost: workspaceStore.onStartHost,
-    onCreateWorkspace: workspaceStore.createWorkspaceFlow,
-    onPickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-    onAttachHost: workspaceStore.onAttachHost,
-    onConnectClient: workspaceStore.onConnectClient,
-    onBackToMode: workspaceStore.onBackToMode,
-    onSetAuthorizedDir: workspaceStore.setNewAuthorizedDir,
-    onAddAuthorizedDir: workspaceStore.addAuthorizedDir,
-    onAddAuthorizedDirFromPicker: () =>
-      workspaceStore.addAuthorizedDirFromPicker({ persistToWorkspace: true }),
-    onRemoveAuthorizedDir: workspaceStore.removeAuthorizedDirAtIndex,
-    onRefreshEngineDoctor: async () => {
-      workspaceStore.setEngineInstallLogs(null);
-      await workspaceStore.refreshEngineDoctor();
-    },
-    onInstallEngine: workspaceStore.onInstallEngine,
-    onShowSearchNotes: () => {
-      const notes =
-        workspaceStore.engineDoctorResult()?.notes?.join("\n") ?? "";
-      workspaceStore.setEngineInstallLogs(notes || null);
-    },
-    onOpenSettings: () => {
-      setTab("settings");
-      setView("dashboard");
-    },
-    themeMode: themeMode(),
-    setThemeMode,
-  });
-
   const dashboardProps = () => ({
     tab: tab(),
     setTab,
@@ -3199,6 +3129,7 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
+      navigate("/dashboard/sessions", { replace: true });
       return;
     }
 
@@ -3208,9 +3139,6 @@ export default function App() {
   return (
     <>
       <Switch>
-        <Match when={currentView() === "onboarding"}>
-          <OnboardingView {...onboardingProps()} />
-        </Match>
         <Match when={currentView() === "session"}>
           <SessionView {...sessionProps()} />
         </Match>
