@@ -36,8 +36,7 @@ pub fn load_workspace_state(app: &tauri::AppHandle) -> Result<WorkspaceState, St
         .map_err(|e| format!("Failed to lock {}: {e}", path.display()))?;
 
     let mut raw = String::new();
-    file
-        .read_to_string(&mut raw)
+    file.read_to_string(&mut raw)
         .map_err(|e| format!("Failed to read {}: {e}", path.display()))?;
 
     let mut state: WorkspaceState = serde_json::from_str(&raw)
@@ -61,21 +60,16 @@ pub fn save_workspace_state(app: &tauri::AppHandle, state: &WorkspaceState) -> R
 
     fs2::FileExt::lock_exclusive(&file)
         .map_err(|e| format!("Failed to lock {}: {e}", path.display()))?;
-    file
-        .set_len(0)
+    file.set_len(0)
         .map_err(|e| format!("Failed to truncate {}: {e}", path.display()))?;
 
     let payload = serde_json::to_string_pretty(state).map_err(|e| e.to_string())?;
-    file
-        .write_all(payload.as_bytes())
+    file.write_all(payload.as_bytes())
         .map_err(|e| format!("Failed to write {}: {e}", path.display()))?;
-    file
-        .sync_all()
+    file.sync_all()
         .map_err(|e| format!("Failed to sync {}: {e}", path.display()))?;
     Ok(())
 }
-}
-
 pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo, String> {
     let data_dir = app
         .path()
