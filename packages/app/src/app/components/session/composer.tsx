@@ -1149,7 +1149,11 @@ export default function Composer(props: ComposerProps) {
                       <button
                         disabled={!props.prompt.trim() && !attachments().length}
                         onClick={sendDraft}
-                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
+                        class={`p-2 rounded-xl transition-all shadow-lg shrink-0 flex items-center justify-center ${
+                          !props.prompt.trim() && !attachments().length
+                            ? "bg-gray-4 text-gray-8 cursor-not-allowed"
+                            : "bg-gray-12 text-gray-1 hover:scale-105 active:scale-95"
+                        }`}
                         title="Run"
                       >
                         <ArrowRight size={18} />
