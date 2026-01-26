@@ -61,19 +61,19 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden">
-          <div class="p-6">
-            <div class="flex items-start justify-between gap-4">
-              <div>
-                <h3 class="text-lg font-semibold text-gray-12">Servers</h3>
-                <p class="text-sm text-gray-11 mt-1">Manage OpenCode server connections.</p>
-              </div>
-              <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
-                <X size={16} />
-              </Button>
+        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden max-h-[85vh] flex flex-col">
+          <div class="p-6 border-b border-gray-6/70 flex items-start justify-between gap-4">
+            <div>
+              <h3 class="text-lg font-semibold text-gray-12">Servers</h3>
+              <p class="text-sm text-gray-11 mt-1">Manage OpenCode server connections.</p>
             </div>
+            <Button variant="ghost" class="!p-2 rounded-full" onClick={props.onClose}>
+              <X size={16} />
+            </Button>
+          </div>
 
-            <div class="mt-6 space-y-4">
+          <div class="p-6 overflow-y-auto flex-1">
+            <div class="space-y-4">
               <div class="flex flex-wrap items-center gap-2">
                 <span class={`inline-flex items-center gap-2 text-xs px-2.5 py-1 rounded-full border ${activeStatusStyle()}`}>
                   {activeStatusLabel()}
@@ -180,12 +180,11 @@ export default function ServerManagerModal(props: ServerManagerModalProps) {
                   }}
                 </For>
               </div>
-            </div>
-
-            <div class="mt-6 flex justify-end">
-              <Button variant="outline" onClick={props.onClose}>
-                Close
-              </Button>
+              <div class="mt-6 flex justify-end">
+                <Button variant="outline" onClick={props.onClose}>
+                  Close
+                </Button>
+              </div>
             </div>
           </div>
         </div>
