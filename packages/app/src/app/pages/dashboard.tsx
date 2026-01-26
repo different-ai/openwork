@@ -17,6 +17,7 @@ import WorkspaceChip from "../components/workspace-chip";
 import McpView from "./mcp";
 import PluginsView from "./plugins";
 import SettingsView from "./settings";
+import type { KeybindSetting } from "../components/settings-keybinds";
 import SkillsView from "./skills";
 import CommandsView from "./commands";
 import {
@@ -44,6 +45,10 @@ export type DashboardViewProps = {
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
+  keybindItems: KeybindSetting[];
+  onOverrideKeybind: (id: string, keybind: string | null) => void;
+  onResetKeybind: (id: string) => void;
+  onResetAllKeybinds: () => void;
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaceSearch: string;
   setWorkspaceSearch: (value: string) => void;
@@ -81,6 +86,8 @@ export type DashboardViewProps = {
   resetCommandDraft?: (scope?: "workspace" | "global") => void;
   runCommand: (command: WorkspaceCommand) => void;
   deleteCommand: (command: WorkspaceCommand) => void;
+  justSavedCommand?: { name: string; scope: string } | null;
+  clearJustSavedCommand?: () => void;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
@@ -702,6 +709,8 @@ export default function DashboardView(props: DashboardViewProps) {
                 resetCommandDraft={props.resetCommandDraft}
                 runCommand={props.runCommand}
                 deleteCommand={props.deleteCommand}
+                justSavedCommand={props.justSavedCommand}
+                clearJustSavedCommand={props.clearJustSavedCommand}
               />
             </Match>
 
@@ -778,6 +787,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   modelVariantLabel={props.modelVariantLabel}
                   editModelVariant={props.editModelVariant}
+                  keybindItems={props.keybindItems}
+                  onOverrideKeybind={props.onOverrideKeybind}
+                  onResetKeybind={props.onResetKeybind}
+                  onResetAllKeybinds={props.onResetAllKeybinds}
                   updateAutoCheck={props.updateAutoCheck}
                   toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
                   themeMode={props.themeMode}

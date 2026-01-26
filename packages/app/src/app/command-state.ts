@@ -55,6 +55,9 @@ export function createCommandState(options: {
   const [runModalCommand, setRunModalCommand] = createSignal<WorkspaceCommand | null>(null);
   const [runModalDetails, setRunModalDetails] = createSignal("");
 
+  // Track the just-saved command for scroll-to and highlight animation
+  const [justSavedCommand, setJustSavedCommand] = createSignal<{ name: string; scope: string } | null>(null);
+
   const workspaceCommands = createMemo(() => commands().filter((c) => c.scope === "workspace"));
   const globalCommands = createMemo(() => commands().filter((c) => c.scope === "global"));
   const otherCommands = createMemo(() => commands().filter((c) => c.scope === "unknown"));
@@ -127,7 +130,37 @@ export function createCommandState(options: {
           template: draft.template,
         },
       });
-      await loadCommands({ workspaceRoot, quiet: true });
+
+      // Directly add/update the command in local state since the SDK's
+      // command list won't reflect the new file until app restart
+      const newCommand: WorkspaceCommand = {
+        name: safeName,
+        description: draft.description || undefined,
+        template: draft.template,
+        scope: draft.scope,
+      };
+
+      setCommands((current) => {
+        // Check if command already exists (update case)
+        const existingIndex = current.findIndex(
+          (c) => c.name === safeName && c.scope === draft.scope
+        );
+
+        let updated: WorkspaceCommand[];
+        if (existingIndex >= 0) {
+          // Update existing command
+          updated = [...current];
+          updated[existingIndex] = newCommand;
+        } else {
+          // Add new command
+          updated = [...current, newCommand];
+        }
+
+        // Keep sorted alphabetically
+        return updated.sort((a, b) => a.name.localeCompare(b.name));
+      });
+
+      setJustSavedCommand({ name: safeName, scope: draft.scope });
       setCommandModalOpen(false);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -310,6 +343,10 @@ export function createCommandState(options: {
     setRunModalCommand(null);
   }
 
+  function clearJustSavedCommand() {
+    setJustSavedCommand(null);
+  }
+
   return {
     commands,
     setCommands,
@@ -340,5 +377,7 @@ export function createCommandState(options: {
     openRunModal,
     confirmRunModal,
     closeRunModal,
+    justSavedCommand,
+    clearJustSavedCommand,
   };
 }

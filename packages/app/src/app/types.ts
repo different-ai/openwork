@@ -44,6 +44,29 @@ export type MessageGroup =
   | { kind: "text"; part: Part }
   | { kind: "steps"; id: string; parts: Part[] };
 
+export type PromptMode = "prompt" | "shell";
+
+export type ComposerPart =
+  | { type: "text"; text: string }
+  | { type: "agent"; name: string }
+  | { type: "file"; path: string; label?: string };
+
+export type ComposerAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "file";
+  dataUrl: string;
+};
+
+export type ComposerDraft = {
+  mode: PromptMode;
+  parts: ComposerPart[];
+  attachments: ComposerAttachment[];
+  text: string;
+};
+
 export type ArtifactItem = {
   id: string;
   name: string;
@@ -73,6 +96,25 @@ export type WorkspacePreset = "starter" | "automation" | "minimal";
 export type ResetOpenworkMode = "onboarding" | "all";
 
 export type CommandScope = "workspace" | "global" | "unknown";
+
+export type CommandRegistryScope = "global" | "session";
+
+export type CommandTriggerContext = {
+  source?: "palette" | "slash" | "keybind";
+};
+
+export type CommandRegistryItem = {
+  id: string;
+  title: string;
+  category?: string;
+  description?: string;
+  keybind?: string;
+  slash?: string;
+  scope?: CommandRegistryScope;
+  showInPalette?: boolean;
+  onSelect: (context?: CommandTriggerContext) => void;
+  onHighlight?: (context?: CommandTriggerContext) => void;
+};
 
 export type CommandDefinition = {
   name: string;

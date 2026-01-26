@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createMemo } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { safeStringify } from "../utils";
@@ -14,6 +14,30 @@ type Props = {
 function clampText(text: string, max = 800) {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n… (truncated)`;
+}
+
+function useThrottledValue<T>(value: () => T, delayMs = 80) {
+  const [state, setState] = createSignal<T>(value());
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  createEffect(() => {
+    const next = value();
+    if (!delayMs) {
+      setState(next);
+      return;
+    }
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      setState(next);
+      timer = undefined;
+    }, delayMs);
+  });
+
+  onCleanup(() => {
+    if (timer) clearTimeout(timer);
+  });
+
+  return state;
 }
 
 function createCustomRenderer(tone: "light" | "dark") {
@@ -101,11 +125,16 @@ export default function PartView(props: Props) {
   const textClass = () => (tone() === "dark" ? "text-gray-12" : "text-gray-12");
   const subtleTextClass = () => (tone() === "dark" ? "text-gray-12/70" : "text-gray-11");
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
-  const toolOnly = () => developerMode();
+  const toolOnly = () => true;
   const showToolOutput = () => developerMode();
+  const markdownSource = createMemo(() => {
+    if (!renderMarkdown() || p().type !== "text") return "";
+    return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
+  });
+  const throttledMarkdownSource = useThrottledValue(markdownSource, 100);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
-    const text = "text" in p() ? String((p() as { text: string }).text ?? "") : "";
+    const text = throttledMarkdownSource();
     if (!text.trim()) return "";
     
     try {
@@ -123,6 +152,122 @@ export default function PartView(props: Props) {
       return null;
     }
   });
+
+  const toolData = () => {
+    if (p().type !== "tool") return null;
+    return p() as any;
+  };
+
+  const toolState = () => toolData()?.state ?? {};
+  const toolName = () => (toolData()?.tool ? String(toolData()?.tool) : "tool");
+  const toolTitle = () => (toolState()?.title ? String(toolState().title) : toolName());
+  const toolStatus = () => (toolState()?.status ? String(toolState().status) : "unknown");
+  const toolSubtitle = () =>
+    toolState()?.subtitle || toolState()?.detail || toolState()?.summary
+      ? String(toolState().subtitle ?? toolState().detail ?? toolState().summary)
+      : "";
+
+  const extractDiff = () => {
+    const state = toolState();
+    const candidates = [state?.diff, state?.patch, state?.output];
+    for (const candidate of candidates) {
+      if (typeof candidate !== "string") continue;
+      if (candidate.includes("@@") || candidate.includes("+++ ") || candidate.includes("--- ")) {
+        return candidate;
+      }
+    }
+    return null;
+  };
+
+  const diffText = createMemo(() => (p().type === "tool" ? extractDiff() : null));
+  const diffLines = createMemo(() => (diffText() ? diffText()!.split("\n") : []));
+  const diffLineClass = (line: string) => {
+    if (line.startsWith("+")) return "text-green-11 bg-green-1/40";
+    if (line.startsWith("-")) return "text-red-11 bg-red-1/40";
+    if (line.startsWith("@@")) return "text-blue-11 bg-blue-1/30";
+    return "text-gray-12";
+  };
+
+  const toolOutput = () => {
+    const output = toolState()?.output;
+    return typeof output === "string" ? output : null;
+  };
+
+  const toolError = () => {
+    const error = toolState()?.error;
+    return typeof error === "string" ? error : null;
+  };
+
+  const toolInput = () => toolState()?.input;
+
+  const diagnostics = () => {
+    const items = toolState()?.diagnostics;
+    return Array.isArray(items) ? items : [];
+  };
+
+  const formatDiagnosticLocation = (diagnostic: any) => {
+    const raw = diagnostic?.file ?? diagnostic?.path ?? diagnostic?.uri ?? "";
+    const file = typeof raw === "string" ? raw.replace(/^file:\/\//, "") : "";
+    const line = diagnostic?.line ?? diagnostic?.range?.start?.line;
+    const character = diagnostic?.character ?? diagnostic?.range?.start?.character;
+    const location =
+      typeof line === "number"
+        ? `${line + 1}${typeof character === "number" ? `:${character + 1}` : ""}`
+        : "";
+    return `${file}${file && location ? ":" : ""}${location}`.trim();
+  };
+
+  const formatDiagnosticLabel = (diagnostic: any) => {
+    const severity = diagnostic?.severity ?? diagnostic?.level;
+    if (typeof severity === "string") return severity;
+    if (severity === 1) return "error";
+    if (severity === 2) return "warning";
+    if (severity === 3) return "info";
+    if (severity === 4) return "hint";
+    return "diagnostic";
+  };
+
+  const isLargeOutput = createMemo(() => {
+    const output = toolOutput();
+    return !!output && output.length > 800;
+  });
+
+  const [expandedOutput, setExpandedOutput] = createSignal(false);
+  const outputPreview = createMemo(() => {
+    const output = toolOutput();
+    if (!output) return "";
+    if (isLargeOutput() && !expandedOutput()) {
+      return `${output.slice(0, 800)}\n\n… (truncated)`;
+    }
+    return output;
+  });
+
+  const toolImages = () => {
+    const state = toolState();
+    const candidates = Array.isArray(state?.images) ? state.images : [];
+    return candidates
+      .map((item: any) => {
+        if (typeof item === "string") return { src: item, alt: "" };
+        const src = item?.url ?? item?.src ?? item?.data;
+        if (!src) return null;
+        if (item?.data && item?.mediaType && !String(item.data).startsWith("data:")) {
+          return { src: `data:${item.mediaType};base64,${item.data}`, alt: item?.alt ?? "" };
+        }
+        return { src, alt: item?.alt ?? "" };
+      })
+      .filter(Boolean);
+  };
+
+  const inlineImage = () => {
+    if (p().type !== "image") return null;
+    const record = p() as any;
+    const src = record?.url ?? record?.src ?? record?.data ?? record?.source;
+    if (!src) return null;
+    if (record?.data && record?.mediaType && !String(record.data).startsWith("data:")) {
+      return `data:${record.mediaType};base64,${record.data}`;
+    }
+    return src as string;
+  };
 
   return (
     <Switch>
@@ -188,49 +333,122 @@ export default function PartView(props: Props) {
 
       <Match when={p().type === "tool"}>
         <Show when={toolOnly()}>
-          <div class="grid gap-2">
-            <div class="flex items-center justify-between gap-3">
-              <div
-                class={`text-xs font-medium ${tone() === "dark" ? "text-gray-1" : "text-gray-12"}`.trim()}
-              >
-                Tool · {("tool" in p() ? String((p() as { tool: string }).tool) : "unknown")}
+          <div class="grid gap-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="space-y-1">
+                <div
+                  class={`text-xs font-medium ${tone() === "dark" ? "text-gray-1" : "text-gray-12"}`.trim()}
+                >
+                  {toolTitle()}
+                </div>
+                <div class={`text-[11px] ${subtleTextClass()}`.trim()}>{toolName()}</div>
               </div>
               <div
                 class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                  "state" in p() && (p() as any).state?.status === "completed"
+                  toolStatus() === "completed"
                     ? "bg-green-3/15 text-green-12"
-                    : "state" in p() && (p() as any).state?.status === "running"
+                    : toolStatus() === "running"
                       ? "bg-blue-3/15 text-blue-12"
-                      : "state" in p() && (p() as any).state?.status === "error"
+                      : toolStatus() === "error"
                         ? "bg-red-3/15 text-red-12"
                         : "bg-gray-2/10 text-gray-1"
                 }`}
               >
-                {("state" in p() ? String((p() as any).state?.status ?? "unknown") : "unknown")}
+                {toolStatus()}
               </div>
             </div>
 
-            <Show when={"state" in p() && (p() as any).state?.title}>
-              <div class={`text-xs ${subtleTextClass()}`.trim()}>{String((p() as any).state.title)}</div>
+            <Show when={toolSubtitle()}>
+              <div class={`text-xs ${subtleTextClass()}`.trim()}>{toolSubtitle()}</div>
             </Show>
 
-            <Show when={showToolOutput() && (p() as any).state?.output && typeof (p() as any).state.output === "string"}>
+            <Show when={diagnostics().length > 0}>
+              <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
+                <div class={`text-[11px] font-medium ${subtleTextClass()}`.trim()}>Diagnostics</div>
+                <div class="mt-2 grid gap-2">
+                  <For each={diagnostics()}>
+                    {(diag: any) => (
+                      <div class="flex items-start justify-between gap-4 text-xs">
+                        <div>
+                          <div class="font-medium text-gray-12">{String(diag?.message ?? "")}</div>
+                          <Show when={diag?.source || diag?.code}>
+                            <div class="text-[11px] text-gray-10">
+                              {[diag?.source, diag?.code].filter(Boolean).join(" · ")}
+                            </div>
+                          </Show>
+                        </div>
+                        <div class="text-[11px] text-gray-10 text-right">
+                          <div>{formatDiagnosticLabel(diag)}</div>
+                          <Show when={formatDiagnosticLocation(diag)}>
+                            <div>{formatDiagnosticLocation(diag)}</div>
+                          </Show>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={diffText()}>
+              <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
+                <div class={`text-[11px] font-medium ${subtleTextClass()}`.trim()}>Diff</div>
+                <div class="mt-2 grid gap-1 rounded-md overflow-hidden">
+                  <For each={diffLines()}>
+                    {(line) => (
+                      <div
+                        class={`font-mono text-[11px] leading-relaxed px-2 py-0.5 whitespace-pre-wrap break-words ${diffLineClass(
+                          line,
+                        )}`.trim()}
+                      >
+                        {line || " "}
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={toolImages().length > 0}>
+              <div class="grid gap-2">
+                <For each={toolImages()}>
+                  {(image: any) => (
+                    <img
+                      src={image.src}
+                      alt={image.alt || ""}
+                      class="max-w-full h-auto rounded-lg border border-gray-6/50"
+                    />
+                  )}
+                </For>
+              </div>
+            </Show>
+
+            <Show when={toolError()}>
+              <div class="rounded-lg bg-red-1/40 p-2 text-xs text-red-12">
+                {toolError()}
+              </div>
+            </Show>
+
+            <Show when={showToolOutput() && toolOutput() && toolOutput() !== diffText()}>
               <pre
                 class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs ${
                   tone() === "dark" ? "text-gray-12" : "text-gray-1"
                 }`.trim()}
               >
-                {clampText(String((p() as any).state.output))}
+                {outputPreview()}
               </pre>
             </Show>
 
-            <Show when={showToolOutput() && (p() as any).state?.error && typeof (p() as any).state.error === "string"}>
-              <div class="rounded-lg bg-red-1/40 p-2 text-xs text-red-12">
-                {String((p() as any).state.error)}
-              </div>
+            <Show when={showToolOutput() && isLargeOutput()}>
+              <button
+                class={`text-[11px] ${subtleTextClass()} hover:text-gray-12 transition-colors`}
+                onClick={() => setExpandedOutput((current) => !current)}
+              >
+                {expandedOutput() ? "Show less" : "Show more"}
+              </button>
             </Show>
 
-            <Show when={showToolOutput() && (p() as any).state?.input != null}>
+            <Show when={showToolOutput() && toolInput() != null}>
               <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
                 <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Input</summary>
                 <pre
@@ -238,11 +456,21 @@ export default function PartView(props: Props) {
                     tone() === "dark" ? "text-gray-12" : "text-gray-1"
                   }`.trim()}
                 >
-                  {safeStringify((p() as any).state.input)}
+                  {safeStringify(toolInput())}
                 </pre>
               </details>
             </Show>
           </div>
+        </Show>
+      </Match>
+
+      <Match when={p().type === "image"}>
+        <Show when={inlineImage()}>
+          <img
+            src={inlineImage()!}
+            alt=""
+            class="max-w-full h-auto rounded-xl border border-gray-6/50"
+          />
         </Show>
       </Match>
 
