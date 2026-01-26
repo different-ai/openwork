@@ -438,7 +438,12 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
     }
 
     if (part.type === "file") {
-      const record = part as { label?: string; path?: string; filename?: string };
+      const record = part as { label?: string; path?: string; filename?: string; url?: string };
+      const url = record.url;
+      if (typeof url === "string" && !url.startsWith("file://")) {
+        flushText();
+        return;
+      }
       const label = record.label ?? record.path ?? record.filename ?? "";
       textBuffer += label ? `@${label}` : "@file";
       return;

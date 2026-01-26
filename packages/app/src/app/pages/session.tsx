@@ -17,7 +17,6 @@ import type {
 
 import {
   AlertTriangle,
-  AtSign,
   ArrowRight,
   ChevronDown,
   HardDrive,
@@ -94,6 +93,7 @@ export type SessionViewProps = {
   providers: Provider[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
+  searchFiles: (query: string) => Promise<string[]>;
   selectedSessionAgent: string | null;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
@@ -553,7 +553,6 @@ export default function SessionView(props: SessionViewProps) {
     const sessionId = requireSessionId();
     if (!sessionId) return;
     props.setSessionAgent(sessionId, agent);
-    setCommandToast(agent ? `Agent set to ${agent}` : "Agent cleared");
   };
 
   const cycleAgent = async (direction: "next" | "prev") => {
@@ -582,7 +581,6 @@ export default function SessionView(props: SessionViewProps) {
         return;
       }
       props.setSessionAgent(sessionId, nextAgent);
-      setCommandToast(`Agent set to ${nextAgent}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Agent selection failed";
       setCommandToast(message);
@@ -740,8 +738,7 @@ export default function SessionView(props: SessionViewProps) {
               return;
             }
 
-            props.setSessionAgent(sessionId, match.name);
-            setCommandToast(`Agent set to ${match.name}`);
+              props.setSessionAgent(sessionId, match.name);
             clearPrompt();
           } catch (error) {
             const message = error instanceof Error ? error.message : "Agent selection failed";
@@ -917,12 +914,6 @@ export default function SessionView(props: SessionViewProps) {
     props.setPrompt(draft.text);
   };
 
-  const searchFiles = async (query: string) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return props.workingFiles.filter((file) => file.toLowerCase().includes(q));
-  };
-
   return (
     <Show
       when={props.selectedSessionId}
@@ -969,91 +960,6 @@ export default function SessionView(props: SessionViewProps) {
                <span class="text-xs text-gray-10">· {props.busyHint}</span>
              </Show>
 
-          </div>
-          <div class="relative flex items-center gap-2" ref={(el) => (agentPickerRef = el)}>
-            <button
-              type="button"
-              class="flex items-center gap-2 pl-3 pr-2 py-1.5 bg-gray-2 border border-gray-6 rounded-lg hover:border-gray-7 hover:bg-gray-4 transition-all group"
-              onClick={openAgentPicker}
-              aria-expanded={agentPickerOpen()}
-            >
-              <div class="p-1 rounded bg-gray-4 text-gray-10">
-                <AtSign size={14} />
-              </div>
-              <div class="flex flex-col items-start mr-2 min-w-0">
-                <span class="text-xs font-medium text-gray-12 leading-none truncate max-w-[10rem]">
-                  {agentLabel()}
-                </span>
-                <span class="text-[10px] text-gray-10 font-mono leading-none">
-                  {props.selectedSessionAgent ? "Agent" : "Default"}
-                </span>
-              </div>
-              <ChevronDown size={14} class="text-gray-10 group-hover:text-gray-11" />
-            </button>
-
-            <Show when={agentPickerOpen()}>
-              <div class="absolute right-0 top-full mt-2 w-72 rounded-2xl border border-gray-6 bg-gray-1/95 shadow-2xl backdrop-blur-md overflow-hidden">
-                <div class="px-4 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30">
-                  Session agent
-                </div>
-                <div class="max-h-64 overflow-auto p-2 space-y-1">
-                  <button
-                    type="button"
-                    class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-                      props.selectedSessionAgent
-                        ? "text-gray-11 hover:bg-gray-12/5"
-                        : "bg-gray-12/10 text-gray-12"
-                    }`}
-                    onClick={() => {
-                      applySessionAgent(null);
-                      setAgentPickerOpen(false);
-                    }}
-                  >
-                    <span>Default agent</span>
-                    <Show when={!props.selectedSessionAgent}>
-                      <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
-                    </Show>
-                  </button>
-                  <Show
-                    when={!agentPickerBusy()}
-                    fallback={<div class="px-3 py-2 text-xs text-gray-9">Loading agents...</div>}
-                  >
-                    <Show
-                      when={agentOptions().length}
-                      fallback={<div class="px-3 py-2 text-xs text-gray-9">No agents available.</div>}
-                    >
-                      <For each={agentOptions()}>
-                        {(agent: Agent) => (
-                          <button
-                            type="button"
-                            class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
-                              props.selectedSessionAgent === agent.name
-                                ? "bg-gray-12/10 text-gray-12"
-                                : "text-gray-11 hover:bg-gray-12/5"
-                            }`}
-                            onClick={() => {
-                              applySessionAgent(agent.name);
-                              setAgentPickerOpen(false);
-                            }}
-                          >
-                            <span>{agent.name}</span>
-                            <Show when={props.selectedSessionAgent === agent.name}>
-                              <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
-                            </Show>
-                          </button>
-                        )}
-                      </For>
-                    </Show>
-                  </Show>
-                  <Show when={agentPickerError()}>
-                    <div class="px-3 py-2 text-xs text-red-11">{agentPickerError()}</div>
-                  </Show>
-                </div>
-                <div class="border-t border-gray-6/40 px-4 py-2 text-[10px] text-gray-9">
-                  Tip: use /agent-next or /agent-prev to cycle.
-                </div>
-              </div>
-            </Show>
           </div>
         </header>
 
@@ -1195,13 +1101,27 @@ export default function SessionView(props: SessionViewProps) {
           onInsertCommand={handleInsertCommand}
           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
           onModelClick={props.openSessionModelPicker}
+          agentLabel={agentLabel()}
+          selectedAgent={props.selectedSessionAgent}
+          agentPickerOpen={agentPickerOpen()}
+          agentPickerBusy={agentPickerBusy()}
+          agentPickerError={agentPickerError()}
+          agentOptions={agentOptions()}
+          onToggleAgentPicker={openAgentPicker}
+          onSelectAgent={(agent) => {
+            applySessionAgent(agent);
+            setAgentPickerOpen(false);
+          }}
+          setAgentPickerRef={(el) => {
+            agentPickerRef = el;
+          }}
           showNotionBanner={props.showTryNotionPrompt}
           onNotionBannerClick={props.onTryNotionPrompt}
           toast={commandToast()}
           onToast={(message) => setCommandToast(message)}
           listAgents={props.listAgents}
           recentFiles={props.workingFiles}
-          searchFiles={searchFiles}
+          searchFiles={props.searchFiles}
           isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         />
 

@@ -39,6 +39,24 @@ type MessageBlockItem = MessageBlock | StepClusterBlock;
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
   let copyTimeout: number | undefined;
+  const isAttachmentPart = (part: Part) => {
+    if (part.type !== "file") return false;
+    const url = (part as { url?: string }).url;
+    return typeof url === "string" && !url.startsWith("file://");
+  };
+  const attachmentsForMessage = (message: MessageWithParts) =>
+    message.parts
+      .filter(isAttachmentPart)
+      .map((part) => {
+        const record = part as { url?: string; filename?: string; mime?: string };
+        return {
+          url: record.url ?? "",
+          filename: record.filename ?? "attachment",
+          mime: record.mime ?? "application/octet-stream",
+        };
+      })
+      .filter((attachment) => !!attachment.url);
+  const isImageAttachment = (mime: string) => mime.startsWith("image/");
 
   onCleanup(() => {
     if (copyTimeout !== undefined) {
@@ -269,6 +287,32 @@ export default function MessageList(props: MessageListProps) {
                     : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                 }`}
               >
+                <Show when={attachmentsForMessage(block.message).length > 0}>
+                  <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
+                    <For each={attachmentsForMessage(block.message)}>
+                      {(attachment) => (
+                        <div class="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-xs text-gray-11">
+                          <Show
+                            when={isImageAttachment(attachment.mime)}
+                            fallback={<File size={14} class="text-gray-9" />}
+                          >
+                            <div class="h-12 w-12 rounded-xl bg-gray-2 overflow-hidden border border-gray-6">
+                              <img
+                                src={attachment.url}
+                                alt={attachment.filename}
+                                class="h-full w-full object-cover"
+                              />
+                            </div>
+                          </Show>
+                          <div class="max-w-[180px]">
+                            <div class="truncate text-gray-12">{attachment.filename}</div>
+                            <div class="text-[10px] text-gray-9">{attachment.mime}</div>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
                 <For each={block.groups}>
                   {(group, idx) => (
                     <div class={idx() === block.groups.length - 1 ? "" : groupSpacing}>
