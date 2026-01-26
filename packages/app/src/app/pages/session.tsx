@@ -93,6 +93,8 @@ export type SessionViewProps = {
   providers: Provider[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
+  searchFiles: (query: string) => Promise<string[]>;
+  selectedSessionAgent: string | null;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
@@ -106,16 +108,45 @@ export type SessionViewProps = {
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  let agentPickerRef: HTMLDivElement | undefined;
 
   const [commandToast, setCommandToast] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+  const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
+  const [agentPickerReady, setAgentPickerReady] = createSignal(false);
+  const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
+  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
 
   const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
 
   const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
+
+  const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
+
+  const loadAgentOptions = async (force = false) => {
+    if (agentPickerBusy()) return agentOptions();
+    if (agentPickerReady() && !force) return agentOptions();
+    setAgentPickerBusy(true);
+    setAgentPickerError(null);
+    try {
+      const agents = await props.listAgents();
+      const sorted = agents.slice().sort((a, b) => a.name.localeCompare(b.name));
+      setAgentOptions(sorted);
+      setAgentPickerReady(true);
+      return sorted;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load agents";
+      setAgentPickerError(message);
+      setAgentOptions([]);
+      return [];
+    } finally {
+      setAgentPickerBusy(false);
+    }
+  };
 
   type Flyout = {
     id: string;
@@ -511,6 +542,62 @@ export default function SessionView(props: SessionViewProps) {
     return items.length > 4 ? `${preview}, ...` : preview;
   };
 
+  const openAgentPicker = () => {
+    setAgentPickerOpen((current) => !current);
+    if (!agentPickerReady()) {
+      void loadAgentOptions();
+    }
+  };
+
+  const applySessionAgent = (agent: string | null) => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    props.setSessionAgent(sessionId, agent);
+  };
+
+  const cycleAgent = async (direction: "next" | "prev") => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    try {
+      const agents = await loadAgentOptions(true);
+      if (!agents.length) {
+        setCommandToast("No agents available");
+        return;
+      }
+      const names = agents.map((agent) => agent.name);
+      const current = props.selectedSessionAgent ?? "";
+      const currentIndex = current ? names.findIndex((name) => name === current) : -1;
+      let nextIndex = 0;
+      if (currentIndex === -1) {
+        nextIndex = direction === "next" ? 0 : names.length - 1;
+      } else if (direction === "next") {
+        nextIndex = (currentIndex + 1) % names.length;
+      } else {
+        nextIndex = (currentIndex - 1 + names.length) % names.length;
+      }
+      const nextAgent = names[nextIndex] ?? null;
+      if (!nextAgent) {
+        setCommandToast("No agents available");
+        return;
+      }
+      props.setSessionAgent(sessionId, nextAgent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent selection failed";
+      setCommandToast(message);
+    }
+  };
+
+  createEffect(() => {
+    if (!agentPickerOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!agentPickerRef) return;
+      if (agentPickerRef.contains(event.target as Node)) return;
+      setAgentPickerOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
   const handleProviderAuthSelect = async (providerId: string) => {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
@@ -607,6 +694,11 @@ export default function SessionView(props: SessionViewProps) {
 
           try {
             const rawArg = extractCommandArgs(props.prompt);
+            if (/^(next|prev|previous)$/i.test(rawArg)) {
+              await cycleAgent(/^prev/i.test(rawArg) ? "prev" : "next");
+              clearPrompt();
+              return;
+            }
             if (/^(none|clear|default)$/i.test(rawArg)) {
               props.setSessionAgent(sessionId, null);
               setCommandToast("Agent cleared");
@@ -646,13 +738,36 @@ export default function SessionView(props: SessionViewProps) {
               return;
             }
 
-            props.setSessionAgent(sessionId, match.name);
-            setCommandToast(`Agent set to ${match.name}`);
+              props.setSessionAgent(sessionId, match.name);
             clearPrompt();
           } catch (error) {
             const message = error instanceof Error ? error.message : "Agent selection failed";
             setCommandToast(message);
           }
+        },
+      },
+      {
+        id: "session.agent.next",
+        title: "Next agent",
+        category: "Session",
+        description: "Cycle to the next agent",
+        slash: "agent-next",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("next");
+          clearPrompt();
+        },
+      },
+      {
+        id: "session.agent.prev",
+        title: "Previous agent",
+        category: "Session",
+        description: "Cycle to the previous agent",
+        slash: "agent-prev",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("prev");
+          clearPrompt();
         },
       },
       {
@@ -797,12 +912,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setPrompt(draft.text);
-  };
-
-  const searchFiles = async (query: string) => {
-    const q = query.trim().toLowerCase();
-    if (!q) return [];
-    return props.workingFiles.filter((file) => file.toLowerCase().includes(q));
   };
 
   return (
@@ -992,13 +1101,27 @@ export default function SessionView(props: SessionViewProps) {
           onInsertCommand={handleInsertCommand}
           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
           onModelClick={props.openSessionModelPicker}
+          agentLabel={agentLabel()}
+          selectedAgent={props.selectedSessionAgent}
+          agentPickerOpen={agentPickerOpen()}
+          agentPickerBusy={agentPickerBusy()}
+          agentPickerError={agentPickerError()}
+          agentOptions={agentOptions()}
+          onToggleAgentPicker={openAgentPicker}
+          onSelectAgent={(agent) => {
+            applySessionAgent(agent);
+            setAgentPickerOpen(false);
+          }}
+          setAgentPickerRef={(el) => {
+            agentPickerRef = el;
+          }}
           showNotionBanner={props.showTryNotionPrompt}
           onNotionBannerClick={props.onTryNotionPrompt}
           toast={commandToast()}
           onToast={(message) => setCommandToast(message)}
           listAgents={props.listAgents}
           recentFiles={props.workingFiles}
-          searchFiles={searchFiles}
+          searchFiles={props.searchFiles}
           isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         />
 

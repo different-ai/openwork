@@ -3,7 +3,12 @@
   "mcp": {
     "chrome-devtools": {
       "type": "local",
-      "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest"
+      ]
     }
-  }
+  },
+  "model": "openai/gpt-5.2-codex"
 }

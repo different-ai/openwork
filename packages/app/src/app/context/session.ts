@@ -127,8 +127,9 @@ export function createSessionStore(options: {
   const reloadDetectionSet = new Set<string>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
-  const opencodeConfigPattern = /(?:^|[\\/])opencode\.json\b/i;
+  const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
+  const mutatingTools = new Set(["write", "edit", "apply_patch"]);
 
   const extractSearchText = (value: unknown) => {
     if (!value) return "";
@@ -146,15 +147,37 @@ export function createSessionStore(options: {
     return null;
   };
 
+  const detectReloadReasonDeep = (value: unknown): ReloadReason | null => {
+    if (!value) return null;
+    if (typeof value === "string" || typeof value === "number") {
+      return detectReloadReason(value);
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const reason = detectReloadReasonDeep(entry);
+        if (reason) return reason;
+      }
+      return null;
+    }
+    if (typeof value === "object") {
+      for (const entry of Object.values(value as Record<string, unknown>)) {
+        const reason = detectReloadReasonDeep(entry);
+        if (reason) return reason;
+      }
+    }
+    return null;
+  };
+
   const detectReloadFromPart = (part: Part): ReloadReason | null => {
+    if (part.type !== "tool") return null;
     const record = part as Record<string, unknown>;
+    const toolName = typeof record.tool === "string" ? record.tool : "";
+    if (!mutatingTools.has(toolName)) return null;
+    const state = (record.state ?? {}) as Record<string, unknown>;
     return (
-      detectReloadReason(record.text) ||
-      detectReloadReason(record.path) ||
-      detectReloadReason(record.title) ||
-      detectReloadReason((record.state as { title?: unknown })?.title) ||
-      detectReloadReason((record.state as { output?: unknown })?.output) ||
-      detectReloadReason((record.state as { input?: unknown })?.input)
+      detectReloadReasonDeep(state.input) ||
+      detectReloadReasonDeep(state.patch) ||
+      detectReloadReasonDeep(state.diff)
     );
   };
 

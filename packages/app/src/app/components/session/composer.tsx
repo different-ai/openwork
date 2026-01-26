@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowRight, AtSign, File, Paperclip, Terminal, X, Zap } from "lucide-solid";
+import { ArrowRight, AtSign, ChevronDown, File, Paperclip, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode } from "../../types";
 
@@ -33,6 +33,15 @@ type ComposerProps = {
   onInsertCommand: (commandId: string) => void;
   selectedModelLabel: string;
   onModelClick: () => void;
+  agentLabel: string;
+  selectedAgent: string | null;
+  agentPickerOpen: boolean;
+  agentPickerBusy: boolean;
+  agentPickerError: string | null;
+  agentOptions: Agent[];
+  onToggleAgentPicker: () => void;
+  onSelectAgent: (agent: string | null) => void;
+  setAgentPickerRef: (el: HTMLDivElement) => void;
   showNotionBanner: boolean;
   onNotionBannerClick: () => void;
   toast: string | null;
@@ -319,7 +328,9 @@ export default function Composer(props: ComposerProps) {
   const syncHeight = () => {
     if (!editorRef) return;
     editorRef.style.height = "auto";
-    const nextHeight = Math.min(editorRef.scrollHeight, 160);
+    const baseHeight = 24;
+    const scrollHeight = editorRef.scrollHeight || baseHeight;
+    const nextHeight = Math.min(Math.max(scrollHeight, baseHeight), 160);
     editorRef.style.height = `${nextHeight}px`;
     editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
   };
@@ -697,8 +708,6 @@ export default function Composer(props: ComposerProps) {
     onCleanup(() => window.removeEventListener("openwork:focusPrompt", handler));
   });
 
-  const modeLabel = createMemo(() => (mode() === "shell" ? "Shell" : "Prompt"));
-
   return (
     <div class="p-4 border-t border-gray-6 bg-gray-1 sticky bottom-0 z-20">
       <div class="max-w-2xl mx-auto">
@@ -880,23 +889,11 @@ export default function Composer(props: ComposerProps) {
                 </div>
               </Show>
 
-              <div class="flex items-end gap-3">
+              <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-2">
-                    <div
-                      class={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide border ${
-                        mode() === "shell"
-                          ? "border-amber-7/30 bg-amber-7/10 text-amber-12"
-                          : "border-gray-6 bg-gray-1/70 text-gray-9"
-                      }`}
-                    >
-                      <Terminal size={11} />
-                      <span>{modeLabel()}</span>
-                    </div>
-                    <Show when={props.isRemoteWorkspace}>
-                      <div class="text-[10px] uppercase tracking-wider text-gray-8">Remote workspace</div>
-                    </Show>
-                  </div>
+                  <Show when={props.isRemoteWorkspace}>
+                    <div class="mb-2 text-[10px] uppercase tracking-wider text-gray-8">Remote workspace</div>
+                  </Show>
 
                   <div class="relative">
                     <Show when={!props.prompt.trim() && !attachments().length}>
@@ -917,54 +914,132 @@ export default function Composer(props: ComposerProps) {
                       onKeyUp={updateMentionQuery}
                       onClick={updateMentionQuery}
                       onPaste={handlePaste}
-                      class="bg-transparent border-none p-0 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
+                      class="bg-transparent border-none p-0 pb-12 pr-20 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
                     />
+
+                    <div class="absolute bottom-0 left-0 z-20" ref={props.setAgentPickerRef}>
+                      <button
+                        type="button"
+                        class="flex items-center gap-2 pl-3 pr-2 py-1.5 bg-gray-1/70 border border-gray-6 rounded-lg hover:border-gray-7 hover:bg-gray-3 transition-all group"
+                        onClick={props.onToggleAgentPicker}
+                        aria-expanded={props.agentPickerOpen}
+                      >
+                        <div class="p-1 rounded bg-gray-4 text-gray-10">
+                          <AtSign size={14} />
+                        </div>
+                        <div class="flex flex-col items-start mr-2 min-w-0">
+                          <span class="text-xs font-medium text-gray-12 leading-none truncate max-w-[10rem]">
+                            {props.agentLabel}
+                          </span>
+                          <span class="text-[10px] text-gray-10 font-mono leading-none">
+                            {props.selectedAgent ? "Agent" : "Default"}
+                          </span>
+                        </div>
+                        <ChevronDown size={14} class="text-gray-10 group-hover:text-gray-11" />
+                      </button>
+
+                      <Show when={props.agentPickerOpen}>
+                        <div class="absolute left-0 bottom-full mb-2 w-72 rounded-2xl border border-gray-6 bg-gray-1/95 shadow-2xl backdrop-blur-md overflow-hidden">
+                          <div class="px-4 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30">
+                            Session agent
+                          </div>
+                          <div class="max-h-64 overflow-auto p-2 space-y-1">
+                            <button
+                              type="button"
+                              class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                                props.selectedAgent ? "text-gray-11 hover:bg-gray-12/5" : "bg-gray-12/10 text-gray-12"
+                              }`}
+                              onClick={() => props.onSelectAgent(null)}
+                            >
+                              <span>Default agent</span>
+                              <Show when={!props.selectedAgent}>
+                                <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                              </Show>
+                            </button>
+                            <Show
+                              when={!props.agentPickerBusy}
+                              fallback={<div class="px-3 py-2 text-xs text-gray-9">Loading agents...</div>}
+                            >
+                              <Show
+                                when={props.agentOptions.length}
+                                fallback={<div class="px-3 py-2 text-xs text-gray-9">No agents available.</div>}
+                              >
+                                <For each={props.agentOptions}>
+                                  {(agent: Agent) => (
+                                    <button
+                                      type="button"
+                                      class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                                        props.selectedAgent === agent.name
+                                          ? "bg-gray-12/10 text-gray-12"
+                                          : "text-gray-11 hover:bg-gray-12/5"
+                                      }`}
+                                      onClick={() => props.onSelectAgent(agent.name)}
+                                    >
+                                      <span>{agent.name}</span>
+                                      <Show when={props.selectedAgent === agent.name}>
+                                        <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                                      </Show>
+                                    </button>
+                                  )}
+                                </For>
+                              </Show>
+                            </Show>
+                            <Show when={props.agentPickerError}>
+                              <div class="px-3 py-2 text-xs text-red-11">{props.agentPickerError}</div>
+                            </Show>
+                          </div>
+                          <div class="border-t border-gray-6/40 px-4 py-2 text-[10px] text-gray-9">
+                            Tip: use /agent-next or /agent-prev to cycle.
+                          </div>
+                        </div>
+                      </Show>
+                    </div>
+
+                    <div class="absolute bottom-0 right-0 z-20 flex items-center gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        class="hidden"
+                        onChange={(event: Event) => {
+                          const target = event.currentTarget as HTMLInputElement;
+                          const files = Array.from(target.files ?? []);
+                          if (files.length) void addAttachments(files);
+                          target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        class="p-2 rounded-xl border border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
+                        onClick={() => {
+                          if (props.isRemoteWorkspace) {
+                            props.onToast("Attachments are unavailable in remote workspaces.");
+                            return;
+                          }
+                          fileInputRef?.click();
+                        }}
+                        title="Attach files"
+                      >
+                        <Paperclip size={16} />
+                      </button>
+
+                      <button
+                        disabled={!props.prompt.trim() && !attachments().length}
+                        onClick={() => {
+                          if (!editorRef) return;
+                          const parts = buildPartsFromEditor(editorRef);
+                          const text = normalizeText(partsToText(parts));
+                          const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
+                          recordHistory(draft);
+                          props.onSend(draft);
+                        }}
+                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
+                        title="Run"
+                      >
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    class="hidden"
-                    onChange={(event: Event) => {
-                      const target = event.currentTarget as HTMLInputElement;
-                      const files = Array.from(target.files ?? []);
-                      if (files.length) void addAttachments(files);
-                      target.value = "";
-                    }}
-                  />
-                  <button
-                    type="button"
-                    class="p-2 rounded-xl border border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
-                    onClick={() => {
-                      if (props.isRemoteWorkspace) {
-                        props.onToast("Attachments are unavailable in remote workspaces.");
-                        return;
-                      }
-                      fileInputRef?.click();
-                    }}
-                    title="Attach files"
-                  >
-                    <Paperclip size={16} />
-                  </button>
-
-                  <button
-                    disabled={!props.prompt.trim() && !attachments().length}
-                    onClick={() => {
-                      if (!editorRef) return;
-                      const parts = buildPartsFromEditor(editorRef);
-                      const text = normalizeText(partsToText(parts));
-                      const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
-                      recordHistory(draft);
-                      props.onSend(draft);
-                    }}
-                    class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
-                    title="Run"
-                  >
-                    <ArrowRight size={18} />
-                  </button>
                 </div>
               </div>
             </div>

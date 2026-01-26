@@ -328,15 +328,11 @@ export default function App() {
     }
 
     for (const attachment of draft.attachments) {
-      if (attachment.kind === "image") {
-        parts.push({ type: "image", image: attachment.dataUrl, mediaType: attachment.mimeType } as Part);
-        continue;
-      }
       parts.push({
         type: "file",
-        data: attachment.dataUrl,
+        url: attachment.dataUrl,
         filename: attachment.name,
-        mediaType: attachment.mimeType,
+        mime: attachment.mimeType,
       } as Part);
     }
 
@@ -865,6 +861,8 @@ export default function App() {
     openRunModal,
     confirmRunModal,
     closeRunModal,
+    justSavedCommand,
+    clearJustSavedCommand,
   } = commandState;
 
   const commandRegistry = createCommandRegistry();
@@ -2568,6 +2566,8 @@ export default function App() {
     openCommandModal,
     runCommand: openRunModal,
     deleteCommand,
+    justSavedCommand: justSavedCommand(),
+    clearJustSavedCommand,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),
@@ -2663,6 +2663,31 @@ export default function App() {
     setLanguage: setLocale,
   });
 
+  const searchWorkspaceFiles = async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    if (isDemoMode()) {
+      const lower = trimmed.toLowerCase();
+      return activeWorkingFiles().filter((file) => file.toLowerCase().includes(lower));
+    }
+    const activeClient = client();
+    if (!activeClient) return [];
+    try {
+      const directory = workspaceProjectDir().trim();
+      const result = unwrap(
+        await activeClient.find.files({
+          query: trimmed,
+          dirs: "true",
+          limit: 50,
+          directory: directory || undefined,
+        }),
+      );
+      return result;
+    } catch {
+      return [];
+    }
+  };
+
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     setView,
@@ -2719,6 +2744,7 @@ export default function App() {
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
     listAgents: listAgents,
+    selectedSessionAgent: selectedSessionAgent(),
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
@@ -2727,6 +2753,7 @@ export default function App() {
     openCommandRunModal: openRunModal,
     commandRegistryItems,
     registerCommand: commandRegistry.registerCommand,
+    searchFiles: searchWorkspaceFiles,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);
