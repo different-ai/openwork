@@ -424,6 +424,33 @@ export function createSessionStore(options: {
     setStore("pendingPermissions", next);
   };
 
+  const addOptimisticMessage = (sessionID: string, message: MessageInfo, parts: Part[]) => {
+    batch(() => {
+      setStore("messages", sessionID, (current = []) => upsertMessageInfo(current, message));
+      setStore("parts", message.id, reconcile(sortById(parts), { key: "id" }));
+    });
+  };
+
+  const removeOptimisticMessage = (sessionID: string, messageID: string) => {
+    batch(() => {
+      setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
+      setStore("parts", messageID, []);
+    });
+  };
+
+  const syncSessionMessages = async (sessionID: string, optionsOverride?: { limit?: number }) => {
+    const c = options.client();
+    if (!c) return;
+
+    try {
+      const payload = optionsOverride?.limit ? { sessionID, limit: optionsOverride.limit } : { sessionID };
+      const msgs = unwrap(await withTimeout(c.session.messages(payload), 12_000, "session.messages"));
+      setMessagesForSession(sessionID, msgs);
+    } catch {
+      // ignore
+    }
+  };
+
   const activePermission = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
@@ -586,105 +613,13 @@ export function createSessionStore(options: {
     }
   };
 
-  createEffect(() => {
-    const c = options.client();
-    if (!c) return;
-
-    const controller = new AbortController();
-    let cancelled = false;
-
-    let queue: Array<OpencodeEvent | undefined> = [];
-    const coalesced = new Map<string, number>();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let last = 0;
-
-    const keyForEvent = (event: OpencodeEvent) => {
-      if (event.type === "session.status" || event.type === "session.idle") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
-        return sessionID ? `${event.type}:${sessionID}` : undefined;
+  const applyEventBatch = (events: OpencodeEvent[]) => {
+    batch(() => {
+      for (const event of events) {
+        void applyEvent(event);
       }
-      if (event.type === "message.part.updated") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const part = record?.part as Part | undefined;
-        if (part?.messageID && part.id) {
-          return `message.part.updated:${part.messageID}:${part.id}`;
-        }
-      }
-      if (event.type === "todo.updated") {
-        const record = event.properties as Record<string, unknown> | undefined;
-        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
-        return sessionID ? `todo.updated:${sessionID}` : undefined;
-      }
-      return undefined;
-    };
-
-    const flush = () => {
-      if (timer) clearTimeout(timer);
-      timer = undefined;
-
-      const eventsToApply = queue;
-      queue = [];
-      coalesced.clear();
-      if (eventsToApply.length === 0) return;
-
-      last = Date.now();
-      batch(() => {
-        for (const event of eventsToApply) {
-          if (!event) continue;
-          void applyEvent(event);
-        }
-      });
-    };
-
-    const schedule = () => {
-      if (timer) return;
-      const elapsed = Date.now() - last;
-      timer = setTimeout(flush, Math.max(0, 16 - elapsed));
-    };
-
-    (async () => {
-      try {
-        const sub = await c.event.subscribe(undefined, { signal: controller.signal });
-        let yielded = Date.now();
-
-        for await (const raw of sub.stream) {
-          if (cancelled) break;
-
-          const event = normalizeEvent(raw);
-          if (!event) continue;
-
-          const key = keyForEvent(event);
-          if (key) {
-            const existing = coalesced.get(key);
-            if (existing !== undefined) {
-              queue[existing] = undefined;
-            }
-            coalesced.set(key, queue.length);
-          }
-
-          queue.push(event);
-          schedule();
-
-          if (Date.now() - yielded < 8) continue;
-          yielded = Date.now();
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        }
-      } catch (e) {
-        if (cancelled) return;
-
-        const message = e instanceof Error ? e.message : String(e);
-        if (message.toLowerCase().includes("abort")) return;
-        options.setError(message);
-      }
-    })();
-
-    onCleanup(() => {
-      cancelled = true;
-      controller.abort();
-      flush();
     });
-  });
+  };
 
   return {
     sessions,
@@ -708,5 +643,10 @@ export function createSessionStore(options: {
     setMessages,
     setTodos,
     setPendingPermissions,
+    addOptimisticMessage,
+    removeOptimisticMessage,
+    syncSessionMessages,
+    applyEvent,
+    applyEventBatch,
   };
 }

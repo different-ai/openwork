@@ -7,12 +7,14 @@ import {
   onCleanup,
   onMount,
   untrack,
+  type Accessor,
+  type Setter,
 } from "solid-js";
 import { createStore } from "solid-js/store";
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
-import type { Agent, Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type { Agent, GlobalEvent, Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { parse } from "jsonc-parser";
@@ -50,10 +52,12 @@ import type {
   DashboardTab,
   DemoSequence,
   MessageWithParts,
+  MessageInfo,
   Mode,
   ModelOption,
   ModelRef,
   OnboardingStep,
+  PendingPermission,
   PluginScope,
   ReloadReason,
   ResetOpenworkMode,
@@ -81,6 +85,7 @@ import {
   isWindowsPlatform,
   lastUserModelFromMessages,
   normalizeDirectoryPath,
+  normalizeEvent,
   parseModelRef,
   readModePreference,
   safeStringify,
@@ -99,9 +104,9 @@ import { createDemoState } from "./demo-state";
 import { createCommandState } from "./command-state";
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { createSessionStore } from "./context/session";
+import { createSessionStore, type SessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
-import { createWorkspaceStore } from "./context/workspace";
+import { createWorkspaceStore, type WorkspaceStore } from "./context/workspace";
 import { normalizeServerUrl, useServer } from "./context/server";
 import {
   updaterEnvironment,
@@ -223,53 +228,219 @@ export default function App() {
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
   const [serverManagerOpen, setServerManagerOpen] = createSignal(false);
 
-  const sessionStore = createSessionStore({
-    client,
-    selectedSessionId,
-    setSelectedSessionId,
-    sessionModelState: () => ({
-      overrides: sessionModelOverrideById(),
-      resolved: sessionModelById(),
-    }),
-    setSessionModelState: (updater) => {
-      const next = updater({
+  const [workspaceStoreReady, setWorkspaceStoreReady] = createSignal(false);
+  let workspaceStoreRef: WorkspaceStore | null = null;
+
+  let activeSessionStoreRef: () => SessionStore | null = () => null;
+
+  const getWorkspaceStore = (): WorkspaceStore | null => workspaceStoreRef;
+
+  const getActiveSessionStore = () => activeSessionStoreRef();
+
+  const loadSessions = async (scopeRoot?: string) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    await store.loadSessions(scopeRoot);
+  };
+
+  const refreshPendingPermissions = async () => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    await store.refreshPendingPermissions();
+  };
+
+  const selectSession = async (sessionId: string) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    await store.selectSession(sessionId);
+  };
+
+  const renameSession = async (sessionId: string, title: string) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    await store.renameSession(sessionId, title);
+  };
+
+  const respondPermission = async (requestID: string, reply: "once" | "always" | "reject") => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    await store.respondPermission(requestID, reply);
+  };
+
+  const setSessions = (next: Session[]) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    store.setSessions(next);
+  };
+
+  const setSessionStatusById = (next: Record<string, string>) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    store.setSessionStatusById(next);
+  };
+
+  const setMessages = (next: MessageWithParts[]) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    store.setMessages(next);
+  };
+
+  const setTodos = (next: TodoItem[]) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    store.setTodos(next);
+  };
+
+  const setPendingPermissions = (next: PendingPermission[]) => {
+    const store = getActiveSessionStore();
+    if (!store) return;
+    store.setPendingPermissions(next);
+  };
+
+  const createWorkspaceSessionStore = (clientSignal: Accessor<Client | null>) =>
+    createSessionStore({
+      client: clientSignal,
+      selectedSessionId,
+      setSelectedSessionId,
+      sessionModelState: () => ({
         overrides: sessionModelOverrideById(),
         resolved: sessionModelById(),
-      });
-      setSessionModelOverrideById(next.overrides);
-      setSessionModelById(next.resolved);
-      return next;
-    },
-    lastUserModelFromMessages,
-    developerMode,
-    setError,
-    setSseConnected,
-    markReloadRequired: (reason) => markReloadRequiredRef(reason),
+      }),
+      setSessionModelState: (updater) => {
+        const next = updater({
+          overrides: sessionModelOverrideById(),
+          resolved: sessionModelById(),
+        });
+        setSessionModelOverrideById(next.overrides);
+        setSessionModelById(next.resolved);
+        return next;
+      },
+      lastUserModelFromMessages,
+      developerMode,
+      setError,
+      setSseConnected,
+      markReloadRequired: (reason) => markReloadRequiredRef(reason),
+    });
+
+  type WorkspaceSessionContext = {
+    workspaceId: string;
+    directory: string;
+    baseUrl: string;
+    client: Accessor<Client | null>;
+    setClient: Setter<Client | null>;
+    store: SessionStore;
+    lastUsed: number;
+  };
+
+  const SESSION_CONTEXT_LIMIT = 6;
+  const sessionContexts = new Map<string, WorkspaceSessionContext>();
+
+  const touchSessionContext = (workspaceId: string) => {
+    const ctx = sessionContexts.get(workspaceId);
+    if (ctx) {
+      ctx.lastUsed = Date.now();
+    }
+  };
+
+  const pruneSessionContexts = () => {
+    if (sessionContexts.size <= SESSION_CONTEXT_LIMIT) return;
+    const activeId = getWorkspaceStore()?.activeWorkspaceId() ?? "";
+    const entries = Array.from(sessionContexts.values())
+      .filter((entry) => entry.workspaceId !== activeId)
+      .sort((a, b) => a.lastUsed - b.lastUsed);
+    for (const entry of entries) {
+      if (sessionContexts.size <= SESSION_CONTEXT_LIMIT) break;
+      sessionContexts.delete(entry.workspaceId);
+    }
+  };
+
+  const getSessionContextForWorkspace = (workspace: WorkspaceInfo) => {
+    const id = workspace.id;
+    const directory = workspaceDirectoryNormalized(workspace);
+    const baseUrl = workspaceBaseUrl(workspace);
+    let ctx = sessionContexts.get(id);
+
+    if (!ctx) {
+      const [clientSignal, setClientSignal] = createSignal<Client | null>(null);
+      const store = createWorkspaceSessionStore(clientSignal);
+      ctx = {
+        workspaceId: id,
+        directory,
+        baseUrl,
+        client: clientSignal,
+        setClient: setClientSignal,
+        store,
+        lastUsed: Date.now(),
+      };
+      sessionContexts.set(id, ctx);
+    }
+
+    const connected = isWorkspaceConnected(workspace);
+    const shouldRefreshClient =
+      connected &&
+      baseUrl &&
+      (ctx.baseUrl !== baseUrl || ctx.directory !== directory || !ctx.client());
+
+    if (shouldRefreshClient) {
+      ctx.setClient(createClient(baseUrl, directory || undefined));
+    } else if (!connected) {
+      ctx.setClient(null);
+    }
+
+    ctx.baseUrl = baseUrl;
+    ctx.directory = directory;
+    ctx.lastUsed = Date.now();
+    pruneSessionContexts();
+    return ctx;
+  };
+
+  const sessionStatusById = createMemo(() => {
+    workspaceStoreReady();
+    getWorkspaceStore()?.workspaces();
+    const next: Record<string, string> = {};
+    for (const ctx of sessionContexts.values()) {
+      Object.assign(next, ctx.store.sessionStatusById());
+    }
+    return next;
   });
 
-  const {
-    sessions,
-    sessionStatusById,
-    sessionLoadState,
-    selectedSession,
-    selectedSessionStatus,
-    messages,
-    todos,
-    pendingPermissions,
-    permissionReplyBusy,
-    events,
-    activePermission,
-    loadSessions,
-    refreshPendingPermissions,
-    selectSession,
-    renameSession,
-    respondPermission,
-    setSessions,
-    setSessionStatusById,
-    setMessages,
-    setTodos,
-    setPendingPermissions,
-  } = sessionStore;
+  const sessionLoadState = createMemo(() => {
+    workspaceStoreReady();
+    getWorkspaceStore()?.workspaces();
+    const next: Record<string, "idle" | "loading" | "ready" | "error"> = {};
+    for (const ctx of sessionContexts.values()) {
+      Object.assign(next, ctx.store.sessionLoadState());
+    }
+    return next;
+  });
+
+  const activeSessionWorkspaceId = createMemo(() => {
+    workspaceStoreReady();
+    return getWorkspaceStore()?.activeWorkspaceId() ?? "";
+  });
+
+  const activeSessionContext = createMemo(() => {
+    workspaceStoreReady();
+    if (!workspaceStoreReady()) return null;
+    const workspaceId = activeSessionWorkspaceId();
+    const list = getWorkspaceStore()?.workspaces() ?? ([] as WorkspaceInfo[]);
+    const workspace = list.find((item: WorkspaceInfo) => item.id === workspaceId) ?? null;
+    return workspace ? getSessionContextForWorkspace(workspace) : null;
+  });
+
+  const activeSessionStore = createMemo(() => activeSessionContext()?.store ?? null);
+  activeSessionStoreRef = () => activeSessionStore();
+
+  const sessions = createMemo(() => activeSessionStore()?.sessions() ?? []);
+  const selectedSession = createMemo(() => activeSessionStore()?.selectedSession() ?? null);
+  const selectedSessionStatus = createMemo(() => activeSessionStore()?.selectedSessionStatus() ?? "idle");
+  const messages = createMemo<MessageWithParts[]>(() => activeSessionStore()?.messages() ?? []);
+  const todos = createMemo<TodoItem[]>(() => activeSessionStore()?.todos() ?? []);
+  const pendingPermissions = createMemo(() => activeSessionStore()?.pendingPermissions() ?? []);
+  const permissionReplyBusy = createMemo(() => activeSessionStore()?.permissionReplyBusy() ?? false);
+  const events = createMemo(() => activeSessionStore()?.events() ?? []);
+  const activePermission = createMemo(() => activeSessionStore()?.activePermission() ?? null);
+
 
   const server = useServer();
 
@@ -348,9 +519,11 @@ export default function App() {
       return;
     }
 
-    const c = client();
     const sessionID = selectedSessionId();
-    if (!c || !sessionID) return;
+    const context = activeSessionContext();
+    const c = context?.client();
+    const store = context?.store;
+    if (!c || !sessionID || !store) return;
 
     if (developerMode()) {
       console.log("[prompt] send", {
@@ -373,6 +546,31 @@ export default function App() {
       setQueuedPrompt(null);
     }
 
+    const model = selectedSessionModel();
+    const agent = selectedSessionAgent();
+    const messageId = `local-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+    const now = Date.now();
+    const optimisticMessage: MessageInfo = {
+      id: messageId,
+      sessionID,
+      role: "user",
+      time: { created: now },
+      agent: agent ?? "user",
+      model: {
+        providerID: model.providerID,
+        modelID: model.modelID,
+      },
+      variant: modelVariant() ?? undefined,
+    } as MessageInfo;
+    const optimisticPart: Part = {
+      id: `${messageId}-text`,
+      sessionID,
+      messageID: messageId,
+      type: "text",
+      text: content,
+      time: { start: now },
+    } as Part;
+
     setBusy(true);
     setBusyLabel("status.running");
     setBusyStartedAt(Date.now());
@@ -381,12 +579,11 @@ export default function App() {
     try {
       setLastPromptSent(content);
       setPrompt("");
-
-      const model = selectedSessionModel();
-      const agent = selectedSessionAgent();
+      store.addOptimisticMessage(sessionID, optimisticMessage, [optimisticPart]);
 
       await c.session.promptAsync({
         sessionID,
+        messageID: messageId,
         model,
         agent: agent ?? undefined,
         variant: modelVariant() ?? undefined,
@@ -405,8 +602,13 @@ export default function App() {
         return copy;
       });
 
-      // Session lists refresh via project aggregation.
+      if (!sseConnected()) {
+        setTimeout(() => {
+          store.syncSessionMessages(sessionID, { limit: 200 });
+        }, 2500);
+      }
     } catch (e) {
+      store.removeOptimisticMessage(sessionID, messageId);
       const message = e instanceof Error ? e.message : safeStringify(e);
       setError(addOpencodeCacheHint(message));
     } finally {
@@ -800,6 +1002,7 @@ export default function App() {
     setTab,
     isWindowsPlatform,
   });
+  workspaceStoreRef = workspaceStore;
 
   const readSessionCache = () => {
     if (typeof window === "undefined") return {} as Record<string, Session[]>;
@@ -848,6 +1051,18 @@ export default function App() {
   const workspaceDirectoryNormalized = (workspace: WorkspaceInfo) =>
     normalizeDirectoryPath(workspaceDirectory(workspace));
 
+  const workspaceDirectoryIndex = createMemo(() => {
+    workspaceStoreReady();
+    const map = new Map<string, string>();
+    const store = getWorkspaceStore();
+    if (!store) return map;
+    for (const workspace of store.workspaces()) {
+      const directory = workspaceDirectoryNormalized(workspace);
+      if (directory) map.set(directory, workspace.id);
+    }
+    return map;
+  });
+
   const workspaceBaseUrl = (workspace: WorkspaceInfo) => {
     if (workspace.workspaceType === "remote") return normalizeServerUrl(workspace.baseUrl ?? "") ?? "";
     return connectedServerUrl();
@@ -866,6 +1081,135 @@ export default function App() {
     }
     return mode() === "host";
   };
+
+  if (!workspaceStoreReady()) {
+    setWorkspaceStoreReady(true);
+  }
+
+  createEffect(() => {
+    if (!workspaceStoreReady()) return;
+    const store = getWorkspaceStore();
+    if (!store) return;
+    const list = store.workspaces();
+    const ids = new Set(list.map((workspace) => workspace.id));
+    for (const workspace of list) {
+      getSessionContextForWorkspace(workspace);
+    }
+    for (const id of sessionContexts.keys()) {
+      if (!ids.has(id)) {
+        sessionContexts.delete(id);
+      }
+    }
+  });
+
+  createEffect(() => {
+    const url = connectedServerUrl();
+    if (!url) return;
+
+    const controller = new AbortController();
+    let cancelled = false;
+    setSseConnected(false);
+    let queue: Array<GlobalEvent | undefined> = [];
+    const coalesced = new Map<string, number>();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let last = 0;
+    let retryDelay = 1000;
+
+    const keyForEvent = (event: GlobalEvent) => {
+      const payload = normalizeEvent(event.payload);
+      if (!payload) return undefined;
+      if (payload.type === "session.status" || payload.type === "session.idle") {
+        const record = payload.properties as Record<string, unknown> | undefined;
+        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
+        return sessionID ? `${event.directory}:${payload.type}:${sessionID}` : undefined;
+      }
+      if (payload.type === "message.part.updated") {
+        const record = payload.properties as Record<string, unknown> | undefined;
+        const part = record?.part as Part | undefined;
+        if (part?.messageID && part.id) {
+          return `${event.directory}:message.part.updated:${part.messageID}:${part.id}`;
+        }
+      }
+      if (payload.type === "todo.updated") {
+        const record = payload.properties as Record<string, unknown> | undefined;
+        const sessionID = typeof record?.sessionID === "string" ? record.sessionID : "";
+        return sessionID ? `${event.directory}:todo.updated:${sessionID}` : undefined;
+      }
+      return undefined;
+    };
+
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+
+      const eventsToApply = queue;
+      queue = [];
+      coalesced.clear();
+      if (eventsToApply.length === 0) return;
+
+      last = Date.now();
+      for (const event of eventsToApply) {
+        if (!event) continue;
+        const payload = normalizeEvent(event.payload);
+        if (!payload) continue;
+        setSseConnected(true);
+        const directory = normalizeDirectoryPath(event.directory ?? "");
+        const workspaceId =
+          workspaceDirectoryIndex().get(directory) ?? getWorkspaceStore()?.activeWorkspaceId() ?? null;
+        if (workspaceId) {
+          const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId);
+          if (workspace) {
+            const ctx = getSessionContextForWorkspace(workspace);
+            ctx.store.applyEvent(payload);
+          }
+        }
+      }
+    };
+
+    const schedule = () => {
+      if (timer) return;
+      const elapsed = Date.now() - last;
+      timer = setTimeout(flush, Math.max(0, 16 - elapsed));
+    };
+
+    const run = async () => {
+      const eventClient = createClient(url);
+      while (!cancelled) {
+        try {
+          const sub = await eventClient.global.event({ signal: controller.signal });
+          retryDelay = 1000;
+          for await (const raw of sub.stream) {
+            if (cancelled) break;
+            const event = raw as GlobalEvent | null;
+            if (!event) continue;
+            const key = keyForEvent(event);
+            if (key) {
+              const existing = coalesced.get(key);
+              if (existing !== undefined) {
+                queue[existing] = undefined;
+              }
+              coalesced.set(key, queue.length);
+            }
+            queue.push(event);
+            schedule();
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          }
+        } catch (e) {
+          if (cancelled) break;
+          await new Promise((resolve) => setTimeout(resolve, retryDelay));
+          retryDelay = Math.min(8000, retryDelay * 2);
+        }
+      }
+    };
+
+    void run();
+
+    onCleanup(() => {
+      cancelled = true;
+      controller.abort();
+      flush();
+    });
+  });
 
   const sessionListQuery = (directory: string) => {
     const normalized = normalizeDirectoryPath(directory);
@@ -1185,7 +1529,11 @@ export default function App() {
       });
       if (!ok) return;
     }
-    await selectSession(sessionId);
+    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
+    if (!workspace) return;
+    const ctx = getSessionContextForWorkspace(workspace);
+    touchSessionContext(workspaceId);
+    await ctx.store.selectSession(sessionId);
   };
 
   const createSessionForWorkspace = async (workspaceId: string) => {
@@ -1202,6 +1550,7 @@ export default function App() {
       });
       if (!ok) return;
     }
+    touchSessionContext(workspaceId);
     await createSessionAndOpen();
   };
 
