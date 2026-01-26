@@ -1,14 +1,15 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File } from "lucide-solid";
+import { Check, ChevronDown, Circle, Clock, Copy, Github } from "lucide-solid";
 
-import type { MessageGroup, MessageWithParts } from "../../types";
-import { groupMessageParts, summarizeStep } from "../../utils";
+import type { MessageEndReason, MessageGroup, MessageInfo, MessageTiming, MessageWithParts } from "../../types";
+import { formatElapsedTime, groupMessageParts, summarizeStep, type StepSummary } from "../../utils";
 import PartView from "../part-view";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
+  messageTimings: Record<string, MessageTiming>;
   developerMode: boolean;
   showThinking: boolean;
   expandedStepIds: Set<string>;
@@ -178,32 +179,138 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  const messageInfoById = createMemo(() => {
+    const map = new Map<string, MessageInfo>();
+    for (const message of props.messages) {
+      const id = String((message.info as any)?.id ?? "");
+      if (id) {
+        map.set(id, message.info);
+      }
+    }
+    return map;
+  });
+
+  const reasonPriority: Record<MessageEndReason, number> = {
+    terminated: 3,
+    interrupted: 2,
+    error: 2,
+    completed: 1,
+  };
+
+  const pickReason = (
+    current: MessageEndReason | undefined,
+    next: MessageEndReason | undefined,
+  ) => {
+    if (!next) return current;
+    if (!current) return next;
+    return reasonPriority[next] > reasonPriority[current] ? next : current;
+  };
+
+  const resolveTimingRange = (messageId: string, info?: MessageInfo) => {
+    const timing = props.messageTimings[messageId];
+    const created = (info as any)?.time?.created;
+    const completed = (info as any)?.time?.completed;
+    const start = timing?.startAt ?? (typeof created === "number" ? created : null);
+    const end = timing?.endAt ?? (typeof completed === "number" ? completed : null);
+    if (typeof start !== "number" || typeof end !== "number") return null;
+    const duration = end - start;
+    if (duration < 0) return null;
+    const reason = timing?.endReason ?? (typeof completed === "number" ? "completed" : undefined);
+    return { start, end, duration, reason };
+  };
+
+  const resolveMessageTiming = (message: MessageWithParts) => {
+    const info = message.info as MessageInfo;
+    const messageId = String((info as any)?.id ?? "");
+    return resolveTimingRange(messageId, info);
+  };
+
+  const resolveClusterTiming = (messageIds: string[]) => {
+    const infoMap = messageInfoById();
+    let start: number | null = null;
+    let end: number | null = null;
+    let reason: MessageEndReason | undefined;
+
+    for (const messageId of messageIds) {
+      const info = infoMap.get(messageId);
+      const timing = resolveTimingRange(messageId, info);
+      if (!timing) continue;
+      start = start === null ? timing.start : Math.min(start, timing.start);
+      end = end === null ? timing.end : Math.max(end, timing.end);
+      reason = pickReason(reason, timing.reason);
+    }
+
+    if (start === null || end === null) return null;
+    const duration = end - start;
+    if (duration < 0) return null;
+    return { duration, reason };
+  };
+
+  const formatReasonLabel = (reason: MessageEndReason) => {
+    switch (reason) {
+      case "terminated":
+        return "Terminated";
+      case "interrupted":
+        return "Interrupted";
+      case "error":
+        return "Error";
+      default:
+        return "";
+    }
+  };
+
+  const getToolStatus = (part: Part) => {
+    if (part.type !== "tool") return null;
+    const state = (part as any).state ?? {};
+    return state.status as string | undefined;
+  };
+
+  const renderStepIcon = (summary: StepSummary, status: string | null | undefined) => {
+    const isCompleted = status === "completed";
+    const isError = status === "error";
+    const isRunning = status === "running";
+    
+    // GitHub icon for git-related operations
+    if (summary.icon === "github") {
+      return (
+        <div class={`flex-shrink-0 ${
+          isCompleted ? "text-green-10" : 
+          isError ? "text-red-10" : 
+          isRunning ? "text-blue-10" : "text-gray-10"
+        }`}>
+          <Github size={14} class={isRunning ? "animate-pulse" : ""} />
+        </div>
+      );
+    }
+    
+    // Default status icons
+    return (
+      <div class={`flex-shrink-0 ${
+        isCompleted ? "text-green-10" : 
+        isError ? "text-red-10" : 
+        isRunning ? "text-blue-10" : "text-gray-10"
+      }`}>
+        {isCompleted ? <Check size={14} /> : 
+         isError ? <Circle size={14} /> :
+         isRunning ? <Circle size={14} class="animate-pulse" /> :
+         <Circle size={14} />}
+      </div>
+    );
+  };
+
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
-    <div class="space-y-3">
+    <div class="space-y-1.5">
       <For each={listProps.parts}>
         {(part) => {
           const summary = summarizeStep(part);
+          const status = getToolStatus(part);
           return (
-            <div class="flex items-start gap-3 text-xs text-gray-11">
-              <div class="mt-0.5 h-5 w-5 rounded-full border border-gray-7 flex items-center justify-center text-gray-10">
-                {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
-              </div>
-              <div>
-                <div class="text-gray-12">{summary.title}</div>
-                <Show when={summary.detail}>
-                  <div class="mt-1 text-gray-10">{summary.detail}</div>
-                </Show>
-                <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
-                  <div class="mt-2 text-xs text-gray-10">
-                    <PartView
-                      part={part}
-                      developerMode={props.developerMode}
-                      showThinking={props.showThinking}
-                      tone={listProps.isUser ? "dark" : "light"}
-                    />
-                  </div>
-                </Show>
-              </div>
+            <div class="flex items-center gap-2 text-xs">
+              {renderStepIcon(summary, status)}
+              <span class="text-gray-12 font-medium">{summary.title}</span>
+              <Show when={summary.detail}>
+                <span class="text-gray-10 truncate max-w-[300px]">{summary.detail}</span>
+              </Show>
             </div>
           );
         }}
@@ -218,6 +325,7 @@ export default function MessageList(props: MessageListProps) {
           if (block.kind === "steps-cluster") {
             const relatedStepIds = block.stepIds.filter((stepId) => stepId !== block.id);
             const expanded = () => isStepsExpanded(block.id, relatedStepIds);
+            const clusterTiming = () => resolveClusterTiming(block.messageIds);
             return (
               <div
                 class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
@@ -225,10 +333,10 @@ export default function MessageList(props: MessageListProps) {
                 data-message-id={block.messageIds[0] ?? ""}
               >
                 <div
-                  class={`w-full relative ${
+                  class={`relative ${
                     block.isUser
-                      ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                      : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                      ? "max-w-2xl px-5 py-3 rounded-[20px] bg-gray-3 text-gray-12 text-[15px] leading-normal"
+                      : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                   }`}
                 >
                   <div class={block.isUser ? "mt-2" : "mt-3 border-t border-gray-6/60 pt-3"}>
@@ -244,6 +352,21 @@ export default function MessageList(props: MessageListProps) {
                         class={`transition-transform ${expanded() ? "rotate-180" : ""}`.trim()}
                       />
                     </button>
+                    <Show when={!block.isUser && clusterTiming()}>
+                      {(timing) => {
+                        const reason = timing().reason;
+                        const reasonLabel = reason && reason !== "completed" ? formatReasonLabel(reason) : null;
+                        return (
+                          <div class="mt-2 flex items-center gap-1.5 text-xs text-gray-9">
+                            <Clock size={12} />
+                            <span>{formatElapsedTime(timing().duration)}</span>
+                            <Show when={reasonLabel}>
+                              <span class="text-gray-9/80">· {reasonLabel}</span>
+                            </Show>
+                          </div>
+                        );
+                      }}
+                    </Show>
                     <Show when={expanded()}>
                       <div
                         class={`mt-3 rounded-xl border p-3 ${
@@ -274,17 +397,36 @@ export default function MessageList(props: MessageListProps) {
           }
 
           const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+          
+          const copyButton = (
+            <button
+              class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors opacity-0 group-hover:opacity-100 transition-opacity"
+              title="Copy message"
+              onClick={() => {
+                const text = block.renderableParts
+                  .map((part) => ("text" in part ? (part as any).text : ""))
+                  .join("\n");
+                handleCopy(text, block.messageId);
+              }}
+            >
+              <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
+                <Check size={12} class="text-green-10" />
+              </Show>
+            </button>
+          );
+          
           return (
             <div
-              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+              class={`flex group items-end gap-2 ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
             >
+              <Show when={block.isUser}>{copyButton}</Show>
               <div
-                class={`w-full relative ${
+                class={`relative ${
                   block.isUser
-                    ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                    : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                    ? "max-w-2xl px-5 py-3 rounded-[20px] bg-gray-3 text-gray-12 text-[15px] leading-normal"
+                    : "w-full max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                 }`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
@@ -362,22 +504,35 @@ export default function MessageList(props: MessageListProps) {
                     </div>
                   )}
                 </For>
-                <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
-                  <button
-                    class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                    title="Copy message"
-                    onClick={() => {
-                      const text = block.renderableParts
-                        .map((part) => partToText(part))
-                        .join("\n");
-                      handleCopy(text, block.messageId);
-                    }}
-                  >
-                    <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
-                      <Check size={12} class="text-green-10" />
-                    </Show>
-                  </button>
-                </div>
+                <Show when={!block.isUser}>
+                  {(() => {
+                    const timing = () => resolveMessageTiming(block.message);
+                    
+                    return (
+                      <div class="mt-3 flex items-center justify-between text-xs text-gray-9">
+                        <Show when={timing()}>
+                          {(resolved) => {
+                            const reason = resolved().reason;
+                            const reasonLabel = reason && reason !== "completed" ? formatReasonLabel(reason) : null;
+                            return (
+                              <div class="flex items-center gap-1.5 opacity-60">
+                                <Clock size={12} />
+                                <span>{formatElapsedTime(resolved().duration)}</span>
+                                <Show when={reasonLabel}>
+                                  <span class="text-gray-9/80">· {reasonLabel}</span>
+                                </Show>
+                              </div>
+                            );
+                          }}
+                        </Show>
+                        <div class="flex-1" />
+                        <div>
+                          {copyButton}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </Show>
               </div>
             </div>
           );

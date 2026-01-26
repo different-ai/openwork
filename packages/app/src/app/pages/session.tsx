@@ -7,6 +7,7 @@ import type {
   CommandRegistryItem,
   CommandTriggerContext,
   MessageGroup,
+  MessageTiming,
   MessageWithParts,
   PendingPermission,
   SkillCard,
@@ -35,6 +36,7 @@ import Composer from "../components/session/composer";
 import SessionSidebar, { type SidebarSectionState } from "../components/session/sidebar";
 import ContextPanel from "../components/session/context-panel";
 import FlyoutItem from "../components/flyout-item";
+import { formatElapsedTime } from "../utils";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -51,6 +53,7 @@ export type SessionViewProps = {
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
+  messageTimings: Record<string, MessageTiming>;
   todos: TodoItem[];
   busyLabel: string | null;
   developerMode: boolean;
@@ -73,6 +76,7 @@ export type SessionViewProps = {
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
+  cancelRun: () => Promise<void>;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
   modelVariantLabel: string;
@@ -360,7 +364,7 @@ export default function SessionView(props: SessionViewProps) {
     return Math.max(0, runTick() - start);
   });
 
-  const runElapsedLabel = createMemo(() => `${Math.round(runElapsedMs()).toLocaleString()}ms`);
+  const runElapsedLabel = createMemo(() => formatElapsedTime(runElapsedMs()));
 
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
@@ -402,23 +406,15 @@ export default function SessionView(props: SessionViewProps) {
     }
   });
 
-  createEffect(
-    on(
-      () => [
-        props.messages.length,
-        props.todos.length,
-        props.messages.reduce((acc, m) => acc + m.parts.length, 0),
-      ],
-      (current, previous) => {
-        if (!previous) return;
-        const [mLen, tLen, pCount] = current;
-        const [prevM, prevT, prevP] = previous;
-        if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          messagesEndEl?.scrollIntoView({ behavior: "smooth" });
-        }
-      },
-    ),
-  );
+  const [prevMessageCount, setPrevMessageCount] = createSignal(0);
+  createEffect(() => {
+    const currentCount = props.messages.length;
+    const prev = prevMessageCount();
+    if (currentCount > prev) {
+      messagesEndEl?.scrollIntoView({ behavior: "smooth" });
+    }
+    setPrevMessageCount(currentCount);
+  });
 
   const triggerFlyout = (
     sourceEl: Element | null,
@@ -1047,6 +1043,7 @@ export default function SessionView(props: SessionViewProps) {
 
             <MessageList 
               messages={props.messages}
+              messageTimings={props.messageTimings}
               developerMode={props.developerMode}
               showThinking={props.showThinking}
               expandedStepIds={props.expandedStepIds}
@@ -1134,6 +1131,7 @@ export default function SessionView(props: SessionViewProps) {
           prompt={props.prompt}
           busy={props.busy}
           onSend={handleSendPrompt}
+          onCancel={() => props.cancelRun()}
           onDraftChange={handleDraftChange}
           commandMatches={commandMatches()}
           onRunCommand={handleRunCommand}

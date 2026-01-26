@@ -6,6 +6,8 @@ import type { Message, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   Client,
   MessageInfo,
+  MessageEndReason,
+  MessageTiming,
   MessageWithParts,
   ModelRef,
   OpencodeEvent,
@@ -36,6 +38,7 @@ type StoreState = {
   sessionStatus: Record<string, string>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
+  messageTimings: Record<string, MessageTiming>;
   todos: Record<string, TodoItem[]>;
   pendingPermissions: PendingPermission[];
   events: OpencodeEvent[];
@@ -102,6 +105,35 @@ const upsertPartInfo = (list: Part[], next: Part) => {
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
+const resolvePartTimestamp = (part: Part) => {
+  const record = part as Record<string, unknown>;
+  const time = record.time as { created?: unknown; updated?: unknown } | undefined;
+  const created = time?.created;
+  const updated = time?.updated;
+  if (typeof created === "number") return created;
+  if (typeof updated === "number") return updated;
+  return Date.now();
+};
+
+const resolveEndReasonFromStatus = (status: unknown): MessageEndReason | null => {
+  if (!status) return null;
+  if (typeof status === "string") {
+    const normalized = status.toLowerCase();
+    if (["terminated", "terminate", "killed"].includes(normalized)) return "terminated";
+    if (["interrupt", "interrupted", "aborted", "cancelled", "canceled"].includes(normalized)) {
+      return "interrupted";
+    }
+    if (["error", "failed", "failure"].includes(normalized)) return "error";
+    return null;
+  }
+  if (typeof status === "object") {
+    const record = status as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type.toLowerCase() : null;
+    return type ? resolveEndReasonFromStatus(type) : null;
+  }
+  return null;
+};
+
 export function createSessionStore(options: {
   client: () => Client | null;
   selectedSessionId: () => string | null;
@@ -119,12 +151,14 @@ export function createSessionStore(options: {
     sessionStatus: {},
     messages: {},
     parts: {},
+    messageTimings: {},
     todos: {},
     pendingPermissions: [],
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const reloadDetectionSet = new Set<string>();
+  const sessionEndHints = new Map<string, MessageEndReason>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
@@ -216,6 +250,7 @@ export function createSessionStore(options: {
   const sessionStatusById = () => store.sessionStatus;
   const pendingPermissions = () => store.pendingPermissions;
   const events = () => store.events;
+  const messageTimings = () => store.messageTimings;
 
   const selectedSession = createMemo(() => {
     const id = options.selectedSessionId();
@@ -228,6 +263,37 @@ export function createSessionStore(options: {
     if (!id) return "idle";
     return store.sessionStatus[id] ?? "idle";
   });
+
+  const finalizePendingMessageTimings = (sessionID: string, reason: MessageEndReason) => {
+    setStore(
+      produce((draft: StoreState) => {
+        const list = draft.messages[sessionID] ?? [];
+        for (const info of list) {
+          if ((info as any)?.role !== "assistant") continue;
+          const timing = draft.messageTimings[info.id];
+          if (!timing || timing.endAt || !timing.startAt) continue;
+          const endAt = timing.lastTokenAt ?? Date.now();
+          timing.endAt = endAt;
+          timing.endReason = reason;
+          draft.messageTimings[info.id] = timing;
+        }
+      }),
+    );
+  };
+
+  const markSessionEndReason = (sessionID: string, reason: MessageEndReason) => {
+    if (!sessionID) return;
+    sessionEndHints.set(sessionID, reason);
+  };
+
+  const consumeSessionEndReason = (sessionID: string) => {
+    if (!sessionID) return null;
+    const reason = sessionEndHints.get(sessionID) ?? null;
+    if (reason) {
+      sessionEndHints.delete(sessionID);
+    }
+    return reason;
+  };
 
   const messages = createMemo<MessageWithParts[]>(() => {
     const id = options.selectedSessionId();
@@ -461,6 +527,11 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, normalizeSessionStatus(record.status));
+          const endReason = resolveEndReasonFromStatus(record.status);
+          if (endReason) {
+            consumeSessionEndReason(sessionID);
+            finalizePendingMessageTimings(sessionID, endReason);
+          }
         }
       }
     }
@@ -471,6 +542,8 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          const hintedReason = consumeSessionEndReason(sessionID);
+          finalizePendingMessageTimings(sessionID, hintedReason ?? "completed");
         }
       }
     }
@@ -496,6 +569,14 @@ export function createSessionStore(options: {
           }
 
           setStore("messages", info.sessionID, (current = []) => upsertMessageInfo(current, info));
+          const completed = (info as any)?.time?.completed;
+          if (typeof completed === "number") {
+            setStore("messageTimings", info.id, (current: MessageTiming = {}) => ({
+              ...current,
+              endAt: completed,
+              endReason: "completed" as MessageEndReason,
+            }));
+          }
         }
       }
     }
@@ -508,6 +589,11 @@ export function createSessionStore(options: {
         if (sessionID && messageID) {
           setStore("messages", sessionID, (current = []) => removeMessageInfo(current, messageID));
           setStore("parts", messageID, []);
+          setStore("messageTimings", (current) => {
+            const next = { ...current };
+            delete next[messageID];
+            return next;
+          });
         }
       }
     }
@@ -518,6 +604,7 @@ export function createSessionStore(options: {
         if (record.part && typeof record.part === "object") {
           const part = record.part as Part;
           const delta = typeof record.delta === "string" ? record.delta : null;
+          const partTime = resolvePartTimestamp(part);
 
           setStore(
             produce((draft: StoreState) => {
@@ -540,6 +627,23 @@ export function createSessionStore(options: {
               }
 
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
+
+              const timing = draft.messageTimings[part.messageID] ?? {};
+              if (!timing.startAt || partTime < timing.startAt) {
+                timing.startAt = partTime;
+              }
+              if (!timing.lastTokenAt || partTime > timing.lastTokenAt) {
+                timing.lastTokenAt = partTime;
+              }
+              if (
+                timing.endAt &&
+                timing.endReason &&
+                timing.endReason !== "completed" &&
+                partTime > timing.endAt
+              ) {
+                timing.endAt = partTime;
+              }
+              draft.messageTimings[part.messageID] = timing;
             }),
           );
           maybeMarkReloadRequired(part);
@@ -683,6 +787,7 @@ export function createSessionStore(options: {
     selectedSession,
     selectedSessionStatus,
     messages,
+    messageTimings,
     todos,
     pendingPermissions,
     permissionReplyBusy,
@@ -693,6 +798,7 @@ export function createSessionStore(options: {
     selectSession,
     renameSession,
     respondPermission,
+    markSessionEndReason,
     setSessions,
     setSessionStatusById,
     setMessages,

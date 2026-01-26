@@ -227,6 +227,25 @@ export function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
+export function formatElapsedTime(ms: number): string {
+  const seconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60;
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
+  }
+  if (minutes > 0) {
+    const remainingSeconds = seconds % 60;
+    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  if (seconds > 0) {
+    return `${seconds}s`;
+  }
+  return `${ms}ms`;
+}
+
 export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
   const root = workspaceRoot.trim().replace(/\/+$/, "");
   const name = commandName.trim().replace(/^\/+/, "");
@@ -379,11 +398,27 @@ export function removePart(list: MessageWithParts[], messageID: string, partID: 
 }
 
 export function normalizeSessionStatus(status: unknown) {
-  if (!status || typeof status !== "object") return "idle";
-  const record = status as Record<string, unknown>;
-  if (record.type === "busy") return "running";
-  if (record.type === "retry") return "retry";
-  if (record.type === "idle") return "idle";
+  const resolveType = (value: unknown) => {
+    if (!value) return null;
+    if (typeof value === "string") return value.toLowerCase();
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (typeof record.type === "string") return record.type.toLowerCase();
+    }
+    return null;
+  };
+
+  const type = resolveType(status);
+  if (!type) return "idle";
+
+  if (type === "busy" || type === "running") return "running";
+  if (type === "retry") return "retry";
+  if (type === "idle") return "idle";
+
+  if (["terminated", "terminate", "killed"].includes(type)) return "terminated";
+  if (["interrupt", "interrupted", "aborted", "cancelled", "canceled"].includes(type)) return "interrupted";
+  if (["error", "failed", "failure"].includes(type)) return "error";
+
   return "idle";
 }
 
@@ -411,7 +446,8 @@ export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | 
 }
 
 export function isStepPart(part: Part) {
-  return part.type === "reasoning" || part.type === "tool" || part.type === "step-start" || part.type === "step-finish";
+  // Only count reasoning and tool as real steps, ignore step-start/step-finish markers
+  return part.type === "reasoning" || part.type === "tool";
 }
 
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
@@ -462,34 +498,203 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string } {
+const TOOL_LABELS: Record<string, string> = {
+  bash: "Bash",
+  read: "Read",
+  write: "Write",
+  edit: "Edit",
+  patch: "Patch",
+  multiedit: "MultiEdit",
+  grep: "Grep",
+  glob: "Glob",
+  task: "Task",
+  webfetch: "Fetch",
+  fetchurl: "Fetch",
+  websearch: "Search",
+  execute: "Execute",
+  create: "Create",
+  ls: "List",
+  skill: "Skill",
+  todowrite: "Todo",
+};
+
+// Tools that should show GitHub icon (git operations)
+const GITHUB_TOOLS = new Set([
+  "git", "gh", "github", "mcp_github", "mcp-github",
+  "git_status", "git_diff", "git_log", "git_commit", "git_push", "git_pull",
+  "create_pull_request", "list_pull_requests", "get_pull_request",
+  "create_issue", "list_issues", "get_issue",
+  "create_branch", "list_branches", "create_repository",
+]);
+
+// Shorten path to last N segments
+function shortenPath(path: string, segments = 3): string {
+  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  if (parts.length <= segments) return path;
+  return parts.slice(-segments).join("/");
+}
+
+// Format file size or line count
+function formatReadInfo(input: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  
+  // Get file path (shortened)
+  const filePath = input.file_path ?? input.path;
+  if (typeof filePath === "string" && filePath.trim()) {
+    parts.push(shortenPath(filePath.trim()));
+  }
+  
+  // Add line range info if present
+  const offset = input.offset ?? input.start_line;
+  const limit = input.limit ?? input.end_line ?? input.lines;
+  if (typeof offset === "number" || typeof limit === "number") {
+    const rangeInfo: string[] = [];
+    if (typeof offset === "number" && offset > 0) rangeInfo.push(`from L${offset}`);
+    if (typeof limit === "number") rangeInfo.push(`${limit} lines`);
+    if (rangeInfo.length) parts.push(`(${rangeInfo.join(", ")})`);
+  }
+  
+  return parts.length ? parts.join(" ") : null;
+}
+
+// Format list directory info
+function formatListInfo(input: Record<string, unknown>): string | null {
+  const dirPath = input.directory_path ?? input.path ?? input.folder;
+  if (typeof dirPath === "string" && dirPath.trim()) {
+    return shortenPath(dirPath.trim());
+  }
+  return null;
+}
+
+// Format search info (grep/glob)
+function formatSearchInfo(toolName: string, input: Record<string, unknown>): string | null {
+  const parts: string[] = [];
+  
+  // Pattern
+  const pattern = input.pattern ?? input.query ?? input.patterns;
+  if (typeof pattern === "string" && pattern.trim()) {
+    const p = pattern.trim();
+    parts.push(p.length > 30 ? `"${p.slice(0, 30)}…"` : `"${p}"`);
+  } else if (Array.isArray(pattern) && pattern.length > 0) {
+    const first = String(pattern[0]);
+    parts.push(first.length > 30 ? `"${first.slice(0, 30)}…"` : `"${first}"`);
+  }
+  
+  // Path context
+  const path = input.path ?? input.folder ?? input.directory;
+  if (typeof path === "string" && path.trim()) {
+    parts.push(`in ${shortenPath(path.trim(), 2)}`);
+  }
+  
+  // File type filter
+  const fileType = input.type ?? input.glob_pattern;
+  if (typeof fileType === "string" && fileType.trim()) {
+    parts.push(`(${fileType})`);
+  }
+  
+  return parts.length ? parts.join(" ") : null;
+}
+
+// Format command/execute info
+function formatCommandInfo(input: Record<string, unknown>): string | null {
+  const cmd = input.command ?? input.cmd;
+  if (typeof cmd === "string" && cmd.trim()) {
+    const trimmed = cmd.trim();
+    // Show first line only, truncate if too long
+    const firstLine = trimmed.split("\n")[0];
+    return firstLine.length > 50 ? `${firstLine.slice(0, 50)}…` : firstLine;
+  }
+  return null;
+}
+
+export type StepSummary = {
+  title: string;
+  detail?: string;
+  icon?: "github" | "default";
+};
+
+export function summarizeStep(part: Part): StepSummary {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
+    const toolLower = toolName.toLowerCase();
+    const label = TOOL_LABELS[toolLower] ?? toolName;
     const state = record.state ?? {};
-    const title = state.title ? String(state.title) : toolName;
-    const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
-    if (output) {
-      const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-      return { title, detail: short };
+    const input = typeof state.input === "object" && state.input ? state.input : {};
+    
+    // Determine if this is a GitHub-related tool
+    const isGithubTool = GITHUB_TOOLS.has(toolLower) || 
+      toolLower.includes("github") || 
+      toolLower.includes("git_") ||
+      toolLower.startsWith("gh_") ||
+      (toolLower === "execute" && typeof input.command === "string" && 
+        (input.command.startsWith("git ") || input.command.startsWith("gh ")));
+    
+    // Some tools don't need detail
+    const noDetailTools = ["todowrite"];
+    if (noDetailTools.includes(toolLower)) {
+      return { title: label, icon: isGithubTool ? "github" : "default" };
     }
-    return { title };
+    
+    // Extract detail based on tool type
+    let detail: string | null = null;
+    
+    // Read file
+    if (toolLower === "read") {
+      detail = formatReadInfo(input);
+    }
+    // List directory
+    else if (toolLower === "ls" || toolLower === "list") {
+      detail = formatListInfo(input);
+    }
+    // Search (grep/glob)
+    else if (["grep", "glob", "find"].includes(toolLower)) {
+      detail = formatSearchInfo(toolLower, input);
+    }
+    // Command/Execute
+    else if (["bash", "execute", "shell"].includes(toolLower)) {
+      detail = formatCommandInfo(input);
+    }
+    // Edit/Write/Create - show file path
+    else if (["edit", "write", "create", "patch", "multiedit"].includes(toolLower)) {
+      const filePath = input.file_path ?? input.path;
+      if (typeof filePath === "string" && filePath.trim()) {
+        detail = shortenPath(filePath.trim());
+      }
+    }
+    // Fetch/WebSearch - show URL or query
+    else if (["webfetch", "fetchurl", "websearch"].includes(toolLower)) {
+      const url = input.url;
+      const query = input.query;
+      if (typeof url === "string" && url.trim()) {
+        const u = url.trim();
+        detail = u.length > 50 ? `${u.slice(0, 50)}…` : u;
+      } else if (typeof query === "string" && query.trim()) {
+        const q = query.trim();
+        detail = q.length > 40 ? `"${q.slice(0, 40)}…"` : `"${q}"`;
+      }
+    }
+    
+    // Fallback to state.title if no detail extracted
+    if (!detail && state.title) {
+      const titleStr = typeof state.title === "string" 
+        ? state.title 
+        : typeof state.title === "object" 
+          ? JSON.stringify(state.title).slice(0, 80)
+          : String(state.title);
+      const title = titleStr.trim();
+      detail = title.length > 60 ? `${title.slice(0, 60)}…` : title;
+    }
+    
+    return { 
+      title: label, 
+      detail: detail ?? undefined,
+      icon: isGithubTool ? "github" : "default"
+    };
   }
 
   if (part.type === "reasoning") {
-    const record = part as any;
-    const text = typeof record.text === "string" ? record.text.trim() : "";
-    if (!text) return { title: "Planning" };
-    const short = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    return { title: "Thinking", detail: short };
-  }
-
-  if (part.type === "step-start" || part.type === "step-finish") {
-    const reason = (part as any).reason;
-    return {
-      title: part.type === "step-start" ? "Step started" : "Step finished",
-      detail: reason ? String(reason) : undefined,
-    };
+    return { title: "Thinking" };
   }
 
   return { title: "Step" };

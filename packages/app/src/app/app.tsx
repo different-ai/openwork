@@ -256,6 +256,7 @@ export default function App() {
     selectedSession,
     selectedSessionStatus,
     messages,
+    messageTimings,
     todos,
     pendingPermissions,
     permissionReplyBusy,
@@ -266,6 +267,7 @@ export default function App() {
     selectSession,
     renameSession,
     respondPermission,
+    markSessionEndReason,
     setSessions,
     setSessionStatusById,
     setMessages,
@@ -431,6 +433,23 @@ export default function App() {
       setBusy(false);
       setBusyLabel(null);
       setBusyStartedAt(null);
+    }
+  }
+
+  async function cancelRun() {
+    const c = client();
+    const sessionID = selectedSessionId();
+    if (!c || !sessionID) return;
+
+    try {
+      markSessionEndReason(sessionID, "interrupted");
+      setBusy(false);
+      setBusyLabel(null);
+      setBusyStartedAt(null);
+      await c.session.abort({ sessionID });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      setError(message);
     }
   }
 
@@ -2832,6 +2851,7 @@ export default function App() {
     })),
     selectSession: isDemoMode() ? selectDemoSession : selectSession,
     messages: activeMessages(),
+    messageTimings: isDemoMode() ? {} : messageTimings(),
     todos: activeTodos(),
     busyLabel: busyLabel(),
     developerMode: developerMode(),
@@ -2848,6 +2868,7 @@ export default function App() {
     busy: busy(),
     prompt: prompt(),
     setPrompt: setPrompt,
+    cancelRun: cancelRun,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
     respondPermission: respondPermission,
