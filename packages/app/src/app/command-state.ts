@@ -11,7 +11,7 @@ const COMMANDS_PATH = ".opencode/commands";
 const COMMAND_FILE_SUFFIX = ".md";
 const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
 
-const sanitizeCommandName = (value: string) => {
+export const sanitizeCommandName = (value: string) => {
   const trimmed = value.trim().replace(/^\/+/, "");
   if (!trimmed) return "";
   const normalized = trimmed.replace(/\s+/g, "-");
@@ -20,6 +20,13 @@ const sanitizeCommandName = (value: string) => {
 };
 
 const seedCommandName = (value: string) => sanitizeCommandName(value.toLowerCase());
+
+/** Returns true if the name will be transformed when sanitized */
+export const willSanitizeName = (value: string) => {
+  const trimmed = value.trim().replace(/^\/+/, "");
+  if (!trimmed) return false;
+  return sanitizeCommandName(value) !== trimmed;
+};
 
 const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
 
@@ -54,6 +61,9 @@ export function createCommandState(options: {
   const [runModalOpen, setRunModalOpen] = createSignal(false);
   const [runModalCommand, setRunModalCommand] = createSignal<WorkspaceCommand | null>(null);
   const [runModalDetails, setRunModalDetails] = createSignal("");
+
+  // Override confirmation state
+  const [showOverrideConfirmation, setShowOverrideConfirmation] = createSignal(false);
 
   // Track the just-saved command for scroll-to and highlight animation
   const [justSavedCommand, setJustSavedCommand] = createSignal<{ name: string; scope: string } | null>(null);
@@ -111,6 +121,19 @@ export function createCommandState(options: {
     if (safeName !== draft.name) {
       setCommandDraftName(safeName);
     }
+
+    // Check if a command with the same name already exists in the same scope
+    const existingCommand = commands().find(
+      (c) => c.name === safeName && c.scope === draft.scope
+    );
+    if (existingCommand && !showOverrideConfirmation()) {
+      // Show confirmation dialog instead of blocking
+      setShowOverrideConfirmation(true);
+      return;
+    }
+
+    // Reset confirmation state
+    setShowOverrideConfirmation(false);
 
     options.setBusy(true);
     options.setBusyLabel(
@@ -343,6 +366,15 @@ export function createCommandState(options: {
     setRunModalCommand(null);
   }
 
+  function cancelOverride() {
+    setShowOverrideConfirmation(false);
+  }
+
+  function closeCommandModal() {
+    setCommandModalOpen(false);
+    setShowOverrideConfirmation(false);
+  }
+
   function clearJustSavedCommand() {
     setJustSavedCommand(null);
   }
@@ -370,6 +402,7 @@ export function createCommandState(options: {
     globalCommands,
     otherCommands,
     openCommandModal,
+    closeCommandModal,
     saveCommand,
     deleteCommand,
     runCommand,
@@ -377,6 +410,8 @@ export function createCommandState(options: {
     openRunModal,
     confirmRunModal,
     closeRunModal,
+    showOverrideConfirmation,
+    cancelOverride,
     justSavedCommand,
     clearJustSavedCommand,
   };

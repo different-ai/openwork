@@ -174,6 +174,12 @@ export default {
   "commands.run_modal_title": "运行命令",
   "commands.run_modal_description": "运行前可添加详情。",
   "commands.run_modal_run": "运行命令",
+  "commands.name_will_be": "将创建为",
+  "commands.override_title": "替换现有命令？",
+  "commands.override_description": "已存在同名命令。",
+  "commands.override_warning": "这将替换现有的 \"{name}\" 命令。此操作无法撤销。",
+  "commands.override_confirm": "替换",
+  "commands.override_cancel": "保留现有",
 
   // ==================== Skills ====================
   "skills.title": "Skills",
