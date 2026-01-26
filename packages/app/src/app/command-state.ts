@@ -50,6 +50,7 @@ export function createCommandState(options: {
   const [commandDraftDescription, setCommandDraftDescription] = createSignal("");
   const [commandDraftTemplate, setCommandDraftTemplate] = createSignal("");
   const [commandDraftScope, setCommandDraftScope] = createSignal<"workspace" | "global">("workspace");
+  const [commandModalError, setCommandModalError] = createSignal<string | null>(null);
 
   const [runModalOpen, setRunModalOpen] = createSignal(false);
   const [runModalCommand, setRunModalCommand] = createSignal<WorkspaceCommand | null>(null);
@@ -93,18 +94,19 @@ export function createCommandState(options: {
     draft.template = commandDraftTemplate().trim();
 
     const safeName = sanitizeCommandName(draft.name);
+    // Use modal-specific error for validation errors
     if (!safeName || !draft.template) {
-      options.setError(t("app.error.command_name_template_required", currentLocale()));
+      setCommandModalError(t("app.error.command_name_template_required", currentLocale()));
       return;
     }
 
     if (!isTauriRuntime()) {
-      options.setError(t("app.error.workspace_commands_desktop", currentLocale()));
+      setCommandModalError(t("app.error.workspace_commands_desktop", currentLocale()));
       return;
     }
 
     if (draft.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
-      options.setError(t("app.error.pick_workspace_folder", currentLocale()));
+      setCommandModalError(t("app.error.pick_workspace_folder", currentLocale()));
       return;
     }
 
@@ -117,7 +119,7 @@ export function createCommandState(options: {
       draft.scope === "workspace" ? "status.saving_workspace_command" : "status.saving_command",
     );
     options.setBusyStartedAt(Date.now());
-    options.setError(null);
+    setCommandModalError(null);
 
     try {
       const workspaceRoot = options.activeWorkspaceRoot().trim();
@@ -162,9 +164,10 @@ export function createCommandState(options: {
 
       setJustSavedCommand({ name: safeName, scope: draft.scope });
       setCommandModalOpen(false);
+      setCommandModalError(null);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
-      options.setError(addOpencodeCacheHint(message));
+      setCommandModalError(addOpencodeCacheHint(message));
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -362,6 +365,8 @@ export function createCommandState(options: {
     setCommandDraftTemplate,
     commandDraftScope,
     setCommandDraftScope,
+    commandModalError,
+    setCommandModalError,
     runModalOpen,
     runModalCommand,
     runModalDetails,
