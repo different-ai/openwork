@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use tauri::AppHandle;
-use tauri_plugin_shell::process::{CommandChild, CommandEventReceiver};
+use tauri::async_runtime::Receiver;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
@@ -35,10 +36,10 @@ pub fn spawn_engine(
     port: u16,
     project_dir: &str,
     use_sidecar: bool,
-) -> Result<(CommandEventReceiver, CommandChild), String> {
+) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
     let args = build_engine_args(hostname, port);
 
-    let mut command = if use_sidecar {
+    let command = if use_sidecar {
         app
             .shell()
             .sidecar("opencode")
@@ -47,15 +48,14 @@ pub fn spawn_engine(
         app.shell().command(program)
     };
 
-    command.args(args);
-    command.current_dir(project_dir);
+    let mut command = command.args(args).current_dir(project_dir);
 
     if let Some(xdg_data_home) = maybe_infer_xdg_home(
         "XDG_DATA_HOME",
         candidate_xdg_data_dirs(),
         Path::new("opencode/auth.json"),
     ) {
-        command.env("XDG_DATA_HOME", xdg_data_home);
+        command = command.env("XDG_DATA_HOME", xdg_data_home);
     }
 
     let xdg_config_home = maybe_infer_xdg_home(
@@ -72,11 +72,11 @@ pub fn spawn_engine(
     });
 
     if let Some(xdg_config_home) = xdg_config_home {
-        command.env("XDG_CONFIG_HOME", xdg_config_home);
+        command = command.env("XDG_CONFIG_HOME", xdg_config_home);
     }
 
-    command.env("OPENCODE_CLIENT", "openwork");
-    command.env("OPENWORK", "1");
+    command = command.env("OPENCODE_CLIENT", "openwork");
+    command = command.env("OPENWORK", "1");
 
     command
         .spawn()
