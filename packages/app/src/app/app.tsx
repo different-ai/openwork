@@ -307,6 +307,9 @@ export default function App() {
   const [commandPaletteQuery, setCommandPaletteQuery] = createSignal("");
   const [keybindOverrides, setKeybindOverrides] = createSignal<Record<string, string>>({});
   const [recentCommandIds, setRecentCommandIds] = createSignal<string[]>([]);
+  const [paletteAgents, setPaletteAgents] = createSignal<Agent[]>([]);
+  const [paletteAgentsReady, setPaletteAgentsReady] = createSignal(false);
+  const [paletteAgentsBusy, setPaletteAgentsBusy] = createSignal(false);
 
   const buildPromptParts = (draft: ComposerDraft): Part[] => {
     const parts: Part[] = [];
@@ -328,18 +331,18 @@ export default function App() {
     }
 
     for (const attachment of draft.attachments) {
-      if (attachment.kind === "image") {
-        parts.push({ type: "image", image: attachment.dataUrl, mediaType: attachment.mimeType } as Part);
-        continue;
-      }
       parts.push({
         type: "file",
-        data: attachment.dataUrl,
+        url: attachment.dataUrl,
         filename: attachment.name,
-        mediaType: attachment.mimeType,
+        mime: attachment.mimeType,
       } as Part);
     }
 
+    const hasTextPart = parts.some((part) => part.type === "text");
+    if (!hasTextPart && draft.attachments.length) {
+      pushText(draft.text.trim());
+    }
     if (!parts.length && draft.text.trim()) {
       pushText(draft.text.trim());
     }
@@ -457,6 +460,24 @@ export default function App() {
     const list = unwrap(await c.app.agents());
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
   }
+
+  const loadPaletteAgents = async (force = false) => {
+    if (paletteAgentsBusy()) return paletteAgents();
+    if (paletteAgentsReady() && !force) return paletteAgents();
+    setPaletteAgentsBusy(true);
+    try {
+      const agents = await listAgents();
+      const sorted = agents.slice().sort((a, b) => a.name.localeCompare(b.name));
+      setPaletteAgents(sorted);
+      setPaletteAgentsReady(true);
+      return sorted;
+    } catch {
+      setPaletteAgents([]);
+      return [];
+    } finally {
+      setPaletteAgentsBusy(false);
+    }
+  };
 
   function setSessionAgent(sessionID: string, agent: string | null) {
     const trimmed = agent?.trim() ?? "";
@@ -769,6 +790,41 @@ export default function App() {
   const [showThinking, setShowThinking] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
+  const MODEL_VARIANT_OPTIONS = [
+    { value: "none", label: "None" },
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "X-High" },
+  ];
+
+  const normalizeModelVariant = (value: string | null) => {
+    if (!value) return null;
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "balance" || trimmed === "balanced") return "none";
+    const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
+    return match ? match.value : null;
+  };
+
+  const formatModelVariantLabel = (value: string | null) => {
+    const normalized = normalizeModelVariant(value) ?? "none";
+    return MODEL_VARIANT_OPTIONS.find((option) => option.value === normalized)?.label ?? "None";
+  };
+
+  const handleEditModelVariant = () => {
+    const next = window.prompt(
+      "Model variant (none, low, medium, high, xhigh)",
+      normalizeModelVariant(modelVariant()) ?? "none"
+    );
+    if (next == null) return;
+    const normalized = normalizeModelVariant(next);
+    if (!normalized) {
+      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
+      return;
+    }
+    setModelVariant(normalized);
+  };
+
   let loadCommandsRef: (options?: { workspaceRoot?: string; quiet?: boolean }) => Promise<void> = async () => {};
 
   const workspaceStore = createWorkspaceStore({
@@ -866,6 +922,8 @@ export default function App() {
     closeRunModal,
     showOverrideConfirmation,
     cancelOverride,
+    justSavedCommand,
+    clearJustSavedCommand,
   } = commandState;
 
   const commandRegistry = createCommandRegistry();
@@ -961,6 +1019,56 @@ export default function App() {
     })),
   );
 
+  createEffect(() => {
+    if (!commandPaletteOpen() || commandPaletteMode() !== "command") return;
+    void loadPaletteAgents();
+  });
+
+  const paletteSessionItems = createMemo(() =>
+    activeSessions().map((session) => ({
+      id: `session:${session.id}`,
+      title: session.title || session.slug || "Untitled session",
+      description: session.id === activeSessionId() ? "Active" : session.slug ?? session.id,
+      onSelect: () => {
+        selectSession(session.id);
+        setView("session", session.id);
+      },
+    })),
+  );
+
+  const paletteAgentItems = createMemo(() => {
+    const sessionId = activeSessionId();
+    if (!sessionId) return [];
+    const selectedAgent = selectedSessionAgent();
+    const items = [
+      {
+        id: "agent:default",
+        title: "Default agent",
+        description: selectedAgent ? undefined : "Active",
+        onSelect: () => setSessionAgent(sessionId, null),
+      },
+    ];
+    for (const agent of paletteAgents()) {
+      items.push({
+        id: `agent:${agent.name}`,
+        title: agent.name,
+        description: agent.name === selectedAgent ? "Active" : undefined,
+        onSelect: () => setSessionAgent(sessionId, agent.name),
+      });
+    }
+    return items;
+  });
+
+  const paletteVariantItems = createMemo(() => {
+    const currentVariant = normalizeModelVariant(modelVariant()) ?? "none";
+    return MODEL_VARIANT_OPTIONS.map((option) => ({
+      id: `variant:${option.value}`,
+      title: option.label,
+      description: option.value === currentVariant ? "Active" : undefined,
+      onSelect: () => setModelVariant(option.value),
+    }));
+  });
+
   const commandPaletteGroups = createMemo<PaletteGroup[]>(() => {
     const groups: PaletteGroup[] = [];
     if (commandPaletteMode() === "command") {
@@ -969,6 +1077,15 @@ export default function App() {
       }
       if (paletteCommandItems().length) {
         groups.push({ id: "commands", title: "Commands", items: paletteCommandItems() });
+      }
+      if (paletteSessionItems().length) {
+        groups.push({ id: "sessions", title: "Sessions", items: paletteSessionItems() });
+      }
+      if (paletteAgentItems().length) {
+        groups.push({ id: "agents", title: "Agents", items: paletteAgentItems() });
+      }
+      if (paletteVariantItems().length) {
+        groups.push({ id: "variants", title: "Variants", items: paletteVariantItems() });
       }
       if (paletteFileItems().length) {
         groups.push({ id: "files", title: "Files", items: paletteFileItems() });
@@ -1280,6 +1397,9 @@ export default function App() {
     progress: true,
     artifacts: true,
     context: true,
+    plugins: true,
+    skills: true,
+    authorizedFolders: true,
   });
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
@@ -1959,7 +2079,10 @@ export default function App() {
 
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
-          setModelVariant(storedVariant.trim());
+          const normalized = normalizeModelVariant(storedVariant);
+          if (normalized) {
+            setModelVariant(normalized);
+          }
         }
 
         const storedDemoMode = window.localStorage.getItem(DEMO_MODE_PREF_KEY);
@@ -2569,6 +2692,8 @@ export default function App() {
     openCommandModal,
     runCommand: openRunModal,
     deleteCommand,
+    justSavedCommand: justSavedCommand(),
+    clearJustSavedCommand,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),
@@ -2598,20 +2723,12 @@ export default function App() {
     openDefaultModelPicker,
     showThinking: showThinking(),
     toggleShowThinking: () => setShowThinking((v) => !v),
-    modelVariantLabel: modelVariant() ?? t("common.default_parens", currentLocale()),
+    modelVariantLabel: formatModelVariantLabel(modelVariant()),
     keybindItems: keybindSettings(),
     onOverrideKeybind: updateKeybindOverride,
     onResetKeybind: resetKeybindOverride,
     onResetAllKeybinds: resetAllKeybinds,
-    editModelVariant: () => {
-      const next = window.prompt(
-        t("settings.model_variant_prompt", currentLocale()),
-        modelVariant() ?? ""
-      );
-      if (next == null) return;
-      const trimmed = next.trim();
-      setModelVariant(trimmed ? trimmed : null);
-    },
+    editModelVariant: handleEditModelVariant,
     demoMode: demoMode(),
     toggleDemoMode: () => setDemoMode((v) => !v),
     demoSequence: demoSequence(),
@@ -2664,6 +2781,32 @@ export default function App() {
     setLanguage: setLocale,
   });
 
+  const searchWorkspaceFiles = async (query: string) => {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    if (isDemoMode()) {
+      const lower = trimmed.toLowerCase();
+      return activeWorkingFiles().filter((file) => file.toLowerCase().includes(lower));
+    }
+    const activeClient = client();
+    if (!activeClient) return [];
+    try {
+      const directory = workspaceProjectDir().trim();
+      const result = unwrap(
+        await activeClient.find.files({
+          query: trimmed,
+          dirs: "true",
+          limit: 50,
+          directory: directory || undefined,
+        }),
+      );
+      return result;
+    } catch {
+      return [];
+    }
+  };
+
+
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     setView,
@@ -2675,8 +2818,13 @@ export default function App() {
     busyHint: busyHint(),
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
+    modelVariantLabel: formatModelVariantLabel(modelVariant()),
+    modelVariant: modelVariant(),
+    setModelVariant: (value: string) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
+    skills: skills(),
+    skillsStatus: skillsStatus(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
     newTaskDisabled: newTaskDisabled(),
@@ -2720,6 +2868,7 @@ export default function App() {
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
     listAgents: listAgents,
+    selectedSessionAgent: selectedSessionAgent(),
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
@@ -2728,6 +2877,7 @@ export default function App() {
     openCommandRunModal: openRunModal,
     commandRegistryItems,
     registerCommand: commandRegistry.registerCommand,
+    searchFiles: searchWorkspaceFiles,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);

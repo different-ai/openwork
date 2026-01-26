@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { ArrowRight, AtSign, File, Paperclip, Terminal, X, Zap } from "lucide-solid";
+import { ArrowRight, AtSign, ChevronDown, File, Paperclip, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode } from "../../types";
 
@@ -33,6 +33,18 @@ type ComposerProps = {
   onInsertCommand: (commandId: string) => void;
   selectedModelLabel: string;
   onModelClick: () => void;
+  modelVariantLabel: string;
+  modelVariant: string | null;
+  onModelVariantChange: (value: string) => void;
+  agentLabel: string;
+  selectedAgent: string | null;
+  agentPickerOpen: boolean;
+  agentPickerBusy: boolean;
+  agentPickerError: string | null;
+  agentOptions: Agent[];
+  onToggleAgentPicker: () => void;
+  onSelectAgent: (agent: string | null) => void;
+  setAgentPickerRef: (el: HTMLDivElement) => void;
   showNotionBanner: boolean;
   onNotionBannerClick: () => void;
   toast: string | null;
@@ -44,8 +56,10 @@ type ComposerProps = {
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
 
-const isImageMime = (mime: string) => mime.startsWith("image/");
+const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -61,6 +75,14 @@ const fileToDataUrl = (file: File) =>
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const normalizeText = (value: string) => value.replace(/\u00a0/g, " ");
+
+const MODEL_VARIANT_OPTIONS = [
+  { value: "none", label: "None" },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "xhigh", label: "X-High" },
+];
 
 const partsToText = (parts: ComposerPart[]) =>
   parts
@@ -235,6 +257,8 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 export default function Composer(props: ComposerProps) {
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+  let variantPickerRef: HTMLDivElement | undefined;
+  let suppressPromptSync = false;
   const [commandIndex, setCommandIndex] = createSignal(0);
   const [mentionIndex, setMentionIndex] = createSignal(0);
   const [mentionQuery, setMentionQuery] = createSignal("");
@@ -248,6 +272,8 @@ export default function Composer(props: ComposerProps) {
   const [historySnapshot, setHistorySnapshot] = createSignal<ComposerDraft | null>(null);
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
+  const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
+  const activeVariant = createMemo(() => props.modelVariant ?? "none");
 
   const commandMenuOpen = createMemo(() => {
     return props.prompt.trim().startsWith("/") && !props.busy && mode() === "prompt" && !mentionOpen();
@@ -319,7 +345,9 @@ export default function Composer(props: ComposerProps) {
   const syncHeight = () => {
     if (!editorRef) return;
     editorRef.style.height = "auto";
-    const nextHeight = Math.min(editorRef.scrollHeight, 160);
+    const baseHeight = 24;
+    const scrollHeight = editorRef.scrollHeight || baseHeight;
+    const nextHeight = Math.min(Math.max(scrollHeight, baseHeight), 160);
     editorRef.style.height = `${nextHeight}px`;
     editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
   };
@@ -328,13 +356,29 @@ export default function Composer(props: ComposerProps) {
     if (!editorRef) return;
     const parts = buildPartsFromEditor(editorRef);
     const text = normalizeText(partsToText(parts));
+    suppressPromptSync = true;
     props.onDraftChange({
       mode: mode(),
       parts,
       attachments: attachments(),
       text,
     });
+    queueMicrotask(() => {
+      suppressPromptSync = false;
+    });
     syncHeight();
+  };
+
+  const focusEditorEnd = () => {
+    if (!editorRef) return;
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(editorRef);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    editorRef.focus();
   };
 
   const renderParts = (parts: ComposerPart[], keepSelection = true) => {
@@ -461,6 +505,18 @@ export default function Composer(props: ComposerProps) {
     applyHistoryDraft(target);
   };
 
+  const sendDraft = () => {
+    if (!editorRef) return;
+    const parts = buildPartsFromEditor(editorRef);
+    const text = normalizeText(partsToText(parts));
+    const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
+    recordHistory(draft);
+    props.onSend(draft);
+    setAttachments([]);
+    setEditorText("");
+    emitDraftChange();
+  };
+
   const recordHistory = (draft: ComposerDraft) => {
     const trimmed = draft.text.trim();
     if (!trimmed && !draft.attachments.length) return;
@@ -479,6 +535,10 @@ export default function Composer(props: ComposerProps) {
     }
     const next: ComposerAttachment[] = [];
     for (const file of files) {
+      if (!ACCEPTED_FILE_TYPES.includes(file.type)) {
+        props.onToast(`${file.name} is not a supported attachment type.`);
+        continue;
+      }
       if (file.size > MAX_ATTACHMENT_BYTES) {
         props.onToast(`${file.name} exceeds the 8MB limit.`);
         continue;
@@ -505,10 +565,21 @@ export default function Composer(props: ComposerProps) {
 
   const handlePaste = (event: ClipboardEvent) => {
     if (!event.clipboardData) return;
-    const files = Array.from(event.clipboardData.files || []);
-    if (!files.length) return;
+    const clipboard = event.clipboardData;
+    const fileItems = Array.from(clipboard.items || []).filter((item) => item.kind === "file");
+    const files = Array.from(clipboard.files || []);
+    const itemFiles = fileItems
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => !!file);
+    const allFiles = files.length ? files : itemFiles;
+    if (!allFiles.length) return;
     event.preventDefault();
-    void addAttachments(files);
+    const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
+    if (!hasSupported) {
+      props.onToast("Unsupported attachment type.");
+      return;
+    }
+    void addAttachments(allFiles);
   };
 
   const handleDrop = (event: DragEvent) => {
@@ -621,12 +692,7 @@ export default function Composer(props: ComposerProps) {
 
     if (event.key === "Enter") {
       event.preventDefault();
-      if (!editorRef) return;
-      const parts = buildPartsFromEditor(editorRef);
-      const text = normalizeText(partsToText(parts));
-      const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
-      recordHistory(draft);
-      props.onSend(draft);
+      sendDraft();
     }
   };
 
@@ -673,6 +739,16 @@ export default function Composer(props: ComposerProps) {
     if (!editorRef) return;
     const value = props.prompt;
     const current = normalizeText(editorRef.innerText);
+    if (suppressPromptSync) {
+      if (!value && current) {
+        setEditorText("");
+        setAttachments([]);
+        setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
+        setHistorySnapshot(null);
+        queueMicrotask(() => focusEditorEnd());
+      }
+      return;
+    }
     if (value === current) return;
     if (value.startsWith("!") && mode() === "prompt") {
       setMode("shell");
@@ -685,8 +761,20 @@ export default function Composer(props: ComposerProps) {
       setAttachments([]);
       setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
       setHistorySnapshot(null);
+      queueMicrotask(() => focusEditorEnd());
     }
     emitDraftChange();
+  });
+
+  createEffect(() => {
+    if (!variantMenuOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!variantPickerRef) return;
+      if (variantPickerRef.contains(event.target as Node)) return;
+      setVariantMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
   });
 
   createEffect(() => {
@@ -696,8 +784,6 @@ export default function Composer(props: ComposerProps) {
     window.addEventListener("openwork:focusPrompt", handler);
     onCleanup(() => window.removeEventListener("openwork:focusPrompt", handler));
   });
-
-  const modeLabel = createMemo(() => (mode() === "shell" ? "Shell" : "Prompt"));
 
   return (
     <div class="p-4 border-t border-gray-6 bg-gray-1 sticky bottom-0 z-20">
@@ -814,15 +900,60 @@ export default function Composer(props: ComposerProps) {
             </div>
           </Show>
 
-          <button
-            type="button"
-            class="absolute top-3 left-4 flex items-center gap-1.5 text-[10px] font-bold text-gray-7 hover:text-gray-11 transition-colors uppercase tracking-widest z-10"
-            onClick={props.onModelClick}
-            disabled={props.busy}
-          >
-            <Zap size={10} class="text-gray-7 group-hover:text-amber-11 transition-colors" />
-            <span>{props.selectedModelLabel}</span>
-          </button>
+          <div class="absolute top-3 left-4 flex items-center gap-3 text-[10px] font-bold text-gray-7 uppercase tracking-widest z-10">
+            <button
+              type="button"
+              class="flex items-center gap-1.5 text-gray-7 hover:text-gray-11 transition-colors"
+              onClick={props.onModelClick}
+              disabled={props.busy}
+            >
+              <Zap size={10} class="text-gray-7 group-hover:text-amber-11 transition-colors" />
+              <span>{props.selectedModelLabel}</span>
+            </button>
+            <div class="relative z-40" ref={(el) => (variantPickerRef = el)}>
+              <button
+                type="button"
+                class="flex items-center gap-2 rounded-full border border-gray-6/80 bg-gray-1/60 px-2 py-0.5 text-[9px] text-gray-9 hover:text-gray-11 hover:border-gray-7 transition-colors"
+                onClick={() => setVariantMenuOpen((open) => !open)}
+                disabled={props.busy}
+                aria-expanded={variantMenuOpen()}
+              >
+                <span class="text-gray-8">Variant</span>
+                <span class="font-mono text-gray-11">{props.modelVariantLabel}</span>
+                <ChevronDown size={12} class="text-gray-8" />
+              </button>
+              <Show when={variantMenuOpen()}>
+                <div class="absolute left-0 bottom-full mb-2 w-40 rounded-2xl border border-gray-6 bg-gray-1/95 shadow-2xl backdrop-blur-md overflow-hidden z-40">
+                  <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30">
+                    Thinking effort
+                  </div>
+                  <div class="p-2 space-y-1">
+                    <For each={MODEL_VARIANT_OPTIONS}>
+                      {(option) => (
+                        <button
+                          type="button"
+                          class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                            activeVariant() === option.value
+                              ? "bg-gray-12/10 text-gray-12"
+                              : "text-gray-11 hover:bg-gray-12/5"
+                          }`}
+                          onClick={() => {
+                            props.onModelVariantChange(option.value);
+                            setVariantMenuOpen(false);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          <Show when={activeVariant() === option.value}>
+                            <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                          </Show>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </div>
+              </Show>
+            </div>
+          </div>
 
           <div class="p-3 pt-8 pb-3 px-4">
             <Show when={props.showNotionBanner}>
@@ -873,30 +1004,18 @@ export default function Composer(props: ComposerProps) {
               </div>
             </Show>
 
-            <div class="relative">
+                   <div class="relative min-h-[120px]">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-gray-6 bg-gray-1/90 px-3 py-2 text-xs text-gray-11 shadow-lg backdrop-blur-md">
                   {props.toast}
                 </div>
               </Show>
 
-              <div class="flex items-end gap-3">
+              <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2 mb-2">
-                    <div
-                      class={`flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide border ${
-                        mode() === "shell"
-                          ? "border-amber-7/30 bg-amber-7/10 text-amber-12"
-                          : "border-gray-6 bg-gray-1/70 text-gray-9"
-                      }`}
-                    >
-                      <Terminal size={11} />
-                      <span>{modeLabel()}</span>
-                    </div>
-                    <Show when={props.isRemoteWorkspace}>
-                      <div class="text-[10px] uppercase tracking-wider text-gray-8">Remote workspace</div>
-                    </Show>
-                  </div>
+                  <Show when={props.isRemoteWorkspace}>
+                    <div class="mb-2 text-[10px] uppercase tracking-wider text-gray-8">Remote workspace</div>
+                  </Show>
 
                   <div class="relative">
                     <Show when={!props.prompt.trim() && !attachments().length}>
@@ -917,54 +1036,126 @@ export default function Composer(props: ComposerProps) {
                       onKeyUp={updateMentionQuery}
                       onClick={updateMentionQuery}
                       onPaste={handlePaste}
-                      class="bg-transparent border-none p-0 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
+                      class="bg-transparent border-none p-0 pb-12 pr-20 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
                     />
+
+                    <div class="mt-3" ref={props.setAgentPickerRef}>
+                      <button
+                        type="button"
+                        class="flex items-center gap-2 pl-3 pr-2 py-1.5 bg-gray-1/70 border border-gray-6 rounded-lg hover:border-gray-7 hover:bg-gray-3 transition-all group"
+                        onClick={props.onToggleAgentPicker}
+                        aria-expanded={props.agentPickerOpen}
+                      >
+                        <div class="p-1 rounded bg-gray-4 text-gray-10">
+                          <AtSign size={14} />
+                        </div>
+                        <div class="flex flex-col items-start mr-2 min-w-0">
+                          <span class="text-xs font-medium text-gray-12 leading-none truncate max-w-[10rem]">
+                            {props.agentLabel}
+                          </span>
+                          <span class="text-[10px] text-gray-10 font-mono leading-none">
+                            {props.selectedAgent ? "Agent" : "Default"}
+                          </span>
+                        </div>
+                        <ChevronDown size={14} class="text-gray-10 group-hover:text-gray-11" />
+                      </button>
+
+                      <Show when={props.agentPickerOpen}>
+                        <div class="absolute left-0 bottom-full mb-2 w-72 rounded-2xl border border-gray-6 bg-gray-1/95 shadow-2xl backdrop-blur-md overflow-hidden">
+                          <div class="px-4 pt-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gray-8 border-b border-gray-6/30">
+                            Session agent
+                          </div>
+                          <div class="max-h-64 overflow-auto p-2 space-y-1">
+                            <button
+                              type="button"
+                              class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                                props.selectedAgent ? "text-gray-11 hover:bg-gray-12/5" : "bg-gray-12/10 text-gray-12"
+                              }`}
+                              onClick={() => props.onSelectAgent(null)}
+                            >
+                              <span>Default agent</span>
+                              <Show when={!props.selectedAgent}>
+                                <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                              </Show>
+                            </button>
+                            <Show
+                              when={!props.agentPickerBusy}
+                              fallback={<div class="px-3 py-2 text-xs text-gray-9">Loading agents...</div>}
+                            >
+                              <Show
+                                when={props.agentOptions.length}
+                                fallback={<div class="px-3 py-2 text-xs text-gray-9">No agents available.</div>}
+                              >
+                                <For each={props.agentOptions}>
+                                  {(agent: Agent) => (
+                                    <button
+                                      type="button"
+                                      class={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-left text-xs transition-colors ${
+                                        props.selectedAgent === agent.name
+                                          ? "bg-gray-12/10 text-gray-12"
+                                          : "text-gray-11 hover:bg-gray-12/5"
+                                      }`}
+                                      onClick={() => props.onSelectAgent(agent.name)}
+                                    >
+                                      <span>{agent.name}</span>
+                                      <Show when={props.selectedAgent === agent.name}>
+                                        <span class="text-[10px] uppercase tracking-wider text-gray-9">Active</span>
+                                      </Show>
+                                    </button>
+                                  )}
+                                </For>
+                              </Show>
+                            </Show>
+                            <Show when={props.agentPickerError}>
+                              <div class="px-3 py-2 text-xs text-red-11">{props.agentPickerError}</div>
+                            </Show>
+                          </div>
+                          <div class="border-t border-gray-6/40 px-4 py-2 text-[10px] text-gray-9">
+                            Tip: use /agent-next or /agent-prev to cycle.
+                          </div>
+                        </div>
+                      </Show>
+                    </div>
+
+                    <div class="absolute bottom-0 right-0 z-20 flex items-center gap-2">
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        accept={ACCEPTED_FILE_TYPES.join(",")}
+                        class="hidden"
+                        onChange={(event: Event) => {
+                          const target = event.currentTarget as HTMLInputElement;
+                          const files = Array.from(target.files ?? []);
+                          if (files.length) void addAttachments(files);
+                          target.value = "";
+                        }}
+                      />
+                      <button
+                        type="button"
+                        class="p-2 rounded-xl border border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
+                        onClick={() => {
+                          if (props.isRemoteWorkspace) {
+                            props.onToast("Attachments are unavailable in remote workspaces.");
+                            return;
+                          }
+                          fileInputRef?.click();
+                        }}
+                        title="Attach files"
+                      >
+                        <Paperclip size={16} />
+                      </button>
+
+                      <button
+                        disabled={!props.prompt.trim() && !attachments().length}
+                        onClick={sendDraft}
+                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
+                        title="Run"
+                      >
+                        <ArrowRight size={18} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-
-                <div class="flex items-center gap-2">
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    class="hidden"
-                    onChange={(event: Event) => {
-                      const target = event.currentTarget as HTMLInputElement;
-                      const files = Array.from(target.files ?? []);
-                      if (files.length) void addAttachments(files);
-                      target.value = "";
-                    }}
-                  />
-                  <button
-                    type="button"
-                    class="p-2 rounded-xl border border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
-                    onClick={() => {
-                      if (props.isRemoteWorkspace) {
-                        props.onToast("Attachments are unavailable in remote workspaces.");
-                        return;
-                      }
-                      fileInputRef?.click();
-                    }}
-                    title="Attach files"
-                  >
-                    <Paperclip size={16} />
-                  </button>
-
-                  <button
-                    disabled={!props.prompt.trim() && !attachments().length}
-                    onClick={() => {
-                      if (!editorRef) return;
-                      const parts = buildPartsFromEditor(editorRef);
-                      const text = normalizeText(partsToText(parts));
-                      const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
-                      recordHistory(draft);
-                      props.onSend(draft);
-                    }}
-                    class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
-                    title="Run"
-                  >
-                    <ArrowRight size={18} />
-                  </button>
                 </div>
               </div>
             </div>
