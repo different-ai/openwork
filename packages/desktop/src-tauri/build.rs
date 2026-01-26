@@ -30,6 +30,16 @@ fn ensure_opencode_sidecar() {
   }
   let dest_path = sidecar_dir.join(file_name);
 
+  if let Ok(metadata) = fs::symlink_metadata(&dest_path) {
+    if metadata.file_type().is_symlink() {
+      println!(
+        "cargo:warning=OpenCode sidecar path is a symlink, refusing to overwrite: {}",
+        dest_path.display()
+      );
+      return;
+    }
+  }
+
   if dest_path.exists() {
     return;
   }
@@ -37,8 +47,11 @@ fn ensure_opencode_sidecar() {
   let source_path = env::var("OPENCODE_BIN_PATH")
     .ok()
     .map(PathBuf::from)
-    .filter(|path| path.is_file())
-    .or_else(|| find_in_path(if target.contains("windows") { "opencode.exe" } else { "opencode" }));
+    .and_then(resolve_source_path)
+    .or_else(|| {
+      find_in_path(if target.contains("windows") { "opencode.exe" } else { "opencode" })
+        .and_then(resolve_source_path)
+    });
 
   let profile = env::var("PROFILE").unwrap_or_default();
 
@@ -97,6 +110,15 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
       None
     }
   })
+}
+
+fn resolve_source_path(path: PathBuf) -> Option<PathBuf> {
+  let resolved = path.canonicalize().ok()?;
+  if resolved.is_file() {
+    Some(resolved)
+  } else {
+    None
+  }
 }
 
 fn create_debug_stub(dest_path: &PathBuf, sidecar_dir: &PathBuf, profile: &str, target: &str) {
