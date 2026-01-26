@@ -11,7 +11,15 @@ import {
 
 import { useLocation, useNavigate } from "@solidjs/router";
 
-import type { Agent, Provider, Part } from "@opencode-ai/sdk/v2/client";
+import type {
+  Agent,
+  Provider,
+  Part,
+  TextPartInput,
+  FilePartInput,
+  AgentPartInput,
+  SubtaskPartInput,
+} from "@opencode-ai/sdk/v2/client";
 
 import { getVersion } from "@tauri-apps/api/app";
 import { parse } from "jsonc-parser";
@@ -311,11 +319,13 @@ export default function App() {
   const [paletteAgentsReady, setPaletteAgentsReady] = createSignal(false);
   const [paletteAgentsBusy, setPaletteAgentsBusy] = createSignal(false);
 
-  const buildPromptParts = (draft: ComposerDraft): Part[] => {
-    const parts: Part[] = [];
+  type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
+
+  const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
+    const parts: PartInput[] = [];
     const pushText = (text: string) => {
       if (!text) return;
-      parts.push({ type: "text", text } as Part);
+      parts.push({ type: "text", text } as TextPartInput);
     };
 
     for (const part of draft.parts) {
@@ -324,10 +334,10 @@ export default function App() {
         continue;
       }
       if (part.type === "agent") {
-        parts.push({ type: "agent", name: part.name } as Part);
+        parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
-      parts.push({ type: "file", path: part.path } as Part);
+      parts.push({ type: "file", path: part.path } as unknown as FilePartInput);
     }
 
     for (const attachment of draft.attachments) {
@@ -336,7 +346,7 @@ export default function App() {
         url: attachment.dataUrl,
         filename: attachment.name,
         mime: attachment.mimeType,
-      } as Part);
+      } as FilePartInput);
     }
 
     const hasTextPart = parts.some((part) => part.type === "text");
@@ -1375,6 +1385,13 @@ export default function App() {
     setEngineInstallLogs,
   } = workspaceStore;
 
+  createEffect(() => {
+    if (!isTauriRuntime() || isDemoMode()) return;
+    workspaceStore.activeWorkspaceId();
+    workspaceProjectDir();
+    void refreshMcpServers();
+  });
+
   const activeAuthorizedDirs = createMemo(() =>
     isDemoMode() ? demoAuthorizedDirs() : workspaceStore.authorizedDirs()
   );
@@ -1395,6 +1412,7 @@ export default function App() {
     artifacts: true,
     context: true,
     plugins: true,
+    mcp: true,
     skills: true,
     authorizedFolders: true,
   });
@@ -1772,6 +1790,7 @@ export default function App() {
     }
 
     const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const entryType = entry.type ?? "remote";
     console.log("[connectMcp] slug:", slug);
 
     try {
@@ -1807,12 +1826,23 @@ export default function App() {
 
       // Add the new MCP server entry
       const mcpEntryConfig: Record<string, unknown> = {
-        type: "remote",
-        url: entry.url,
+        type: entryType,
         enabled: true,
       };
-      if (entry.oauth) {
-        mcpEntryConfig["oauth"] = {};
+      if (entryType === "remote") {
+        if (!entry.url) {
+          throw new Error("Missing MCP URL.");
+        }
+        mcpEntryConfig["url"] = entry.url;
+        if (entry.oauth) {
+          mcpEntryConfig["oauth"] = {};
+        }
+      }
+      if (entryType === "local") {
+        if (!entry.command?.length) {
+          throw new Error("Missing MCP command.");
+        }
+        mcpEntryConfig["command"] = entry.command;
       }
       mcpSection[slug] = mcpEntryConfig;
       console.log("[connectMcp] merged MCP config:", existingConfig);
@@ -1829,15 +1859,24 @@ export default function App() {
       }
 
       // Step 4: Call SDK mcp.add to update runtime state
+      const mcpAddConfig =
+        entryType === "remote"
+          ? {
+              type: "remote" as const,
+              url: entry.url!,
+              enabled: true,
+              ...(entry.oauth ? { oauth: {} } : {}),
+            }
+          : {
+              type: "local" as const,
+              command: entry.command!,
+              enabled: true,
+            };
+
       const mcpAddPayload = {
         directory: projectDir,
         name: slug,
-        config: {
-          type: "remote" as const,
-          url: entry.url,
-          enabled: true,
-          ...(entry.oauth ? { oauth: {} } : {}),
-        },
+        config: mcpAddConfig,
       };
       console.log("[connectMcp] calling activeClient.mcp.add with:", mcpAddPayload);
 
@@ -1848,6 +1887,7 @@ export default function App() {
       console.log("[connectMcp] mcp.add unwrapped status:", status);
 
       setMcpStatuses(status as McpStatusMap);
+      await refreshMcpServers();
 
       // Step 5: If OAuth, open the auth modal (modal handles the auth flow)
       if (entry.oauth) {
@@ -2212,6 +2252,13 @@ export default function App() {
     const raw = window.localStorage.getItem(sessionModelOverridesKey(workspaceId));
     setSessionModelOverrideById(parseSessionModelOverrides(raw));
     setSessionModelOverridesReady(true);
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    const projectDir = workspaceProjectDir().trim();
+    if (!projectDir) return;
+    void refreshMcpServers();
   });
 
   createEffect(() => {
@@ -2820,6 +2867,9 @@ export default function App() {
     setModelVariant: (value: string) => setModelVariant(value),
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
+    mcpServers: mcpServers(),
+    mcpStatuses: mcpStatuses(),
+    mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
     createSessionAndOpen: createSessionAndOpen,

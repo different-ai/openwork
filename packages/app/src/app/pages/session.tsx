@@ -8,6 +8,8 @@ import type {
   CommandTriggerContext,
   MessageGroup,
   MessageWithParts,
+  McpServerEntry,
+  McpStatusMap,
   PendingPermission,
   SkillCard,
   TodoItem,
@@ -68,6 +70,9 @@ export type SessionViewProps = {
   authorizedDirs: string[];
   activePlugins: string[];
   activePluginStatus: string | null;
+  mcpServers: McpServerEntry[];
+  mcpStatuses: McpStatusMap;
+  mcpStatus: string | null;
   skills: SkillCard[];
   skillsStatus: string | null;
   busy: boolean;
@@ -1115,6 +1120,9 @@ export default function SessionView(props: SessionViewProps) {
             <ContextPanel
               activePlugins={props.activePlugins}
               activePluginStatus={props.activePluginStatus}
+              mcpServers={props.mcpServers}
+              mcpStatuses={props.mcpStatuses}
+              mcpStatus={props.mcpStatus}
               skills={props.skills}
               skillsStatus={props.skillsStatus}
               authorizedDirs={props.authorizedDirs}

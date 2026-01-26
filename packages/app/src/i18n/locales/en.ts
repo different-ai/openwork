@@ -284,7 +284,7 @@ export default {
   "mcp.reload_banner_description_blocked": "A task is running in this workspace. Stop it, then reload to finish setup.",
   "mcp.reload_banner_blocked_hint": "Stop active runs to reload.",
   "mcp.quick_connect_title": "Quick connect",
-  "mcp.oauth_only_label": "OAuth-only",
+  "mcp.oauth_only_label": "OAuth + local",
   "mcp.connected_status": "Connected",
   "mcp.no_env_vars": "No environment variables required.",
   "mcp.connected_title": "Connected",

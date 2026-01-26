@@ -2,12 +2,15 @@ import { For, Show } from "solid-js";
 import { ChevronDown, Circle, File, Folder, Package } from "lucide-solid";
 
 import { SUGGESTED_PLUGINS } from "../../constants";
-import type { SkillCard } from "../../types";
+import type { McpServerEntry, McpStatus, McpStatusMap, SkillCard } from "../../types";
 import { stripPluginVersion } from "../../utils/plugins";
 
 export type ContextPanelProps = {
   activePlugins: string[];
   activePluginStatus: string | null;
+  mcpServers: McpServerEntry[];
+  mcpStatuses: McpStatusMap;
+  mcpStatus: string | null;
   skills: SkillCard[];
   skillsStatus: string | null;
   authorizedDirs: string[];
@@ -15,10 +18,11 @@ export type ContextPanelProps = {
   expandedSections: {
     context: boolean;
     plugins: boolean;
+    mcp: boolean;
     skills: boolean;
     authorizedFolders: boolean;
   };
-  onToggleSection: (section: "context" | "plugins" | "skills" | "authorizedFolders") => void;
+  onToggleSection: (section: "context" | "plugins" | "mcp" | "skills" | "authorizedFolders") => void;
 };
 
 const humanizePlugin = (name: string) => {
@@ -57,6 +61,39 @@ const humanizeSkill = (name: string) => {
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
     .trim();
+};
+
+const mcpStatusLabel = (status?: McpStatus, disabled?: boolean) => {
+  if (disabled) return "Disabled";
+  if (!status) return "Disconnected";
+  switch (status.status) {
+    case "connected":
+      return "Connected";
+    case "needs_auth":
+      return "Needs auth";
+    case "needs_client_registration":
+      return "Register client";
+    case "failed":
+      return "Failed";
+    default:
+      return "Disconnected";
+  }
+};
+
+const mcpStatusDot = (status?: McpStatus, disabled?: boolean) => {
+  if (disabled) return "bg-gray-7";
+  if (!status) return "bg-gray-7";
+  switch (status.status) {
+    case "connected":
+      return "bg-green-9";
+    case "needs_auth":
+    case "needs_client_registration":
+      return "bg-amber-9";
+    case "failed":
+      return "bg-red-9";
+    default:
+      return "bg-gray-7";
+  }
 };
 
 export default function ContextPanel(props: ContextPanelProps) {
@@ -139,6 +176,56 @@ export default function ContextPanel(props: ContextPanelProps) {
                                 {detail}
                               </div>
                             </Show>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </For>
+                </Show>
+              </div>
+            </div>
+          </Show>
+        </div>
+
+        <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
+          <button
+            class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
+            onClick={() => props.onToggleSection("mcp")}
+          >
+            <span>MCP</span>
+            <ChevronDown
+              size={16}
+              class={`transition-transform text-gray-10 ${props.expandedSections.mcp ? "rotate-180" : ""}`.trim()}
+            />
+          </button>
+          <Show when={props.expandedSections.mcp}>
+            <div class="px-4 pb-4 pt-1">
+              <div class="space-y-2">
+                <Show
+                  when={props.mcpServers.length}
+                  fallback={
+                    <div class="text-xs text-gray-9">
+                      {props.mcpStatus ?? "No MCP servers loaded."}
+                    </div>
+                  }
+                >
+                  <For each={props.mcpServers}>
+                    {(entry) => {
+                      const status = () => props.mcpStatuses[entry.name];
+                      const disabled = () => entry.config.enabled === false;
+                      const detail =
+                        entry.config.type === "remote"
+                          ? entry.config.url
+                          : entry.config.command?.join(" ");
+                      return (
+                        <div class="flex items-start gap-2 text-xs text-gray-11">
+                          <span class={`mt-1 h-2 w-2 rounded-full ${mcpStatusDot(status(), disabled())}`} />
+                          <div class="min-w-0">
+                            <div class="truncate">{entry.name}</div>
+                            <div class="text-[11px] text-gray-9 truncate">
+                              {mcpStatusLabel(status(), disabled())}
+                              {detail ? ` - ${detail}` : ""}
+                            </div>
                           </div>
                         </div>
                       );

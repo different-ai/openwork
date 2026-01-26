@@ -283,7 +283,7 @@ export default {
   "mcp.reload_banner_title": "需要重新加载",
   "mcp.reload_banner_description": "更改需要快速重新加载以激活 MCP 工具。",
   "mcp.quick_connect_title": "快速连接",
-  "mcp.oauth_only_label": "仅 OAuth",
+  "mcp.oauth_only_label": "OAuth + 本地",
   "mcp.connected_status": "已连接",
   "mcp.no_env_vars": "不需要环境变量。",
   "mcp.connected_title": "已连接",

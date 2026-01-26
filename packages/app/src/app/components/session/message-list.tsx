@@ -362,7 +362,7 @@ export default function MessageList(props: MessageListProps) {
                     </div>
                   )}
                 </For>
-                <div class="mt-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none">
+                <div class="absolute bottom-2 right-2 flex justify-end opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none group-hover:pointer-events-auto">
                   <button
                     class="text-gray-9 hover:text-gray-11 p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
                     title="Copy message"

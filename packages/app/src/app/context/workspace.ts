@@ -312,6 +312,8 @@ export function createWorkspaceStore(options: {
       }
     }
 
+      options.refreshSkills({ force: true }).catch(() => undefined);
+      options.refreshPlugins().catch(() => undefined);
       return true;
     } finally {
       setConnectingWorkspaceId(null);
@@ -407,6 +409,7 @@ export function createWorkspaceStore(options: {
       }
 
       options.refreshSkills({ force: true }).catch(() => undefined);
+      options.refreshPlugins().catch(() => undefined);
       if (!options.selectedSessionId()) {
         options.setTab("home");
         options.setView("dashboard");

@@ -89,9 +89,7 @@ export default function McpView(props: McpViewProps) {
     props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
   );
 
-  const quickConnectList = createMemo(() =>
-    props.quickConnect.filter((entry) => entry.oauth),
-  );
+  const quickConnectList = createMemo(() => props.quickConnect);
 
   let configRequestId = 0;
   createEffect(() => {
@@ -248,7 +246,9 @@ export default function McpView(props: McpViewProps) {
                         <div>
                           <div class="text-sm font-medium text-gray-12">{entry.name}</div>
                           <div class="text-xs text-gray-10 mt-1">{entry.description}</div>
-                          <div class="text-xs text-gray-7 font-mono mt-1">{entry.url}</div>
+                          <div class="text-xs text-gray-7 font-mono mt-1">
+                            {entry.type === "local" ? entry.command?.join(" ") : entry.url}
+                          </div>
                         </div>
                         <div class="flex flex-col items-end gap-2">
                           <Show
