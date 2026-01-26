@@ -7,6 +7,9 @@ export type SidebarSectionState = {
   progress: boolean;
   artifacts: boolean;
   context: boolean;
+  plugins: boolean;
+  skills: boolean;
+  authorizedFolders: boolean;
 };
 
 export type SidebarProps = {

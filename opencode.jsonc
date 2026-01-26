@@ -10,5 +10,8 @@
       ]
     }
   },
-  "model": "openai/gpt-5.2-codex"
+  "model": "openai/gpt-5.2-codex",
+  "plugin": [
+    "opencode-scheduler"
+  ]
 }

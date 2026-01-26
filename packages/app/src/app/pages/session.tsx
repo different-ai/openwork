@@ -9,6 +9,7 @@ import type {
   MessageGroup,
   MessageWithParts,
   PendingPermission,
+  SkillCard,
   TodoItem,
   View,
   WorkspaceCommand,
@@ -67,11 +68,16 @@ export type SessionViewProps = {
   authorizedDirs: string[];
   activePlugins: string[];
   activePluginStatus: string | null;
+  skills: SkillCard[];
+  skillsStatus: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
+  modelVariantLabel: string;
+  modelVariant: string | null;
+  setModelVariant: (value: string) => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -542,6 +548,14 @@ export default function SessionView(props: SessionViewProps) {
     return items.length > 4 ? `${preview}, ...` : preview;
   };
 
+  const MODEL_VARIANT_OPTIONS = ["none", "low", "medium", "high", "xhigh"];
+
+  const normalizeVariantInput = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "balance" || trimmed === "balanced") return "none";
+    return MODEL_VARIANT_OPTIONS.includes(trimmed) ? trimmed : null;
+  };
+
   const openAgentPicker = () => {
     setAgentPickerOpen((current) => !current);
     if (!agentPickerReady()) {
@@ -667,6 +681,29 @@ export default function SessionView(props: SessionViewProps) {
             const message = error instanceof Error ? error.message : "Connect failed";
             setCommandToast(message);
           }
+        },
+      },
+      {
+        id: "session.variant",
+        title: "Change model variant",
+        category: "Session",
+        description: "Adjust the model variant",
+        slash: "variant",
+        scope: "session",
+        onSelect: () => {
+          const rawArg = extractCommandArgs(props.prompt);
+          if (!rawArg) {
+            setCommandToast(`Use /variant ${MODEL_VARIANT_OPTIONS.join("/")}`);
+            return;
+          }
+          const normalized = normalizeVariantInput(rawArg);
+          if (!normalized) {
+            setCommandToast(`Variant must be: ${MODEL_VARIANT_OPTIONS.join(", ")}`);
+            return;
+          }
+          props.setModelVariant(normalized);
+          setCommandToast(`Variant set to ${normalized}`);
+          clearPrompt();
         },
       },
       {
@@ -1078,13 +1115,15 @@ export default function SessionView(props: SessionViewProps) {
             <ContextPanel
               activePlugins={props.activePlugins}
               activePluginStatus={props.activePluginStatus}
+              skills={props.skills}
+              skillsStatus={props.skillsStatus}
               authorizedDirs={props.authorizedDirs}
               workingFiles={props.workingFiles}
-              expanded={props.expandedSidebarSections.context}
-              onToggle={() =>
+              expandedSections={props.expandedSidebarSections}
+              onToggleSection={(section) =>
                 props.setExpandedSidebarSections((curr) => ({
                   ...curr,
-                  context: !curr.context,
+                  [section]: !curr[section],
                 }))
               }
             />
@@ -1101,6 +1140,9 @@ export default function SessionView(props: SessionViewProps) {
           onInsertCommand={handleInsertCommand}
           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
           onModelClick={props.openSessionModelPicker}
+          modelVariantLabel={props.modelVariantLabel}
+          modelVariant={props.modelVariant}
+          onModelVariantChange={props.setModelVariant}
           agentLabel={agentLabel()}
           selectedAgent={props.selectedSessionAgent}
           agentPickerOpen={agentPickerOpen()}
