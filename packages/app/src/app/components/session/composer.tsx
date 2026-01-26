@@ -347,14 +347,21 @@ export default function Composer(props: ComposerProps) {
     mentionSections().flatMap((section: MentionSection) => section.options)
   );
 
+  // Sync editor height based on content. When empty, let CSS handle sizing.
   const syncHeight = () => {
     if (!editorRef) return;
+    const isEmpty = !editorRef.textContent?.trim();
+    if (isEmpty) {
+      // Let CSS min-height and padding handle empty state
+      editorRef.style.height = "";
+      editorRef.style.overflowY = "hidden";
+      return;
+    }
     editorRef.style.height = "auto";
-    const baseHeight = 24;
-    const scrollHeight = editorRef.scrollHeight || baseHeight;
-    const nextHeight = Math.min(Math.max(scrollHeight, baseHeight), 160);
+    const scrollHeight = editorRef.scrollHeight;
+    const nextHeight = Math.min(Math.max(scrollHeight, 24), 160);
     editorRef.style.height = `${nextHeight}px`;
-    editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
+    editorRef.style.overflowY = scrollHeight > 160 ? "auto" : "hidden";
   };
 
   const emitDraftChange = () => {
