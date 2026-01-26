@@ -1177,10 +1177,11 @@ export default function App() {
       const targetBaseUrl = normalizeServerUrl(workspace?.baseUrl ?? "");
       const currentBaseUrl = normalizeServerUrl(server.url) ?? "";
       const sameServer = Boolean(targetBaseUrl && currentBaseUrl && targetBaseUrl === currentBaseUrl);
+      const isRemoteWorkspace = workspace?.workspaceType === "remote";
       const ok = await workspaceStore.activateWorkspace(workspaceId, {
-        silent: !workspace || workspace.workspaceType !== "remote" || sameServer,
-        preferExistingConnection: sameServer,
-        skipHostRestart: true,
+        silent: Boolean(isRemoteWorkspace && sameServer),
+        preferExistingConnection: Boolean(isRemoteWorkspace && sameServer),
+        skipHostRestart: Boolean(isRemoteWorkspace),
       });
       if (!ok) return;
     }
@@ -1193,10 +1194,11 @@ export default function App() {
       const targetBaseUrl = normalizeServerUrl(workspace?.baseUrl ?? "");
       const currentBaseUrl = normalizeServerUrl(server.url) ?? "";
       const sameServer = Boolean(targetBaseUrl && currentBaseUrl && targetBaseUrl === currentBaseUrl);
+      const isRemoteWorkspace = workspace?.workspaceType === "remote";
       const ok = await workspaceStore.activateWorkspace(workspaceId, {
-        silent: !workspace || workspace.workspaceType !== "remote" || sameServer,
-        preferExistingConnection: sameServer,
-        skipHostRestart: true,
+        silent: Boolean(isRemoteWorkspace && sameServer),
+        preferExistingConnection: Boolean(isRemoteWorkspace && sameServer),
+        skipHostRestart: Boolean(isRemoteWorkspace),
       });
       if (!ok) return;
     }
