@@ -23,3 +23,6 @@ vendor/opencode/
 # OpenCode local deps
 .opencode/node_modules/
 .opencode/bun.lock
+
+# Local caches
+.cache/
