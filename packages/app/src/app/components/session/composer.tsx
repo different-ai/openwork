@@ -275,6 +275,11 @@ export default function Composer(props: ComposerProps) {
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
 
+  // Track IME composition state via events (more reliable than event.isComposing)
+  const [isComposingIME, setIsComposingIME] = createSignal(false);
+  // Flag to skip the Enter key that confirms IME composition
+  let skipNextEnter = false;
+
   const commandMenuOpen = createMemo(() => {
     return props.prompt.trim().startsWith("/") && !props.busy && mode() === "prompt" && !mentionOpen();
   });
@@ -342,14 +347,21 @@ export default function Composer(props: ComposerProps) {
     mentionSections().flatMap((section: MentionSection) => section.options)
   );
 
+  // Sync editor height based on content. When empty, let CSS handle sizing.
   const syncHeight = () => {
     if (!editorRef) return;
+    const isEmpty = !editorRef.textContent?.trim();
+    if (isEmpty) {
+      // Let CSS min-height and padding handle empty state
+      editorRef.style.height = "";
+      editorRef.style.overflowY = "hidden";
+      return;
+    }
     editorRef.style.height = "auto";
-    const baseHeight = 24;
-    const scrollHeight = editorRef.scrollHeight || baseHeight;
-    const nextHeight = Math.min(Math.max(scrollHeight, baseHeight), 160);
+    const scrollHeight = editorRef.scrollHeight;
+    const nextHeight = Math.min(Math.max(scrollHeight, 24), 160);
     editorRef.style.height = `${nextHeight}px`;
-    editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
+    editorRef.style.overflowY = scrollHeight > 160 ? "auto" : "hidden";
   };
 
   const emitDraftChange = () => {
@@ -590,13 +602,22 @@ export default function Composer(props: ComposerProps) {
   };
 
   const handleKeyDown = (event: KeyboardEvent) => {
+    // During IME composition, let the browser handle all keys
+    if (isComposingIME() || event.isComposing) return;
+
+    // Skip the Enter key that was used to confirm IME composition
+    // (flag is cleared by onCompositionEnd's setTimeout)
+    if (event.key === "Enter" && skipNextEnter) {
+      return;
+    }
+
+    // Shift+Enter inserts a newline
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       document.execCommand("insertLineBreak");
       emitDraftChange();
       return;
     }
-    if (event.isComposing && event.key !== "Enter") return;
 
     if (mentionOpen()) {
       const options = mentionOptions();
@@ -789,11 +810,17 @@ export default function Composer(props: ComposerProps) {
     <div class="p-4 border-t border-gray-6 bg-gray-1 sticky bottom-0 z-20">
       <div class="max-w-2xl mx-auto">
         <div
-          class={`bg-gray-2 border border-gray-6 rounded-3xl overflow-visible transition-all shadow-2xl relative group/input ${
+          class={`bg-gray-2 border border-gray-6 rounded-3xl overflow-visible transition-all shadow-2xl relative group/input cursor-text ${
             commandMenuOpen() || mentionOpen()
               ? "rounded-t-none border-t-transparent"
               : "focus-within:ring-1 focus-within:ring-gray-7"
           }`}
+          onClick={(event: MouseEvent) => {
+            // Focus the editor when clicking on the bubble, but not on interactive elements
+            const target = event.target as HTMLElement;
+            if (target.closest("button, input, [contenteditable]")) return;
+            editorRef?.focus();
+          }}
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
             if (!props.isRemoteWorkspace) event.preventDefault();
@@ -1036,6 +1063,21 @@ export default function Composer(props: ComposerProps) {
                       onKeyUp={updateMentionQuery}
                       onClick={updateMentionQuery}
                       onPaste={handlePaste}
+                      onCompositionStart={() => {
+                        setIsComposingIME(true);
+                        // The Enter that confirms IME composition should be skipped
+                        skipNextEnter = true;
+                      }}
+                      onCompositionEnd={() => {
+                        setIsComposingIME(false);
+                        // Clear the flag after current task completes and a small delay
+                        // to allow the keydown event to fire.
+                        // If Enter confirmed IME, its keydown fires before this runs → skipped
+                        // If mouse/touch/spacebar confirmed IME, this clears the flag → next Enter works
+                        setTimeout(() => {
+                          skipNextEnter = false;
+                        }, 100);
+                      }}
                       class="bg-transparent border-none p-0 pb-12 pr-20 text-gray-12 focus:ring-0 text-[15px] leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
                     />
 
@@ -1149,7 +1191,7 @@ export default function Composer(props: ComposerProps) {
                       <button
                         disabled={!props.prompt.trim() && !attachments().length}
                         onClick={sendDraft}
-                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-0 disabled:scale-75 shadow-lg shrink-0 flex items-center justify-center"
+                        class="p-2 bg-gray-12 text-gray-1 rounded-xl hover:scale-105 active:scale-95 transition-all disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed shadow-lg shrink-0 flex items-center justify-center"
                         title="Run"
                       >
                         <ArrowRight size={18} />
