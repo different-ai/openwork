@@ -17,7 +17,15 @@ pub fn resolve_openwork_port() -> Result<u16, String> {
     Ok(port)
 }
 
-pub fn build_openwork_args(host: &str, port: u16, workspace_path: &str, token: &str, host_token: &str) -> Vec<String> {
+pub fn build_openwork_args(
+    host: &str,
+    port: u16,
+    workspace_path: &str,
+    token: &str,
+    host_token: &str,
+    opencode_base_url: Option<&str>,
+    opencode_directory: Option<&str>,
+) -> Vec<String> {
     let mut args = vec![
         "--host".to_string(),
         host.to_string(),
@@ -42,6 +50,20 @@ pub fn build_openwork_args(host: &str, port: u16, workspace_path: &str, token: &
         args.push("*".to_string());
     }
 
+    if let Some(base_url) = opencode_base_url {
+        if !base_url.trim().is_empty() {
+            args.push("--opencode-base-url".to_string());
+            args.push(base_url.to_string());
+        }
+    }
+
+    if let Some(directory) = opencode_directory {
+        if !directory.trim().is_empty() {
+            args.push("--opencode-directory".to_string());
+            args.push(directory.to_string());
+        }
+    }
+
     args
 }
 
@@ -52,13 +74,23 @@ pub fn spawn_openwork_server(
     workspace_path: &str,
     token: &str,
     host_token: &str,
+    opencode_base_url: Option<&str>,
+    opencode_directory: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
     let command = match app.shell().sidecar("openwork-server") {
         Ok(command) => command,
         Err(_) => app.shell().command("openwork-server"),
     };
 
-    let args = build_openwork_args(host, port, workspace_path, token, host_token);
+    let args = build_openwork_args(
+        host,
+        port,
+        workspace_path,
+        token,
+        host_token,
+        opencode_base_url,
+        opencode_directory,
+    );
     command
         .args(args)
         .current_dir(Path::new(workspace_path))

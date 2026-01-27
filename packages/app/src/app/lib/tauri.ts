@@ -45,9 +45,13 @@ export type WorkspaceInfo = {
   path: string;
   preset: string;
   workspaceType: "local" | "remote";
+  remoteType?: "openwork" | "opencode" | null;
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -95,11 +99,19 @@ export async function workspaceCreateRemote(input: {
   baseUrl: string;
   directory?: string | null;
   displayName?: string | null;
+  remoteType?: "openwork" | "opencode" | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
+    remoteType: input.remoteType ?? null,
+    openworkHostUrl: input.openworkHostUrl ?? null,
+    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
+    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
   });
 }
 
@@ -108,12 +120,20 @@ export async function workspaceUpdateRemote(input: {
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  remoteType?: "openwork" | "opencode" | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
     baseUrl: input.baseUrl ?? null,
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
+    remoteType: input.remoteType ?? null,
+    openworkHostUrl: input.openworkHostUrl ?? null,
+    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
+    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
   });
 }
 

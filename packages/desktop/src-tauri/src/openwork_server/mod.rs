@@ -1,4 +1,5 @@
 use gethostname::gethostname;
+use gethostname::gethostname;
 use local_ip_address::local_ip;
 use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandEvent;
@@ -35,10 +36,16 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
     (connect_url, mdns_url, lan_url)
 }
 
+pub fn resolve_connect_url(port: u16) -> Option<String> {
+    let (connect_url, _mdns_url, _lan_url) = build_urls(port);
+    connect_url
+}
+
 pub fn start_openwork_server(
     app: &AppHandle,
     manager: &OpenworkServerManager,
     workspace_path: &str,
+    opencode_base_url: Option<&str>,
 ) -> Result<OpenworkServerInfo, String> {
     let mut state = manager.inner.lock().map_err(|_| "openwork server mutex poisoned".to_string())?;
     OpenworkServerManager::stop_locked(&mut state);
@@ -48,7 +55,16 @@ pub fn start_openwork_server(
     let client_token = generate_token();
     let host_token = generate_token();
 
-    let (mut rx, child) = spawn_openwork_server(app, &host, port, workspace_path, &client_token, &host_token)?;
+    let (mut rx, child) = spawn_openwork_server(
+        app,
+        &host,
+        port,
+        workspace_path,
+        &client_token,
+        &host_token,
+        opencode_base_url,
+        Some(workspace_path),
+    )?;
 
     state.child = Some(child);
     state.child_exited = false;

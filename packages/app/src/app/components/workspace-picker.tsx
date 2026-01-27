@@ -26,7 +26,9 @@ export default function WorkspacePicker(props: {
     const query = props.search.trim().toLowerCase();
     if (!query) return props.workspaces;
     return props.workspaces.filter((w) =>
-      `${w.name} ${w.path} ${w.baseUrl ?? ""} ${w.displayName ?? ""} ${w.directory ?? ""}`
+      `${w.name} ${w.path} ${w.baseUrl ?? ""} ${w.displayName ?? ""} ${w.directory ?? ""} ${
+        w.openworkHostUrl ?? ""
+      } ${w.openworkWorkspaceName ?? ""}`
         .toLowerCase()
         .includes(query)
     );
@@ -99,14 +101,28 @@ export default function WorkspacePicker(props: {
                           <Globe size={10} />
                           {translate("dashboard.remote")}
                         </span>
+                        <span class="inline-flex items-center text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-2 text-gray-10">
+                          {ws.remoteType === "openwork"
+                            ? translate("dashboard.remote_connection_openwork")
+                            : translate("dashboard.remote_connection_direct")}
+                        </span>
                       </Show>
                     </div>
                     <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
-                      {ws.workspaceType === "remote" ? ws.baseUrl ?? ws.path : ws.path}
+                      {ws.workspaceType === "remote"
+                        ? ws.remoteType === "openwork"
+                          ? ws.openworkHostUrl ?? ws.baseUrl ?? ws.path
+                          : ws.baseUrl ?? ws.path
+                        : ws.path}
                     </div>
-                    <Show when={ws.workspaceType === "remote" && ws.directory}>
+                    <Show
+                      when={
+                        ws.workspaceType === "remote" &&
+                        (ws.directory || ws.openworkWorkspaceName)
+                      }
+                    >
                       <div class="text-[10px] text-gray-8 truncate max-w-[200px]">
-                        {ws.directory}
+                        {ws.openworkWorkspaceName ?? ws.directory}
                       </div>
                     </Show>
                   </button>

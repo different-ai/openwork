@@ -5,7 +5,7 @@ import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 import Button from "../components/button";
 import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
-import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
+import { ChevronDown, HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenworkServerInfo } from "../lib/tauri";
 
@@ -333,10 +333,8 @@ export default function SettingsView(props: SettingsViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">OpenWork Server</div>
-              <div class="text-xs text-gray-10">
-                Connect a remote OpenWork server to manage skills and plugins.
-              </div>
+              <div class="text-sm font-medium text-gray-12">OpenWork host</div>
+              <div class="text-xs text-gray-10">Recommended for managed workspaces, skills, and plugins.</div>
             </div>
             <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
               {openworkStatusLabel()}
@@ -345,22 +343,22 @@ export default function SettingsView(props: SettingsViewProps) {
 
           <div class="grid gap-3">
             <TextInput
-              label="Server URL"
+              label="OpenWork host URL"
               value={openworkUrl()}
               onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
               placeholder="http://127.0.0.1:8787"
-              hint="Leave blank to use your OpenCode URL with port 8787."
+              hint="Use the host URL shared during pairing."
               disabled={props.busy}
             />
 
             <label class="block">
-              <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
+              <div class="mb-1 text-xs font-medium text-gray-11">Access token (optional)</div>
               <div class="flex items-center gap-2">
                 <input
                   type={openworkTokenVisible() ? "text" : "password"}
                   value={openworkToken()}
                   onInput={(event) => setOpenworkToken(event.currentTarget.value)}
-                  placeholder="Optional bearer token"
+                  placeholder="Paste your token"
                   disabled={props.busy}
                   class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
                 />
@@ -373,12 +371,12 @@ export default function SettingsView(props: SettingsViewProps) {
                   {openworkTokenVisible() ? "Hide" : "Show"}
                 </Button>
               </div>
-              <div class="mt-1 text-xs text-gray-10">Keep this private. It grants access to your server.</div>
+              <div class="mt-1 text-xs text-gray-10">Keep this private. It grants access to your host.</div>
             </label>
           </div>
 
           <div class="text-[11px] text-gray-7 font-mono truncate">
-            Resolved URL: {props.openworkServerUrl || "Not set"}
+            Resolved host: {props.openworkServerUrl || "Not set"}
           </div>
 
           <div class="flex flex-wrap gap-2">
@@ -408,6 +406,20 @@ export default function SettingsView(props: SettingsViewProps) {
               Clear
             </Button>
           </div>
+
+          <details class="rounded-2xl border border-gray-6 bg-gray-1/40 px-4 py-3">
+            <summary class="flex items-center justify-between cursor-pointer text-xs text-gray-10">
+              Advanced: OpenCode direct
+              <ChevronDown size={14} class="text-gray-7" />
+            </summary>
+            <div class="pt-3 space-y-3">
+              <div class="text-xs text-gray-10">Connect straight to an OpenCode engine when no host is available.</div>
+              <div class="text-[11px] text-gray-7 font-mono truncate">
+                Current engine: {props.baseUrl || "Not connected"}
+              </div>
+              <div class="text-xs text-gray-8">Manage direct connections from the workspace picker.</div>
+            </div>
+          </details>
         </div>
       </Show>
 

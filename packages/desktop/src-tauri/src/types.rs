@@ -133,6 +133,19 @@ impl Default for WorkspaceType {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum RemoteType {
+    Opencode,
+    Openwork,
+}
+
+impl Default for RemoteType {
+    fn default() -> Self {
+        RemoteType::Opencode
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceInfo {
@@ -143,11 +156,19 @@ pub struct WorkspaceInfo {
     #[serde(default)]
     pub workspace_type: WorkspaceType,
     #[serde(default)]
+    pub remote_type: Option<RemoteType>,
+    #[serde(default)]
     pub base_url: Option<String>,
     #[serde(default)]
     pub directory: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
+    #[serde(default)]
+    pub openwork_host_url: Option<String>,
+    #[serde(default)]
+    pub openwork_workspace_id: Option<String>,
+    #[serde(default)]
+    pub openwork_workspace_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -195,4 +216,4 @@ impl Default for WorkspaceState {
     }
 }
 
-pub const WORKSPACE_STATE_VERSION: u8 = 2;
+pub const WORKSPACE_STATE_VERSION: u8 = 3;

@@ -17,6 +17,8 @@ export type OnboardingViewProps = {
   busy: boolean;
   baseUrl: string;
   clientDirectory: string;
+  openworkHostUrl: string;
+  openworkToken: string;
   newAuthorizedDir: string;
   authorizedDirs: string[];
   activeWorkspacePath: string;
@@ -38,6 +40,8 @@ export type OnboardingViewProps = {
   isWindows: boolean;
   onBaseUrlChange: (value: string) => void;
   onClientDirectoryChange: (value: string) => void;
+  onOpenworkHostUrlChange: (value: string) => void;
+  onOpenworkTokenChange: (value: string) => void;
   onModeSelect: (mode: Mode) => void;
   onRememberModeToggle: () => void;
   onStartHost: () => void;
@@ -63,6 +67,7 @@ export type OnboardingViewProps = {
 export default function OnboardingView(props: OnboardingViewProps) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
+  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
 
   const engineDoctorAvailable = () =>
     props.engineDoctorFound === true && props.engineDoctorSupportsServe === true;
@@ -433,21 +438,74 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
 
             <div class="space-y-4">
-              <TextInput
-                label={translate("dashboard.remote_base_url_label")}
-                placeholder={translate("dashboard.remote_base_url_placeholder")}
-                value={props.baseUrl}
-                onInput={(e) => props.onBaseUrlChange(e.currentTarget.value)}
-              />
-              <TextInput
-                label={translate("dashboard.remote_directory_label")}
-                placeholder={translate("dashboard.remote_directory_placeholder")}
-                value={props.clientDirectory}
-                onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
-                hint={translate("dashboard.remote_directory_hint")}
-              />
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
+                <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">
+                  {translate("onboarding.remote_workspace_title")}
+                </div>
+                <div class="mt-1 text-sm text-gray-12">{translate("onboarding.remote_workspace_description")}</div>
+              </div>
 
-              <Button onClick={props.onConnectClient} disabled={props.busy || !props.baseUrl.trim()} class="w-full py-3 text-base">
+              <div class="space-y-4">
+                <TextInput
+                  label={translate("dashboard.openwork_host_label")}
+                  placeholder={translate("dashboard.openwork_host_placeholder")}
+                  value={props.openworkHostUrl}
+                  onInput={(e) => props.onOpenworkHostUrlChange(e.currentTarget.value)}
+                  hint={translate("dashboard.openwork_host_hint")}
+                />
+
+                <label class="block">
+                  <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.openwork_host_token_label")}</div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type={openworkTokenVisible() ? "text" : "password"}
+                      value={props.openworkToken}
+                      onInput={(e) => props.onOpenworkTokenChange(e.currentTarget.value)}
+                      placeholder={translate("dashboard.openwork_host_token_placeholder")}
+                      disabled={props.busy}
+                      class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+                    />
+                    <Button
+                      variant="outline"
+                      class="text-xs h-9 px-3 shrink-0"
+                      onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                      disabled={props.busy}
+                    >
+                      {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
+                    </Button>
+                  </div>
+                  <div class="mt-1 text-xs text-gray-10">{translate("dashboard.openwork_host_token_hint")}</div>
+                </label>
+              </div>
+
+              <details class="rounded-2xl border border-gray-6 bg-gray-1/60 px-4 py-3">
+                <summary class="flex items-center justify-between cursor-pointer text-xs text-gray-10">
+                  {translate("onboarding.advanced_opencode_direct")}
+                  <ChevronDown size={14} class="text-gray-7" />
+                </summary>
+                <div class="pt-3 space-y-3">
+                  <div class="text-xs text-gray-10">{translate("onboarding.advanced_opencode_hint")}</div>
+                  <TextInput
+                    label={translate("dashboard.remote_base_url_label")}
+                    placeholder={translate("dashboard.remote_base_url_placeholder")}
+                    value={props.baseUrl}
+                    onInput={(e) => props.onBaseUrlChange(e.currentTarget.value)}
+                  />
+                  <TextInput
+                    label={translate("dashboard.remote_directory_label")}
+                    placeholder={translate("dashboard.remote_directory_placeholder")}
+                    value={props.clientDirectory}
+                    onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
+                    hint={translate("dashboard.remote_directory_hint")}
+                  />
+                </div>
+              </details>
+
+              <Button
+                onClick={props.onConnectClient}
+                disabled={props.busy || (!props.openworkHostUrl.trim() && !props.baseUrl.trim())}
+                class="w-full py-3 text-base"
+              >
                 {translate("onboarding.remote_workspace_action")}
               </Button>
 

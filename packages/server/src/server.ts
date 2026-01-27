@@ -151,6 +151,20 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   };
 }
 
+function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
+  const opencode =
+    workspace.baseUrl || workspace.directory
+      ? {
+          baseUrl: workspace.baseUrl,
+          directory: workspace.directory,
+        }
+      : undefined;
+  return {
+    ...workspace,
+    opencode,
+  };
+}
+
 function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[] {
   const routes: Route[] = [];
 
@@ -163,7 +177,9 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
   });
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
-    return jsonResponse({ items: config.workspaces });
+    const active = config.workspaces[0];
+    const items = active ? [serializeWorkspace(active)] : [];
+    return jsonResponse({ items });
   });
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {

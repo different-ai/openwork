@@ -129,7 +129,7 @@ import {
 } from "./lib/tauri";
 import {
   createOpenworkServerClient,
-  deriveOpenworkServerUrl,
+  normalizeOpenworkServerUrl,
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
@@ -232,6 +232,7 @@ export default function App() {
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
 
   const openworkServerClient = createMemo(() => {
+    if (mode() !== "client") return null;
     const url = openworkServerUrl().trim();
     if (!url) return null;
     const token = openworkServerSettings().token;
@@ -244,8 +245,18 @@ export default function App() {
   });
 
   createEffect(() => {
-    const derived = deriveOpenworkServerUrl(baseUrl(), openworkServerSettings());
-    setOpenworkServerUrl(derived ?? "");
+    if (mode() === "client") {
+      const override = normalizeOpenworkServerUrl(openworkServerSettings().urlOverride ?? "");
+      setOpenworkServerUrl(override ?? "");
+      return;
+    }
+    if (mode() === "host") {
+      const info = openworkServerHostInfo();
+      const resolved = info?.connectUrl ?? info?.lanUrl ?? info?.mdnsUrl ?? info?.baseUrl ?? "";
+      setOpenworkServerUrl(resolved ?? "");
+      return;
+    }
+    setOpenworkServerUrl("");
   });
 
   const checkOpenworkServer = async (url: string, token?: string) => {
@@ -273,6 +284,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
+    if (mode() !== "client") return;
     const url = openworkServerUrl().trim();
     const token = openworkServerSettings().token;
 
@@ -307,6 +319,15 @@ export default function App() {
       active = false;
       window.clearInterval(interval);
     });
+  });
+
+  createEffect(() => {
+    if (mode() !== "host") return;
+    const info = openworkServerHostInfo();
+    const running = info?.running ?? false;
+    setOpenworkServerStatus(running ? "connected" : "disconnected");
+    setOpenworkServerCapabilities(null);
+    setOpenworkServerCheckedAt(Date.now());
   });
 
   createEffect(() => {
@@ -1019,38 +1040,32 @@ export default function App() {
     setView,
     setTab,
     isWindowsPlatform,
+    openworkServerSettings,
+    updateOpenworkServerSettings,
     onEngineStable: () => setReloadLastFinishedAtRef(Date.now()),
   });
 
   createEffect(() => {
-    const status = openworkServerStatus();
-    const root = workspaceStore.activeWorkspaceRoot().trim();
-    const client = openworkServerClient();
-
-    if (status !== "connected" || !root || !client) {
-      setOpenworkServerWorkspaceId(null);
+    const active = workspaceStore.activeWorkspaceDisplay();
+    if (active.workspaceType === "remote" && active.remoteType === "openwork") {
+      setOpenworkServerWorkspaceId(active.openworkWorkspaceId ?? null);
       return;
     }
+    setOpenworkServerWorkspaceId(null);
+  });
 
-    let cancelled = false;
-
-    const resolveWorkspace = async () => {
-      try {
-        const response = await client.listWorkspaces();
-        if (cancelled) return;
-        const match = response.items.find(
-          (entry) => normalizeDirectoryPath(entry.path) === normalizeDirectoryPath(root),
-        );
-        setOpenworkServerWorkspaceId(match?.id ?? null);
-      } catch {
-        if (!cancelled) setOpenworkServerWorkspaceId(null);
-      }
-    };
-
-    resolveWorkspace();
-
-    onCleanup(() => {
-      cancelled = true;
+  createEffect(() => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    if (active.workspaceType !== "remote" || active.remoteType !== "openwork") {
+      return;
+    }
+    const hostUrl = active.openworkHostUrl?.trim() ?? "";
+    if (!hostUrl) return;
+    const settings = openworkServerSettings();
+    if (settings.urlOverride?.trim() === hostUrl) return;
+    updateOpenworkServerSettings({
+      ...settings,
+      urlOverride: hostUrl,
     });
   });
 
@@ -1074,7 +1089,7 @@ export default function App() {
   };
 
   const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
-    const derived = deriveOpenworkServerUrl(baseUrl(), next);
+    const derived = normalizeOpenworkServerUrl(next.urlOverride ?? "");
     if (!derived) {
       setOpenworkServerStatus("disconnected");
       setOpenworkServerCapabilities(null);
@@ -2928,6 +2943,8 @@ export default function App() {
     busy: busy(),
     baseUrl: baseUrl(),
     clientDirectory: clientDirectory(),
+    openworkHostUrl: openworkServerSettings().urlOverride ?? "",
+    openworkToken: openworkServerSettings().token ?? "",
     newAuthorizedDir: newAuthorizedDir(),
     authorizedDirs: workspaceStore.authorizedDirs(),
     activeWorkspacePath: workspaceStore.activeWorkspacePath(),
@@ -2949,6 +2966,16 @@ export default function App() {
     isWindows: isWindowsPlatform(),
     onBaseUrlChange: setBaseUrl,
     onClientDirectoryChange: setClientDirectory,
+    onOpenworkHostUrlChange: (value: string) =>
+      updateOpenworkServerSettings({
+        ...openworkServerSettings(),
+        urlOverride: value,
+      }),
+    onOpenworkTokenChange: (value: string) =>
+      updateOpenworkServerSettings({
+        ...openworkServerSettings(),
+        token: value,
+      }),
     onModeSelect: (nextMode: Mode) => {
       if (nextMode === "host" && rememberModeChoice()) {
         writeModePreference("host");

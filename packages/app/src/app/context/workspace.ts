@@ -10,6 +10,13 @@ import type {
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "../utils";
 import { unwrap } from "../lib/opencode";
+import {
+  createOpenworkServerClient,
+  normalizeOpenworkServerUrl,
+  OpenworkServerError,
+  type OpenworkServerSettings,
+  type OpenworkWorkspaceInfo,
+} from "../lib/openwork-server";
 import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
@@ -81,6 +88,8 @@ export function createWorkspaceStore(options: {
   setView: (value: any) => void;
   setTab: (value: any) => void;
   isWindowsPlatform: () => boolean;
+  openworkServerSettings: () => OpenworkServerSettings;
+  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   onEngineStable?: () => void;
 }) {
 
@@ -120,14 +129,29 @@ export function createWorkspaceStore(options: {
         path: "",
         preset: "starter",
         workspaceType: "local",
+        remoteType: "opencode",
         baseUrl: null,
         directory: null,
         displayName: null,
+        openworkHostUrl: null,
+        openworkWorkspaceId: null,
+        openworkWorkspaceName: null,
       };
     }
-    const displayName = ws.displayName?.trim() || ws.name || ws.baseUrl || ws.path || "Workspace";
+    const displayName =
+      ws.displayName?.trim() ||
+      ws.openworkWorkspaceName?.trim() ||
+      ws.name ||
+      ws.openworkHostUrl ||
+      ws.baseUrl ||
+      ws.path ||
+      "Workspace";
     return { ...ws, name: displayName };
   });
+  const normalizeRemoteType = (value?: WorkspaceInfo["remoteType"] | null) =>
+    value === "openwork" ? "openwork" : "opencode";
+  const isOpenworkRemote = (workspace: WorkspaceInfo | null) =>
+    Boolean(workspace && workspace.workspaceType === "remote" && normalizeRemoteType(workspace.remoteType) === "openwork");
   const activeWorkspacePath = createMemo(() => {
     const ws = activeWorkspaceInfo();
     if (!ws) return "";
@@ -141,10 +165,54 @@ export function createWorkspaceStore(options: {
     return workspaces().filter((ws) => {
       const haystack = `${ws.name ?? ""} ${ws.path ?? ""} ${ws.baseUrl ?? ""} ${
         ws.displayName ?? ""
-      } ${ws.directory ?? ""}`.toLowerCase();
+      } ${ws.directory ?? ""} ${ws.openworkHostUrl ?? ""} ${ws.openworkWorkspaceName ?? ""}`.toLowerCase();
       return haystack.includes(query);
     });
   });
+
+  const resolveOpenworkHost = async (input: { hostUrl: string; token?: string | null }) => {
+    const normalized = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
+    if (!normalized) {
+      return { kind: "fallback" as const };
+    }
+
+    const client = createOpenworkServerClient({ baseUrl: normalized, token: input.token ?? undefined });
+
+    try {
+      const health = await client.health();
+      if (!health?.ok) {
+        return { kind: "fallback" as const };
+      }
+    } catch (error) {
+      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+        throw error;
+      }
+      return { kind: "fallback" as const };
+    }
+
+    if (!input.token?.trim()) {
+      throw new Error("Access token required for OpenWork host.");
+    }
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    const workspace = items[0] as OpenworkWorkspaceInfo | undefined;
+    if (!workspace) {
+      throw new Error("OpenWork host did not return a workspace.");
+    }
+    const opencodeBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
+    if (!opencodeBaseUrl) {
+      throw new Error("OpenWork host did not provide an OpenCode URL.");
+    }
+
+    return {
+      kind: "openwork" as const,
+      hostUrl: normalized,
+      workspace,
+      opencodeBaseUrl,
+      directory: workspace.opencode?.directory?.trim() ?? workspace.directory?.trim() ?? "",
+    };
+  };
 
   async function refreshEngine() {
     if (!isTauriRuntime()) return;
@@ -187,17 +255,106 @@ export function createWorkspaceStore(options: {
     const isRemote = next.workspaceType === "remote";
     console.log("[workspace] activate", { id: next.id, type: next.workspaceType });
 
+    const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
     const baseUrl = isRemote ? next.baseUrl?.trim() ?? "" : "";
-    if (isRemote && !baseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
-      return false;
-    }
 
     setConnectingWorkspaceId(id);
 
     try {
       if (isRemote) {
         options.setMode("client");
+
+        if (remoteType === "openwork") {
+          const hostUrl = next.openworkHostUrl?.trim() ?? "";
+          if (!hostUrl) {
+            options.setError("OpenWork host URL is required.");
+            return false;
+          }
+
+          const currentSettings = options.openworkServerSettings();
+          if (currentSettings.urlOverride?.trim() !== hostUrl) {
+            options.updateOpenworkServerSettings({
+              ...currentSettings,
+              urlOverride: hostUrl,
+            });
+          }
+
+          let resolvedBaseUrl = baseUrl;
+          let resolvedDirectory = next.directory?.trim() ?? "";
+          let workspaceInfo: OpenworkWorkspaceInfo | null = null;
+
+          try {
+            const resolved = await resolveOpenworkHost({
+              hostUrl,
+              token: options.openworkServerSettings().token ?? undefined,
+            });
+            if (resolved.kind === "openwork") {
+              resolvedBaseUrl = resolved.opencodeBaseUrl;
+              resolvedDirectory = resolved.directory;
+              workspaceInfo = resolved.workspace;
+            } else {
+              resolvedBaseUrl = baseUrl || hostUrl;
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            options.setError(addOpencodeCacheHint(message));
+            return false;
+          }
+
+          if (!resolvedBaseUrl) {
+            options.setError(t("app.error.remote_base_url_required", currentLocale()));
+            return false;
+          }
+
+          const ok = await connectToServer(resolvedBaseUrl, resolvedDirectory || undefined, {
+            workspaceId: next.id,
+            workspaceType: next.workspaceType,
+            targetRoot: resolvedDirectory ?? "",
+          });
+
+          if (!ok) {
+            return false;
+          }
+
+          if (isTauriRuntime()) {
+            try {
+              const ws = await workspaceUpdateRemote({
+                workspaceId: next.id,
+                remoteType: "openwork",
+                baseUrl: resolvedBaseUrl,
+                directory: resolvedDirectory || null,
+                openworkHostUrl: hostUrl,
+                openworkWorkspaceId: workspaceInfo?.id ?? next.openworkWorkspaceId ?? null,
+                openworkWorkspaceName: workspaceInfo?.name ?? next.openworkWorkspaceName ?? null,
+              });
+              setWorkspaces(ws.workspaces);
+              syncActiveWorkspaceId(ws.activeId);
+            } catch {
+              // ignore
+            }
+          }
+
+          syncActiveWorkspaceId(id);
+          setProjectDir(resolvedDirectory || "");
+          setWorkspaceConfig(null);
+          setWorkspaceConfigLoaded(true);
+          setAuthorizedDirs([]);
+
+          if (isTauriRuntime()) {
+            try {
+              await workspaceSetActive(id);
+            } catch {
+              // ignore
+            }
+          }
+
+          return true;
+        }
+
+        if (!baseUrl) {
+          options.setError(t("app.error.remote_base_url_required", currentLocale()));
+          return false;
+        }
 
         const ok = await connectToServer(baseUrl, next.directory?.trim() || undefined, {
           workspaceId: next.id,
@@ -492,62 +649,112 @@ export function createWorkspaceStore(options: {
   }
 
   async function createRemoteWorkspaceFlow(input: {
-    baseUrl: string;
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    opencodeBaseUrl?: string | null;
     directory?: string | null;
     displayName?: string | null;
   }) {
-    const baseUrl = input.baseUrl.trim();
-    if (!baseUrl) {
-      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+    const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
+    const token = input.openworkToken?.trim() ?? "";
+    const directBaseUrl = input.opencodeBaseUrl?.trim() ?? "";
+    const directory = input.directory?.trim() ?? "";
+    const displayName = input.displayName?.trim() || null;
+
+    if (!hostUrl && !directBaseUrl) {
+      options.setError("Add an OpenWork host URL or a direct OpenCode URL to continue.");
       return false;
     }
 
     options.setError(null);
     console.log("[workspace] create remote", {
-      baseUrl,
-      directory: input.directory ?? null,
-      displayName: input.displayName ?? null,
+      hostUrl: hostUrl || null,
+      baseUrl: directBaseUrl || null,
+      directory: directory || null,
+      displayName,
     });
 
     options.setMode("client");
-    const ok = await connectToServer(baseUrl, input.directory?.trim() || undefined, {
+
+    let remoteType: "openwork" | "opencode" = "opencode";
+    let resolvedBaseUrl = directBaseUrl;
+    let resolvedDirectory = directory;
+    let openworkWorkspace: OpenworkWorkspaceInfo | null = null;
+    let resolvedHostUrl = hostUrl;
+
+    if (hostUrl) {
+      options.updateOpenworkServerSettings({
+        ...options.openworkServerSettings(),
+        urlOverride: hostUrl,
+        token: token || undefined,
+      });
+
+      try {
+        const resolved = await resolveOpenworkHost({ hostUrl, token });
+        if (resolved.kind === "openwork") {
+          remoteType = "openwork";
+          resolvedBaseUrl = resolved.opencodeBaseUrl;
+          resolvedDirectory = resolved.directory || directory;
+          openworkWorkspace = resolved.workspace;
+          resolvedHostUrl = resolved.hostUrl;
+        } else if (!resolvedBaseUrl) {
+          resolvedBaseUrl = hostUrl;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        options.setError(addOpencodeCacheHint(message));
+        return false;
+      }
+    }
+
+    if (!resolvedBaseUrl) {
+      options.setError(t("app.error.remote_base_url_required", currentLocale()));
+      return false;
+    }
+
+    const ok = await connectToServer(resolvedBaseUrl, resolvedDirectory || undefined, {
       workspaceType: "remote",
-      targetRoot: input.directory?.trim() ?? "",
+      targetRoot: resolvedDirectory ?? "",
     });
 
     if (!ok) {
       return false;
     }
 
-    const resolvedDirectory = options.clientDirectory().trim() || input.directory?.trim() || "";
+    const finalDirectory = options.clientDirectory().trim() || resolvedDirectory || "";
 
     options.setBusy(true);
     options.setBusyLabel("status.creating_workspace");
     options.setBusyStartedAt(Date.now());
 
-    const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
-    const displayName = input.displayName?.trim() || null;
-    const workspaceId = `remote:${normalizedBaseUrl}:${resolvedDirectory}`;
-
     try {
       if (isTauriRuntime()) {
         const ws = await workspaceCreateRemote({
-          baseUrl: normalizedBaseUrl,
-          directory: resolvedDirectory ? resolvedDirectory : null,
+          baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
+          directory: finalDirectory ? finalDirectory : null,
           displayName,
+          remoteType,
+          openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
+          openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
+          openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
         });
         setWorkspaces(ws.workspaces);
         syncActiveWorkspaceId(ws.activeId);
       } else {
+        const workspaceId = `remote:${resolvedBaseUrl}:${finalDirectory}`;
         const nextWorkspace: WorkspaceInfo = {
           id: workspaceId,
-          name: displayName ?? normalizedBaseUrl,
+          name: displayName ?? openworkWorkspace?.name ?? resolvedHostUrl ?? resolvedBaseUrl,
           path: "",
           preset: "remote",
           workspaceType: "remote",
-          baseUrl: normalizedBaseUrl,
-          directory: resolvedDirectory || null,
+          remoteType,
+          baseUrl: resolvedBaseUrl,
+          directory: finalDirectory || null,
           displayName,
+          openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
+          openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
+          openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
         };
 
         setWorkspaces((prev) => {
@@ -557,7 +764,7 @@ export function createWorkspaceStore(options: {
         syncActiveWorkspaceId(workspaceId);
       }
 
-      setProjectDir(resolvedDirectory);
+      setProjectDir(finalDirectory);
       setWorkspaceConfig(null);
       setWorkspaceConfigLoaded(true);
       setAuthorizedDirs([]);
@@ -1123,17 +1330,8 @@ export function createWorkspaceStore(options: {
     const activeWorkspace = activeWorkspaceInfo();
     if (activeWorkspace?.workspaceType === "remote") {
       options.setMode("client");
-      const baseUrl = activeWorkspace.baseUrl?.trim() ?? "";
-      if (!baseUrl) {
-        options.setOnboardingStep("client");
-        return;
-      }
-
       options.setOnboardingStep("connecting");
-      const ok = await connectToServer(baseUrl, activeWorkspace.directory?.trim() || undefined, {
-        workspaceId: activeWorkspace.id,
-        workspaceType: activeWorkspace.workspaceType,
-      });
+      const ok = await activateWorkspace(activeWorkspace.id);
       if (!ok) {
         options.setOnboardingStep("client");
       }
@@ -1248,8 +1446,11 @@ export function createWorkspaceStore(options: {
   async function onConnectClient() {
     options.setMode("client");
     options.setOnboardingStep("connecting");
+    const settings = options.openworkServerSettings();
     const ok = await createRemoteWorkspaceFlow({
-      baseUrl: options.baseUrl().trim(),
+      openworkHostUrl: settings.urlOverride ?? null,
+      openworkToken: settings.token ?? null,
+      opencodeBaseUrl: options.baseUrl().trim(),
       directory: options.clientDirectory().trim() ? options.clientDirectory().trim() : null,
       displayName: null,
     });

@@ -12,6 +12,8 @@ interface CliArgs {
   hostToken?: string;
   approvalMode?: ApprovalMode;
   approvalTimeoutMs?: number;
+  opencodeBaseUrl?: string;
+  opencodeDirectory?: string;
   workspaces: string[];
   corsOrigins?: string[];
   readOnly?: boolean;
@@ -81,6 +83,16 @@ export function parseCliArgs(argv: string[]): CliArgs {
       index += 1;
       continue;
     }
+    if (value === "--opencode-base-url") {
+      args.opencodeBaseUrl = argv[index + 1];
+      index += 1;
+      continue;
+    }
+    if (value === "--opencode-directory") {
+      args.opencodeDirectory = argv[index + 1];
+      index += 1;
+      continue;
+    }
     if (value === "--workspace") {
       const path = argv[index + 1];
       if (path) args.workspaces.push(path);
@@ -112,6 +124,8 @@ export function printHelp(): void {
     "  --host-token <token>     Host approval token",
     "  --approval <mode>        manual | auto",
     "  --approval-timeout <ms>  Approval timeout",
+    "  --opencode-base-url <url> OpenCode base URL to share",
+    "  --opencode-directory <path> OpenCode workspace directory to share",
     "  --workspace <path>       Workspace root (repeatable)",
     "  --cors <origins>          Comma-separated origins or *",
     "  --read-only              Disable writes",
@@ -137,6 +151,19 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
       : envWorkspaces.length > 0
         ? envWorkspaces.map((path) => ({ path }))
         : fileConfig.workspaces ?? [];
+
+  const envOpencodeBaseUrl = process.env.OPENWORK_OPENCODE_BASE_URL;
+  const envOpencodeDirectory = process.env.OPENWORK_OPENCODE_DIRECTORY;
+  const opencodeBaseUrl = cli.opencodeBaseUrl ?? envOpencodeBaseUrl;
+  const opencodeDirectory = cli.opencodeDirectory ?? envOpencodeDirectory;
+
+  if (workspaceConfigs.length > 0 && (opencodeBaseUrl || opencodeDirectory)) {
+    workspaceConfigs[0] = {
+      ...workspaceConfigs[0],
+      baseUrl: opencodeBaseUrl ?? workspaceConfigs[0].baseUrl,
+      directory: opencodeDirectory ?? workspaceConfigs[0].directory,
+    };
+  }
 
   const workspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
 

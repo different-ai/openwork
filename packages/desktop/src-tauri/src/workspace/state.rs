@@ -65,9 +65,13 @@ pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo,
         path: starter_dir.to_string_lossy().to_string(),
         preset: "starter".to_string(),
         workspace_type: WorkspaceType::Local,
+        remote_type: None,
         base_url: None,
         directory: None,
         display_name: None,
+        openwork_host_url: None,
+        openwork_workspace_id: None,
+        openwork_workspace_name: None,
     })
 }
 
@@ -77,6 +81,17 @@ pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -
         if !dir.trim().is_empty() {
             key.push_str("::");
             key.push_str(dir.trim());
+        }
+    }
+    stable_workspace_id(&key)
+}
+
+pub fn stable_workspace_id_for_openwork(host_url: &str, workspace_id: Option<&str>) -> String {
+    let mut key = format!("openwork::{host_url}");
+    if let Some(id) = workspace_id {
+        if !id.trim().is_empty() {
+            key.push_str("::");
+            key.push_str(id.trim());
         }
     }
     stable_workspace_id(&key)

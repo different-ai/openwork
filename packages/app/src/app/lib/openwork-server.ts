@@ -21,6 +21,10 @@ export type OpenworkWorkspaceInfo = {
   workspaceType: "local" | "remote";
   baseUrl?: string;
   directory?: string;
+  opencode?: {
+    baseUrl?: string;
+    directory?: string;
+  };
 };
 
 export type OpenworkPluginItem = {

@@ -5,7 +5,7 @@ use crate::engine::doctor::{
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
-use crate::openwork_server::{manager::OpenworkServerManager, start_openwork_server};
+use crate::openwork_server::{manager::OpenworkServerManager, resolve_connect_url, start_openwork_server};
 use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
 use crate::utils::truncate_output;
 use tauri_plugin_shell::process::CommandEvent;
@@ -135,7 +135,8 @@ pub fn engine_start(
     std::fs::create_dir_all(&project_dir)
         .map_err(|e| format!("Failed to create projectDir directory: {e}"))?;
 
-    let hostname = "127.0.0.1".to_string();
+    let bind_host = "0.0.0.0".to_string();
+    let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
 
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
@@ -163,7 +164,7 @@ pub fn engine_start(
             .is_some_and(|candidate| candidate == &program);
 
     let (mut rx, child) =
-        spawn_engine(&app, &program, &hostname, port, &project_dir, use_sidecar)?;
+        spawn_engine(&app, &program, &bind_host, port, &project_dir, use_sidecar)?;
 
     state.last_stdout = None;
     state.last_stderr = None;
@@ -279,11 +280,17 @@ pub fn engine_start(
 
     state.child = Some(child);
     state.project_dir = Some(project_dir);
-    state.hostname = Some(hostname.clone());
+    state.hostname = Some(client_host.clone());
     state.port = Some(port);
-    state.base_url = Some(format!("http://{hostname}:{port}"));
+    state.base_url = Some(format!("http://{client_host}:{port}"));
 
-    if let Err(error) = start_openwork_server(&app, &openwork_manager, &state.project_dir.clone().unwrap_or_default()) {
+    let opencode_connect_url = resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    if let Err(error) = start_openwork_server(
+        &app,
+        &openwork_manager,
+        &state.project_dir.clone().unwrap_or_default(),
+        Some(&opencode_connect_url),
+    ) {
         state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
     }
 

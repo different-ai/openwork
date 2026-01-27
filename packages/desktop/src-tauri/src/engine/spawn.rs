@@ -13,11 +13,11 @@ pub fn find_free_port() -> Result<u16, String> {
     Ok(port)
 }
 
-pub fn build_engine_args(hostname: &str, port: u16) -> Vec<String> {
+pub fn build_engine_args(bind_host: &str, port: u16) -> Vec<String> {
     vec![
         "serve".to_string(),
         "--hostname".to_string(),
-        hostname.to_string(),
+        bind_host.to_string(),
         "--port".to_string(),
         port.to_string(),
         "--cors".to_string(),

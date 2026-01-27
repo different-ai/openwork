@@ -13,6 +13,17 @@ export default function WorkspaceSwitchOverlay(props: {
 
   const workspaceName = createMemo(() => {
     if (!props.workspace) return "";
+    if (props.workspace.workspaceType === "remote" && props.workspace.remoteType === "openwork") {
+      return (
+        props.workspace.openworkWorkspaceName?.trim() ||
+        props.workspace.displayName?.trim() ||
+        props.workspace.name?.trim() ||
+        props.workspace.openworkHostUrl?.trim() ||
+        props.workspace.baseUrl?.trim() ||
+        props.workspace.path?.trim() ||
+        ""
+      );
+    }
     return (
       props.workspace.displayName?.trim() ||
       props.workspace.name?.trim() ||
@@ -38,6 +49,9 @@ export default function WorkspaceSwitchOverlay(props: {
   const metaPrimary = createMemo(() => {
     if (!props.workspace) return "";
     if (props.workspace.workspaceType === "remote") {
+      if (props.workspace.remoteType === "openwork") {
+        return props.workspace.openworkHostUrl?.trim() ?? props.workspace.baseUrl?.trim() ?? "";
+      }
       return props.workspace.baseUrl?.trim() ?? "";
     }
     return props.workspace.path?.trim() ?? "";
@@ -45,7 +59,11 @@ export default function WorkspaceSwitchOverlay(props: {
 
   const metaSecondary = createMemo(() => {
     if (!props.workspace || props.workspace.workspaceType !== "remote") return "";
-    return props.workspace.directory?.trim() ?? "";
+    return (
+      props.workspace.directory?.trim() ||
+      props.workspace.openworkWorkspaceName?.trim() ||
+      ""
+    );
   });
 
   return (
@@ -96,6 +114,11 @@ export default function WorkspaceSwitchOverlay(props: {
                 <Show when={props.workspace?.workspaceType === "remote"}>
                   <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-4 text-gray-11">
                     {translate("dashboard.remote")}
+                  </span>
+                  <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-10">
+                    {props.workspace?.remoteType === "openwork"
+                      ? translate("dashboard.remote_connection_openwork")
+                      : translate("dashboard.remote_connection_direct")}
                   </span>
                 </Show>
               </div>

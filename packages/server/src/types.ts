@@ -17,6 +17,10 @@ export interface WorkspaceInfo {
   workspaceType: WorkspaceType;
   baseUrl?: string;
   directory?: string;
+  opencode?: {
+    baseUrl?: string;
+    directory?: string;
+  };
 }
 
 export interface ApprovalConfig {
