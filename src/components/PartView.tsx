@@ -1,6 +1,8 @@
 import { Match, Show, Switch } from "solid-js";
 
 import type { Part } from "@opencode-ai/sdk/v2/client";
+import { Sparkles } from "lucide-solid";
+import { isSkillInvocation, extractSkillName } from "../app/utils";
 
 type Props = {
   part: Part;
@@ -96,10 +98,22 @@ export default function PartView(props: Props) {
         <Show when={toolOnly()}>
           <div class="grid gap-2">
             <div class="flex items-center justify-between gap-3">
-              <div
-                class={`text-xs font-medium ${tone() === "dark" ? "text-black" : "text-neutral-200"}`.trim()}
-              >
-                Tool · {String((p() as any).tool)}
+              <div class="flex items-center gap-2">
+                <div
+                  class={`text-xs font-medium ${tone() === "dark" ? "text-black" : "text-neutral-200"}`.trim()}
+                >
+                  Tool · {String((p() as any).tool)}
+                </div>
+                <Show when={isSkillInvocation(p())}>
+                  <span class={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${
+                    tone() === "dark" 
+                      ? "bg-amber-500/20 text-amber-700 border-amber-500/30" 
+                      : "bg-amber-500/20 text-amber-200 border-amber-500/30"
+                  }`.trim()}>
+                    <Sparkles size={10} />
+                    Skill
+                  </span>
+                </Show>
               </div>
               <div
                 class={`rounded-full px-2 py-0.5 text-[11px] font-medium ${

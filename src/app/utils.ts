@@ -430,11 +430,25 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string } {
+export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const state = record.state ?? {};
+    
+    // Check if this is a skill invocation
+    const skillName = extractSkillName(part);
+    if (skillName) {
+      const title = state.title ? String(state.title) : skillName;
+      const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
+      if (output) {
+        const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
+        return { title, detail: short, isSkill: true };
+      }
+      return { title, isSkill: true };
+    }
+    
+    // Regular tool handling
     const title = state.title ? String(state.title) : toolName;
     const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
     if (output) {
@@ -511,4 +525,49 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
 
 export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
   return items.map((item) => item.name).slice(0, 5);
+}
+
+/**
+ * Detects if a tool part is a skill invocation.
+ * Skills are identified by the tool name matching a pattern like `skill:skill-name`
+ * or by checking the execution context.
+ */
+export function isSkillInvocation(part: Part): boolean {
+  if (part.type !== "tool") return false;
+  const record = part as any;
+  const toolName = record.tool ? String(record.tool).toLowerCase() : "";
+  
+  // Check if tool name starts with "skill:" prefix
+  if (toolName.startsWith("skill:")) return true;
+  
+  // Check if metadata indicates this is a skill
+  if (record.state?.isSkill === true) return true;
+  
+  // Fall back to detecting common skill patterns in the tool name
+  // This handles cases where skill name is embedded directly
+  return false;
+}
+
+/**
+ * Extracts the skill name from a tool part if it's a skill invocation.
+ * Returns null if the part is not a skill or skill name cannot be determined.
+ */
+export function extractSkillName(part: Part): string | null {
+  if (!isSkillInvocation(part)) return null;
+  
+  const record = part as any;
+  const toolName = record.tool ? String(record.tool) : "";
+  
+  // Extract name after "skill:" prefix
+  if (toolName.startsWith("skill:")) {
+    const name = toolName.slice(6).trim();
+    return name || null;
+  }
+  
+  // Use explicit skill name metadata if available
+  if (typeof record.state?.skillName === "string") {
+    return record.state.skillName;
+  }
+  
+  return null;
 }

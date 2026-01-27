@@ -22,12 +22,14 @@ import {
   HardDrive,
   Plus,
   Shield,
+  Sparkles,
   Zap,
 } from "lucide-solid";
 
 import Button from "../components/Button";
 import PartView from "../components/PartView";
 import WorkspaceChip from "../components/WorkspaceChip";
+import { isSkillInvocation, extractSkillName } from "../app/utils";
 import { isTauriRuntime, isWindowsPlatform } from "../app/utils";
 
 export type SessionViewProps = {
@@ -423,13 +425,23 @@ export default function SessionView(props: SessionViewProps) {
                                         <For each={(group as any).parts as Part[]}>
                                           {(part) => {
                                             const summary = props.summarizeStep(part);
+                                            const isSkill = () => isSkillInvocation(part);
+                                            const skillName = () => isSkill() ? extractSkillName(part) : null;
                                             return (
                                               <div class="flex items-start gap-3 text-xs text-zinc-300">
                                                 <div class="mt-0.5 h-5 w-5 rounded-full border border-zinc-700 flex items-center justify-center text-zinc-500">
                                                   {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
                                                 </div>
-                                                <div>
-                                                  <div class="text-zinc-200">{summary.title}</div>
+                                                <div class="flex-1">
+                                                  <div class="flex items-center gap-2">
+                                                    <div class="text-zinc-200">{summary.title}</div>
+                                                    <Show when={isSkill()}>
+                                                      <span class="inline-flex items-center gap-1 bg-amber-500/20 text-amber-200 rounded-full px-2 py-0.5 text-[10px] font-medium border border-amber-500/30">
+                                                        <Sparkles size={10} />
+                                                        Skill
+                                                      </span>
+                                                    </Show>
+                                                  </div>
                                                   <Show when={summary.detail}>
                                                     <div class="mt-1 text-zinc-500">{summary.detail}</div>
                                                   </Show>
