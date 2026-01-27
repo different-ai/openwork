@@ -45,26 +45,17 @@ pub fn engine_doctor(app: AppHandle, prefer_sidecar: Option<bool>) -> EngineDoct
         current_bin_dir.as_deref(),
     );
 
-    let (sidecar_candidate, _sidecar_notes) = resolve_sidecar_candidate(
-        prefer_sidecar,
-        resource_dir.as_deref(),
-        current_bin_dir.as_deref(),
-    );
-    let use_sidecar = prefer_sidecar
-        && sidecar_candidate
-            .as_ref()
-            .is_some_and(|candidate| resolved.as_ref().is_some_and(|path| path == candidate));
-
     let (version, supports_serve, serve_help_status, serve_help_stdout, serve_help_stderr) =
         match resolved.as_ref() {
             Some(path) => {
-                let version = opencode_version(path.as_os_str());
-                if use_sidecar {
-                    (version, true, None, None, None)
-                } else {
-                    let (ok, status, stdout, stderr) = opencode_serve_help(path.as_os_str());
-                    (version, ok, status, stdout, stderr)
-                }
+                let (ok, status, stdout, stderr) = opencode_serve_help(path.as_os_str());
+                (
+                    opencode_version(path.as_os_str()),
+                    ok,
+                    status,
+                    stdout,
+                    stderr,
+                )
             }
             None => (None, false, None, None, None),
         };
