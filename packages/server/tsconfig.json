@@ -10,7 +10,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
-    "types": ["bun", "node"]
+    "types": ["bun-types", "node"]
   },
   "include": ["src"]
 }
