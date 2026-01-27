@@ -17,7 +17,7 @@ export type SidebarProps = {
   todos: TodoItem[];
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
-  sessions: Array<{ id: string; title: string; slug?: string | null }>;
+  sessions: Array<{ id: string; title: string; slug?: string | null; workspaceLabel?: string | null }>;
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   sessionStatusById: Record<string, string>;
@@ -63,11 +63,18 @@ export default function SessionSidebar(props: SidebarProps) {
                   }`}
                   onClick={() => props.onSelectSession(session.id)}
                 >
-                  <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
-                    <span class="truncate">{session.title}</span>
-                    <Show
-                      when={
-                        props.sessionStatusById[session.id] &&
+                    <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
+                      <div class="min-w-0">
+                        <div class="truncate">{session.title}</div>
+                        <Show when={session.workspaceLabel}>
+                          <div class="text-[10px] text-gray-9 truncate">
+                            {session.workspaceLabel}
+                          </div>
+                        </Show>
+                      </div>
+                      <Show
+                        when={
+                          props.sessionStatusById[session.id] &&
                         props.sessionStatusById[session.id] !== "idle"
                       }
                     >

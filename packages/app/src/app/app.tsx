@@ -39,6 +39,7 @@ import ReloadWorkspaceToast from "./components/reload-workspace-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
+import ProtoWorkspacesView from "./pages/proto-workspaces";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   DEFAULT_MODEL,
@@ -94,6 +95,7 @@ import { currentLocale, setLocale, t, type Language } from "../i18n";
 import {
   isWindowsPlatform,
   lastUserModelFromMessages,
+  normalizeDirectoryPath,
   parseModelRef,
   readModePreference,
   safeStringify,
@@ -135,6 +137,7 @@ export default function App() {
     const path = location.pathname.toLowerCase();
     if (path.startsWith("/onboarding")) return "onboarding";
     if (path.startsWith("/session")) return "session";
+    if (path.startsWith("/proto")) return "proto";
     return "dashboard";
   });
 
@@ -158,6 +161,10 @@ export default function App() {
       return;
     }
     if (next === "dashboard" && Date.now() < sessionViewLockUntil()) {
+      return;
+    }
+    if (next === "proto") {
+      navigate("/proto/workspaces");
       return;
     }
     if (next === "onboarding") {
@@ -2683,6 +2690,8 @@ export default function App() {
     onStartHost: workspaceStore.onStartHost,
     onCreateWorkspace: workspaceStore.createWorkspaceFlow,
     onPickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
+    onImportWorkspaceConfig: workspaceStore.importWorkspaceConfig,
+    importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     onAttachHost: workspaceStore.onAttachHost,
     onConnectClient: workspaceStore.onConnectClient,
     onBackToMode: workspaceStore.onBackToMode,
@@ -2733,6 +2742,8 @@ export default function App() {
     filteredWorkspaces: workspaceStore.filteredWorkspaces(),
     activeWorkspaceId: workspaceStore.activeWorkspaceId(),
     activateWorkspace: workspaceStore.activateWorkspace,
+    exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
+    exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
     setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
     createWorkspaceFlow: workspaceStore.createWorkspaceFlow,
@@ -2878,6 +2889,18 @@ export default function App() {
     }
   };
 
+  const workspaceLabelForDirectory = (directory?: string | null) => {
+    const normalized = normalizeDirectoryPath(directory);
+    if (!normalized) return null;
+    const match = workspaceStore.workspaces().find((workspace) => {
+      const workspacePath = normalizeDirectoryPath(
+        workspace.workspaceType === "remote" ? workspace.directory ?? "" : workspace.path
+      );
+      return workspacePath === normalized;
+    });
+    return match?.displayName ?? match?.name ?? null;
+  };
+
 
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
@@ -2907,6 +2930,7 @@ export default function App() {
       id: session.id,
       title: session.title,
       slug: session.slug,
+      workspaceLabel: workspaceLabelForDirectory(session.directory),
     })),
     selectSession: isDemoMode() ? selectDemoSession : selectSession,
     messages: activeMessages(),
@@ -3046,6 +3070,19 @@ export default function App() {
       return;
     }
 
+    if (path.startsWith("/proto")) {
+      if (isTauriRuntime()) {
+        navigate("/dashboard/home", { replace: true });
+        return;
+      }
+
+      const [, , protoSegment] = rawPath.split("/");
+      if (!protoSegment) {
+        navigate("/proto/workspaces", { replace: true });
+      }
+      return;
+    }
+
     if (path.startsWith("/onboarding")) {
       return;
     }
@@ -3056,6 +3093,9 @@ export default function App() {
   return (
     <>
       <Switch>
+        <Match when={currentView() === "proto"}>
+          <ProtoWorkspacesView />
+        </Match>
         <Match when={currentView() === "onboarding"}>
           <OnboardingView {...onboardingProps()} />
         </Match>
@@ -3183,6 +3223,8 @@ export default function App() {
         onSelect={workspaceStore.activateWorkspace}
         onCreateLocal={() => workspaceStore.setCreateWorkspaceOpen(true)}
         onCreateRemote={() => workspaceStore.setCreateRemoteWorkspaceOpen(true)}
+        onImport={workspaceStore.importWorkspaceConfig}
+        importing={workspaceStore.importingWorkspaceConfig()}
         onForget={workspaceStore.forgetWorkspace}
         connectingWorkspaceId={workspaceStore.connectingWorkspaceId()}
       />

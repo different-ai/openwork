@@ -1,6 +1,6 @@
 import { For, Show, createMemo } from "solid-js";
 
-import { Check, Globe, Loader2, Plus, Search, Trash2 } from "lucide-solid";
+import { Check, Globe, Loader2, Plus, Search, Trash2, Upload } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -15,6 +15,8 @@ export default function WorkspacePicker(props: {
   onSelect: (workspaceId: string) => Promise<boolean> | boolean | void;
   onCreateLocal: () => void;
   onCreateRemote: () => void;
+  onImport: () => void;
+  importing?: boolean;
   onForget: (workspaceId: string) => void;
   connectingWorkspaceId?: string | null;
 }) {
@@ -124,6 +126,17 @@ export default function WorkspacePicker(props: {
 
           <div class="p-2 border-t border-gray-6 bg-gray-2">
             <div class="grid gap-2">
+              <button
+                onClick={() => {
+                  props.onImport();
+                  props.onClose();
+                }}
+                disabled={props.importing}
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-gray-11 hover:bg-gray-4 hover:text-gray-12 transition-colors disabled:opacity-60 disabled:hover:bg-transparent"
+              >
+                <Upload size={16} />
+                Import workspace config
+              </button>
               <button
                 onClick={() => {
                   props.onCreateLocal();

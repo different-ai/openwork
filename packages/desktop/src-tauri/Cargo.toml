@@ -17,6 +17,8 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-shell = "2"
+walkdir = "2.5"
+zip = "0.6"
 
 [profile.release]
 panic = "abort"

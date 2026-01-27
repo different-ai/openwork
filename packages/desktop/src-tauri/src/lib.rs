@@ -23,8 +23,8 @@ use commands::skills::{install_skill_template, list_local_skills, uninstall_skil
 use commands::updater::updater_environment;
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
-    workspace_forget, workspace_openwork_read, workspace_openwork_write, workspace_set_active,
-    workspace_update_remote,
+    workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
+    workspace_openwork_write, workspace_set_active, workspace_update_remote,
 };
 use engine::manager::EngineManager;
 use workspace::watch::WorkspaceWatchState;
@@ -56,6 +56,8 @@ pub fn run() {
             workspace_update_remote,
             workspace_forget,
             workspace_add_authorized_root,
+            workspace_export_config,
+            workspace_import_config,
             opencode_command_list,
             opencode_command_write,
             opencode_command_delete,

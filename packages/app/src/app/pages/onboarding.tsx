@@ -43,6 +43,8 @@ export type OnboardingViewProps = {
   onStartHost: () => void;
   onCreateWorkspace: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickWorkspaceFolder: () => Promise<string | null>;
+  onImportWorkspaceConfig: () => void;
+  importingWorkspaceConfig: boolean;
   onAttachHost: () => void;
   onConnectClient: () => void;
   onBackToMode: () => void;
@@ -171,6 +173,24 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 onConfirm={props.onCreateWorkspace}
                 onPickFolder={props.onPickWorkspaceFolder}
               />
+
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">Import</div>
+                    <div class="mt-1 text-sm text-gray-12">Use an existing workspace config.</div>
+                    <div class="text-xs text-gray-10">Imports `.opencode` and `opencode.json` only.</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 px-3 shrink-0"
+                    onClick={props.onImportWorkspaceConfig}
+                    disabled={props.importingWorkspaceConfig || props.busy}
+                  >
+                    Import config
+                  </Button>
+                </div>
+              </div>
 
               <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
                 <div class="flex items-center justify-between gap-4">

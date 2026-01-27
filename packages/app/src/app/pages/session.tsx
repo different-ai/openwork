@@ -50,7 +50,7 @@ export type SessionViewProps = {
   createSessionAndOpen: () => void;
   sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   newTaskDisabled: boolean;
-  sessions: Array<{ id: string; title: string; slug?: string | null }>;
+  sessions: Array<{ id: string; title: string; slug?: string | null; workspaceLabel?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
   todos: TodoItem[];

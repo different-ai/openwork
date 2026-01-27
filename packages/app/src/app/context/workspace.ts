@@ -10,18 +10,22 @@ import type {
 } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "../utils";
 import { unwrap } from "../lib/opencode";
-import { homeDir } from "@tauri-apps/api/path";
+import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
   engineInstall,
   engineStart,
   engineStop,
+  pickFile,
   pickDirectory,
+  saveFile,
   workspaceBootstrap,
   workspaceCreate,
   workspaceCreateRemote,
+  workspaceExportConfig,
   workspaceForget,
+  workspaceImportConfig,
   workspaceOpenworkRead,
   workspaceOpenworkWrite,
   workspaceSetActive,
@@ -101,6 +105,8 @@ export function createWorkspaceStore(options: {
   const [createWorkspaceOpen, setCreateWorkspaceOpen] = createSignal(false);
   const [createRemoteWorkspaceOpen, setCreateRemoteWorkspaceOpen] = createSignal(false);
   const [connectingWorkspaceId, setConnectingWorkspaceId] = createSignal<string | null>(null);
+  const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
+  const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -614,6 +620,116 @@ export function createWorkspaceStore(options: {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
       return null;
+    }
+  }
+
+  async function exportWorkspaceConfig() {
+    if (exportingWorkspaceConfig()) return;
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    const active = activeWorkspaceInfo();
+    if (!active) {
+      options.setError("Select a workspace to export");
+      return;
+    }
+    if (active.workspaceType === "remote") {
+      options.setError("Export is only supported for local workspaces");
+      return;
+    }
+
+    setExportingWorkspaceConfig(true);
+    options.setError(null);
+
+    try {
+      const nameBase = (active.displayName || active.name || "workspace")
+        .toLowerCase()
+        .replace(/[^a-z0-9-_]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 60);
+      const dateStamp = new Date().toISOString().slice(0, 10);
+      const fileName = `openwork-${nameBase || "workspace"}-${dateStamp}.openwork-workspace`;
+      const downloads = await downloadDir().catch(() => null);
+      const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
+
+      const outputPath = await saveFile({
+        title: "Export workspace config",
+        defaultPath,
+        filters: [{ name: "OpenWork Workspace", extensions: ["openwork-workspace", "zip"] }],
+      });
+
+      if (!outputPath) {
+        return;
+      }
+
+      await workspaceExportConfig({
+        workspaceId: active.id,
+        outputPath,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      setExportingWorkspaceConfig(false);
+    }
+  }
+
+  async function importWorkspaceConfig() {
+    if (importingWorkspaceConfig()) return;
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    setImportingWorkspaceConfig(true);
+    options.setError(null);
+
+    try {
+      const selection = await pickFile({
+        title: "Import workspace config",
+        filters: [{ name: "OpenWork Workspace", extensions: ["openwork-workspace", "zip"] }],
+      });
+      const filePath =
+        typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
+      if (!filePath) return;
+
+      const target = await pickDirectory({
+        title: "Choose a workspace folder",
+      });
+      const folder =
+        typeof target === "string" ? target : Array.isArray(target) ? target[0] : null;
+      if (!folder) return;
+
+      const resolvedFolder = await resolveWorkspacePath(folder);
+      if (!resolvedFolder) {
+        options.setError(t("app.error.choose_folder", currentLocale()));
+        return;
+      }
+
+      const ws = await workspaceImportConfig({
+        archivePath: filePath,
+        targetDir: resolvedFolder,
+      });
+
+      setWorkspaces(ws.workspaces);
+      syncActiveWorkspaceId(ws.activeId);
+      setWorkspacePickerOpen(false);
+      setCreateWorkspaceOpen(false);
+      setCreateRemoteWorkspaceOpen(false);
+      options.setTab("home");
+      options.setView("dashboard");
+      markOnboardingComplete();
+
+      if (ws.activeId) {
+        await activateWorkspace(ws.activeId);
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      setImportingWorkspaceConfig(false);
     }
   }
 
@@ -1178,6 +1294,8 @@ export function createWorkspaceStore(options: {
     createWorkspaceOpen,
     createRemoteWorkspaceOpen,
     connectingWorkspaceId,
+    exportingWorkspaceConfig,
+    importingWorkspaceConfig,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,
@@ -1201,6 +1319,8 @@ export function createWorkspaceStore(options: {
     createRemoteWorkspaceFlow,
     forgetWorkspace,
     pickWorkspaceFolder,
+    exportWorkspaceConfig,
+    importWorkspaceConfig,
     startHost,
     stopHost,
     reloadWorkspaceEngine,

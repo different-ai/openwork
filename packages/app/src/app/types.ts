@@ -81,7 +81,7 @@ export type OpencodeEvent = {
   properties?: unknown;
 };
 
-export type View = "onboarding" | "dashboard" | "session";
+export type View = "onboarding" | "dashboard" | "session" | "proto";
 
 export type Mode = "host" | "client";
 

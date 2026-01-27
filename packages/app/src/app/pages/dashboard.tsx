@@ -6,9 +6,9 @@ import type {
   PluginScope,
   SkillCard,
   WorkspaceCommand,
+  View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 
 import Button from "../components/button";
@@ -34,8 +34,8 @@ import {
 export type DashboardViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
-  view: "dashboard" | "session" | "onboarding";
-  setView: (view: "dashboard" | "session" | "onboarding", sessionId?: string) => void;
+  view: View;
+  setView: (view: View, sessionId?: string) => void;
   mode: "host" | "client" | null;
   baseUrl: string;
   clientConnected: boolean;
@@ -59,6 +59,8 @@ export type DashboardViewProps = {
   filteredWorkspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
   activateWorkspace: (id: string) => Promise<boolean> | boolean;
+  exportWorkspaceConfig: () => void;
+  exportWorkspaceBusy: boolean;
   createWorkspaceOpen: boolean;
   setCreateWorkspaceOpen: (open: boolean) => void;
   createWorkspaceFlow: (
@@ -215,6 +217,25 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   const quickCommands = createMemo(() => props.workspaceCommands.slice(0, 3));
+  const canExportWorkspace = createMemo(() => props.activeWorkspaceDisplay.workspaceType !== "remote");
+  const workspaceDirectoryMap = createMemo(() =>
+    props.workspaces.map((workspace) => ({
+      id: workspace.id,
+      name: workspace.displayName ?? workspace.name,
+      path: normalizeDirectoryPath(
+        workspace.workspaceType === "remote"
+          ? workspace.directory ?? ""
+          : workspace.path
+      ),
+    }))
+  );
+
+  const workspaceLabelForSession = (directory?: string | null) => {
+    if (!directory) return null;
+    const normalized = normalizeDirectoryPath(directory);
+    if (!normalized) return null;
+    return workspaceDirectoryMap().find((workspace) => workspace.path === normalized)?.name ?? null;
+  };
 
   const openSessionFromList = (sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
@@ -430,6 +451,19 @@ export default function DashboardView(props: DashboardViewProps) {
           <div class="flex items-center gap-2">
             <Show when={props.tab === "home" || props.tab === "sessions"}>
               <Button
+                variant="outline"
+                class="text-xs h-9"
+                onClick={props.exportWorkspaceConfig}
+                disabled={!canExportWorkspace() || props.exportWorkspaceBusy}
+                title={
+                  !canExportWorkspace()
+                    ? "Export is only available for local workspaces"
+                    : "Export workspace config"
+                }
+              >
+                Share config
+              </Button>
+              <Button
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture?.(e.pointerId);
                 }}
@@ -563,6 +597,81 @@ export default function DashboardView(props: DashboardViewProps) {
               </section>
 
               <section>
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
+                    Workspaces
+                  </h3>
+                  <div class="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 px-3"
+                      onClick={props.exportWorkspaceConfig}
+                      disabled={!canExportWorkspace() || props.exportWorkspaceBusy}
+                      title={
+                        !canExportWorkspace()
+                          ? "Export is only available for local workspaces"
+                          : "Export workspace config"
+                      }
+                    >
+                      Share config
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      class="text-xs h-8 px-3"
+                      onClick={() => props.setWorkspacePickerOpen(true)}
+                    >
+                      <Plus size={14} />
+                      Add workspace
+                    </Button>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <For each={props.workspaces}>
+                    {(workspace) => (
+                      <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                        <div class="flex items-start justify-between">
+                          <div class="space-y-1 min-w-0">
+                            <div class="text-sm font-semibold text-gray-12 truncate">
+                              {workspace.displayName ?? workspace.name}
+                            </div>
+                            <div class="text-xs text-gray-10 font-mono truncate">
+                              {workspace.workspaceType === "remote"
+                                ? workspace.baseUrl ?? workspace.path
+                                : workspace.path}
+                            </div>
+                          </div>
+                          <span class="text-[11px] text-gray-9">
+                            {workspace.workspaceType === "remote" ? "Remote" : "Local"}
+                          </span>
+                        </div>
+                        <div class="flex items-center justify-between text-xs text-gray-9">
+                          <span>
+                            {workspace.id === props.activeWorkspaceId ? "Active" : "Inactive"}
+                          </span>
+                          <Button
+                            variant="ghost"
+                            class="text-xs px-2 py-1"
+                            onClick={() => props.activateWorkspace(workspace.id)}
+                            disabled={
+                              workspace.id === props.activeWorkspaceId ||
+                              props.connectingWorkspaceId === workspace.id
+                            }
+                          >
+                            {workspace.id === props.activeWorkspaceId
+                              ? "Active"
+                              : props.connectingWorkspaceId === workspace.id
+                                ? "Switching..."
+                                : "Switch"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </For>
+                </div>
+              </section>
+
+              <section>
                 <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
                   Recent Sessions
                 </h3>
@@ -595,16 +704,12 @@ export default function DashboardView(props: DashboardViewProps) {
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
-                              <Show
-                                when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
-                                }
-                              >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                  this workspace
-                                </span>
+                              <Show when={workspaceLabelForSession(s.directory)}>
+                                {(label) => (
+                                  <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
+                                    {label()}
+                                  </span>
+                                )}
                               </Show>
                             </div>
                           </div>
@@ -662,16 +767,12 @@ export default function DashboardView(props: DashboardViewProps) {
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
-                              <Show
-                                when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
-                                }
-                              >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                  this workspace
-                                </span>
+                              <Show when={workspaceLabelForSession(s.directory)}>
+                                {(label) => (
+                                  <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
+                                    {label()}
+                                  </span>
+                                )}
                               </Show>
                             </div>
                           </div>

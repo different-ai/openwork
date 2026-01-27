@@ -40,6 +40,12 @@ export type WorkspaceList = {
   workspaces: WorkspaceInfo[];
 };
 
+export type WorkspaceExportSummary = {
+  outputPath: string;
+  included: number;
+  excluded: string[];
+};
+
 export async function engineStart(
   projectDir: string,
   options?: { preferSidecar?: boolean },
@@ -107,6 +113,28 @@ export async function workspaceAddAuthorizedRoot(input: {
   return invoke<ExecResult>("workspace_add_authorized_root", {
     workspacePath: input.workspacePath,
     folderPath: input.folderPath,
+  });
+}
+
+export async function workspaceExportConfig(input: {
+  workspaceId: string;
+  outputPath: string;
+}): Promise<WorkspaceExportSummary> {
+  return invoke<WorkspaceExportSummary>("workspace_export_config", {
+    workspaceId: input.workspaceId,
+    outputPath: input.outputPath,
+  });
+}
+
+export async function workspaceImportConfig(input: {
+  archivePath: string;
+  targetDir: string;
+  name?: string | null;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_import_config", {
+    archivePath: input.archivePath,
+    targetDir: input.targetDir,
+    name: input.name ?? null,
   });
 }
 
@@ -208,6 +236,35 @@ export async function pickDirectory(options?: {
     defaultPath: options?.defaultPath,
     directory: true,
     multiple: options?.multiple,
+  });
+}
+
+export async function pickFile(options?: {
+  title?: string;
+  defaultPath?: string;
+  multiple?: boolean;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | string[] | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  return open({
+    title: options?.title,
+    defaultPath: options?.defaultPath,
+    directory: false,
+    multiple: options?.multiple,
+    filters: options?.filters,
+  });
+}
+
+export async function saveFile(options?: {
+  title?: string;
+  defaultPath?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | null> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  return save({
+    title: options?.title,
+    defaultPath: options?.defaultPath,
+    filters: options?.filters,
   });
 }
 
