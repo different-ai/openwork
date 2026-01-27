@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
-import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
+import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
@@ -11,6 +11,7 @@ import type {
   McpServerEntry,
   McpStatusMap,
   PendingPermission,
+  ProviderListItem,
   SkillCard,
   TodoItem,
   View,
@@ -101,7 +102,7 @@ export type SessionViewProps = {
   providerAuthBusy: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  providers: Provider[];
+  providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
   searchFiles: (query: string) => Promise<string[]>;

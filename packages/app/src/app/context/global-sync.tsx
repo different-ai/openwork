@@ -20,6 +20,7 @@ import type {
 import type { McpStatusMap, TodoItem } from "../types";
 import { unwrap } from "../lib/opencode";
 import { safeStringify } from "../utils";
+import { mapConfigProvidersToList } from "../utils/providers";
 import { useGlobalSDK } from "./global-sdk";
 
 export type WorkspaceState = {
@@ -36,7 +37,6 @@ type WorkspaceStore = [Store<WorkspaceState>, SetStoreFunction<WorkspaceState>];
 type ProjectMeta = {
   name?: string;
   icon?: Project["icon"];
-  commands?: Project["commands"];
 };
 
 type GlobalState = {
@@ -107,7 +107,6 @@ export function GlobalSyncProvider(props: ParentProps) {
       next[project.worktree] = {
         name: project.name,
         icon: project.icon,
-        commands: project.commands,
       };
     }
     setGlobalStore("projectMeta", next);
@@ -125,7 +124,7 @@ export function GlobalSyncProvider(props: ParentProps) {
     } catch {
       const fallback = unwrap(await globalSDK.client().config.providers()) as ConfigProvidersResponse;
       setGlobalStore("provider", {
-        all: fallback.providers as ProviderListResponse["all"],
+        all: mapConfigProvidersToList(fallback.providers),
         connected: [],
         default: fallback.default,
       });
@@ -239,7 +238,9 @@ export function GlobalSyncProvider(props: ParentProps) {
     children.set(key, store);
     void refreshDirectory(directory);
     if (!subscriptions.has(key)) {
-      const unsubscribe = globalSDK.event.listen(key, (event: Event) => {
+      const unsubscribe = globalSDK.event.listen((payload) => {
+        if (payload.name !== key) return;
+        const event = payload.details as Event;
         if (event.type === "lsp.updated") {
           void refreshLsp(directory);
         }
@@ -268,7 +269,9 @@ export function GlobalSyncProvider(props: ParentProps) {
 
   const globalKey = keyFor("");
   if (!subscriptions.has(globalKey)) {
-    const unsubscribe = globalSDK.event.listen(globalKey, (event: Event) => {
+    const unsubscribe = globalSDK.event.listen((payload) => {
+      if (payload.name !== globalKey) return;
+      const event = payload.details as Event;
       if (event.type === "lsp.updated") {
         void refreshLsp();
       }

@@ -1,12 +1,14 @@
 import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
 
-import type { Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem } from "./types";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 import type { Client, Mode, PluginScope, ReloadReason, ResetOpenworkMode, UpdateHandle } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
+import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
 import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
@@ -29,7 +31,7 @@ export function createSystemState(options: {
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshMcpServers?: () => Promise<void>;
   reloadWorkspaceEngine?: () => Promise<boolean>;
-  setProviders: (value: Provider[]) => void;
+  setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
   setError: (value: string | null) => void;
@@ -234,13 +236,13 @@ export function createSystemState(options: {
 
       try {
         const providerList = unwrap(await nextClient.provider.list());
-        options.setProviders(providerList.all as unknown as Provider[]);
+        options.setProviders(providerList.all);
         options.setProviderDefaults(providerList.default);
         options.setProviderConnectedIds(providerList.connected);
       } catch {
         try {
           const cfg = unwrap(await nextClient.config.providers());
-          options.setProviders(cfg.providers);
+          options.setProviders(mapConfigProvidersToList(cfg.providers));
           options.setProviderDefaults(cfg.default);
           options.setProviderConnectedIds([]);
         } catch {

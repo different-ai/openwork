@@ -1,5 +1,14 @@
-import type { Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
-import type { ArtifactItem, MessageGroup, MessageInfo, MessageWithParts, ModelRef, OpencodeEvent, PlaceholderAssistantMessage } from "../types";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
+import type {
+  ArtifactItem,
+  MessageGroup,
+  MessageInfo,
+  MessageWithParts,
+  ModelRef,
+  OpencodeEvent,
+  PlaceholderAssistantMessage,
+  ProviderListItem,
+} from "../types";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -47,7 +56,7 @@ const humanizeModelLabel = (value: string) => {
     .join(" ");
 };
 
-export function formatModelLabel(model: ModelRef, providers: Provider[] = []) {
+export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] = []) {
   const provider = providers.find((p) => p.id === model.providerID);
   const modelInfo = provider?.models?.[model.modelID];
 

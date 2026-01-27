@@ -1,8 +1,16 @@
-import type { Message, Part, PermissionRequest as ApiPermissionRequest, Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type {
+  Message,
+  Part,
+  PermissionRequest as ApiPermissionRequest,
+  ProviderListResponse,
+  Session,
+} from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/tauri";
 
 export type Client = ReturnType<typeof createClient>;
+
+export type ProviderListItem = ProviderListResponse["all"][number];
 
 export type PlaceholderAssistantMessage = {
   id: string;

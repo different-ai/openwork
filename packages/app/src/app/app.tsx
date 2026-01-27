@@ -13,7 +13,6 @@ import { useLocation, useNavigate } from "@solidjs/router";
 
 import type {
   Agent,
-  Provider,
   Part,
   TextPartInput,
   FilePartInput,
@@ -76,6 +75,7 @@ import type {
   ComposerAttachment,
   ComposerDraft,
   ComposerPart,
+  ProviderListItem,
   WorkspaceCommand,
   UpdateHandle,
 } from "./types";
@@ -127,6 +127,8 @@ import {
   createOpenworkServerClient,
   deriveOpenworkServerUrl,
   readOpenworkServerSettings,
+  writeOpenworkServerSettings,
+  clearOpenworkServerSettings,
   type OpenworkServerCapabilities,
   type OpenworkServerStatus,
   type OpenworkServerSettings,
@@ -236,6 +238,29 @@ export default function App() {
     setOpenworkServerUrl(derived ?? "");
   });
 
+  const checkOpenworkServer = async (url: string, token?: string) => {
+    const client = createOpenworkServerClient({ baseUrl: url, token });
+    try {
+      await client.health();
+    } catch {
+      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+    }
+
+    if (!token) {
+      return { status: "limited" as OpenworkServerStatus, capabilities: null };
+    }
+
+    try {
+      const caps = await client.capabilities();
+      return { status: "connected" as OpenworkServerStatus, capabilities: caps };
+    } catch (error) {
+      if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+        return { status: "limited" as OpenworkServerStatus, capabilities: null };
+      }
+      return { status: "disconnected" as OpenworkServerStatus, capabilities: null };
+    }
+  };
+
   createEffect(() => {
     if (typeof window === "undefined") return;
     const url = openworkServerUrl().trim();
@@ -250,39 +275,15 @@ export default function App() {
 
     let active = true;
     let busy = false;
-    const client = createOpenworkServerClient({ baseUrl: url, token });
 
     const run = async () => {
       if (busy) return;
       busy = true;
       try {
-        await client.health();
+        const result = await checkOpenworkServer(url, token);
         if (!active) return;
-
-        if (!token) {
-          setOpenworkServerStatus("limited");
-          setOpenworkServerCapabilities(null);
-        } else {
-          try {
-            const caps = await client.capabilities();
-            if (!active) return;
-            setOpenworkServerCapabilities(caps);
-            setOpenworkServerStatus("connected");
-          } catch (error) {
-            if (!active) return;
-            if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
-              setOpenworkServerStatus("limited");
-              setOpenworkServerCapabilities(null);
-            } else {
-              setOpenworkServerStatus("disconnected");
-              setOpenworkServerCapabilities(null);
-            }
-          }
-        }
-      } catch {
-        if (!active) return;
-        setOpenworkServerStatus("disconnected");
-        setOpenworkServerCapabilities(null);
+        setOpenworkServerStatus(result.status);
+        setOpenworkServerCapabilities(result.capabilities);
       } finally {
         if (!active) return;
         setOpenworkServerCheckedAt(Date.now());
@@ -810,7 +811,7 @@ export default function App() {
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
   const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
   const providerConnectedIds = createMemo(() => globalSync.data.provider.connected ?? []);
-  const setProviders = (value: Provider[]) => {
+  const setProviders = (value: ProviderListItem[]) => {
     globalSync.set("provider", "all", value);
   };
   const setProviderDefaults = (value: Record<string, string>) => {
@@ -1022,6 +1023,31 @@ export default function App() {
   const openworkServerCanWritePlugins = createMemo(
     () => openworkServerReady() && openworkServerWorkspaceReady() && (openworkServerCapabilities()?.plugins?.write ?? false),
   );
+
+  const updateOpenworkServerSettings = (next: OpenworkServerSettings) => {
+    const stored = writeOpenworkServerSettings(next);
+    setOpenworkServerSettings(stored);
+  };
+
+  const resetOpenworkServerSettings = () => {
+    clearOpenworkServerSettings();
+    setOpenworkServerSettings({});
+  };
+
+  const testOpenworkServerConnection = async (next: OpenworkServerSettings) => {
+    const derived = deriveOpenworkServerUrl(baseUrl(), next);
+    if (!derived) {
+      setOpenworkServerStatus("disconnected");
+      setOpenworkServerCapabilities(null);
+      setOpenworkServerCheckedAt(Date.now());
+      return false;
+    }
+    const result = await checkOpenworkServer(derived, next.token);
+    setOpenworkServerStatus(result.status);
+    setOpenworkServerCapabilities(result.capabilities);
+    setOpenworkServerCheckedAt(Date.now());
+    return result.status === "connected" || result.status === "limited";
+  };
 
   const commandState = createCommandState({
     client,
@@ -1714,7 +1740,7 @@ export default function App() {
           footerBits.push(t("settings.model_default", currentLocale()));
         }
         if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
-        if (model.capabilities?.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
+        if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
         next.push({
           providerID: provider.id,
@@ -2948,6 +2974,10 @@ export default function App() {
     error: error(),
     openworkServerStatus: openworkStatus,
     openworkServerUrl: openworkServerUrl(),
+    openworkServerSettings: openworkServerSettings(),
+    updateOpenworkServerSettings,
+    resetOpenworkServerSettings,
+    testOpenworkServerConnection,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     workspaceSearch: workspaceStore.workspaceSearch(),
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,

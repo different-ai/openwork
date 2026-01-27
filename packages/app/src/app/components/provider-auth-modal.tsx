@@ -1,5 +1,5 @@
 import { CheckCircle2, X } from "lucide-solid";
-import type { Provider } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem } from "../types";
 import { createMemo, For, Show } from "solid-js";
 
 import Button from "./button";
@@ -17,7 +17,7 @@ export type ProviderAuthModalProps = {
   loading: boolean;
   submitting: boolean;
   error: string | null;
-  providers: Provider[];
+  providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string) => void;

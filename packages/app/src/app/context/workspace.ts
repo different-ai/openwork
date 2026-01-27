@@ -31,8 +31,9 @@ import {
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient } from "../lib/opencode";
-import type { Provider } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
+import { mapConfigProvidersToList } from "../utils/providers";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
 
@@ -50,7 +51,7 @@ export function createWorkspaceStore(options: {
   setClient: (value: Client | null) => void;
   setConnectedVersion: (value: string | null) => void;
   setSseConnected: (value: boolean) => void;
-  setProviders: (value: Provider[]) => void;
+  setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
   setError: (value: string | null) => void;
@@ -379,13 +380,13 @@ export function createWorkspaceStore(options: {
 
       try {
         const providerList = unwrap(await nextClient.provider.list());
-        options.setProviders(providerList.all as unknown as Provider[]);
+        options.setProviders(providerList.all);
         options.setProviderDefaults(providerList.default);
         options.setProviderConnectedIds(providerList.connected);
       } catch {
         try {
           const cfg = unwrap(await nextClient.config.providers());
-          options.setProviders(cfg.providers as unknown as Provider[]);
+          options.setProviders(mapConfigProvidersToList(cfg.providers));
           options.setProviderDefaults(cfg.default);
           options.setProviderConnectedIds([]);
         } catch {

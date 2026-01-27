@@ -23,12 +23,12 @@ function useThrottledValue<T>(value: () => T, delayMs = 80) {
   createEffect(() => {
     const next = value();
     if (!delayMs) {
-      setState(next);
+      setState(() => next);
       return;
     }
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      setState(next);
+      setState(() => next);
       timer = undefined;
     }, delayMs);
   });
@@ -259,8 +259,10 @@ export default function PartView(props: Props) {
   };
 
   const inlineImage = () => {
-    if (p().type !== "image") return null;
+    if (p().type !== "file") return null;
     const record = p() as any;
+    const mime = typeof record?.mime === "string" ? record.mime : "";
+    if (!mime.startsWith("image/")) return null;
     const src = record?.url ?? record?.src ?? record?.data ?? record?.source;
     if (!src) return null;
     if (record?.data && record?.mediaType && !String(record.data).startsWith("data:")) {
@@ -464,14 +466,12 @@ export default function PartView(props: Props) {
         </Show>
       </Match>
 
-      <Match when={p().type === "image"}>
-        <Show when={inlineImage()}>
-          <img
-            src={inlineImage()!}
-            alt=""
-            class="max-w-full h-auto rounded-xl border border-gray-6/50"
-          />
-        </Show>
+      <Match when={inlineImage()}>
+        <img
+          src={inlineImage()!}
+          alt=""
+          class="max-w-full h-auto rounded-xl border border-gray-6/50"
+        />
       </Match>
 
       <Match when={p().type === "step-start" || p().type === "step-finish"}>

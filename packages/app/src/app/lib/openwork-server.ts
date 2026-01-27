@@ -86,6 +86,48 @@ export function readOpenworkServerSettings(): OpenworkServerSettings {
   }
 }
 
+export function writeOpenworkServerSettings(next: OpenworkServerSettings): OpenworkServerSettings {
+  if (typeof window === "undefined") return next;
+  try {
+    const urlOverride = normalizeOpenworkServerUrl(next.urlOverride ?? "");
+    const portOverride = typeof next.portOverride === "number" ? next.portOverride : undefined;
+    const token = next.token?.trim() || undefined;
+
+    if (urlOverride) {
+      window.localStorage.setItem(STORAGE_URL_OVERRIDE, urlOverride);
+    } else {
+      window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
+    }
+
+    if (typeof portOverride === "number" && !Number.isNaN(portOverride)) {
+      window.localStorage.setItem(STORAGE_PORT_OVERRIDE, String(portOverride));
+    } else {
+      window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
+    }
+
+    if (token) {
+      window.localStorage.setItem(STORAGE_TOKEN, token);
+    } else {
+      window.localStorage.removeItem(STORAGE_TOKEN);
+    }
+
+    return readOpenworkServerSettings();
+  } catch {
+    return next;
+  }
+}
+
+export function clearOpenworkServerSettings() {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(STORAGE_URL_OVERRIDE);
+    window.localStorage.removeItem(STORAGE_PORT_OVERRIDE);
+    window.localStorage.removeItem(STORAGE_TOKEN);
+  } catch {
+    // ignore
+  }
+}
+
 export function deriveOpenworkServerUrl(
   opencodeBaseUrl: string,
   settings?: OpenworkServerSettings,

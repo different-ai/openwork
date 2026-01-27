@@ -1,16 +1,24 @@
-import { Match, Show, Switch } from "solid-js";
+import { Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
+import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
+import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 
 export type SettingsViewProps = {
   mode: "host" | "client" | null;
   baseUrl: string;
   headerStatus: string;
   busy: boolean;
+  openworkServerStatus: OpenworkServerStatus;
+  openworkServerUrl: string;
+  openworkServerSettings: OpenworkServerSettings;
+  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
+  resetOpenworkServerSettings: () => void;
+  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
   stopHost: () => void;
@@ -104,6 +112,49 @@ export default function SettingsView(props: SettingsViewProps) {
     return "bg-gray-4/60 text-gray-11 border-gray-7/50";
   };
 
+  const [openworkUrl, setOpenworkUrl] = createSignal("");
+  const [openworkToken, setOpenworkToken] = createSignal("");
+  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
+
+  createEffect(() => {
+    setOpenworkUrl(props.openworkServerSettings.urlOverride ?? "");
+    setOpenworkToken(props.openworkServerSettings.token ?? "");
+  });
+
+  const openworkStatusLabel = createMemo(() => {
+    switch (props.openworkServerStatus) {
+      case "connected":
+        return "Connected";
+      case "limited":
+        return "Limited";
+      default:
+        return "Not connected";
+    }
+  });
+
+  const openworkStatusStyle = createMemo(() => {
+    switch (props.openworkServerStatus) {
+      case "connected":
+        return "bg-green-7/10 text-green-11 border-green-7/20";
+      case "limited":
+        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+      default:
+        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    }
+  });
+
+  const buildOpenworkSettings = () => ({
+    ...props.openworkServerSettings,
+    urlOverride: openworkUrl().trim() || undefined,
+    token: openworkToken().trim() || undefined,
+  });
+
+  const hasOpenworkChanges = createMemo(() => {
+    const currentUrl = props.openworkServerSettings.urlOverride ?? "";
+    const currentToken = props.openworkServerSettings.token ?? "";
+    return openworkUrl().trim() !== currentUrl || openworkToken().trim() !== currentToken;
+  });
+
 
   return (
     <section class="space-y-6">
@@ -128,6 +179,86 @@ export default function SettingsView(props: SettingsViewProps) {
           </Show>
         </div>
 
+      </div>
+
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+        <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-12">OpenWork Server</div>
+            <div class="text-xs text-gray-10">
+              Connect a remote OpenWork server to manage skills and plugins.
+            </div>
+          </div>
+          <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
+            {openworkStatusLabel()}
+          </div>
+        </div>
+
+        <div class="grid gap-3">
+          <TextInput
+            label="Server URL"
+            value={openworkUrl()}
+            onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
+            placeholder="http://127.0.0.1:8787"
+            hint="Leave blank to use your OpenCode URL with port 4097."
+            disabled={props.busy}
+          />
+
+          <label class="block">
+            <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
+            <div class="flex items-center gap-2">
+              <input
+                type={openworkTokenVisible() ? "text" : "password"}
+                value={openworkToken()}
+                onInput={(event) => setOpenworkToken(event.currentTarget.value)}
+                placeholder="Optional bearer token"
+                disabled={props.busy}
+                class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+              />
+              <Button
+                variant="outline"
+                class="text-xs h-9 px-3 shrink-0"
+                onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                disabled={props.busy}
+              >
+                {openworkTokenVisible() ? "Hide" : "Show"}
+              </Button>
+            </div>
+            <div class="mt-1 text-xs text-gray-10">Keep this private. It grants access to your server.</div>
+          </label>
+        </div>
+
+        <div class="text-[11px] text-gray-7 font-mono truncate">
+          Resolved URL: {props.openworkServerUrl || "Not set"}
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              const next = buildOpenworkSettings();
+              props.updateOpenworkServerSettings(next);
+              await props.testOpenworkServerConnection(next);
+            }}
+            disabled={props.busy}
+          >
+            Test connection
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
+            disabled={props.busy || !hasOpenworkChanges()}
+          >
+            Save
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={props.resetOpenworkServerSettings}
+            disabled={props.busy}
+          >
+            Clear
+          </Button>
+        </div>
       </div>
 
 

@@ -10,7 +10,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
-import type { OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -48,6 +48,10 @@ export type DashboardViewProps = {
   error: string | null;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
+  openworkServerSettings: OpenworkServerSettings;
+  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
+  resetOpenworkServerSettings: () => void;
+  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
   keybindItems: KeybindSetting[];
   onOverrideKeybind: (id: string, keybind: string | null) => void;
   onResetKeybind: (id: string) => void;
@@ -833,6 +837,12 @@ export default function DashboardView(props: DashboardViewProps) {
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
                   busy={props.busy}
+                  openworkServerStatus={props.openworkServerStatus}
+                  openworkServerUrl={props.openworkServerUrl}
+                  openworkServerSettings={props.openworkServerSettings}
+                  updateOpenworkServerSettings={props.updateOpenworkServerSettings}
+                  resetOpenworkServerSettings={props.resetOpenworkServerSettings}
+                  testOpenworkServerConnection={props.testOpenworkServerConnection}
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}
                   stopHost={props.stopHost}
