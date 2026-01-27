@@ -11,6 +11,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -49,6 +50,7 @@ export type DashboardViewProps = {
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
+  openworkServerHostInfo: OpenworkServerInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -941,6 +943,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
                   openworkServerSettings={props.openworkServerSettings}
+                  openworkServerHostInfo={props.openworkServerHostInfo}
                   updateOpenworkServerSettings={props.updateOpenworkServerSettings}
                   resetOpenworkServerSettings={props.resetOpenworkServerSettings}
                   testOpenworkServerConnection={props.testOpenworkServerConnection}

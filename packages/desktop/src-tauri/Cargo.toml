@@ -17,6 +17,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2.5.3"
 tauri-plugin-shell = "2"
+uuid = { version = "1", features = ["v4"] }
+gethostname = "0.4"
+local-ip-address = "0.5"
 walkdir = "2.5"
 zip = "0.6"
 

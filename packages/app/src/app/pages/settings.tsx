@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createEffect, createMemo, createSignal } from "solid-js";
+import { Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
@@ -7,6 +7,7 @@ import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerInfo } from "../lib/tauri";
 
 export type SettingsViewProps = {
   mode: "host" | "client" | null;
@@ -16,6 +17,7 @@ export type SettingsViewProps = {
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
+  openworkServerHostInfo: OpenworkServerInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -115,6 +117,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const [openworkUrl, setOpenworkUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
   const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
+  const [clientTokenVisible, setClientTokenVisible] = createSignal(false);
+  const [hostTokenVisible, setHostTokenVisible] = createSignal(false);
+  const [copyingField, setCopyingField] = createSignal<string | null>(null);
+  let copyTimeout: number | undefined;
 
   createEffect(() => {
     setOpenworkUrl(props.openworkServerSettings.urlOverride ?? "");
@@ -155,6 +161,45 @@ export default function SettingsView(props: SettingsViewProps) {
     return openworkUrl().trim() !== currentUrl || openworkToken().trim() !== currentToken;
   });
 
+  const hostInfo = createMemo(() => props.openworkServerHostInfo);
+  const hostStatusLabel = createMemo(() => {
+    if (!hostInfo()?.running) return "Offline";
+    return "Available";
+  });
+  const hostStatusStyle = createMemo(() => {
+    if (!hostInfo()?.running) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    return "bg-green-7/10 text-green-11 border-green-7/20";
+  });
+  const hostConnectUrl = createMemo(() => {
+    const info = hostInfo();
+    return info?.connectUrl ?? info?.mdnsUrl ?? info?.lanUrl ?? info?.baseUrl ?? "";
+  });
+  const hostMdnsUrl = createMemo(() => hostInfo()?.mdnsUrl ?? "");
+  const hostLanUrl = createMemo(() => hostInfo()?.lanUrl ?? "");
+
+  const handleCopy = async (value: string, field: string) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyingField(field);
+      if (copyTimeout !== undefined) {
+        window.clearTimeout(copyTimeout);
+      }
+      copyTimeout = window.setTimeout(() => {
+        setCopyingField(null);
+        copyTimeout = undefined;
+      }, 2000);
+    } catch {
+      // ignore
+    }
+  };
+
+  onCleanup(() => {
+    if (copyTimeout !== undefined) {
+      window.clearTimeout(copyTimeout);
+    }
+  });
+
 
   return (
     <section class="space-y-6">
@@ -181,6 +226,110 @@ export default function SettingsView(props: SettingsViewProps) {
 
       </div>
 
+      <Show when={props.mode === "host"}>
+        <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+          <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div class="text-sm font-medium text-gray-12">Host pairing</div>
+              <div class="text-xs text-gray-10">Share these details with a trusted device.</div>
+            </div>
+            <div class={`text-xs px-2 py-1 rounded-full border ${hostStatusStyle()}`}>
+              {hostStatusLabel()}
+            </div>
+          </div>
+
+          <div class="grid gap-3">
+            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+              <div class="min-w-0">
+                <div class="text-xs font-medium text-gray-11">OpenWork Server URL</div>
+                <div class="text-xs text-gray-7 font-mono truncate">
+                  {hostConnectUrl() || "Starting server…"}
+                </div>
+                <Show when={hostMdnsUrl() || hostLanUrl()}>
+                  <div class="text-[11px] text-gray-8 mt-1">
+                    {hostMdnsUrl()
+                      ? ".local names are easier to remember but may not resolve on all networks."
+                      : "Use your local IP on the same Wi-Fi for the fastest connection."}
+                  </div>
+                </Show>
+              </div>
+              <Button
+                variant="outline"
+                class="text-xs h-8 py-0 px-3 shrink-0"
+                onClick={() => handleCopy(hostConnectUrl(), "host-url")}
+                disabled={!hostConnectUrl()}
+              >
+                {copyingField() === "host-url" ? "Copied" : "Copy"}
+              </Button>
+            </div>
+
+            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+              <div class="min-w-0">
+                <div class="text-xs font-medium text-gray-11">Client token</div>
+                <div class="text-xs text-gray-7 font-mono truncate">
+                  {clientTokenVisible()
+                    ? hostInfo()?.clientToken || "—"
+                    : hostInfo()?.clientToken
+                      ? "••••••••••••"
+                      : "—"}
+                </div>
+                <div class="text-[11px] text-gray-8 mt-1">Use on phones or laptops connecting to this host.</div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => setClientTokenVisible((prev) => !prev)}
+                  disabled={!hostInfo()?.clientToken}
+                >
+                  {clientTokenVisible() ? "Hide" : "Show"}
+                </Button>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => handleCopy(hostInfo()?.clientToken ?? "", "client-token")}
+                  disabled={!hostInfo()?.clientToken}
+                >
+                  {copyingField() === "client-token" ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+              <div class="min-w-0">
+                <div class="text-xs font-medium text-gray-11">Host token</div>
+                <div class="text-xs text-gray-7 font-mono truncate">
+                  {hostTokenVisible()
+                    ? hostInfo()?.hostToken || "—"
+                    : hostInfo()?.hostToken
+                      ? "••••••••••••"
+                      : "—"}
+                </div>
+                <div class="text-[11px] text-gray-8 mt-1">Keep private. Required for host approvals.</div>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => setHostTokenVisible((prev) => !prev)}
+                  disabled={!hostInfo()?.hostToken}
+                >
+                  {hostTokenVisible() ? "Hide" : "Show"}
+                </Button>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => handleCopy(hostInfo()?.hostToken ?? "", "host-token")}
+                  disabled={!hostInfo()?.hostToken}
+                >
+                  {copyingField() === "host-token" ? "Copied" : "Copy"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
@@ -200,7 +349,7 @@ export default function SettingsView(props: SettingsViewProps) {
             value={openworkUrl()}
             onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:8787"
-            hint="Leave blank to use your OpenCode URL with port 4097."
+            hint="Leave blank to use your OpenCode URL with port 8787."
             disabled={props.busy}
           />
 

@@ -45,7 +45,7 @@ impl EngineManager {
     }
 
     pub fn stop_locked(state: &mut EngineState) {
-        if let Some(mut child) = state.child.take() {
+        if let Some(child) = state.child.take() {
             let _ = child.kill();
         }
         state.child_exited = true;

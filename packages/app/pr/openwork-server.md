@@ -31,6 +31,8 @@ Remote clients cannot read or write workspace config because critical state live
 - Functional: expose workspace config read/write APIs for `.opencode` and `opencode.json`
 - Functional: list installed skills, plugins, MCPs for a workspace without direct FS access
 - Functional: allow saving new skills, plugins, and MCP entries from a remote client
+- Functional: host mode auto-starts the OpenWork server alongside the OpenCode engine
+- UX: surface pairing URL + tokens in Settings for host mode
 - UX: show remote-config origin, last updated time, and change attribution
 
 ---
@@ -167,6 +169,16 @@ This section captures the exact OpenCode semantics the OpenWork server must resp
 - Basic auth can be enabled via `OPENCODE_SERVER_PASSWORD` (username defaults to `opencode`).
 - The OpenWork server should not bypass OpenCode auth; if OpenCode is password-protected, the host UI must collect credentials and pass them to the client.
 - OpenCode publishes its OpenAPI spec at `/doc`; the OpenWork server should track upstream changes and avoid duplicating stable APIs.
+
+---
+## Host auto-start + pairing UX
+- When OpenWork runs in Host mode, it starts the OpenWork server automatically after the OpenCode engine comes online.
+- The host UI exposes a pairing card in Settings with:
+  - OpenWork Server URL (prefers `.local` hostname, falls back to LAN IP)
+  - Client token (for remote devices)
+  - Host token (for approvals)
+- Tokens are generated per run unless supplied by host config.
+- Pairing info should be copyable (tap-to-copy) and masked by default.
 
 ---
 ## Endpoint examples (requests and responses)

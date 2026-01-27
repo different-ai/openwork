@@ -65,6 +65,23 @@ pub struct EngineInfo {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct OpenworkServerInfo {
+    pub running: bool,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub base_url: Option<String>,
+    pub connect_url: Option<String>,
+    pub mdns_url: Option<String>,
+    pub lan_url: Option<String>,
+    pub client_token: Option<String>,
+    pub host_token: Option<String>,
+    pub pid: Option<u32>,
+    pub last_stdout: Option<String>,
+    pub last_stderr: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct EngineDoctorResult {
     pub found: bool,
     pub in_path: bool,

@@ -54,7 +54,7 @@ export type OpenworkMcpItem = {
   disabledByTools?: boolean;
 };
 
-export const DEFAULT_OPENWORK_SERVER_PORT = 4097;
+export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
 const STORAGE_PORT_OVERRIDE = "openwork.server.port";

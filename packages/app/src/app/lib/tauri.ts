@@ -12,6 +12,21 @@ export type EngineInfo = {
   lastStderr: string | null;
 };
 
+export type OpenworkServerInfo = {
+  running: boolean;
+  host: string | null;
+  port: number | null;
+  baseUrl: string | null;
+  connectUrl: string | null;
+  mdnsUrl: string | null;
+  lanUrl: string | null;
+  clientToken: string | null;
+  hostToken: string | null;
+  pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
+};
+
 export type EngineDoctorResult = {
   found: boolean;
   inPath: boolean;
@@ -211,6 +226,22 @@ export async function opencodeCommandDelete(input: {
 
 export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
+}
+
+export async function openworkServerStart(input: {
+  workspacePath: string;
+}): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_start", {
+    workspacePath: input.workspacePath,
+  });
+}
+
+export async function openworkServerStop(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_stop");
+}
+
+export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_info");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {

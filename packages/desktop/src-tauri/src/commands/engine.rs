@@ -5,6 +5,7 @@ use crate::engine::doctor::{
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
+use crate::openwork_server::{manager::OpenworkServerManager, start_openwork_server};
 use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
 use crate::utils::truncate_output;
 use tauri_plugin_shell::process::CommandEvent;
@@ -24,9 +25,15 @@ pub fn engine_info(manager: State<EngineManager>) -> EngineInfo {
 }
 
 #[tauri::command]
-pub fn engine_stop(manager: State<EngineManager>) -> EngineInfo {
+pub fn engine_stop(
+    manager: State<EngineManager>,
+    openwork_manager: State<OpenworkServerManager>,
+) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::stop_locked(&mut state);
+    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
+        OpenworkServerManager::stop_locked(&mut openwork_state);
+    }
     EngineManager::snapshot_locked(&mut state)
 }
 
@@ -113,6 +120,7 @@ pub fn engine_install() -> Result<ExecResult, String> {
 pub fn engine_start(
     app: AppHandle,
     manager: State<EngineManager>,
+    openwork_manager: State<OpenworkServerManager>,
     project_dir: String,
     prefer_sidecar: Option<bool>,
 ) -> Result<EngineInfo, String> {
@@ -274,6 +282,10 @@ pub fn engine_start(
     state.hostname = Some(hostname.clone());
     state.port = Some(port);
     state.base_url = Some(format!("http://{hostname}:{port}"));
+
+    if let Err(error) = start_openwork_server(&app, &openwork_manager, &state.project_dir.clone().unwrap_or_default()) {
+        state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+    }
 
     Ok(EngineManager::snapshot_locked(&mut state))
 }

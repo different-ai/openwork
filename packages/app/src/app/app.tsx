@@ -124,6 +124,8 @@ import {
   updaterEnvironment,
   readOpencodeConfig,
   writeOpencodeConfig,
+  openworkServerInfo,
+  type OpenworkServerInfo,
 } from "./lib/tauri";
 import {
   createOpenworkServerClient,
@@ -227,6 +229,7 @@ export default function App() {
   const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
   const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
+  const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
 
   const openworkServerClient = createMemo(() => {
     const url = openworkServerUrl().trim();
@@ -295,6 +298,32 @@ export default function App() {
         if (!active) return;
         setOpenworkServerCheckedAt(Date.now());
         busy = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 10_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (mode() !== "host") {
+      setOpenworkServerHostInfo(null);
+      return;
+    }
+
+    let active = true;
+
+    const run = async () => {
+      try {
+        const info = await openworkServerInfo();
+        if (active) setOpenworkServerHostInfo(info);
+      } catch {
+        if (active) setOpenworkServerHostInfo(null);
       }
     };
 
@@ -3010,6 +3039,7 @@ export default function App() {
     openworkServerStatus: openworkStatus,
     openworkServerUrl: openworkServerUrl(),
     openworkServerSettings: openworkServerSettings(),
+    openworkServerHostInfo: openworkServerHostInfo(),
     updateOpenworkServerSettings,
     resetOpenworkServerSettings,
     testOpenworkServerConnection,
