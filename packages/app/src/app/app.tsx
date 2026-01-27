@@ -88,6 +88,7 @@ import {
   groupMessageParts,
   isTauriRuntime,
   modelEquals,
+  normalizeDirectoryPath,
 } from "./utils";
 import { isEditableTarget, matchKeybind, normalizeKeybind } from "./utils/keybinds";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
@@ -122,6 +123,15 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
 } from "./lib/tauri";
+import {
+  createOpenworkServerClient,
+  deriveOpenworkServerUrl,
+  readOpenworkServerSettings,
+  type OpenworkServerCapabilities,
+  type OpenworkServerStatus,
+  type OpenworkServerSettings,
+  OpenworkServerError,
+} from "./lib/openwork-server";
 
 export default function App() {
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
@@ -201,6 +211,92 @@ export default function App() {
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
+
+  const [openworkServerSettings, setOpenworkServerSettings] = createSignal<OpenworkServerSettings>({});
+  const [openworkServerUrl, setOpenworkServerUrl] = createSignal("");
+  const [openworkServerStatus, setOpenworkServerStatus] = createSignal<OpenworkServerStatus>("disconnected");
+  const [openworkServerCapabilities, setOpenworkServerCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
+  const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
+  const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
+
+  const openworkServerClient = createMemo(() => {
+    const url = openworkServerUrl().trim();
+    if (!url) return null;
+    const token = openworkServerSettings().token;
+    return createOpenworkServerClient({ baseUrl: url, token });
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    setOpenworkServerSettings(readOpenworkServerSettings());
+  });
+
+  createEffect(() => {
+    const derived = deriveOpenworkServerUrl(baseUrl(), openworkServerSettings());
+    setOpenworkServerUrl(derived ?? "");
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    const url = openworkServerUrl().trim();
+    const token = openworkServerSettings().token;
+
+    if (!url) {
+      setOpenworkServerStatus("disconnected");
+      setOpenworkServerCapabilities(null);
+      setOpenworkServerCheckedAt(Date.now());
+      return;
+    }
+
+    let active = true;
+    let busy = false;
+    const client = createOpenworkServerClient({ baseUrl: url, token });
+
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        await client.health();
+        if (!active) return;
+
+        if (!token) {
+          setOpenworkServerStatus("limited");
+          setOpenworkServerCapabilities(null);
+        } else {
+          try {
+            const caps = await client.capabilities();
+            if (!active) return;
+            setOpenworkServerCapabilities(caps);
+            setOpenworkServerStatus("connected");
+          } catch (error) {
+            if (!active) return;
+            if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
+              setOpenworkServerStatus("limited");
+              setOpenworkServerCapabilities(null);
+            } else {
+              setOpenworkServerStatus("disconnected");
+              setOpenworkServerCapabilities(null);
+            }
+          }
+        }
+      } catch {
+        if (!active) return;
+        setOpenworkServerStatus("disconnected");
+        setOpenworkServerCapabilities(null);
+      } finally {
+        if (!active) return;
+        setOpenworkServerCheckedAt(Date.now());
+        busy = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 10_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
 
   const [client, setClient] = createSignal<Client | null>(null);
   const [connectedVersion, setConnectedVersion] = createSignal<string | null>(
@@ -661,6 +757,11 @@ export default function App() {
     mode,
     projectDir: () => workspaceProjectDir(),
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    openworkServerClient,
+    openworkServerStatus,
+    openworkServerCapabilities,
+    openworkServerWorkspaceId,
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -685,6 +786,7 @@ export default function App() {
     pluginScope,
     setPluginScope,
     pluginConfig,
+    pluginConfigPath,
     pluginList,
     pluginInput,
     setPluginInput,
@@ -880,6 +982,47 @@ export default function App() {
     isWindowsPlatform,
   });
 
+  createEffect(() => {
+    const status = openworkServerStatus();
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const client = openworkServerClient();
+
+    if (status !== "connected" || !root || !client) {
+      setOpenworkServerWorkspaceId(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const resolveWorkspace = async () => {
+      try {
+        const response = await client.listWorkspaces();
+        if (cancelled) return;
+        const match = response.items.find(
+          (entry) => normalizeDirectoryPath(entry.path) === normalizeDirectoryPath(root),
+        );
+        setOpenworkServerWorkspaceId(match?.id ?? null);
+      } catch {
+        if (!cancelled) setOpenworkServerWorkspaceId(null);
+      }
+    };
+
+    resolveWorkspace();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
+  const openworkServerReady = createMemo(() => openworkServerStatus() === "connected");
+  const openworkServerWorkspaceReady = createMemo(() => Boolean(openworkServerWorkspaceId()));
+  const openworkServerCanWriteSkills = createMemo(
+    () => openworkServerReady() && openworkServerWorkspaceReady() && (openworkServerCapabilities()?.skills?.write ?? false),
+  );
+  const openworkServerCanWritePlugins = createMemo(
+    () => openworkServerReady() && openworkServerWorkspaceReady() && (openworkServerCapabilities()?.plugins?.write ?? false),
+  );
+
   const commandState = createCommandState({
     client,
     selectedSession,
@@ -894,6 +1037,10 @@ export default function App() {
     setView,
     isDemoMode,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot(),
+    workspaceType: () => workspaceStore.activeWorkspaceDisplay().workspaceType,
+    openworkServerClient,
+    openworkServerCapabilities,
+    openworkServerWorkspaceId,
     setBusy,
     setBusyLabel,
     setBusyStartedAt,
@@ -1736,6 +1883,51 @@ export default function App() {
 
   async function refreshMcpServers() {
     const projectDir = workspaceProjectDir().trim();
+    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = openworkServerCapabilities();
+
+    if (isRemoteWorkspace) {
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.mcp?.read) {
+        setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
+        setMcpServers([]);
+        setMcpStatuses({});
+        return;
+      }
+
+      try {
+        setMcpStatus(null);
+        const response = await openworkClient.listMcp(openworkWorkspaceId);
+        const next = response.items.map((entry) => ({
+          name: entry.name,
+          config: entry.config as McpServerEntry["config"],
+        }));
+        setMcpServers(next);
+        setMcpLastUpdatedAt(Date.now());
+
+        const activeClient = client();
+        if (activeClient && projectDir) {
+          try {
+            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+            setMcpStatuses(status as McpStatusMap);
+          } catch {
+            setMcpStatuses({});
+          }
+        } else {
+          setMcpStatuses({});
+        }
+
+        if (!next.length) {
+          setMcpStatus("No MCP servers configured yet.");
+        }
+      } catch (e) {
+        setMcpServers([]);
+        setMcpStatuses({});
+        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
+      }
+      return;
+    }
 
     if (!isTauriRuntime()) {
       setMcpStatus("MCP configuration is only available in Host mode.");
@@ -2709,7 +2901,38 @@ export default function App() {
     setThemeMode,
   });
 
-  const dashboardProps = () => ({
+  const dashboardProps = () => {
+    const workspaceType = activeWorkspaceDisplay().workspaceType;
+    const isRemoteWorkspace = workspaceType === "remote";
+    const openworkStatus = openworkServerStatus();
+    const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
+    const canInstallSkillCreator = isRemoteWorkspace
+      ? openworkServerCanWriteSkills()
+      : isTauriRuntime();
+    const canEditPlugins = isRemoteWorkspace
+      ? openworkServerCanWritePlugins()
+      : isTauriRuntime();
+    const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
+    const skillsAccessHint = isRemoteWorkspace
+      ? openworkStatus === "disconnected"
+        ? "OpenWork server unavailable. Connect to manage skills."
+        : openworkStatus === "limited"
+          ? "OpenWork server needs a token to manage skills."
+          : openworkServerCanWriteSkills()
+            ? null
+            : "OpenWork server is read-only for skills."
+      : null;
+    const pluginsAccessHint = isRemoteWorkspace
+      ? openworkStatus === "disconnected"
+        ? "OpenWork server unavailable. Plugins are read-only."
+        : openworkStatus === "limited"
+          ? "OpenWork server needs a token to edit plugins."
+          : openworkServerCanWritePlugins()
+            ? null
+            : "OpenWork server is read-only for plugins."
+      : null;
+
+    return {
     tab: tab(),
     setTab,
     view: currentView(),
@@ -2723,6 +2946,8 @@ export default function App() {
     newTaskDisabled: newTaskDisabled(),
     headerStatus: headerStatus(),
     error: error(),
+    openworkServerStatus: openworkStatus,
+    openworkServerUrl: openworkServerUrl(),
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     workspaceSearch: workspaceStore.workspaceSearch(),
     setWorkspaceSearch: workspaceStore.setWorkspaceSearch,
@@ -2771,13 +2996,19 @@ export default function App() {
       refreshPlugins(scopeOverride).catch(() => undefined),
     skills: skills(),
     skillsStatus: skillsStatus(),
+    skillsAccessHint,
+    canInstallSkillCreator,
+    canUseDesktopTools,
     importLocalSkill,
     installSkillCreator,
     revealSkillsFolder,
     uninstallSkill,
+    pluginsAccessHint,
+    canEditPlugins,
+    canUseGlobalPluginScope,
     pluginScope: pluginScope(),
     setPluginScope,
-    pluginConfigPath: pluginConfig()?.path ?? null,
+    pluginConfigPath: pluginConfigPath() ?? pluginConfig()?.path ?? null,
     pluginList: pluginList(),
     pluginInput: pluginInput(),
     setPluginInput,
@@ -2851,7 +3082,8 @@ export default function App() {
     reloadMcpEngine: () => reloadWorkspaceEngine(),
     language: currentLocale(),
     setLanguage: setLocale,
-  });
+    };
+  };
 
   const searchWorkspaceFiles = async (query: string) => {
     const trimmed = query.trim();

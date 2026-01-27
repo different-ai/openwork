@@ -6,6 +6,7 @@ import { addOpencodeCacheHint, isTauriRuntime, parseModelRef, safeStringify } fr
 import { opencodeCommandDelete, opencodeCommandList, opencodeCommandWrite } from "./lib/tauri";
 import { unwrap } from "./lib/opencode";
 import { t, currentLocale } from "../i18n";
+import type { OpenworkServerCapabilities, OpenworkServerClient } from "./lib/openwork-server";
 
 const COMMANDS_PATH = ".opencode/commands";
 const COMMAND_FILE_SUFFIX = ".md";
@@ -44,6 +45,10 @@ export function createCommandState(options: {
   setView: (view: "onboarding" | "dashboard" | "session") => void;
   isDemoMode: Accessor<boolean>;
   activeWorkspaceRoot: Accessor<string>;
+  workspaceType: Accessor<"local" | "remote">;
+  openworkServerClient: Accessor<OpenworkServerClient | null>;
+  openworkServerCapabilities: Accessor<OpenworkServerCapabilities | null>;
+  openworkServerWorkspaceId: Accessor<string | null>;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -108,12 +113,28 @@ export function createCommandState(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+
+    if (isRemoteWorkspace) {
+      if (draft.scope !== "workspace") {
+        options.setError("Global commands are only available in Host mode.");
+        return;
+      }
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.commands?.write) {
+        options.setError("OpenWork server unavailable. Connect to save commands.");
+        return;
+      }
+    }
+
+    if (!isRemoteWorkspace && !isTauriRuntime()) {
       options.setError(t("app.error.workspace_commands_desktop", currentLocale()));
       return;
     }
 
-    if (draft.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
+    if (!isRemoteWorkspace && draft.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return;
     }
@@ -144,15 +165,23 @@ export function createCommandState(options: {
 
     try {
       const workspaceRoot = options.activeWorkspaceRoot().trim();
-      await opencodeCommandWrite({
-        scope: draft.scope,
-        projectDir: workspaceRoot,
-        command: {
+      if (isRemoteWorkspace && openworkClient && openworkWorkspaceId) {
+        await openworkClient.upsertCommand(openworkWorkspaceId, {
           name: safeName,
           description: draft.description || undefined,
           template: draft.template,
-        },
-      });
+        });
+      } else {
+        await opencodeCommandWrite({
+          scope: draft.scope,
+          projectDir: workspaceRoot,
+          command: {
+            name: safeName,
+            description: draft.description || undefined,
+            template: draft.template,
+          },
+        });
+      }
 
       // Directly add/update the command in local state since the SDK's
       // command list won't reflect the new file until app restart
@@ -201,12 +230,28 @@ export function createCommandState(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+
+    if (isRemoteWorkspace) {
+      if (command.scope !== "workspace") {
+        options.setError("Global commands are only available in Host mode.");
+        return;
+      }
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.commands?.write) {
+        options.setError("OpenWork server unavailable. Connect to delete commands.");
+        return;
+      }
+    }
+
+    if (!isRemoteWorkspace && !isTauriRuntime()) {
       options.setError(t("app.error.workspace_commands_desktop", currentLocale()));
       return;
     }
 
-    if (command.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
+    if (!isRemoteWorkspace && command.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return;
     }
@@ -218,11 +263,15 @@ export function createCommandState(options: {
 
     try {
       const workspaceRoot = options.activeWorkspaceRoot().trim();
-      await opencodeCommandDelete({
-        scope: command.scope,
-        projectDir: workspaceRoot,
-        name: command.name,
-      });
+      if (isRemoteWorkspace && openworkClient && openworkWorkspaceId) {
+        await openworkClient.deleteCommand(openworkWorkspaceId, command.name);
+      } else {
+        await opencodeCommandDelete({
+          scope: command.scope,
+          projectDir: workspaceRoot,
+          name: command.name,
+        });
+      }
       await loadCommands({ workspaceRoot, quiet: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -283,6 +332,10 @@ export function createCommandState(options: {
   async function loadCommands(optionsLoad?: { workspaceRoot?: string; quiet?: boolean }) {
     const c = options.client();
     const root = (optionsLoad?.workspaceRoot ?? options.activeWorkspaceRoot()).trim();
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
     if (!c) return;
 
     try {
@@ -290,7 +343,16 @@ export function createCommandState(options: {
       let workspaceNames = new Set<string>();
       let globalNames = new Set<string>();
 
-      if (isTauriRuntime()) {
+      if (isRemoteWorkspace) {
+        if (openworkClient && openworkWorkspaceId && openworkCapabilities?.commands?.read) {
+          try {
+            const response = await openworkClient.listCommands(openworkWorkspaceId, "workspace");
+            workspaceNames = new Set(response.items.map((item) => item.name));
+          } catch {
+            workspaceNames = new Set();
+          }
+        }
+      } else if (isTauriRuntime()) {
         if (root) {
           try {
             const names = await opencodeCommandList({ scope: "workspace", projectDir: root });

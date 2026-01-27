@@ -1,0 +1,27 @@
+{
+  "name": "@different-ai/openwork-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "openwork-server": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "bun src/cli.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "bun dist/cli.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.2.1",
+    "minimatch": "^10.0.1",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/minimatch": "^5.1.2",
+    "bun-types": "^1.1.29",
+    "typescript": "^5.6.3"
+  },
+  "packageManager": "pnpm@10.27.0"
+}

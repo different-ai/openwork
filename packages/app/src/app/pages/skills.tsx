@@ -9,6 +9,9 @@ import { currentLocale, t } from "../../i18n";
 export type SkillsViewProps = {
   busy: boolean;
   mode: "host" | "client" | null;
+  canInstallSkillCreator: boolean;
+  canUseDesktopTools: boolean;
+  accessHint?: string | null;
   refreshSkills: (options?: { force?: boolean }) => void;
   skills: SkillCard[];
   skillsStatus: string | null;
@@ -47,7 +50,17 @@ export default function SkillsView(props: SkillsViewProps) {
             <div class="text-xs font-semibold text-gray-11 uppercase tracking-wider">{translate("skills.add_title")}</div>
             <div class="text-sm text-gray-10 mt-2">{translate("skills.add_description")}</div>
           </div>
-          <Show when={props.mode !== "host"}>
+          <Show when={props.accessHint}>
+            <div class="text-xs text-gray-10">{props.accessHint}</div>
+          </Show>
+          <Show
+            when={
+              !props.accessHint &&
+              props.mode !== "host" &&
+              !props.canInstallSkillCreator &&
+              !props.canUseDesktopTools
+            }
+          >
             <div class="text-xs text-gray-10">{translate("skills.host_mode_only")}</div>
           </Show>
         </div>
@@ -64,7 +77,7 @@ export default function SkillsView(props: SkillsViewProps) {
                 if (skillCreatorInstalled()) return;
                 props.installSkillCreator();
               }}
-              disabled={props.busy || skillCreatorInstalled()}
+              disabled={props.busy || skillCreatorInstalled() || !props.canInstallSkillCreator}
             >
               <Package size={16} />
               {skillCreatorInstalled() ? translate("skills.installed_label") : translate("skills.install")}
@@ -76,7 +89,11 @@ export default function SkillsView(props: SkillsViewProps) {
               <div class="text-sm font-medium text-gray-12">{translate("skills.import_local")}</div>
               <div class="text-xs text-gray-10 mt-1">{translate("skills.import_local_hint")}</div>
             </div>
-            <Button variant="secondary" onClick={props.importLocalSkill} disabled={props.busy}>
+            <Button
+              variant="secondary"
+              onClick={props.importLocalSkill}
+              disabled={props.busy || !props.canUseDesktopTools}
+            >
               <Upload size={16} />
               {translate("skills.import")}
             </Button>
@@ -87,7 +104,11 @@ export default function SkillsView(props: SkillsViewProps) {
               <div class="text-sm font-medium text-gray-12">{translate("skills.reveal_folder")}</div>
               <div class="text-xs text-gray-10 mt-1">{translate("skills.reveal_folder_hint")}</div>
             </div>
-            <Button variant="secondary" onClick={props.revealSkillsFolder} disabled={props.busy}>
+            <Button
+              variant="secondary"
+              onClick={props.revealSkillsFolder}
+              disabled={props.busy || !props.canUseDesktopTools}
+            >
               <FolderOpen size={16} />
               {translate("skills.reveal_button")}
             </Button>
@@ -137,7 +158,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       variant="danger"
                       class="!px-3 !py-2 text-xs"
                       onClick={() => setUninstallTarget(s)}
-                      disabled={props.busy}
+                      disabled={props.busy || !props.canUseDesktopTools}
                       title={translate("skills.uninstall")}
                     >
                       {translate("skills.uninstall")}

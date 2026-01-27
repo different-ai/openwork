@@ -23,6 +23,11 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../lib/tauri";
+import type {
+  OpenworkServerCapabilities,
+  OpenworkServerClient,
+  OpenworkServerStatus,
+} from "../lib/openwork-server";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
@@ -31,6 +36,11 @@ export function createExtensionsStore(options: {
   mode: () => Mode | null;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
+  workspaceType: () => "local" | "remote";
+  openworkServerClient: () => OpenworkServerClient | null;
+  openworkServerStatus: () => OpenworkServerStatus;
+  openworkServerCapabilities: () => OpenworkServerCapabilities | null;
+  openworkServerWorkspaceId: () => string | null;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
@@ -48,6 +58,7 @@ export function createExtensionsStore(options: {
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
+  const [pluginConfigPath, setPluginConfigPath] = createSignal<string | null>(null);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
@@ -73,6 +84,10 @@ export function createExtensionsStore(options: {
 
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
     if (!root) {
       setSkills([]);
       setSkillsStatus(translate("skills.pick_workspace_first"));
@@ -127,10 +142,58 @@ export function createExtensionsStore(options: {
       return;
     }
 
+    if (isRemoteWorkspace && openworkClient && openworkWorkspaceId && openworkCapabilities?.skills?.read) {
+      if (root !== skillsRoot) {
+        skillsLoaded = false;
+      }
+
+      if (!optionsOverride?.force && skillsLoaded) {
+        return;
+      }
+
+      if (refreshSkillsInFlight) {
+        return;
+      }
+
+      refreshSkillsInFlight = true;
+      refreshSkillsAborted = false;
+
+      try {
+        setSkillsStatus(null);
+        const response = await openworkClient.listSkills(openworkWorkspaceId);
+        if (refreshSkillsAborted) return;
+        const next: SkillCard[] = Array.isArray(response.items)
+          ? response.items.map((entry) => ({
+              name: entry.name,
+              description: entry.description,
+              path: entry.path,
+            }))
+          : [];
+        setSkills(next);
+        if (!next.length) {
+          setSkillsStatus(translate("skills.no_skills_found"));
+        }
+        skillsLoaded = true;
+        skillsRoot = root;
+      } catch (e) {
+        if (refreshSkillsAborted) return;
+        setSkills([]);
+        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      } finally {
+        refreshSkillsInFlight = false;
+      }
+
+      return;
+    }
+
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus(translate("skills.connect_host_to_load"));
+      setSkillsStatus(
+        isRemoteWorkspace
+          ? "OpenWork server unavailable. Connect to load skills."
+          : translate("skills.connect_host_to_load"),
+      );
       return;
     }
 
@@ -198,13 +261,10 @@ export function createExtensionsStore(options: {
   }
 
   async function refreshPlugins(scopeOverride?: PluginScope) {
-    if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
-      setPluginList([]);
-      setSidebarPluginStatus(translate("skills.plugins_host_only"));
-      setSidebarPluginList([]);
-      return;
-    }
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
 
     // Skip if already in flight
     if (refreshPluginsInFlight) {
@@ -216,6 +276,64 @@ export function createExtensionsStore(options: {
 
     const scope = scopeOverride ?? pluginScope();
     const targetDir = options.projectDir().trim();
+
+    if (isRemoteWorkspace) {
+      setPluginConfig(null);
+      setPluginConfigPath("opencode.json (remote)");
+      if (scope !== "project") {
+        setPluginStatus("Global plugins are only available in Host mode.");
+        setPluginList([]);
+        setSidebarPluginStatus("Switch to project scope to view remote plugins.");
+        setSidebarPluginList([]);
+        refreshPluginsInFlight = false;
+        return;
+      }
+
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.plugins?.read) {
+        setPluginStatus("OpenWork server unavailable. Plugins are read-only.");
+        setPluginList([]);
+        setSidebarPluginStatus("Connect OpenWork server to load plugins.");
+        setSidebarPluginList([]);
+        refreshPluginsInFlight = false;
+        return;
+      }
+
+      try {
+        setPluginStatus(null);
+        setSidebarPluginStatus(null);
+
+        const result = await openworkClient.listPlugins(openworkWorkspaceId);
+        if (refreshPluginsAborted) return;
+
+        const configItems = result.items.filter((item) => item.source === "config");
+        const list = configItems.map((item) => item.spec);
+        setPluginList(list);
+        setSidebarPluginList(list);
+
+        if (!list.length) {
+          setPluginStatus("No plugins configured yet.");
+        }
+      } catch (e) {
+        if (refreshPluginsAborted) return;
+        setPluginList([]);
+        setSidebarPluginStatus("Failed to load plugins.");
+        setSidebarPluginList([]);
+        setPluginStatus(e instanceof Error ? e.message : "Failed to load plugins.");
+      } finally {
+        refreshPluginsInFlight = false;
+      }
+
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setPluginStatus(translate("skills.plugin_management_host_only"));
+      setPluginList([]);
+      setSidebarPluginStatus(translate("skills.plugins_host_only"));
+      setSidebarPluginList([]);
+      refreshPluginsInFlight = false;
+      return;
+    }
 
     if (scope === "project" && !targetDir) {
       setPluginStatus(translate("skills.pick_project_for_plugins"));
@@ -237,6 +355,7 @@ export function createExtensionsStore(options: {
       if (refreshPluginsAborted) return;
 
       setPluginConfig(config);
+      setPluginConfigPath(config.path ?? null);
 
       if (!config.exists) {
         setPluginList([]);
@@ -258,6 +377,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshPluginsAborted) return;
       setPluginConfig(null);
+      setPluginConfigPath(null);
       setPluginList([]);
       setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
       setSidebarPluginStatus(translate("skills.failed_load_active"));
@@ -268,18 +388,46 @@ export function createExtensionsStore(options: {
   }
 
   async function addPlugin(pluginNameOverride?: string) {
-    if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
-      return;
-    }
-
     const pluginName = (pluginNameOverride ?? pluginInput()).trim();
     const isManualInput = pluginNameOverride == null;
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
 
     if (!pluginName) {
       if (isManualInput) {
         setPluginStatus(translate("skills.enter_plugin_name"));
       }
+      return;
+    }
+
+    if (isRemoteWorkspace) {
+      if (pluginScope() !== "project") {
+        setPluginStatus("Global plugins are only available in Host mode.");
+        return;
+      }
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.plugins?.write) {
+        setPluginStatus("OpenWork server unavailable. Connect to add plugins.");
+        return;
+      }
+
+      try {
+        setPluginStatus(null);
+        await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        if (isManualInput) {
+          setPluginInput("");
+        }
+        await refreshPlugins("project");
+      } catch (e) {
+        setPluginStatus(e instanceof Error ? e.message : "Failed to add plugin.");
+      }
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setPluginStatus(translate("skills.plugin_management_host_only"));
       return;
     }
 
@@ -377,6 +525,37 @@ export function createExtensionsStore(options: {
   }
 
   async function installSkillCreator() {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+
+    if (isRemoteWorkspace) {
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.skills?.write) {
+        setSkillsStatus("OpenWork server unavailable. Connect to install skills.");
+        return;
+      }
+
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(translate("skills.installing_skill_creator"));
+
+      try {
+        await openworkClient.upsertSkill(openworkWorkspaceId, {
+          name: "skill-creator",
+          content: skillCreatorTemplate,
+        });
+        setSkillsStatus(translate("skills.skill_creator_installed"));
+        await refreshSkills({ force: true });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        options.setError(addOpencodeCacheHint(message));
+      } finally {
+        options.setBusy(false);
+      }
+      return;
+    }
+
     if (!isTauriRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return;
@@ -510,6 +689,7 @@ export function createExtensionsStore(options: {
     pluginScope,
     setPluginScope,
     pluginConfig,
+    pluginConfigPath,
     pluginList,
     pluginInput,
     setPluginInput,

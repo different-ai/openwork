@@ -10,6 +10,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
+import type { OpenworkServerStatus } from "../lib/openwork-server";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -45,6 +46,8 @@ export type DashboardViewProps = {
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
+  openworkServerStatus: OpenworkServerStatus;
+  openworkServerUrl: string;
   keybindItems: KeybindSetting[];
   onOverrideKeybind: (id: string, keybind: string | null) => void;
   onResetKeybind: (id: string) => void;
@@ -93,10 +96,16 @@ export type DashboardViewProps = {
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  skillsAccessHint?: string | null;
+  canInstallSkillCreator: boolean;
+  canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => void;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
+  pluginsAccessHint?: string | null;
+  canEditPlugins: boolean;
+  canUseGlobalPluginScope: boolean;
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
@@ -309,6 +318,23 @@ export default function DashboardView(props: DashboardViewProps) {
     );
   };
 
+  const opencodeStatusMeta = createMemo(() => ({
+    dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
+    text: props.clientConnected ? "text-green-11" : "text-gray-10",
+    label: props.clientConnected ? "Connected" : "Not connected",
+  }));
+
+  const openworkStatusMeta = createMemo(() => {
+    switch (props.openworkServerStatus) {
+      case "connected":
+        return { dot: "bg-green-9", text: "text-green-11", label: "Ready" };
+      case "limited":
+        return { dot: "bg-amber-9", text: "text-amber-11", label: "Limited access" };
+      default:
+        return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
+    }
+  });
+
   return (
     <div class="flex h-screen bg-gray-1 text-gray-12 overflow-hidden">
       <aside class="w-64 border-r border-gray-6 p-6 hidden md:flex flex-col justify-between bg-gray-1">
@@ -372,6 +398,33 @@ export default function DashboardView(props: DashboardViewProps) {
               </div>
             </Show>
           </div>
+
+          <div class="px-3 py-2 rounded-xl bg-gray-2/40 border border-gray-6">
+            <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs">
+              <div class="flex items-center gap-2">
+                <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenCode Engine</span>
+                <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
+              </div>
+              <div class="w-px h-5 bg-gray-6/70" />
+              <div class="flex items-center gap-2 justify-end">
+                <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenWork Server</span>
+                <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
+              </div>
+            </div>
+            <Show when={props.developerMode && props.openworkServerUrl}>
+              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
+                {props.openworkServerUrl}
+              </div>
+            </Show>
+          </div>
+
+          <Show when={props.mode === "client" && props.openworkServerStatus === "disconnected"}>
+            <div class="text-[11px] text-gray-9 px-1">
+              OpenWork server is offline — remote tasks still run.
+            </div>
+          </Show>
 
           <Show when={!props.clientConnected && !props.demoMode}>
             <Button
@@ -718,6 +771,9 @@ export default function DashboardView(props: DashboardViewProps) {
               <SkillsView
                 busy={props.busy}
                 mode={props.mode}
+                canInstallSkillCreator={props.canInstallSkillCreator}
+                canUseDesktopTools={props.canUseDesktopTools}
+                accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
@@ -732,6 +788,9 @@ export default function DashboardView(props: DashboardViewProps) {
               <PluginsView
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
+                canEditPlugins={props.canEditPlugins}
+                canUseGlobalScope={props.canUseGlobalPluginScope}
+                accessHint={props.pluginsAccessHint}
                 pluginScope={props.pluginScope}
                 setPluginScope={props.setPluginScope}
                 pluginConfigPath={props.pluginConfigPath}
