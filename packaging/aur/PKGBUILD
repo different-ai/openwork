@@ -1,19 +1,32 @@
-# Maintainer: Parker Rowen <gitporker@gmail.com>
 pkgname=openwork
 pkgver=0.4.2
-pkgrel=2
+pkgrel=2 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
 pkgdesc="An Open source alternative to Claude Cowork"
 arch=('x86_64')
 url="https://github.com/different-ai/openwork"
 license=('MIT')
 depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'openssl' 'dbus' 'librsvg')
 
+# Renaming to ${pkgname}-${pkgver}.deb
 source=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
 sha256sums=('5df27c5a7384fe8a4080f8c206dd84eadd54011974a3a0b3c987253ef532d886')
+# Makes sure makepkg doesn't extract the .deb since it will break
 noextract=("${pkgname}-${pkgver}.deb")
 
 package() {
-# Avoids permission issues
+  # cd cwd
   cd "${srcdir}"
+
+  # Extract the internal data archive directly to the cwd.
   bsdtar -O -xf "${pkgname}-${pkgver}.deb" 'data.tar*' | bsdtar -C "${pkgdir}" -xf -
 }
+
+# .deb Internal Structure Reference:
+# └── openwork-desktop-linux-amd64.deb
+#     ├── debian-binary
+#     ├── control.tar.zst
+#     └── data.tar.zst (Extracted to $pkgdir)
+#         ├── opt/openwork/ (App files)
+#         └── usr/bin/
+#             ├── opencode (Terminal agent)
+#             └── openwork (GUI launcher)
