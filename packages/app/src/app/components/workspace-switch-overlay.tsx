@@ -83,7 +83,7 @@ export default function WorkspaceSwitchOverlay(props: {
         </div>
 
         <div class="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 py-10 text-center">
-          <div class="flex flex-col items-center gap-8">
+          <div class="flex flex-col items-center gap-7">
             <div class="flex items-center gap-3 text-[10px] uppercase tracking-[0.35em] text-gray-8">
               <span class="h-px w-10 bg-gray-6/60" />
               <span>OpenWork</span>
@@ -125,32 +125,33 @@ export default function WorkspaceSwitchOverlay(props: {
               <p class="text-sm text-gray-10">{subtitle()}</p>
             </div>
 
-            <div class="flex flex-col items-center gap-3">
-              <div class="flex items-center gap-2 text-sm text-gray-11">
-                <span class="relative flex h-2.5 w-2.5">
-                  <span
-                    class="absolute inline-flex h-full w-full rounded-full bg-indigo-7/40 motion-safe:animate-ping motion-reduce:opacity-40"
-                    style={{ "animation-duration": "2.6s" }}
+            <div class="flex flex-col items-center gap-4">
+              <div class="flex flex-col items-center gap-3">
+                <div class="flex items-center gap-2 text-sm text-gray-11">
+                  <span class="relative flex h-2.5 w-2.5">
+                    <span
+                      class="absolute inline-flex h-full w-full rounded-full bg-indigo-7/40 motion-safe:animate-ping motion-reduce:opacity-40"
+                      style={{ "animation-duration": "2.6s" }}
+                    />
+                    <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-7/70" />
+                  </span>
+                  <span>{statusLine()}</span>
+                </div>
+                <div class="h-1 w-56 overflow-hidden rounded-full bg-gray-4/50 relative">
+                  <div
+                    class="absolute inset-y-0 w-1/2 rounded-full bg-gradient-to-r from-transparent via-indigo-7 to-transparent animate-progress-shimmer"
                   />
-                  <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-indigo-7/70" />
-                </span>
-                <span>{statusLine()}</span>
+                </div>
               </div>
-              <div class="h-1 w-56 overflow-hidden rounded-full bg-gray-4/50">
-                <div
-                  class="h-full w-1/2 rounded-full bg-gradient-to-r from-transparent via-indigo-6/50 to-transparent motion-safe:animate-pulse motion-reduce:opacity-70"
-                  style={{ "animation-duration": "2.8s" }}
-                />
-              </div>
-            </div>
 
-            <div class="space-y-1 text-[11px] text-gray-8 font-mono">
-              <Show when={metaPrimary()}>
-                <div class="truncate max-w-[22rem]">{metaPrimary()}</div>
-              </Show>
-              <Show when={metaSecondary()}>
-                <div class="truncate max-w-[22rem] text-gray-7">{metaSecondary()}</div>
-              </Show>
+              <div class="space-y-1 text-[11px] text-gray-8 font-mono">
+                <Show when={metaPrimary()}>
+                  <div class="truncate max-w-[22rem]">{metaPrimary()}</div>
+                </Show>
+                <Show when={metaSecondary()}>
+                  <div class="truncate max-w-[22rem] text-gray-7">{metaSecondary()}</div>
+                </Show>
+              </div>
             </div>
           </div>
         </div>

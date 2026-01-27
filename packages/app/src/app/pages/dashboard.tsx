@@ -394,6 +394,60 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <div class="space-y-4">
+          <div class="px-3 py-3 rounded-xl bg-gray-2/40 border border-gray-6">
+            <div class="flex items-center gap-2 text-[11px] font-medium text-gray-11 mb-2.5">
+              Connection
+              <Show when={props.developerMode}>
+                <span class="text-gray-7">
+                  {props.mode === "host" ? "Local Engine" : "Client Mode"}
+                </span>
+              </Show>
+            </div>
+            <div class="flex items-center gap-2">
+              <div
+                class={`w-2 h-2 rounded-full ${
+                  props.clientConnected
+                    ? "bg-green-9 animate-pulse"
+                    : "bg-gray-6"
+                }`}
+              />
+              <span
+                class={`text-sm font-medium ${
+                  props.clientConnected ? "text-green-11" : "text-gray-10"
+                }`}
+              >
+                {props.clientConnected ? "Connected" : "Not connected"}
+              </span>
+            </div>
+            <Show when={props.developerMode}>
+              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
+                {props.baseUrl}
+              </div>
+            </Show>
+          </div>
+
+          <div class="px-3 py-3 rounded-xl bg-gray-2/40 border border-gray-6 space-y-2.5">
+            <div class="flex items-center justify-between text-[11px]">
+              <div class="flex items-center gap-2">
+                <span class={`w-1.5 h-1.5 rounded-full ${opencodeStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenCode Engine</span>
+              </div>
+              <span class={`${opencodeStatusMeta().text} font-medium`}>{opencodeStatusMeta().label}</span>
+            </div>
+            <div class="h-px bg-gray-6/30" />
+            <div class="flex items-center justify-between text-[11px]">
+              <div class="flex items-center gap-2">
+                <span class={`w-1.5 h-1.5 rounded-full ${openworkStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenWork Server</span>
+              </div>
+              <span class={`${openworkStatusMeta().text} font-medium`}>{openworkStatusMeta().label}</span>
+            </div>
+            <Show when={props.developerMode && props.openworkServerUrl}>
+              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
+                {props.openworkServerUrl}
+              </div>
+            </Show>
+          </div>
 
           <Show when={props.mode === "client" && props.openworkServerStatus === "disconnected"}>
             <div class="text-[11px] text-gray-9 px-1">
@@ -630,25 +684,28 @@ export default function DashboardView(props: DashboardViewProps) {
                             {workspace.workspaceType === "remote" ? "Remote" : "Local"}
                           </span>
                         </div>
-                        <div class="flex items-center justify-between text-xs text-gray-9">
-                          <span>
-                            {workspace.id === props.activeWorkspaceId ? "Active" : "Inactive"}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            class="text-xs px-2 py-1"
-                            onClick={() => props.activateWorkspace(workspace.id)}
-                            disabled={
-                              workspace.id === props.activeWorkspaceId ||
-                              props.connectingWorkspaceId === workspace.id
-                            }
-                          >
-                            {workspace.id === props.activeWorkspaceId
-                              ? "Active"
-                              : props.connectingWorkspaceId === workspace.id
-                                ? "Switching..."
-                                : "Switch"}
-                          </Button>
+                        <div class="flex items-center justify-between text-xs text-gray-9 h-8">
+                          <div />
+                          <div class="flex items-center gap-2">
+                            <Show when={workspace.id === props.activeWorkspaceId}>
+                              <span class="text-green-11 font-medium px-2 py-1 flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+                                Active
+                              </span>
+                            </Show>
+                            <Show when={workspace.id !== props.activeWorkspaceId}>
+                              <Button
+                                variant="ghost"
+                                class="text-xs px-2 py-1"
+                                onClick={() => props.activateWorkspace(workspace.id)}
+                                disabled={props.connectingWorkspaceId === workspace.id}
+                              >
+                                {props.connectingWorkspaceId === workspace.id
+                                  ? "Switching..."
+                                  : "Switch"}
+                              </Button>
+                            </Show>
+                          </div>
                         </div>
                       </div>
                     )}
