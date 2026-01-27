@@ -18,7 +18,7 @@ pub fn resolve_openwork_port() -> Result<u16, String> {
 }
 
 pub fn build_openwork_args(host: &str, port: u16, workspace_path: &str, token: &str, host_token: &str) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "--host".to_string(),
         host.to_string(),
         "--port".to_string(),
@@ -35,7 +35,14 @@ pub fn build_openwork_args(host: &str, port: u16, workspace_path: &str, token: &
         "tauri://localhost".to_string(),
         "--cors".to_string(),
         "http://tauri.localhost".to_string(),
-    ]
+    ];
+
+    if cfg!(debug_assertions) {
+        args.push("--cors".to_string());
+        args.push("*".to_string());
+    }
+
+    args
 }
 
 pub fn spawn_openwork_server(
