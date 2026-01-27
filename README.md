@@ -2,9 +2,12 @@
 
 # OpenWork
 
-OpenWork is an **extensible, open-source “Claude Work” style system for knowledge workers**.
+> **The easiest way to create safe agentic workflow and share them with your team**
 
-It’s built on top of opencode and lets you turn your opencode workflows into usable experiences for non-technical users.
+OpenWork is built on top of [opencode](https://opencode.ai) it lets you turn your opencode config into usable experiences for non-technical users.
+
+It's an **extensible, open-source alternative** to “Claude Work”.
+
 
 <img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 19 02 PM" src="https://github.com/user-attachments/assets/7a1b8662-19a0-4327-87c9-c0295a0d54f1" />
 
