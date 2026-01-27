@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use gethostname::gethostname;
 use local_ip_address::local_ip;
 use tauri::AppHandle;
@@ -14,14 +12,6 @@ pub mod spawn;
 
 use manager::OpenworkServerManager;
 use spawn::{resolve_openwork_port, spawn_openwork_server};
-
-#[derive(Default)]
-struct OutputState {
-    stdout: String,
-    stderr: String,
-    exited: bool,
-    exit_code: Option<i32>,
-}
 
 fn generate_token() -> String {
     Uuid::new_v4().to_string()
@@ -40,7 +30,7 @@ fn build_urls(port: u16) -> (Option<String>, Option<String>, Option<String>) {
         .ok()
         .map(|ip| format!("http://{ip}:{port}"));
 
-    let connect_url = mdns_url.clone().or(lan_url.clone());
+    let connect_url = lan_url.clone().or(mdns_url.clone());
 
     (connect_url, mdns_url, lan_url)
 }
@@ -74,8 +64,6 @@ pub fn start_openwork_server(
     state.last_stdout = None;
     state.last_stderr = None;
 
-    let output_state = Arc::new(Mutex::new(OutputState::default()));
-    let output_state_handle = output_state.clone();
     let state_handle = manager.inner.clone();
 
     tauri::async_runtime::spawn(async move {
@@ -83,9 +71,6 @@ pub fn start_openwork_server(
             match event {
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut output) = output_state_handle.lock() {
-                        output.stdout.push_str(&line);
-                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         let next = state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
@@ -93,29 +78,21 @@ pub fn start_openwork_server(
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut output) = output_state_handle.lock() {
-                        output.stderr.push_str(&line);
-                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         let next = state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
                 }
                 CommandEvent::Terminated(payload) => {
-                    if let Ok(mut output) = output_state_handle.lock() {
-                        output.exited = true;
-                        output.exit_code = payload.code;
-                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
+                        if let Some(code) = payload.code {
+                            let next = format!("OpenWork server exited (code {code}).");
+                            state.last_stderr = Some(truncate_output(&next, 8000));
+                        }
                     }
                 }
                 CommandEvent::Error(message) => {
-                    if let Ok(mut output) = output_state_handle.lock() {
-                        output.exited = true;
-                        output.exit_code = Some(-1);
-                        output.stderr.push_str(&message);
-                    }
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
                         let next = state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;

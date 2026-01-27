@@ -228,18 +228,6 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
-export async function openworkServerStart(input: {
-  workspacePath: string;
-}): Promise<OpenworkServerInfo> {
-  return invoke<OpenworkServerInfo>("openwork_server_start", {
-    workspacePath: input.workspacePath,
-  });
-}
-
-export async function openworkServerStop(): Promise<OpenworkServerInfo> {
-  return invoke<OpenworkServerInfo>("openwork_server_stop");
-}
-
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
 }

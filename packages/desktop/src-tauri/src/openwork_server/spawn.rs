@@ -27,8 +27,6 @@ pub fn build_openwork_args(host: &str, port: u16, workspace_path: &str, token: &
         token.to_string(),
         "--host-token".to_string(),
         host_token.to_string(),
-        "--approval".to_string(),
-        "auto".to_string(),
         "--workspace".to_string(),
         workspace_path.to_string(),
         "--cors".to_string(),

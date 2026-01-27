@@ -19,7 +19,7 @@ use commands::command_files::{
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
 use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
-use commands::openwork_server::{openwork_server_info, openwork_server_start, openwork_server_stop};
+use commands::openwork_server::openwork_server_info;
 use commands::opkg::{import_skill, opkg_install};
 use commands::skills::{install_skill_template, list_local_skills, uninstall_skill};
 use commands::updater::updater_environment;
@@ -53,8 +53,6 @@ pub fn run() {
             engine_info,
             engine_doctor,
             engine_install,
-            openwork_server_start,
-            openwork_server_stop,
             openwork_server_info,
             workspace_bootstrap,
             workspace_set_active,
