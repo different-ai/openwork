@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "updater:default",
     "process:default",
     "opener:allow-reveal-item-in-dir",
