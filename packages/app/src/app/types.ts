@@ -97,8 +97,6 @@ export type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
 export type DashboardTab = "home" | "sessions" | "commands" | "skills" | "plugins" | "mcp" | "settings";
 
-export type DemoSequence = "cold-open" | "scheduler" | "summaries" | "groceries";
-
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type ResetOpenworkMode = "onboarding" | "all";

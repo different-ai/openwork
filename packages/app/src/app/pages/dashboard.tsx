@@ -203,12 +203,6 @@ export type DashboardViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
-  demoMode: boolean;
-  toggleDemoMode: () => void;
-  demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
-  setDemoSequence: (
-    value: "cold-open" | "scheduler" | "summaries" | "groceries"
-  ) => void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
@@ -401,7 +395,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </div>
           </Show>
 
-          <Show when={!props.clientConnected && !props.demoMode}>
+          <Show when={!props.clientConnected}>
             <Button
               variant="secondary"
               onClick={() => props.setView("onboarding")}
@@ -915,10 +909,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   notionError={props.notionError}
                   notionBusy={props.notionBusy}
                   connectNotion={props.connectNotion}
-                  demoMode={props.demoMode}
-                  toggleDemoMode={props.toggleDemoMode}
-                  demoSequence={props.demoSequence}
-                  setDemoSequence={props.setDemoSequence}
                 />
 
             </Match>

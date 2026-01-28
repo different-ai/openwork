@@ -42,8 +42,6 @@ import ProtoWorkspacesView from "./pages/proto-workspaces";
 import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
 import {
   DEFAULT_MODEL,
-  DEMO_MODE_PREF_KEY,
-  DEMO_SEQUENCE_PREF_KEY,
   KEYBIND_PREF_KEY,
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
@@ -56,7 +54,6 @@ import { parseMcpServersFromContent } from "./mcp";
 import type {
   Client,
   DashboardTab,
-  DemoSequence,
   MessageWithParts,
   Mode,
   ModelOption,
@@ -82,6 +79,8 @@ import type {
 } from "./types";
 import {
   clearModePreference,
+  deriveArtifacts,
+  deriveWorkingFiles,
   formatBytes,
   formatModelLabel,
   formatModelRef,
@@ -111,7 +110,6 @@ import {
   subscribeToSystemTheme,
   type ThemeMode,
 } from "./theme";
-import { createDemoState } from "./demo-state";
 import { createCommandState } from "./command-state";
 import { createCommandRegistry } from "./command-registry";
 import { createSystemState } from "./system-state";
@@ -438,32 +436,15 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
-  const demoState = createDemoState({
-    sessions,
-    sessionStatusById,
-    messages,
-    todos,
-    selectedSessionId,
-  });
-
-  const {
-    demoMode,
-    setDemoMode,
-    demoSequence,
-    setDemoSequence,
-    isDemoMode,
-    demoAuthorizedDirs,
-    demoActiveWorkspaceDisplay,
-    activeSessionId,
-    activeSessions,
-    activeSessionStatusById,
-    activeMessages,
-    activeTodos,
-    activeArtifacts,
-    activeWorkingFiles,
-    selectDemoSession,
-    renameDemoSession,
-  } = demoState;
+  const artifacts = createMemo(() => deriveArtifacts(messages()));
+  const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
+  const activeSessionId = createMemo(() => selectedSessionId());
+  const activeSessions = createMemo(() => sessions());
+  const activeSessionStatusById = createMemo(() => sessionStatusById());
+  const activeMessages = createMemo(() => messages());
+  const activeTodos = createMemo(() => todos());
+  const activeArtifacts = createMemo(() => artifacts());
+  const activeWorkingFiles = createMemo(() => workingFiles());
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -527,12 +508,6 @@ export default function App() {
     };
     const content = resolvedDraft.text.trim();
     if (!content && !resolvedDraft.attachments.length) return;
-
-    if (isDemoMode()) {
-      setLastPromptSent(content);
-      setPrompt("");
-      return;
-    }
 
     const c = client();
     const sessionID = selectedSessionId();
@@ -605,11 +580,6 @@ export default function App() {
     const trimmed = title.trim();
     if (!trimmed) {
       throw new Error("Session name is required");
-    }
-
-    if (isDemoMode()) {
-      renameDemoSession(sessionID, trimmed);
-      return;
     }
 
     await renameSession(sessionID, trimmed);
@@ -727,17 +697,6 @@ export default function App() {
   }
 
   async function saveSessionExport(sessionID: string) {
-    if (isDemoMode()) {
-      const payload = {
-        sessionID,
-        messages: activeMessages(),
-        todos: activeTodos(),
-        exportedAt: new Date().toISOString(),
-        source: "openwork",
-      };
-      return downloadSessionExport(payload, `session-${sessionID}.json`);
-    }
-
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -1663,24 +1622,16 @@ export default function App() {
   } = workspaceStore;
 
   createEffect(() => {
-    if (!isTauriRuntime() || isDemoMode()) return;
+    if (!isTauriRuntime()) return;
     workspaceStore.activeWorkspaceId();
     workspaceProjectDir();
     clearReloadRequired();
     void refreshMcpServers();
   });
 
-  const activeAuthorizedDirs = createMemo(() =>
-    isDemoMode() ? demoAuthorizedDirs() : workspaceStore.authorizedDirs()
-  );
-  const activeWorkspaceDisplay = createMemo(() =>
-    isDemoMode()
-      ? demoActiveWorkspaceDisplay()
-      : workspaceStore.activeWorkspaceDisplay()
-  );
-  const activePermissionMemo = createMemo(() =>
-    isDemoMode() ? null : activePermission()
-  );
+  const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
+  const activeWorkspaceDisplay = createMemo(() => workspaceStore.activeWorkspaceDisplay());
+  const activePermissionMemo = createMemo(() => activePermission());
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
     new Set()
@@ -1705,7 +1656,7 @@ export default function App() {
   });
 
   const newTaskDisabled = createMemo(() => {
-    if (!isDemoMode() && !client()) {
+    if (!client()) {
       return true;
     }
 
@@ -1730,7 +1681,6 @@ export default function App() {
     // If we lose the client (disconnect / stop engine), don't strand the user
     // in a session view that can't operate.
     if (currentView() !== "session") return;
-    if (isDemoMode()) return;
     if (creatingSession()) return;
     if (client()) return;
     setView("dashboard");
@@ -2239,16 +2189,6 @@ export default function App() {
     console.log("[DEBUG] createSessionAndOpen");
     console.log("[DEBUG] current baseUrl:", baseUrl());
     console.log("[DEBUG] engine info:", engine());
-    if (isDemoMode()) {
-      const demoId = activeSessionId();
-      if (demoId) {
-        goToSession(demoId);
-      } else {
-        setView("session");
-      }
-      return;
-    }
-
     console.log("[DEBUG] creating session");
     const c = client();
     if (!c) {
@@ -2443,23 +2383,6 @@ export default function App() {
           if (normalized) {
             setModelVariant(normalized);
           }
-        }
-
-        const storedDemoMode = window.localStorage.getItem(DEMO_MODE_PREF_KEY);
-        if (storedDemoMode != null) {
-          setDemoMode(storedDemoMode === "1");
-        }
-
-        const storedDemoSequence = window.localStorage.getItem(
-          DEMO_SEQUENCE_PREF_KEY
-        );
-        if (
-          storedDemoSequence === "cold-open" ||
-          storedDemoSequence === "scheduler" ||
-          storedDemoSequence === "summaries" ||
-          storedDemoSequence === "groceries"
-        ) {
-          setDemoSequence(storedDemoSequence);
         }
 
         const storedKeybinds = window.localStorage.getItem(KEYBIND_PREF_KEY);
@@ -2796,24 +2719,6 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      window.localStorage.setItem(DEMO_MODE_PREF_KEY, demoMode() ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(DEMO_SEQUENCE_PREF_KEY, demoSequence());
-    } catch {
-      // ignore
-    }
-  });
-
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
       const overrides = keybindOverrides();
       if (Object.keys(overrides).length) {
         window.localStorage.setItem(KEYBIND_PREF_KEY, JSON.stringify(overrides));
@@ -3094,9 +2999,7 @@ export default function App() {
       directory: s.directory,
     })),
     sessionStatusById: activeSessionStatusById(),
-    activeWorkspaceRoot: isDemoMode()
-      ? demoActiveWorkspaceDisplay().path
-      : workspaceStore.activeWorkspaceRoot().trim(),
+    activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
     workspaceCommands: workspaceCommands(),
     globalCommands: globalCommands(),
     otherCommands: otherCommands(),
@@ -3144,7 +3047,7 @@ export default function App() {
     addPlugin,
     createSessionAndOpen,
     setPrompt,
-    selectSession: isDemoMode() ? selectDemoSession : selectSession,
+    selectSession: selectSession,
     defaultModelLabel: formatModelLabel(defaultModel(), providers()),
     defaultModelRef: formatModelRef(defaultModel()),
     openDefaultModelPicker,
@@ -3156,10 +3059,6 @@ export default function App() {
     onResetKeybind: resetKeybindOverride,
     onResetAllKeybinds: resetAllKeybinds,
     editModelVariant: handleEditModelVariant,
-    demoMode: demoMode(),
-    toggleDemoMode: () => setDemoMode((v) => !v),
-    demoSequence: demoSequence(),
-    setDemoSequence,
     updateAutoCheck: updateAutoCheck(),
     toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
     updateStatus: updateStatus(),
@@ -3212,10 +3111,6 @@ export default function App() {
   const searchWorkspaceFiles = async (query: string) => {
     const trimmed = query.trim();
     if (!trimmed) return [];
-    if (isDemoMode()) {
-      const lower = trimmed.toLowerCase();
-      return activeWorkingFiles().filter((file) => file.toLowerCase().includes(lower));
-    }
     const activeClient = client();
     if (!activeClient) return [];
     try {
@@ -3277,7 +3172,7 @@ export default function App() {
       slug: session.slug,
       workspaceLabel: workspaceLabelForDirectory(session.directory),
     })),
-    selectSession: isDemoMode() ? selectDemoSession : selectSession,
+    selectSession: selectSession,
     messages: activeMessages(),
     todos: activeTodos(),
     busyLabel: busyLabel(),
@@ -3398,13 +3293,6 @@ export default function App() {
           goToSession(fallback, { replace: true });
         } else {
           goToDashboard("sessions", { replace: true });
-        }
-        return;
-      }
-
-      if (isDemoMode()) {
-        if (activeSessionId() !== id) {
-          selectDemoSession(id);
         }
         return;
       }
