@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -14,6 +14,18 @@ const repoRoot = join(__dirname, "..", "..");
 const serverDir = join(repoRoot, "server");
 const serverCli = join(serverDir, "dist", "cli.js");
 const bunTypesPath = join(serverDir, "node_modules", "bun-types", "package.json");
+
+const resolveBun = () => {
+  if (process.env.BUN_PATH) return process.env.BUN_PATH;
+  const result = spawnSync("bun", ["--version"], { stdio: "ignore" });
+  return result.status === 0 ? "bun" : null;
+};
+
+const resolveBunTarget = (target) => {
+  if (!target) return null;
+  if (target === "x86_64-pc-windows-msvc") return "bun-windows-x64";
+  return null;
+};
 
 const resolveTargetTriple = () => {
   const envTarget =
@@ -35,8 +47,57 @@ const resolveTargetTriple = () => {
 };
 
 const ensureOpenworkServerSidecar = () => {
-  if (process.platform === "win32") {
-    console.log("OpenWork server sidecar prep is not automated on Windows.");
+  const target = resolveTargetTriple();
+  const isWindows = process.platform === "win32";
+  const devSidecarPath = join(sidecarDir, isWindows ? "openwork-server.exe" : "openwork-server");
+  const targetSidecarPath = target
+    ? join(sidecarDir, `openwork-server-${target}${isWindows ? ".exe" : ""}`)
+    : null;
+
+  if (targetSidecarPath && existsSync(targetSidecarPath) && existsSync(devSidecarPath)) {
+    console.log(`OpenWork server sidecar already present: ${targetSidecarPath}`);
+    return;
+  }
+
+  if (isWindows) {
+    const bunPath = resolveBun();
+    if (!bunPath) {
+      console.error("Bun is required to compile the OpenWork server sidecar on Windows.");
+      console.error("Install Bun or set BUN_PATH, then re-run the build.");
+      process.exit(1);
+    }
+
+    if (!existsSync(bunTypesPath)) {
+      const install = spawnSync("pnpm", ["-C", serverDir, "install"], { stdio: "inherit" });
+      if (install.status !== 0) {
+        process.exit(install.status ?? 1);
+      }
+    }
+
+    const bunTarget = resolveBunTarget(target) ?? "bun-windows-x64";
+    const entrypoint = join(serverDir, "src", "cli.ts");
+    const outputPath = targetSidecarPath ?? devSidecarPath;
+
+    mkdirSync(sidecarDir, { recursive: true });
+
+    const build = spawnSync(
+      bunPath,
+      ["build", entrypoint, "--compile", `--target=${bunTarget}`, "--outfile", outputPath],
+      { stdio: "inherit", cwd: serverDir }
+    );
+    if (build.status !== 0) {
+      process.exit(build.status ?? 1);
+    }
+
+    if (!existsSync(outputPath)) {
+      console.error(`OpenWork server sidecar was not created at ${outputPath}`);
+      process.exit(1);
+    }
+
+    if (outputPath !== devSidecarPath) {
+      copyFileSync(outputPath, devSidecarPath);
+    }
+
     return;
   }
 
@@ -56,9 +117,6 @@ const ensureOpenworkServerSidecar = () => {
   const nodePath = process.execPath.replace(/"/g, "\\\"");
   const cliPath = serverCli.replace(/"/g, "\\\"");
   const launcher = `#!/usr/bin/env bash\n"${nodePath}" "${cliPath}" "$@"\n`;
-  const target = resolveTargetTriple();
-  const devSidecarPath = join(sidecarDir, "openwork-server");
-  const targetSidecarPath = target ? join(sidecarDir, `openwork-server-${target}`) : null;
 
   writeFileSync(devSidecarPath, launcher, "utf8");
   chmodSync(devSidecarPath, 0o755);
