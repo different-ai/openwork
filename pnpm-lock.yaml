@@ -16,8 +16,8 @@ importers:
   packages/app:
     dependencies:
       '@opencode-ai/sdk':
-        specifier: ^1.1.19
-        version: 1.1.20
+        specifier: ^1.1.31
+        version: 1.1.39
       '@radix-ui/colors':
         specifier: ^3.0.0
         version: 3.0.0
@@ -86,8 +86,8 @@ importers:
         specifier: ^0.11.0
         version: 0.11.0
       '@opencode-ai/sdk':
-        specifier: ^1.1.19
-        version: 1.1.20
+        specifier: ^1.1.31
+        version: 1.1.39
       '@whiskeysockets/baileys':
         specifier: 7.0.0-rc.9
         version: 7.0.0-rc.9(sharp@0.34.5)
@@ -747,8 +747,8 @@ packages:
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
 
-  '@opencode-ai/sdk@1.1.20':
-    resolution: {integrity: sha512-OYzRFqf13y09TSiaQynsInpvJ2benk63NX+4HM7PbV85vYluGxRIB4j7CLCQUGojFmUz8+gOwiJ8+DDnv1h7lQ==}
+  '@opencode-ai/sdk@1.1.39':
+    resolution: {integrity: sha512-EUYBZAci0bzG9+a7JVINmqAqis71ipG2/D3juvmvvKFyu0YBIT/6b+g3+p82Eb5CU2dujxpPdJJCaexZ1389eQ==}
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
@@ -2302,7 +2302,7 @@ snapshots:
 
   '@keyv/serialize@1.1.1': {}
 
-  '@opencode-ai/sdk@1.1.20': {}
+  '@opencode-ai/sdk@1.1.39': {}
 
   '@pinojs/redact@0.4.0': {}
 
