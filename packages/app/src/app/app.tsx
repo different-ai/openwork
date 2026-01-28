@@ -473,8 +473,7 @@ export default function App() {
       return;
     }
 
-    if (currentView() !== "session") return;
-    void createSessionAndOpen();
+    return;
   });
 
   const [prompt, setPrompt] = createSignal("");
@@ -541,8 +540,13 @@ export default function App() {
     if (!content && !resolvedDraft.attachments.length) return;
 
     const c = client();
-    const sessionID = selectedSessionId();
-    if (!c || !sessionID) return;
+    if (!c) return;
+    let sessionID = selectedSessionId();
+    if (!sessionID) {
+      await createSessionAndOpen();
+      sessionID = selectedSessionId();
+    }
+    if (!sessionID) return;
 
     setBusy(true);
     setBusyLabel("status.running");

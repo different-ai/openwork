@@ -490,52 +490,9 @@ export default function SessionView(props: SessionViewProps) {
     return props.sessions.find((session) => session.id === id)?.title ?? "";
   });
 
-  const starterSkillOrder = [
-    "get-started",
-    "skill-creator",
-    "command-creator",
-    "agent-creator",
-    "plugin-creator",
-    "custom-cal-com-creator",
-  ];
-
-  const starterSkills = createMemo(() => {
-    const skills = props.skills ?? [];
-    const picked: SkillCard[] = [];
-    const byName = new Map(skills.map((skill) => [skill.name, skill]));
-
-    for (const name of starterSkillOrder) {
-      const skill = byName.get(name);
-      if (skill) {
-        picked.push(skill);
-        byName.delete(name);
-      }
-    }
-
-    for (const skill of skills) {
-      if (picked.length >= 6) break;
-      if (skill.name.endsWith("-creator") && !picked.some((item) => item.name === skill.name)) {
-        picked.push(skill);
-      }
-    }
-
-    return picked.slice(0, 6);
-  });
-
-  const starterSkillPrompt = (skill: SkillCard) => {
-    if (skill.name === "get-started") return "get started";
-    return `@${skill.name} `;
-  };
-
-  const formatSkillLabel = (name: string) =>
-    name
-      .split("-")
-      .filter(Boolean)
-      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-      .join(" ");
-
-  const handleStarterSkill = (skill: SkillCard) => {
-    props.setPrompt(starterSkillPrompt(skill));
+  const handleCreateSkill = () => {
+    props.setPrompt("@skill-creator ");
+    window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
   };
 
   const renameCanSave = createMemo(() => {
@@ -1006,25 +963,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   return (
-    <Show
-      when={props.selectedSessionId}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-gray-1 text-gray-12 p-6">
-          <div class="text-center space-y-4">
-            <div class="text-lg font-medium">No session selected</div>
-            <Button
-              onClick={() => {
-                props.setTab("sessions");
-                props.setView("dashboard");
-              }}
-            >
-              Back to dashboard
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <div class="h-screen flex flex-col bg-gray-1 text-gray-12 relative">
+    <div class="h-screen flex flex-col bg-gray-1 text-gray-12 relative">
         <header class="h-16 border-b border-gray-6 flex items-center justify-between px-6 bg-gray-1/80 backdrop-blur-md z-10 sticky top-0">
           <div class="flex items-center gap-3">
             <Button
@@ -1093,61 +1032,16 @@ export default function SessionView(props: SessionViewProps) {
                   <Zap class="text-gray-7" />
                 </div>
                 <div class="space-y-2">
-                  <h3 class="text-xl font-medium">Ready when you are</h3>
+                  <h3 class="text-xl font-medium">Start with a skill</h3>
                   <p class="text-gray-10 text-sm max-w-sm mx-auto">
-                    Describe a task. I&apos;ll show progress and ask for permissions when needed.
+                    Tell OpenWork what you want to reuse. We&apos;ll shape it into a skill you can run anytime.
                   </p>
                 </div>
-                <Show when={starterSkills().length}>
-                  <div class="mx-auto w-full max-w-2xl text-left space-y-4">
-                    <div class="text-xs uppercase tracking-wide text-gray-9">Starter skills</div>
-                    <div class="grid gap-3 sm:grid-cols-2">
-                      <For each={starterSkills()}>
-                        {(skill) => (
-                          <button
-                            type="button"
-                            class="w-full rounded-xl border border-gray-6 bg-gray-2/40 p-4 text-left transition hover:border-gray-7 hover:bg-gray-2/70"
-                            onClick={() => handleStarterSkill(skill)}
-                          >
-                            <div class="space-y-2">
-                              <div class="flex items-center justify-between gap-3">
-                                <div class="text-sm font-medium text-gray-12">
-                                  {formatSkillLabel(skill.name)}
-                                </div>
-                                <span class="text-[11px] text-gray-9 font-mono">@{skill.name}</span>
-                              </div>
-                              <div class="text-xs text-gray-10">
-                                {skill.description ?? "Run this skill to get started."}
-                              </div>
-                            </div>
-                          </button>
-                        )}
-                      </For>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                      <Button
-                        variant="outline"
-                        class="text-xs h-8 px-3"
-                        onClick={() => props.setWorkspacePickerOpen(true)}
-                      >
-                        Connect folder
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        class="text-xs h-8 px-2"
-                        onClick={() => {
-                          props.setTab("skills");
-                          props.setView("dashboard");
-                        }}
-                      >
-                        View all skills
-                      </Button>
-                    </div>
-                    <div class="text-xs text-gray-9">
-                      Connect a folder when you&apos;re ready to work with files.
-                    </div>
-                  </div>
-                </Show>
+                <div class="flex justify-center">
+                  <Button variant="primary" class="h-11 px-5" onClick={handleCreateSkill}>
+                    Create your first skill
+                  </Button>
+                </div>
               </div>
             </Show>
 
@@ -1374,7 +1268,6 @@ export default function SessionView(props: SessionViewProps) {
         <For each={flyouts()}>
           {(item) => <FlyoutItem item={item} />}
         </For>
-      </div>
-    </Show>
+    </div>
   );
 }
