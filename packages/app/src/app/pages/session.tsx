@@ -491,7 +491,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleCreateSkill = () => {
-    props.setPrompt("@skill-creator ");
+    props.setPrompt("/skill create ");
     window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
   };
 
