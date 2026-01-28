@@ -15,6 +15,13 @@ const serverDir = join(repoRoot, "server");
 const serverCli = join(serverDir, "dist", "cli.js");
 const bunTypesPath = join(serverDir, "node_modules", "bun-types", "package.json");
 
+const resolveBun = () => {
+  if (process.env.BUN_PATH) return process.env.BUN_PATH;
+  const which = spawnSync("bash", ["-lc", "command -v bun"], { encoding: "utf8" });
+  const bunPath = which.stdout?.trim();
+  return bunPath ? bunPath : null;
+};
+
 const resolveTargetTriple = () => {
   const envTarget =
     process.env.TAURI_ENV_TARGET_TRIPLE ||
@@ -53,9 +60,13 @@ const ensureOpenworkServerSidecar = () => {
   }
 
   mkdirSync(sidecarDir, { recursive: true });
-  const nodePath = process.execPath.replace(/"/g, "\\\"");
+  const bunPath = resolveBun();
   const cliPath = serverCli.replace(/"/g, "\\\"");
-  const launcher = `#!/usr/bin/env bash\n"${nodePath}" "${cliPath}" "$@"\n`;
+  const launcher = bunPath
+    ? `#!/usr/bin/env bash\n"${bunPath.replace(/"/g, "\\\"")}" "${cliPath}" "$@"\n`
+    : "#!/usr/bin/env bash\n" +
+      "echo 'Bun is required to run the OpenWork server. Install bun.sh and re-run pnpm dev.'\n" +
+      "exit 1\n";
   const target = resolveTargetTriple();
   const devSidecarPath = join(sidecarDir, "openwork-server");
   const targetSidecarPath = target ? join(sidecarDir, `openwork-server-${target}`) : null;
