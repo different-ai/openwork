@@ -250,7 +250,7 @@ jobs:
       - name: Download OpenCode sidecar
         shell: bash
         env:
-          OPENCODE_VERSION: 1.1.25
+          OPENCODE_VERSION: 1.1.36
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
