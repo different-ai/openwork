@@ -84,26 +84,9 @@ export default function WorkspaceSwitchOverlay(props: {
 
         <div class="relative z-10 flex min-h-screen flex-col items-center justify-center px-6 py-10 text-center">
           <div class="flex flex-col items-center gap-8">
-            <div class="flex items-center gap-3 text-[10px] uppercase tracking-[0.35em] text-gray-8">
-              <span class="h-px w-10 bg-gray-6/60" />
-              <span>OpenWork</span>
-              <span class="h-px w-10 bg-gray-6/60" />
-            </div>
+                      <div class="relative">
 
-            <div class="relative">
-              <div
-                class="absolute inset-0 rounded-full bg-indigo-6/20 blur-2xl motion-safe:animate-pulse motion-reduce:opacity-50"
-                style={{ "animation-duration": "5s" }}
-              />
-              <div
-                class="absolute -inset-4 rounded-full border border-gray-6/40 motion-safe:animate-spin motion-reduce:opacity-60"
-                style={{ "animation-duration": "14s" }}
-              />
-              <div
-                class="absolute -inset-1 rounded-full border border-gray-6/30 motion-safe:animate-spin motion-reduce:opacity-60"
-                style={{ "animation-duration": "9s", "animation-direction": "reverse" }}
-              />
-              <div class="relative h-24 w-24 rounded-3xl bg-gray-1/90 border border-gray-5/60 shadow-2xl flex items-center justify-center">
+              <div class="relative h-24 w-24 flex items-center justify-center">
                 <OpenWorkLogo size={44} class="drop-shadow-sm" />
               </div>
             </div>
