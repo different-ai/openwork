@@ -200,9 +200,21 @@ export function createWorkspaceStore(options: {
     if (!workspace) {
       throw new Error("OpenWork host did not return a workspace.");
     }
-    const opencodeBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
+    let opencodeBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeBaseUrl) {
       throw new Error("OpenWork host did not provide an OpenCode URL.");
+    }
+
+    try {
+      const hostUrl = new URL(normalized);
+      const opencodeUrl = new URL(opencodeBaseUrl);
+      if (hostUrl.hostname && opencodeUrl.hostname !== hostUrl.hostname) {
+        opencodeUrl.hostname = hostUrl.hostname;
+        opencodeUrl.protocol = hostUrl.protocol;
+        opencodeBaseUrl = opencodeUrl.toString();
+      }
+    } catch {
+      // ignore
     }
 
     return {

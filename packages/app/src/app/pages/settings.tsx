@@ -333,8 +333,15 @@ export default function SettingsView(props: SettingsViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">OpenWork host</div>
-              <div class="text-xs text-gray-10">Recommended for managed workspaces, skills, and plugins.</div>
+              <div class="flex items-center gap-2">
+                <div class="text-sm font-medium text-gray-12">OpenWork host</div>
+                <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/10 text-amber-11 border border-amber-7/30">
+                  Alpha
+                </span>
+              </div>
+              <div class="text-xs text-gray-10">
+                OpenWork discovers your OpenCode address and port from the host. Use a host URL to connect across devices.
+              </div>
             </div>
             <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
               {openworkStatusLabel()}
@@ -352,7 +359,7 @@ export default function SettingsView(props: SettingsViewProps) {
             />
 
             <label class="block">
-              <div class="mb-1 text-xs font-medium text-gray-11">Access token (optional)</div>
+              <div class="mb-1 text-xs font-medium text-gray-11">Client token</div>
               <div class="flex items-center gap-2">
                 <input
                   type={openworkTokenVisible() ? "text" : "password"}
@@ -371,7 +378,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   {openworkTokenVisible() ? "Hide" : "Show"}
                 </Button>
               </div>
-              <div class="mt-1 text-xs text-gray-10">Keep this private. It grants access to your host.</div>
+              <div class="mt-1 text-xs text-gray-10">Optional. Paste the client token from the host to pair.</div>
             </label>
           </div>
 

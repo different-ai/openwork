@@ -26,7 +26,7 @@ export default function CreateRemoteWorkspaceModal(props: {
   let inputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
-  const [remoteType, setRemoteType] = createSignal<"openwork" | "opencode">("openwork");
+  const [remoteType, setRemoteType] = createSignal<"openwork" | "opencode">("opencode");
   const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
   const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
@@ -55,7 +55,7 @@ export default function CreateRemoteWorkspaceModal(props: {
 
   createEffect(() => {
     if (!props.open) return;
-    setRemoteType("openwork");
+    setRemoteType("opencode");
     setOpenworkHostUrl("");
     setOpenworkToken("");
     setOpenworkTokenVisible(false);
@@ -104,7 +104,7 @@ export default function CreateRemoteWorkspaceModal(props: {
                   : "text-gray-10 hover:text-gray-12"
               }`}
             >
-              {translate("dashboard.remote_mode_openwork")}
+              {translate("dashboard.remote_mode_openwork_alpha")}
             </button>
             <button
               type="button"
