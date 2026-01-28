@@ -394,58 +394,6 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
 
         <div class="space-y-4">
-          <div class="px-3 py-3 rounded-xl bg-gray-2/50 border border-gray-6">
-            <div class="flex items-center gap-2 text-xs font-medium text-gray-11 mb-2">
-              Connection
-              <Show when={props.developerMode}>
-                <span class="text-gray-7">
-                  {props.mode === "host" ? "Local Engine" : "Client Mode"}
-                </span>
-              </Show>
-            </div>
-            <div class="flex items-center gap-2">
-              <div
-                class={`w-2 h-2 rounded-full ${
-                  props.clientConnected
-                    ? "bg-green-9 animate-pulse"
-                    : "bg-gray-6"
-                }`}
-              />
-              <span
-                class={`text-sm font-medium ${
-                  props.clientConnected ? "text-green-11" : "text-gray-10"
-                }`}
-              >
-                {props.clientConnected ? "Connected" : "Not connected"}
-              </span>
-            </div>
-            <Show when={props.developerMode}>
-              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
-                {props.baseUrl}
-              </div>
-            </Show>
-          </div>
-
-          <div class="px-3 py-2 rounded-xl bg-gray-2/40 border border-gray-6">
-            <div class="grid grid-cols-[1fr_auto_1fr] items-center gap-3 text-xs">
-              <div class="flex items-center gap-2">
-                <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
-                <span class="text-gray-11 font-medium">OpenCode Engine</span>
-                <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
-              </div>
-              <div class="w-px h-5 bg-gray-6/70" />
-              <div class="flex items-center gap-2 justify-end">
-                <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
-                <span class="text-gray-11 font-medium">OpenWork Server</span>
-                <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
-              </div>
-            </div>
-            <Show when={props.developerMode && props.openworkServerUrl}>
-              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
-                {props.openworkServerUrl}
-              </div>
-            </Show>
-          </div>
 
           <Show when={props.mode === "client" && props.openworkServerStatus === "disconnected"}>
             <div class="text-[11px] text-gray-9 px-1">
@@ -463,32 +411,10 @@ export default function DashboardView(props: DashboardViewProps) {
               Connect
             </Button>
           </Show>
-
-          <Show when={props.mode === "host"}>
-            <Button
-              variant="danger"
-              onClick={props.stopHost}
-              disabled={props.busy}
-              class="w-full"
-            >
-              Stop & Disconnect
-            </Button>
-          </Show>
-
-          <Show when={props.mode === "client"}>
-            <Button
-              variant="outline"
-              onClick={props.stopHost}
-              disabled={props.busy}
-              class="w-full"
-            >
-              Disconnect
-            </Button>
-          </Show>
         </div>
       </aside>
 
-      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-0">
+      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-12">
         <header class="h-16 flex items-center justify-between px-6 md:px-10 border-b border-gray-6 sticky top-0 bg-gray-1/80 backdrop-blur-md z-10">
           <div class="flex items-center gap-3">
             <WorkspaceChip
@@ -1032,73 +958,112 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </Show>
 
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
-          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "home" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("home")}
-            >
-              <Command size={18} />
-              Home
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "sessions" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("sessions")}
-            >
-              <Play size={18} />
-              Runs
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "commands" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("commands")}
-            >
-              <Terminal size={18} />
-              Commands
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "skills" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("skills")}
-            >
-              <Package size={18} />
-              Skills
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("plugins")}
-            >
-              <Cpu size={18} />
-              Plugins
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("mcp")}
-            >
-              <Server size={18} />
-              MCPs
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("settings")}
-            >
-              <Settings size={18} />
-              Settings
-            </button>
+        <div class="fixed bottom-0 left-0 right-0">
+          <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
+            <div class="mx-auto max-w-5xl px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
+              <div class="flex items-center gap-2">
+                <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenCode Engine</span>
+                <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
+              </div>
+              <div class="w-px h-4 bg-gray-6/70" />
+              <div class="flex items-center gap-2">
+                <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
+                <span class="text-gray-11 font-medium">OpenWork Server</span>
+                <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
+              </div>
+              <div class="ml-auto flex items-center gap-2">
+                <Show when={props.mode === "host"}>
+                  <Button
+                    variant="danger"
+                    onClick={props.stopHost}
+                    disabled={props.busy}
+                    class="text-xs h-7 px-3"
+                  >
+                    Stop & Disconnect
+                  </Button>
+                </Show>
+                <Show when={props.mode === "client"}>
+                  <Button
+                    variant="outline"
+                    onClick={props.stopHost}
+                    disabled={props.busy}
+                    class="text-xs h-7 px-3"
+                  >
+                    Disconnect
+                  </Button>
+                </Show>
+              </div>
+            </div>
           </div>
-        </nav>
+          <nav class="md:hidden border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
+            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "home" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("home")}
+              >
+                <Command size={18} />
+                Home
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "sessions" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("sessions")}
+              >
+                <Play size={18} />
+                Runs
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "commands" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("commands")}
+              >
+                <Terminal size={18} />
+                Commands
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "skills" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("skills")}
+              >
+                <Package size={18} />
+                Skills
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("plugins")}
+              >
+                <Cpu size={18} />
+                Plugins
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("mcp")}
+              >
+                <Server size={18} />
+                MCPs
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "settings" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("settings")}
+              >
+                <Settings size={18} />
+                Settings
+              </button>
+            </div>
+          </nav>
+        </div>
       </main>
     </div>
   );
