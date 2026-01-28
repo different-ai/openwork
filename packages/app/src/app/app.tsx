@@ -843,6 +843,11 @@ export default function App() {
   const {
     skills,
     skillsStatus,
+    remoteSkillSources,
+    remoteSkills,
+    remoteSkillsStatus,
+    remoteSkillsLoading,
+    remoteSkillInstallState,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -857,10 +862,14 @@ export default function App() {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshRemoteSkills,
     refreshPlugins,
     addPlugin,
+    addRemoteSkillSource,
+    removeRemoteSkillSource,
     importLocalSkill,
     installSkillCreator,
+    installRemoteSkill,
     revealSkillsFolder,
     uninstallSkill,
     abortRefreshes,
@@ -3026,6 +3035,10 @@ export default function App() {
     const canInstallSkillCreator = isRemoteWorkspace
       ? openworkServerCanWriteSkills()
       : isTauriRuntime();
+    const canBrowseRemoteSkills = isRemoteWorkspace ? openworkStatus === "connected" : true;
+    const canInstallRemoteSkills = isRemoteWorkspace
+      ? openworkServerCanWriteSkills()
+      : isTauriRuntime();
     const canEditPlugins = isRemoteWorkspace
       ? openworkServerCanWritePlugins()
       : isTauriRuntime();
@@ -3038,6 +3051,15 @@ export default function App() {
           : openworkServerCanWriteSkills()
             ? null
             : "OpenWork server is read-only for skills."
+      : null;
+    const remoteSkillsAccessHint = isRemoteWorkspace
+      ? openworkStatus === "disconnected"
+        ? "OpenWork server unavailable. Connect to browse remote skills."
+        : openworkStatus === "limited"
+          ? "OpenWork server needs a token to browse remote skills."
+          : openworkServerCanWriteSkills()
+            ? null
+            : "OpenWork server is read-only. Remote installs are disabled."
       : null;
     const pluginsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
@@ -3116,13 +3138,25 @@ export default function App() {
     justSavedCommand: justSavedCommand(),
     clearJustSavedCommand,
     refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
+    refreshRemoteSkills: (options?: { force?: boolean }) => refreshRemoteSkills(options).catch(() => undefined),
     refreshPlugins: (scopeOverride?: PluginScope) =>
       refreshPlugins(scopeOverride).catch(() => undefined),
     skills: skills(),
     skillsStatus: skillsStatus(),
+    remoteSkillSources: remoteSkillSources(),
+    remoteSkills: remoteSkills(),
+    remoteSkillsStatus: remoteSkillsStatus(),
+    remoteSkillsLoading: remoteSkillsLoading(),
+    remoteSkillInstallState: remoteSkillInstallState(),
+    remoteSkillsAccessHint,
+    canBrowseRemoteSkills,
+    canInstallRemoteSkills,
     skillsAccessHint,
     canInstallSkillCreator,
     canUseDesktopTools,
+    addRemoteSkillSource: (input: string) => addRemoteSkillSource(input),
+    removeRemoteSkillSource: (id: string) => removeRemoteSkillSource(id),
+    installRemoteSkill: (skill) => installRemoteSkill(skill),
     importLocalSkill,
     installSkillCreator,
     revealSkillsFolder,

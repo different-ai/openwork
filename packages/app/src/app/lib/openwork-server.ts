@@ -41,6 +41,35 @@ export type OpenworkSkillItem = {
   scope: "project" | "global";
 };
 
+export type OpenworkRemoteSkillSource = {
+  id: string;
+  input: string;
+  repo: string;
+  ref: string | null;
+  pathPrefix: string | null;
+  resolvedRef?: string | null;
+  status: "success" | "error";
+  errorMessage?: string | null;
+};
+
+export type OpenworkRemoteSkillItem = {
+  id: string;
+  sourceId: string;
+  sourceInput: string;
+  name: string;
+  description?: string | null;
+  repo: string;
+  ref: string | null;
+  path: string;
+  skillFilePath: string;
+  contentUrl: string;
+};
+
+export type OpenworkRemoteSkillsResponse = {
+  sources: OpenworkRemoteSkillSource[];
+  items: OpenworkRemoteSkillItem[];
+};
+
 export type OpenworkCommandItem = {
   name: string;
   description?: string;
@@ -244,8 +273,20 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       ),
     listSkills: (workspaceId: string) =>
       requestJson<{ items: OpenworkSkillItem[] }>(baseUrl, `/workspace/${workspaceId}/skills`, { token }),
+    listRemoteSkills: (workspaceId: string, sources: string[]) =>
+      requestJson<OpenworkRemoteSkillsResponse>(baseUrl, `/workspace/${workspaceId}/skills/remote`, {
+        token,
+        method: "POST",
+        body: { sources },
+      }),
     upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
       requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
+        token,
+        method: "POST",
+        body: payload,
+      }),
+    installRemoteSkill: (workspaceId: string, payload: { source: string; path: string; name: string }) =>
+      requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills/remote/install`, {
         token,
         method: "POST",
         body: payload,

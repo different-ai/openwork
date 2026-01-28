@@ -5,6 +5,7 @@ import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { listSkills, upsertSkill } from "./skills.js";
+import { installRemoteSkill, listRemoteSkills } from "./remote-skills.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
@@ -315,6 +316,39 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       timestamp: Date.now(),
     });
     return jsonResponse({ name, path, description: description ?? "", scope: "project" });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/remote", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    const sources = Array.isArray(body.sources) ? body.sources.map((source) => String(source)) : [];
+    const result = await listRemoteSkills(sources);
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/skills/remote/install", "client", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const name = String(body.name ?? "");
+    const source = String(body.source ?? "");
+    const path = String(body.path ?? "");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "skills.remote.install",
+      summary: `Install remote skill ${name}`,
+      paths: [join(workspace.path, ".opencode", "skills", name, "SKILL.md")],
+    });
+    const result = await installRemoteSkill(workspace.path, { name, source, path });
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "skills.remote.install",
+      target: result.path,
+      summary: `Installed remote skill ${name}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ name, path: result.path, description: result.description ?? "", scope: "project" });
   });
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {

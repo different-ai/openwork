@@ -153,6 +153,30 @@ export type SkillCard = {
   description?: string;
 };
 
+export type RemoteSkillSource = {
+  id: string;
+  input: string;
+  repo: string;
+  ref: string | null;
+  pathPrefix: string | null;
+  resolvedRef?: string | null;
+  status?: "idle" | "loading" | "success" | "error";
+  errorMessage?: string | null;
+};
+
+export type RemoteSkillCard = {
+  id: string;
+  name: string;
+  description?: string | null;
+  sourceId: string;
+  sourceInput: string;
+  repo: string;
+  ref: string | null;
+  path: string;
+  skillFilePath: string;
+  contentUrl: string;
+};
+
 export type PluginInstallStep = {
   title: string;
   description: string;

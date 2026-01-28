@@ -4,6 +4,8 @@ import type {
   McpServerEntry,
   McpStatusMap,
   PluginScope,
+  RemoteSkillCard,
+  RemoteSkillSource,
   SkillCard,
   WorkspaceCommand,
   View,
@@ -11,7 +13,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { OpenworkServerInfo } from "../lib/tauri";
+import type { OpenworkServerInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -100,13 +102,25 @@ export type DashboardViewProps = {
   justSavedCommand?: { name: string; scope: string } | null;
   clearJustSavedCommand?: () => void;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshRemoteSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  remoteSkillSources: RemoteSkillSource[];
+  remoteSkills: RemoteSkillCard[];
+  remoteSkillsStatus: string | null;
+  remoteSkillsLoading: boolean;
+  remoteSkillInstallState: Record<string, { status: "idle" | "installing" | "error"; message?: string | null }>;
+  remoteSkillsAccessHint?: string | null;
+  canBrowseRemoteSkills: boolean;
+  canInstallRemoteSkills: boolean;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
+  addRemoteSkillSource: (input: string) => Promise<boolean> | boolean;
+  removeRemoteSkillSource: (id: string) => void;
+  installRemoteSkill: (skill: RemoteSkillCard) => void;
   importLocalSkill: () => void;
   installSkillCreator: () => void;
   revealSkillsFolder: () => void;
@@ -297,6 +311,9 @@ export default function DashboardView(props: DashboardViewProps) {
       try {
         if (currentTab === "skills" && !cancelled) {
           await props.refreshSkills();
+          if (!cancelled) {
+            await props.refreshRemoteSkills();
+          }
         }
         if (currentTab === "plugins" && !cancelled) {
           await props.refreshPlugins();
@@ -801,20 +818,32 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
 
             <Match when={props.tab === "skills"}>
-              <SkillsView
-                busy={props.busy}
-                mode={props.mode}
-                canInstallSkillCreator={props.canInstallSkillCreator}
-                canUseDesktopTools={props.canUseDesktopTools}
-                accessHint={props.skillsAccessHint}
-                refreshSkills={props.refreshSkills}
-                skills={props.skills}
-                skillsStatus={props.skillsStatus}
-                importLocalSkill={props.importLocalSkill}
-                installSkillCreator={props.installSkillCreator}
-                revealSkillsFolder={props.revealSkillsFolder}
-                uninstallSkill={props.uninstallSkill}
-              />
+                <SkillsView
+                  busy={props.busy}
+                  mode={props.mode}
+                  canInstallSkillCreator={props.canInstallSkillCreator}
+                  canUseDesktopTools={props.canUseDesktopTools}
+                  accessHint={props.skillsAccessHint}
+                  remoteAccessHint={props.remoteSkillsAccessHint}
+                  canBrowseRemoteSkills={props.canBrowseRemoteSkills}
+                  canInstallRemoteSkills={props.canInstallRemoteSkills}
+                  refreshSkills={props.refreshSkills}
+                  refreshRemoteSkills={props.refreshRemoteSkills}
+                  skills={props.skills}
+                  skillsStatus={props.skillsStatus}
+                  remoteSkillSources={props.remoteSkillSources}
+                  remoteSkills={props.remoteSkills}
+                  remoteSkillsStatus={props.remoteSkillsStatus}
+                  remoteSkillsLoading={props.remoteSkillsLoading}
+                  remoteSkillInstallState={props.remoteSkillInstallState}
+                  addRemoteSkillSource={props.addRemoteSkillSource}
+                  removeRemoteSkillSource={props.removeRemoteSkillSource}
+                  installRemoteSkill={props.installRemoteSkill}
+                  importLocalSkill={props.importLocalSkill}
+                  installSkillCreator={props.installSkillCreator}
+                  revealSkillsFolder={props.revealSkillsFolder}
+                  uninstallSkill={props.uninstallSkill}
+                />
             </Match>
 
             <Match when={props.tab === "plugins"}>
