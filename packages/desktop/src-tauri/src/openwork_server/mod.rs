@@ -1,5 +1,4 @@
 use gethostname::gethostname;
-use gethostname::gethostname;
 use local_ip_address::local_ip;
 use tauri::AppHandle;
 use tauri_plugin_shell::process::CommandEvent;

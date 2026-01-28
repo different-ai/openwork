@@ -1078,10 +1078,10 @@ export default function App() {
     () => openworkServerReady() && openworkServerWorkspaceReady() && (openworkServerCapabilities()?.plugins?.write ?? false),
   );
 
-  const updateOpenworkServerSettings = (next: OpenworkServerSettings) => {
+  function updateOpenworkServerSettings(next: OpenworkServerSettings) {
     const stored = writeOpenworkServerSettings(next);
     setOpenworkServerSettings(stored);
-  };
+  }
 
   const resetOpenworkServerSettings = () => {
     clearOpenworkServerSettings();
