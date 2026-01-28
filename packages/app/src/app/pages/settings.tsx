@@ -38,10 +38,6 @@ export type SettingsViewProps = {
   toggleShowThinking: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
-  demoMode: boolean;
-  toggleDemoMode: () => void;
-  demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
-  setDemoSequence: (value: "cold-open" | "scheduler" | "summaries" | "groceries") => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
   updateAutoCheck: boolean;
@@ -527,67 +523,6 @@ export default function SettingsView(props: SettingsViewProps) {
         onReset={props.onResetKeybind}
         onResetAll={props.onResetAllKeybinds}
       />
-
-      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-        <div>
-          <div class="text-sm font-medium text-gray-12">Demo mode</div>
-          <div class="text-xs text-gray-10">Lightweight scripted states for recording and review.</div>
-        </div>
-
-        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-          <div class="min-w-0">
-            <div class="text-sm text-gray-12">Enable demo mode</div>
-            <div class="text-xs text-gray-7">Replaces live data with demo sequences.</div>
-          </div>
-          <Button
-            variant={props.demoMode ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3 shrink-0"
-            onClick={props.toggleDemoMode}
-            disabled={props.busy}
-          >
-            {props.demoMode ? "On" : "Off"}
-          </Button>
-        </div>
-
-        <div class="flex flex-wrap gap-2">
-          <Button
-            variant={props.demoSequence === "cold-open" ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3"
-            onClick={() => props.setDemoSequence("cold-open")}
-            disabled={props.busy || !props.demoMode}
-          >
-            Cold open
-          </Button>
-          <Button
-            variant={props.demoSequence === "scheduler" ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3"
-            onClick={() => props.setDemoSequence("scheduler")}
-            disabled={props.busy || !props.demoMode}
-          >
-            Scheduler
-          </Button>
-          <Button
-            variant={props.demoSequence === "summaries" ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3"
-            onClick={() => props.setDemoSequence("summaries")}
-            disabled={props.busy || !props.demoMode}
-          >
-            Summaries
-          </Button>
-          <Button
-            variant={props.demoSequence === "groceries" ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3"
-            onClick={() => props.setDemoSequence("groceries")}
-            disabled={props.busy || !props.demoMode}
-          >
-            Groceries
-          </Button>
-        </div>
-
-        <div class="text-xs text-gray-7">
-          Demo sequences swap in scripted sessions, artifacts, and workspace context.
-        </div>
-      </div>
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
         <div class="flex items-start justify-between gap-4">
