@@ -490,10 +490,6 @@ export default function SessionView(props: SessionViewProps) {
     return props.sessions.find((session) => session.id === id)?.title ?? "";
   });
 
-  const handleCreateSkill = () => {
-    props.setPrompt("/skill create ");
-    window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
-  };
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -1032,15 +1028,10 @@ export default function SessionView(props: SessionViewProps) {
                   <Zap class="text-gray-7" />
                 </div>
                 <div class="space-y-2">
-                  <h3 class="text-xl font-medium">Start with a skill</h3>
+                  <h3 class="text-xl font-medium">Start a conversation</h3>
                   <p class="text-gray-10 text-sm max-w-sm mx-auto">
-                    Tell OpenWork what you want to reuse. We&apos;ll shape it into a skill you can run anytime.
+                    Describe what you want to do, and OpenWork will take it from there.
                   </p>
-                </div>
-                <div class="flex justify-center">
-                  <Button variant="primary" class="h-11 px-5" onClick={handleCreateSkill}>
-                    Create your first skill
-                  </Button>
                 </div>
               </div>
             </Show>
