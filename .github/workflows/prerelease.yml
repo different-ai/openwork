@@ -120,6 +120,12 @@ jobs:
         with:
           version: 10.27.0
 
+      - name: Setup Bun
+        if: matrix.os_type == 'windows'
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "1.1.29"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
