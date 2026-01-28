@@ -398,11 +398,11 @@ export default function DashboardView(props: DashboardViewProps) {
           <Show when={!props.clientConnected}>
             <Button
               variant="secondary"
-              onClick={() => props.setView("onboarding")}
+              onClick={() => props.setWorkspacePickerOpen(true)}
               disabled={props.busy}
               class="w-full"
             >
-              Connect
+              Connect folder
             </Button>
           </Show>
         </div>

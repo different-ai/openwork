@@ -437,6 +437,18 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
+  const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
+  const loadSessionsWithReady = async (scopeRoot?: string) => {
+    await loadSessions(scopeRoot);
+    setSessionsLoaded(true);
+  };
+
+  createEffect(() => {
+    if (!client()) {
+      setSessionsLoaded(false);
+    }
+  });
+
   const artifacts = createMemo(() => deriveArtifacts(messages()));
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
   const activeSessionId = createMemo(() => selectedSessionId());
@@ -446,6 +458,24 @@ export default function App() {
   const activeTodos = createMemo(() => todos());
   const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
+
+  createEffect(() => {
+    if (!client()) return;
+    if (!sessionsLoaded()) return;
+    if (creatingSession()) return;
+    if (selectedSessionId()) return;
+
+    const list = sessions();
+    if (list.length) {
+      const next = list[0];
+      void selectSession(next.id);
+      setView("session", next.id);
+      return;
+    }
+
+    if (currentView() !== "session") return;
+    void createSessionAndOpen();
+  });
 
   const [prompt, setPrompt] = createSignal("");
   const [lastPromptSent, setLastPromptSent] = createSignal("");
@@ -563,7 +593,7 @@ export default function App() {
           return copy;
         });
 
-        await loadSessions(workspaceStore.activeWorkspaceRoot().trim()).catch(
+        await loadSessionsWithReady(workspaceStore.activeWorkspaceRoot().trim()).catch(
           () => undefined
         );
       }
@@ -587,9 +617,7 @@ export default function App() {
   }
 
   async function openConnectFlow() {
-    setView("onboarding");
-    setMode("client");
-    setOnboardingStep("client");
+    workspaceStore.setWorkspacePickerOpen(true);
   }
 
   async function listAgents(): Promise<Agent[]> {
@@ -997,7 +1025,7 @@ export default function App() {
     setBusyLabel,
     setBusyStartedAt,
     loadCommands: (options) => loadCommandsRef(options),
-    loadSessions,
+    loadSessions: loadSessionsWithReady,
     refreshPendingPermissions,
     selectedSessionId,
     selectSession,
@@ -1083,7 +1111,7 @@ export default function App() {
     selectedSession,
     prompt,
     lastPromptSent,
-    loadSessions,
+    loadSessions: loadSessionsWithReady,
     selectSession,
     setSessionModelById,
     setSessionAgent,
@@ -2321,11 +2349,11 @@ export default function App() {
       mark("session unwrapped");
       // Set selectedSessionId BEFORE switching view to avoid "No session selected" flash
       setBusyLabel("status.loading_session");
-      await withTimeout(
-        loadSessions(workspaceStore.activeWorkspaceRoot().trim()),
-        12_000,
-        "session.list"
-      );
+        await withTimeout(
+          loadSessionsWithReady(workspaceStore.activeWorkspaceRoot().trim()),
+          12_000,
+          "session.list"
+        );
       mark("sessions loaded");
       await selectSession(session.id);
       mark("session selected");
@@ -3297,14 +3325,8 @@ export default function App() {
   };
 
   const initialRoute = () => {
-    if (typeof window === "undefined") return "/onboarding";
-    try {
-      return window.localStorage.getItem("openwork.onboardingComplete") === "1"
-        ? "/dashboard/home"
-        : "/onboarding";
-    } catch {
-      return "/onboarding";
-    }
+    if (typeof window === "undefined") return "/session";
+    return "/session";
   };
 
   createEffect(() => {
@@ -3337,8 +3359,6 @@ export default function App() {
         const fallback = activeSessionId();
         if (fallback) {
           goToSession(fallback, { replace: true });
-        } else {
-          goToDashboard("sessions", { replace: true });
         }
         return;
       }
@@ -3363,10 +3383,16 @@ export default function App() {
     }
 
     if (path.startsWith("/onboarding")) {
+      navigate("/session", { replace: true });
       return;
     }
 
-    navigate("/dashboard/home", { replace: true });
+    const fallback = activeSessionId();
+    if (fallback) {
+      goToSession(fallback, { replace: true });
+      return;
+    }
+    navigate("/session", { replace: true });
   });
 
   return (

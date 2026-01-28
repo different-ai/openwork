@@ -589,7 +589,7 @@ export function createWorkspaceStore(options: {
       options.refreshPlugins().catch(() => undefined);
       if (!options.selectedSessionId()) {
         options.setTab("home");
-        options.setView("dashboard");
+        options.setView("session");
       }
 
       // If the user successfully connected, treat onboarding as complete so we
@@ -1056,16 +1056,7 @@ export function createWorkspaceStore(options: {
       options.setMode(null);
       options.setOnboardingStep("mode");
 
-      const showOnboarding = (() => {
-        if (typeof window === "undefined") return true;
-        try {
-          return window.localStorage.getItem("openwork.onboardingComplete") !== "1";
-        } catch {
-          return true;
-        }
-      })();
-
-      options.setView(showOnboarding ? "onboarding" : "dashboard");
+      options.setView("session");
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
@@ -1350,7 +1341,7 @@ export function createWorkspaceStore(options: {
       return;
     }
 
-    if (!modePref && onboardingComplete && activeWorkspacePath().trim()) {
+    if (!modePref && activeWorkspacePath().trim()) {
       options.setMode("host");
 
       if (info?.running && info.baseUrl) {
@@ -1359,7 +1350,9 @@ export function createWorkspaceStore(options: {
         if (!ok) {
           options.setMode(null);
           options.setOnboardingStep("mode");
+          return;
         }
+        markOnboardingComplete();
         return;
       }
 
@@ -1367,7 +1360,9 @@ export function createWorkspaceStore(options: {
       const ok = await startHost({ workspacePath: activeWorkspacePath().trim() });
       if (!ok) {
         options.setOnboardingStep("host");
+        return;
       }
+      markOnboardingComplete();
       return;
     }
 
