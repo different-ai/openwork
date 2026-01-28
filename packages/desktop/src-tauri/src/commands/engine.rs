@@ -1,5 +1,6 @@
 use tauri::{AppHandle, Manager, State};
 
+use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
 };
@@ -8,6 +9,7 @@ use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::openwork_server::{manager::OpenworkServerManager, resolve_connect_url, start_openwork_server};
 use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
 use crate::utils::truncate_output;
+use serde_json::json;
 use tauri_plugin_shell::process::CommandEvent;
 
 #[derive(Default)]
@@ -134,6 +136,18 @@ pub fn engine_start(
     // fails with `os error 2`.
     std::fs::create_dir_all(&project_dir)
         .map_err(|e| format!("Failed to create projectDir directory: {e}"))?;
+
+    let config = read_opencode_config("project", &project_dir)?;
+    if !config.exists {
+        let content = serde_json::to_string_pretty(&json!({
+            "$schema": "https://opencode.ai/config.json",
+        }))
+        .map_err(|e| format!("Failed to serialize opencode config: {e}"))?;
+        let write_result = write_opencode_config("project", &project_dir, &format!("{content}\n"))?;
+        if !write_result.ok {
+            return Err(write_result.stderr);
+        }
+    }
 
     let bind_host = "0.0.0.0".to_string();
     let client_host = "127.0.0.1".to_string();
