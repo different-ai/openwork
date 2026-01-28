@@ -56,8 +56,10 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   const items: SkillItem[] = [];
   for (const root of roots) {
     const opencodeDir = join(root, ".opencode", "skills");
+    const legacyDir = join(root, ".opencode", "skill");
     const claudeDir = join(root, ".claude", "skills");
     items.push(...(await listSkillsInDir(opencodeDir, "project")));
+    items.push(...(await listSkillsInDir(legacyDir, "project")));
     items.push(...(await listSkillsInDir(claudeDir, "project")));
   }
 

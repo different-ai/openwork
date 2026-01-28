@@ -78,6 +78,30 @@ export interface SkillItem {
   scope: "project" | "global";
 }
 
+export interface RemoteSkillSource {
+  id: string;
+  input: string;
+  repo: string;
+  ref: string | null;
+  pathPrefix: string | null;
+  resolvedRef?: string | null;
+  status: "success" | "error";
+  errorMessage?: string | null;
+}
+
+export interface RemoteSkillItem {
+  id: string;
+  sourceId: string;
+  sourceInput: string;
+  name: string;
+  description?: string | null;
+  repo: string;
+  ref: string | null;
+  path: string;
+  skillFilePath: string;
+  contentUrl: string;
+}
+
 export interface CommandItem {
   name: string;
   description?: string;

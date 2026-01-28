@@ -4,7 +4,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
+import type { Client, Mode, PluginScope, ReloadReason, RemoteSkillCard, RemoteSkillSource, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
@@ -23,10 +23,17 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../lib/tauri";
-import type {
-  OpenworkServerCapabilities,
-  OpenworkServerClient,
-  OpenworkServerStatus,
+import {
+  fetchRemoteSkillContent,
+  listGitHubSkills,
+  parseGitHubSourceInput,
+  type ParsedGitHubSource,
+} from "../lib/github-skills";
+import {
+  OpenworkServerError,
+  type OpenworkServerCapabilities,
+  type OpenworkServerClient,
+  type OpenworkServerStatus,
 } from "../lib/openwork-server";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
@@ -53,8 +60,111 @@ export function createExtensionsStore(options: {
 
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
+  const [remoteSkillSources, setRemoteSkillSources] = createSignal<RemoteSkillSource[]>([]);
+  const [remoteSkills, setRemoteSkills] = createSignal<RemoteSkillCard[]>([]);
+  const [remoteSkillsStatus, setRemoteSkillsStatus] = createSignal<string | null>(null);
+  const [remoteSkillsLoading, setRemoteSkillsLoading] = createSignal(false);
+  const [remoteSkillInstallState, setRemoteSkillInstallState] = createSignal<
+    Record<string, { status: "idle" | "installing" | "error"; message?: string | null }>
+  >({});
 
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
+
+  const REMOTE_SKILL_STORAGE_PREFIX = "openwork.remoteSkills.sources";
+
+  const remoteSkillStorageKey = () => {
+    const workspaceType = options.workspaceType();
+    const workspaceRoot = options.activeWorkspaceRoot().trim();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    if (workspaceType === "remote") {
+      const remoteKey = openworkWorkspaceId?.trim() || workspaceRoot;
+      return remoteKey
+        ? `${REMOTE_SKILL_STORAGE_PREFIX}.remote.${encodeURIComponent(remoteKey)}`
+        : null;
+    }
+    if (!workspaceRoot) return null;
+    return `${REMOTE_SKILL_STORAGE_PREFIX}.local.${encodeURIComponent(workspaceRoot)}`;
+  };
+
+  const readRemoteSkillSourcesFromStorage = (key: string) => {
+    if (typeof window === "undefined") return [] as string[];
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((value) => String(value)).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
+  const writeRemoteSkillSourcesToStorage = (key: string, sources: string[]) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(sources));
+    } catch {
+      // ignore
+    }
+  };
+
+  const formatGithubError = (error: unknown) => {
+    const status = typeof (error as { status?: number })?.status === "number"
+      ? (error as { status?: number }).status
+      : null;
+    if (status === 404) return translate("skills.remote_repo_not_found");
+    if (status === 403 || status === 429) return translate("skills.remote_rate_limited");
+    if (error instanceof Error) return error.message;
+    return translate("skills.remote_fetch_failed");
+  };
+
+  const formatOpenworkError = (error: unknown) => {
+    if (error instanceof OpenworkServerError) return error.message;
+    if (error instanceof Error) return error.message;
+    return translate("skills.remote_fetch_failed");
+  };
+
+  const hydrateRemoteSkillSources = (inputs: string[]) => {
+    const existing = new Map(remoteSkillSources().map((source: RemoteSkillSource) => [source.id, source]));
+    const seen = new Set<string>();
+    const output: RemoteSkillSource[] = [];
+    for (const input of inputs) {
+      const parsed = parseGitHubSourceInput(input);
+      if (!parsed) {
+        const fallback: RemoteSkillSource = {
+          id: `invalid:${input}`,
+          input,
+          repo: "",
+          ref: null,
+          pathPrefix: null,
+          status: "error",
+          errorMessage: translate("skills.remote_source_invalid"),
+        };
+        if (!seen.has(fallback.id)) {
+          seen.add(fallback.id);
+          output.push(fallback);
+        }
+        continue;
+      }
+
+      const next: RemoteSkillSource = {
+        id: parsed.id,
+        input: parsed.input,
+        repo: parsed.repo,
+        ref: parsed.ref,
+        pathPrefix: parsed.pathPrefix,
+        status: "idle",
+        errorMessage: null,
+      };
+      const previous = existing.get(parsed.id);
+      const merged = previous ? { ...previous, ...next } : next;
+      if (!seen.has(merged.id)) {
+        seen.add(merged.id);
+        output.push(merged);
+      }
+    }
+    return output;
+  };
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
@@ -70,10 +180,14 @@ export function createExtensionsStore(options: {
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
   let refreshPluginsInFlight = false;
+  let refreshRemoteSkillsInFlight = false;
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
+  let refreshRemoteSkillsAborted = false;
   let skillsLoaded = false;
   let skillsRoot = "";
+  let remoteSourcesLoaded = false;
+  let remoteSourcesKey = "";
 
   const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
     isPluginInstalled(pluginList(), pluginName, aliases);
@@ -257,6 +371,320 @@ export function createExtensionsStore(options: {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
     } finally {
       refreshSkillsInFlight = false;
+    }
+  }
+
+  const loadRemoteSkillSources = async (optionsOverride?: { force?: boolean }) => {
+    const key = remoteSkillStorageKey();
+    if (!key) {
+      setRemoteSkillSources([]);
+      return [] as RemoteSkillSource[];
+    }
+
+    if (!optionsOverride?.force && remoteSourcesLoaded && key === remoteSourcesKey) {
+      return remoteSkillSources();
+    }
+
+    remoteSourcesKey = key;
+    remoteSourcesLoaded = true;
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    let inputs: string[] = [];
+
+    if (isRemoteWorkspace && openworkClient && openworkWorkspaceId && openworkCapabilities?.config?.read) {
+      try {
+        const config = await openworkClient.getConfig(openworkWorkspaceId);
+        const openwork = (config.openwork ?? {}) as Record<string, unknown>;
+        const remoteSkills = (openwork.remoteSkills ?? {}) as Record<string, unknown>;
+        const stored = Array.isArray(remoteSkills.sources) ? remoteSkills.sources : [];
+        inputs = stored.map((value) => String(value)).filter(Boolean);
+      } catch (error) {
+        setRemoteSkillsStatus(formatOpenworkError(error));
+      }
+    }
+
+    if (!inputs.length) {
+      inputs = readRemoteSkillSourcesFromStorage(key);
+    }
+
+    const nextSources = hydrateRemoteSkillSources(inputs);
+    setRemoteSkillSources(nextSources);
+    return nextSources;
+  };
+
+  const persistRemoteSkillSources = async (sources: RemoteSkillSource[]) => {
+    const key = remoteSkillStorageKey();
+    const inputs = sources.map((source) => source.input);
+    if (key) {
+      writeRemoteSkillSourcesToStorage(key, inputs);
+    }
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+
+    if (isRemoteWorkspace && openworkClient && openworkWorkspaceId && openworkCapabilities?.config?.write) {
+      try {
+        const config = await openworkClient.getConfig(openworkWorkspaceId);
+        const openwork = (config.openwork ?? {}) as Record<string, unknown>;
+        const remoteSkills = (openwork.remoteSkills ?? {}) as Record<string, unknown>;
+        const nextOpenwork = {
+          ...openwork,
+          remoteSkills: {
+            ...remoteSkills,
+            sources: inputs,
+          },
+        };
+        await openworkClient.patchConfig(openworkWorkspaceId, { openwork: nextOpenwork });
+      } catch (error) {
+        setRemoteSkillsStatus(formatOpenworkError(error));
+      }
+    }
+  };
+
+  async function refreshRemoteSkills(optionsOverride?: { force?: boolean }) {
+    const root = options.activeWorkspaceRoot().trim();
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+
+    if (!root && !isRemoteWorkspace) {
+      setRemoteSkills([]);
+      setRemoteSkillsStatus(translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    if (refreshRemoteSkillsInFlight) {
+      return;
+    }
+
+    refreshRemoteSkillsInFlight = true;
+    refreshRemoteSkillsAborted = false;
+    setRemoteSkillsLoading(true);
+    setRemoteSkillsStatus(null);
+
+    try {
+      const sources = await loadRemoteSkillSources(optionsOverride);
+      if (refreshRemoteSkillsAborted) return;
+
+      setRemoteSkillSources((current) =>
+        current.map((source) =>
+          source.repo
+            ? { ...source, status: "loading", errorMessage: null }
+            : source,
+        ),
+      );
+
+      if (!sources.length) {
+        setRemoteSkills([]);
+        setRemoteSkillsStatus(null);
+        return;
+      }
+
+      const validSources = sources.filter((source) => source.repo);
+      if (!validSources.length) {
+        setRemoteSkills([]);
+        setRemoteSkillsStatus(translate("skills.remote_source_invalid"));
+        return;
+      }
+
+      if (isRemoteWorkspace) {
+        if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.skills?.read) {
+          setRemoteSkills([]);
+          setRemoteSkillsStatus(translate("skills.remote_host_required"));
+          return;
+        }
+
+        const response = await openworkClient.listRemoteSkills(
+          openworkWorkspaceId,
+          sources.map((source) => source.input),
+        );
+        if (refreshRemoteSkillsAborted) return;
+
+        const sourceById = new Map(sources.map((source) => [source.id, source]));
+        const nextSources = response.sources.map((source) => {
+          const existing = sourceById.get(source.id);
+          return {
+            ...(existing ?? {}),
+            ...source,
+            status: source.status === "error" ? "error" : "success",
+            errorMessage: source.errorMessage ?? null,
+          } as RemoteSkillSource;
+        });
+        setRemoteSkillSources(nextSources);
+        setRemoteSkills(response.items as RemoteSkillCard[]);
+        if (!response.items.length) {
+          setRemoteSkillsStatus(translate("skills.remote_no_skills"));
+        }
+        return;
+      }
+
+      const results = await Promise.all(
+        validSources.map(async (source) => {
+          const parsed: ParsedGitHubSource = {
+            input: source.input,
+            id: source.id,
+            repo: source.repo,
+            ref: source.ref,
+            pathPrefix: source.pathPrefix,
+          };
+          try {
+            const items = await listGitHubSkills(parsed);
+            const resolvedRef = items[0]?.ref ?? parsed.ref ?? null;
+            return { sourceId: source.id, items, error: null, resolvedRef };
+          } catch (error) {
+            return { sourceId: source.id, items: [] as RemoteSkillCard[], error: formatGithubError(error), resolvedRef: null };
+          }
+        }),
+      );
+
+      if (refreshRemoteSkillsAborted) return;
+
+      const nextItems = results.flatMap((result) => result.items);
+      const nextSources = sources.map((source) => {
+        if (!source.repo) return source;
+        const match = results.find((result) => result.sourceId === source.id);
+        if (!match) return source;
+        return {
+          ...source,
+          status: match.error ? "error" : "success",
+          errorMessage: match.error ?? null,
+          resolvedRef: match.resolvedRef ?? source.resolvedRef,
+        };
+      });
+
+      setRemoteSkillSources(nextSources);
+      setRemoteSkills(nextItems);
+      if (!nextItems.length && !results.some((result) => result.error)) {
+        setRemoteSkillsStatus(translate("skills.remote_no_skills"));
+      }
+    } catch (error) {
+      if (refreshRemoteSkillsAborted) return;
+      setRemoteSkillsStatus(isRemoteWorkspace ? formatOpenworkError(error) : formatGithubError(error));
+    } finally {
+      refreshRemoteSkillsInFlight = false;
+      setRemoteSkillsLoading(false);
+    }
+  }
+
+  async function addRemoteSkillSource(input: string) {
+    const trimmed = input.trim();
+    if (!trimmed) {
+      setRemoteSkillsStatus(translate("skills.remote_source_required"));
+      return false;
+    }
+
+    const parsed = parseGitHubSourceInput(trimmed);
+    if (!parsed) {
+      setRemoteSkillsStatus(translate("skills.remote_source_invalid"));
+      return false;
+    }
+
+    const current = remoteSkillSources();
+    if (current.some((source) => source.id === parsed.id)) {
+      setRemoteSkillsStatus(translate("skills.remote_source_exists"));
+      return false;
+    }
+
+    const nextSource: RemoteSkillSource = {
+      id: parsed.id,
+      input: parsed.input,
+      repo: parsed.repo,
+      ref: parsed.ref,
+      pathPrefix: parsed.pathPrefix,
+      status: "idle",
+      errorMessage: null,
+    };
+    const nextSources = [...current, nextSource];
+    setRemoteSkillSources(nextSources);
+    await persistRemoteSkillSources(nextSources);
+    setRemoteSkillsStatus(null);
+    await refreshRemoteSkills({ force: true });
+    return true;
+  }
+
+  async function removeRemoteSkillSource(id: string) {
+    const current = remoteSkillSources();
+    const nextSources = current.filter((source) => source.id !== id);
+    setRemoteSkillSources(nextSources);
+    setRemoteSkills((items) => items.filter((item) => item.sourceId !== id));
+    await persistRemoteSkillSources(nextSources);
+    if (!nextSources.length) {
+      setRemoteSkillsStatus(null);
+    }
+  }
+
+  const setInstallState = (id: string, status: "idle" | "installing" | "error", message?: string | null) => {
+    setRemoteSkillInstallState((current) => ({
+      ...current,
+      [id]: { status, message: message ?? null },
+    }));
+  };
+
+  async function installRemoteSkill(skill: RemoteSkillCard) {
+    const snapshot = { ...skill };
+    const current = remoteSkillInstallState()[snapshot.id];
+    if (current?.status === "installing") return;
+
+    setInstallState(snapshot.id, "installing", null);
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    if (isRemoteWorkspace) {
+      const openworkClient = options.openworkServerClient();
+      const openworkWorkspaceId = options.openworkServerWorkspaceId();
+      const openworkCapabilities = options.openworkServerCapabilities();
+      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.skills?.write) {
+        setInstallState(snapshot.id, "error", translate("skills.remote_host_required"));
+        return;
+      }
+
+      try {
+        await openworkClient.installRemoteSkill(openworkWorkspaceId, {
+          source: snapshot.sourceInput,
+          path: snapshot.skillFilePath,
+          name: snapshot.name,
+        });
+        await refreshSkills({ force: true });
+        setInstallState(snapshot.id, "idle", null);
+      } catch (error) {
+        setInstallState(snapshot.id, "error", formatOpenworkError(error));
+      }
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setInstallState(snapshot.id, "error", translate("skills.desktop_required"));
+      return;
+    }
+
+    const root = options.activeWorkspaceRoot().trim();
+    if (!root) {
+      setInstallState(snapshot.id, "error", translate("skills.pick_workspace_first"));
+      return;
+    }
+
+    try {
+      const content = await fetchRemoteSkillContent(snapshot);
+      const result = await installSkillTemplate(root, snapshot.name, content, { overwrite: false });
+      if (!result.ok) {
+        setInstallState(
+          snapshot.id,
+          "error",
+          result.stderr || result.stdout || translate("skills.install_failed"),
+        );
+        return;
+      }
+      options.markReloadRequired("skills");
+      await refreshSkills({ force: true });
+      setInstallState(snapshot.id, "idle", null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : translate("skills.unknown_error");
+      setInstallState(snapshot.id, "error", message);
     }
   }
 
@@ -681,11 +1109,17 @@ export function createExtensionsStore(options: {
   function abortRefreshes() {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
+    refreshRemoteSkillsAborted = true;
   }
 
   return {
     skills,
     skillsStatus,
+    remoteSkillSources,
+    remoteSkills,
+    remoteSkillsStatus,
+    remoteSkillsLoading,
+    remoteSkillInstallState,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -700,10 +1134,14 @@ export function createExtensionsStore(options: {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshRemoteSkills,
     refreshPlugins,
     addPlugin,
+    addRemoteSkillSource,
+    removeRemoteSkillSource,
     importLocalSkill,
     installSkillCreator,
+    installRemoteSkill,
     revealSkillsFolder,
     uninstallSkill,
     abortRefreshes,
