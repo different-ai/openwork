@@ -4,6 +4,7 @@ mod engine;
 mod fs;
 mod opkg;
 mod openwork_server;
+mod owpenbot;
 mod paths;
 mod platform;
 mod types;
@@ -21,6 +22,7 @@ use commands::engine::{engine_doctor, engine_info, engine_install, engine_start,
 use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
 use commands::openwork_server::openwork_server_info;
 use commands::opkg::{import_skill, opkg_install};
+use commands::owpenbot::{owpenbot_info, owpenbot_qr, owpenbot_start, owpenbot_stop};
 use commands::skills::{install_skill_template, list_local_skills, uninstall_skill};
 use commands::updater::updater_environment;
 use commands::workspace::{
@@ -30,6 +32,7 @@ use commands::workspace::{
 };
 use engine::manager::EngineManager;
 use openwork_server::manager::OpenworkServerManager;
+use owpenbot::manager::OwpenbotManager;
 use workspace::watch::WorkspaceWatchState;
 
 pub fn run() {
@@ -46,6 +49,7 @@ pub fn run() {
     builder
         .manage(EngineManager::default())
         .manage(OpenworkServerManager::default())
+        .manage(OwpenbotManager::default())
         .manage(WorkspaceWatchState::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
@@ -54,6 +58,10 @@ pub fn run() {
             engine_doctor,
             engine_install,
             openwork_server_info,
+            owpenbot_info,
+            owpenbot_start,
+            owpenbot_stop,
+            owpenbot_qr,
             workspace_bootstrap,
             workspace_set_active,
             workspace_create,

@@ -29,6 +29,7 @@
   "scripts": {
     "dev": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
+    "build:binary": "bun run script/build.ts",
     "start": "node dist/cli.js start",
     "whatsapp:login": "node dist/cli.js whatsapp login",
     "pairing-code": "node dist/cli.js pairing-code",

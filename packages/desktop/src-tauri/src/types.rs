@@ -82,6 +82,20 @@ pub struct OpenworkServerInfo {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct OwpenbotInfo {
+    pub running: bool,
+    pub workspace_path: Option<String>,
+    pub opencode_url: Option<String>,
+    pub qr_data: Option<String>,
+    pub whatsapp_linked: bool,
+    pub telegram_configured: bool,
+    pub pid: Option<u32>,
+    pub last_stdout: Option<String>,
+    pub last_stderr: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct EngineDoctorResult {
     pub found: bool,
     pub in_path: bool,
