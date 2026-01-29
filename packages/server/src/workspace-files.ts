@@ -1,7 +1,12 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export function opencodeConfigPath(workspaceRoot: string): string {
-  return join(workspaceRoot, "opencode.json");
+  const jsoncPath = join(workspaceRoot, "opencode.jsonc");
+  const jsonPath = join(workspaceRoot, "opencode.json");
+  if (existsSync(jsoncPath)) return jsoncPath;
+  if (existsSync(jsonPath)) return jsonPath;
+  return jsoncPath;
 }
 
 export function openworkConfigPath(workspaceRoot: string): string {

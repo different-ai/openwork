@@ -11,7 +11,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { EngineInfo, OpenworkServerInfo } from "../lib/tauri";
+import type { EngineInfo, OpenworkServerInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
