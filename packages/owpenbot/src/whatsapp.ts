@@ -228,9 +228,10 @@ export function createWhatsAppAdapter(
 
       try {
         if (!fs.existsSync(filePath)) {
-          await socket.sendMessage(peerId, {
+          const sent = await socket.sendMessage(peerId, {
             text: `⚠️ Error: File not found at ${filePath}`,
           });
+          recordSentMessage(sent?.key?.id);
           return;
         }
 
@@ -253,10 +254,11 @@ export function createWhatsAppAdapter(
         recordSentMessage(sent?.key?.id);
       } catch (err: unknown) {
         log.error({ error: err, filePath }, "failed to send file");
-        await socket.sendMessage(peerId, {
+        const sent = await socket.sendMessage(peerId, {
             // @ts-ignore - TS doesn't know about error.message on unknown
           text: `⚠️ Error sending file: ${err?.message || "Unknown error"}`,
         });
+        recordSentMessage(sent?.key?.id);
       }
     },
     async sendTyping(peerId: string) {
