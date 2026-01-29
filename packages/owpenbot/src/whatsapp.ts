@@ -254,9 +254,14 @@ export function createWhatsAppAdapter(
         recordSentMessage(sent?.key?.id);
       } catch (err: unknown) {
         log.error({ error: err, filePath }, "failed to send file");
+        let errorMessage: string;
+        if (err instanceof Error) {
+          errorMessage = err.message || "Unknown error";
+        } else {
+          errorMessage = err != null ? String(err) : "Unknown error";
+        }
         const sent = await socket.sendMessage(peerId, {
-            // @ts-ignore - TS doesn't know about error.message on unknown
-          text: `⚠️ Error sending file: ${err?.message || "Unknown error"}`,
+          text: `⚠️ Error sending file: ${errorMessage}`,
         });
         recordSentMessage(sent?.key?.id);
       }
