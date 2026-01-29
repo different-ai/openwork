@@ -8,7 +8,7 @@ import { listSkills, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
-import { recordAudit, readLastAudit } from "./audit.js";
+import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
@@ -188,6 +188,15 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     const openwork = await readOpenworkConfig(workspace.path);
     const lastAudit = await readLastAudit(workspace.path);
     return jsonResponse({ opencode, openwork, updatedAt: lastAudit?.timestamp ?? null });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/audit", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const limitParam = ctx.url.searchParams.get("limit");
+    const parsed = limitParam ? Number(limitParam) : NaN;
+    const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
+    const items = await readAuditEntries(workspace.path, limit);
+    return jsonResponse({ items });
   });
 
   addRoute(routes, "PATCH", "/workspace/:id/config", "client", async (ctx) => {

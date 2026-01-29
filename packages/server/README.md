@@ -57,6 +57,7 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `GET /workspace/:id/commands`
 - `POST /workspace/:id/commands`
 - `DELETE /workspace/:id/commands/:name`
+- `GET /workspace/:id/audit`
 - `GET /workspace/:id/export`
 - `POST /workspace/:id/import`
 

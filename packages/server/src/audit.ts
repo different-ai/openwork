@@ -26,3 +26,21 @@ export async function readLastAudit(workspaceRoot: string): Promise<AuditEntry |
     return null;
   }
 }
+
+export async function readAuditEntries(workspaceRoot: string, limit = 50): Promise<AuditEntry[]> {
+  const path = auditLogPath(workspaceRoot);
+  if (!(await exists(path))) return [];
+  const content = await readFile(path, "utf8");
+  const rawLines = content.trim().split("\n").filter(Boolean);
+  if (!rawLines.length) return [];
+  const slice = rawLines.slice(-Math.max(1, limit));
+  const entries: AuditEntry[] = [];
+  for (let i = slice.length - 1; i >= 0; i -= 1) {
+    try {
+      entries.push(JSON.parse(slice[i]) as AuditEntry);
+    } catch {
+      // ignore malformed entry
+    }
+  }
+  return entries;
+}

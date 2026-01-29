@@ -58,6 +58,22 @@ export type OpenworkMcpItem = {
   disabledByTools?: boolean;
 };
 
+export type OpenworkActor = {
+  type: "remote" | "host";
+  clientId?: string;
+  tokenHash?: string;
+};
+
+export type OpenworkAuditEntry = {
+  id: string;
+  workspaceId: string;
+  actor: OpenworkActor;
+  action: string;
+  target: string;
+  summary: string;
+  timestamp: number;
+};
+
 export const DEFAULT_OPENWORK_SERVER_PORT = 8787;
 
 const STORAGE_URL_OVERRIDE = "openwork.server.urlOverride";
@@ -267,6 +283,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
       requestJson<{ items: OpenworkCommandItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/commands?scope=${scope}`,
+        { token },
+      ),
+    listAudit: (workspaceId: string, limit = 50) =>
+      requestJson<{ items: OpenworkAuditEntry[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/audit?limit=${limit}`,
         { token },
       ),
     upsertCommand: (

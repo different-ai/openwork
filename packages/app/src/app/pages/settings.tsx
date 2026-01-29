@@ -1,4 +1,4 @@
-import { Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
@@ -6,8 +6,8 @@ import Button from "../components/button";
 import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { ChevronDown, HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
-import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { OpenworkServerInfo } from "../lib/tauri";
+import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type { EngineInfo, OpenworkServerInfo } from "../lib/tauri";
 
 export type SettingsViewProps = {
   mode: "host" | "client" | null;
@@ -18,6 +18,12 @@ export type SettingsViewProps = {
   openworkServerUrl: string;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
+  openworkServerCapabilities: OpenworkServerCapabilities | null;
+  openworkServerWorkspaceId: string | null;
+  openworkAuditEntries: OpenworkAuditEntry[];
+  openworkAuditStatus: "idle" | "loading" | "error";
+  openworkAuditError: string | null;
+  engineInfo: EngineInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -144,6 +150,69 @@ export default function SettingsView(props: SettingsViewProps) {
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }
   });
+
+  const engineStatusLabel = createMemo(() => {
+    if (!isTauriRuntime()) return "Unavailable";
+    return props.engineInfo?.running ? "Running" : "Offline";
+  });
+
+  const engineStatusStyle = createMemo(() => {
+    if (!isTauriRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    return props.engineInfo?.running
+      ? "bg-green-7/10 text-green-11 border-green-7/20"
+      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
+  const openworkAuditStatusLabel = createMemo(() => {
+    if (!props.openworkServerWorkspaceId) return "Unavailable";
+    if (props.openworkAuditStatus === "loading") return "Loading";
+    if (props.openworkAuditStatus === "error") return "Error";
+    return "Ready";
+  });
+
+  const openworkAuditStatusStyle = createMemo(() => {
+    if (!props.openworkServerWorkspaceId) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    if (props.openworkAuditStatus === "loading") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+    if (props.openworkAuditStatus === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
+    return "bg-green-7/10 text-green-11 border-green-7/20";
+  });
+
+  const formatActor = (entry: OpenworkAuditEntry) => {
+    const actor = entry.actor;
+    if (!actor) return "unknown";
+    if (actor.type === "host") return "host";
+    if (actor.type === "remote") {
+      return actor.clientId ? `remote:${actor.clientId}` : "remote";
+    }
+    return "unknown";
+  };
+
+  const formatCapability = (cap?: { read?: boolean; write?: boolean; source?: string }) => {
+    if (!cap) return "Unavailable";
+    const parts = [cap.read ? "read" : null, cap.write ? "write" : null].filter(Boolean).join(" / ");
+    const label = parts || "no access";
+    return cap.source ? `${label} · ${cap.source}` : label;
+  };
+
+  const engineStdout = () => {
+    if (!isTauriRuntime()) return "Available in the desktop app.";
+    return props.engineInfo?.lastStdout?.trim() || "No stdout captured yet.";
+  };
+
+  const engineStderr = () => {
+    if (!isTauriRuntime()) return "Available in the desktop app.";
+    return props.engineInfo?.lastStderr?.trim() || "No stderr captured yet.";
+  };
+
+  const openworkStdout = () => {
+    if (!props.openworkServerHostInfo) return "Logs are available on the host.";
+    return props.openworkServerHostInfo.lastStdout?.trim() || "No stdout captured yet.";
+  };
+
+  const openworkStderr = () => {
+    if (!props.openworkServerHostInfo) return "Logs are available on the host.";
+    return props.openworkServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
+  };
 
   const buildOpenworkSettings = () => ({
     ...props.openworkServerSettings,
@@ -770,18 +839,151 @@ export default function SettingsView(props: SettingsViewProps) {
               </Button>
             </div>
 
-            <div class="grid md:grid-cols-2 gap-4">
-              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4">
-                <div class="text-xs text-gray-10 mb-2">Pending permissions</div>
-                <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
-                  {props.safeStringify(props.pendingPermissions)}
-                </pre>
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Devtools</div>
+                <div class="text-xs text-gray-10">Sidecar health, capabilities, and audit trail.</div>
               </div>
-              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4">
-                <div class="text-xs text-gray-10 mb-2">Recent events</div>
-                <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
-                  {props.safeStringify(props.events)}
-                </pre>
+
+              <div class="grid md:grid-cols-2 gap-4">
+                <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
+                      <div class="text-xs text-gray-10">Local execution sidecar.</div>
+                    </div>
+                    <div class={`text-xs px-2 py-1 rounded-full border ${engineStatusStyle()}`}>
+                      {engineStatusLabel()}
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] text-gray-7 font-mono truncate">
+                      {props.engineInfo?.baseUrl ?? "Base URL unavailable"}
+                    </div>
+                    <div class="text-[11px] text-gray-7 font-mono truncate">
+                      {props.engineInfo?.projectDir ?? "No project directory"}
+                    </div>
+                    <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.engineInfo?.pid ?? "—"}</div>
+                  </div>
+                  <div class="grid gap-2">
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {engineStdout()}
+                      </pre>
+                    </div>
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {engineStderr()}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+                      <div class="text-xs text-gray-10">Config and approvals sidecar.</div>
+                    </div>
+                    <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
+                      {openworkStatusLabel()}
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] text-gray-7 font-mono truncate">
+                      {props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl || "Base URL unavailable"}
+                    </div>
+                    <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.openworkServerHostInfo?.pid ?? "—"}</div>
+                  </div>
+                  <div class="grid gap-2">
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {openworkStdout()}
+                      </pre>
+                    </div>
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {openworkStderr()}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-sm font-medium text-gray-12">OpenWork server capabilities</div>
+                  <div class="text-[11px] text-gray-8 font-mono truncate">
+                    {props.openworkServerWorkspaceId ? `Workspace ${props.openworkServerWorkspaceId}` : "Workspace unresolved"}
+                  </div>
+                </div>
+                <Show
+                  when={props.openworkServerCapabilities}
+                  fallback={<div class="text-xs text-gray-9">Capabilities unavailable. Connect with a client token.</div>}
+                >
+                  {(caps) => (
+                    <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
+                      <div>Skills: {formatCapability(caps().skills)}</div>
+                      <div>Plugins: {formatCapability(caps().plugins)}</div>
+                      <div>MCP: {formatCapability(caps().mcp)}</div>
+                      <div>Commands: {formatCapability(caps().commands)}</div>
+                      <div>Config: {formatCapability(caps().config)}</div>
+                    </div>
+                  )}
+                </Show>
+              </div>
+
+              <div class="grid md:grid-cols-2 gap-4">
+                <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
+                  <div class="text-xs text-gray-10 mb-2">Pending permissions</div>
+                  <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+                    {props.safeStringify(props.pendingPermissions)}
+                  </pre>
+                </div>
+                <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
+                  <div class="text-xs text-gray-10 mb-2">Recent events</div>
+                  <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+                    {props.safeStringify(props.events)}
+                  </pre>
+                </div>
+              </div>
+
+              <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                <div class="flex items-center justify-between gap-3">
+                  <div class="text-sm font-medium text-gray-12">Audit log</div>
+                  <div class={`text-xs px-2 py-1 rounded-full border ${openworkAuditStatusStyle()}`}>
+                    {openworkAuditStatusLabel()}
+                  </div>
+                </div>
+                <Show when={props.openworkAuditError}>
+                  <div class="text-xs text-red-11">{props.openworkAuditError}</div>
+                </Show>
+                <Show
+                  when={props.openworkAuditEntries.length > 0}
+                  fallback={<div class="text-xs text-gray-9">No audit entries yet.</div>}
+                >
+                  <div class="divide-y divide-gray-6/50">
+                    <For each={props.openworkAuditEntries}>
+                      {(entry) => (
+                        <div class="flex items-start justify-between gap-4 py-2">
+                          <div class="min-w-0">
+                            <div class="text-sm text-gray-12 truncate">{entry.summary}</div>
+                            <div class="text-[11px] text-gray-9 truncate">
+                              {entry.action} · {entry.target} · {formatActor(entry)}
+                            </div>
+                          </div>
+                          <div class="text-[11px] text-gray-9 whitespace-nowrap">
+                            {entry.timestamp ? formatRelativeTime(entry.timestamp) : "—"}
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
               </div>
             </div>
           </div>

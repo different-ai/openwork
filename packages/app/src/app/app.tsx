@@ -131,6 +131,7 @@ import {
   readOpenworkServerSettings,
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
+  type OpenworkAuditEntry,
   type OpenworkServerCapabilities,
   type OpenworkServerStatus,
   type OpenworkServerSettings,
@@ -228,6 +229,11 @@ export default function App() {
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
   const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
+  const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
+  const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
+  const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
+  const [devtoolsWorkspaceId, setDevtoolsWorkspaceId] = createSignal<string | null>(null);
+  const [hostOpenworkCapabilities, setHostOpenworkCapabilities] = createSignal<OpenworkServerCapabilities | null>(null);
 
   const openworkServerClient = createMemo(() => {
     if (mode() !== "client") return null;
@@ -235,6 +241,14 @@ export default function App() {
     if (!url) return null;
     const token = openworkServerSettings().token;
     return createOpenworkServerClient({ baseUrl: url, token });
+  });
+
+  const devtoolsOpenworkClient = createMemo(() => {
+    if (mode() === "client") return openworkServerClient();
+    if (mode() !== "host") return null;
+    const info = openworkServerHostInfo();
+    if (!info?.baseUrl || !info?.clientToken) return null;
+    return createOpenworkServerClient({ baseUrl: info.baseUrl, token: info.clientToken });
   });
 
   createEffect(() => {
@@ -1062,6 +1076,100 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (!developerMode()) {
+      setDevtoolsWorkspaceId(null);
+      setHostOpenworkCapabilities(null);
+      return;
+    }
+
+    const client = devtoolsOpenworkClient();
+    if (!client) {
+      setDevtoolsWorkspaceId(null);
+      setHostOpenworkCapabilities(null);
+      return;
+    }
+
+    const root = normalizeDirectoryPath(workspaceStore.activeWorkspaceRoot().trim());
+    let active = true;
+
+    const run = async () => {
+      try {
+        if (mode() === "host") {
+          try {
+            const caps = await client.capabilities();
+            if (active) setHostOpenworkCapabilities(caps);
+          } catch {
+            if (active) setHostOpenworkCapabilities(null);
+          }
+        }
+
+        const response = await client.listWorkspaces();
+        if (!active) return;
+        const items = Array.isArray(response.items) ? response.items : [];
+        const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : items[0];
+        setDevtoolsWorkspaceId(match?.id ?? null);
+      } catch {
+        if (active) setDevtoolsWorkspaceId(null);
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 20_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
+    if (!developerMode()) {
+      setOpenworkAuditEntries([]);
+      setOpenworkAuditStatus("idle");
+      setOpenworkAuditError(null);
+      return;
+    }
+
+    const client = devtoolsOpenworkClient();
+    const workspaceId = devtoolsWorkspaceId();
+    if (!client || !workspaceId) {
+      setOpenworkAuditEntries([]);
+      setOpenworkAuditStatus("idle");
+      setOpenworkAuditError(null);
+      return;
+    }
+
+    let active = true;
+    let busy = false;
+
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      setOpenworkAuditStatus("loading");
+      setOpenworkAuditError(null);
+      try {
+        const result = await client.listAudit(workspaceId, 50);
+        if (!active) return;
+        setOpenworkAuditEntries(Array.isArray(result.items) ? result.items : []);
+        setOpenworkAuditStatus("idle");
+      } catch (error) {
+        if (!active) return;
+        setOpenworkAuditEntries([]);
+        setOpenworkAuditStatus("error");
+        setOpenworkAuditError(error instanceof Error ? error.message : "Failed to load audit log.");
+      } finally {
+        busy = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 15_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
     if (active.workspaceType !== "remote" || active.remoteType !== "openwork") {
       return;
@@ -1084,6 +1192,10 @@ export default function App() {
   const openworkServerCanWritePlugins = createMemo(
     () => openworkServerReady() && openworkServerWorkspaceReady() && (openworkServerCapabilities()?.plugins?.write ?? false),
   );
+  const devtoolsCapabilities = createMemo(() =>
+    mode() === "host" ? hostOpenworkCapabilities() : openworkServerCapabilities(),
+  );
+  const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? openworkServerWorkspaceId());
 
   function updateOpenworkServerSettings(next: OpenworkServerSettings) {
     const stored = writeOpenworkServerSettings(next);
@@ -3049,6 +3161,12 @@ export default function App() {
     openworkServerUrl: openworkServerUrl(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
+    openworkServerCapabilities: devtoolsCapabilities(),
+    openworkServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
+    openworkAuditEntries: openworkAuditEntries(),
+    openworkAuditStatus: openworkAuditStatus(),
+    openworkAuditError: openworkAuditError(),
+    engineInfo: workspaceStore.engine(),
     updateOpenworkServerSettings,
     resetOpenworkServerSettings,
     testOpenworkServerConnection,
