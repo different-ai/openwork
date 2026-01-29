@@ -1855,7 +1855,16 @@ export default function App() {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = openworkServerCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.mcp?.write;
+
+    if (!canUseOpenworkServer && !isTauriRuntime()) {
       setNotionError("Notion connections require the desktop app.");
       return;
     }
@@ -1869,25 +1878,36 @@ export default function App() {
     setNotionSkillInstalled(false);
 
     try {
-      const config = await readOpencodeConfig("project", projectDir);
-      const raw = config.content ?? "";
-      const nextConfig = raw.trim()
-        ? (parse(raw) as Record<string, unknown>)
-        : { $schema: "https://opencode.ai/config.json" };
+      if (canUseOpenworkServer) {
+        await openworkClient.addMcp(openworkWorkspaceId, {
+          name: "notion",
+          config: {
+            type: "remote",
+            url: "https://mcp.notion.com/mcp",
+            enabled: true,
+          },
+        });
+      } else {
+        const config = await readOpencodeConfig("project", projectDir);
+        const raw = config.content ?? "";
+        const nextConfig = raw.trim()
+          ? (parse(raw) as Record<string, unknown>)
+          : { $schema: "https://opencode.ai/config.json" };
 
-      const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
-      mcp.notion = {
-        type: "remote",
-        url: "https://mcp.notion.com/mcp",
-        enabled: true,
-      };
+        const mcp = typeof nextConfig.mcp === "object" && nextConfig.mcp ? { ...(nextConfig.mcp as Record<string, unknown>) } : {};
+        mcp.notion = {
+          type: "remote",
+          url: "https://mcp.notion.com/mcp",
+          enabled: true,
+        };
 
-      nextConfig.mcp = mcp;
-      const formatted = JSON.stringify(nextConfig, null, 2);
+        nextConfig.mcp = mcp;
+        const formatted = JSON.stringify(nextConfig, null, 2);
 
-      const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
-      if (!result.ok) {
-        throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+        const result = await writeOpencodeConfig("project", projectDir, `${formatted}\n`);
+        if (!result.ok) {
+          throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
+        }
       }
 
       markReloadRequired("mcp");
@@ -1910,18 +1930,58 @@ export default function App() {
   async function refreshMcpServers() {
     const projectDir = workspaceProjectDir().trim();
     const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
+    const isHostMode = mode() === "host";
     const openworkClient = openworkServerClient();
     const openworkWorkspaceId = openworkServerWorkspaceId();
     const openworkCapabilities = openworkServerCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.mcp?.read;
 
     if (isRemoteWorkspace) {
-      if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.mcp?.read) {
+      if (!canUseOpenworkServer) {
         setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
         setMcpServers([]);
         setMcpStatuses({});
         return;
       }
 
+      try {
+        setMcpStatus(null);
+        const response = await openworkClient.listMcp(openworkWorkspaceId);
+        const next = response.items.map((entry) => ({
+          name: entry.name,
+          config: entry.config as McpServerEntry["config"],
+        }));
+        setMcpServers(next);
+        setMcpLastUpdatedAt(Date.now());
+
+        const activeClient = client();
+        if (activeClient && projectDir) {
+          try {
+            const status = unwrap(await activeClient.mcp.status({ directory: projectDir }));
+            setMcpStatuses(status as McpStatusMap);
+          } catch {
+            setMcpStatuses({});
+          }
+        } else {
+          setMcpStatuses({});
+        }
+
+        if (!next.length) {
+          setMcpStatus("No MCP servers configured yet.");
+        }
+      } catch (e) {
+        setMcpServers([]);
+        setMcpStatuses({});
+        setMcpStatus(e instanceof Error ? e.message : "Failed to load MCP servers");
+      }
+      return;
+    }
+
+    if (isHostMode && canUseOpenworkServer) {
       try {
         setMcpStatus(null);
         const response = await openworkClient.listMcp(openworkWorkspaceId);
@@ -2020,12 +2080,21 @@ export default function App() {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = openworkServerCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.mcp?.write;
+
+    if (!canUseOpenworkServer && !isTauriRuntime()) {
       console.log("[connectMcp] ❌ not Tauri runtime");
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
       return;
     }
-    console.log("[connectMcp] ✓ is Tauri runtime");
+    console.log("[connectMcp] ✓ runtime ready");
 
     const activeClient = client();
     console.log("[connectMcp] activeClient:", activeClient ? "exists" : "null");
@@ -2044,33 +2113,7 @@ export default function App() {
       setMcpConnectingName(entry.name);
       console.log("[connectMcp] connecting name set to:", entry.name);
 
-      // Step 1: Read existing opencode.json config
-      console.log("[connectMcp] reading opencode config for projectDir:", projectDir);
-      const configFile = await readOpencodeConfig("project", projectDir);
-      console.log("[connectMcp] config file result:", configFile);
-
-      // Step 2: Parse and merge the MCP entry into the config
-      let existingConfig: Record<string, unknown> = {};
-      if (configFile.exists && configFile.content?.trim()) {
-        try {
-          existingConfig = parse(configFile.content) ?? {};
-          console.log("[connectMcp] parsed existing config:", existingConfig);
-        } catch (parseErr) {
-          console.warn("[connectMcp] failed to parse existing config, starting fresh:", parseErr);
-          existingConfig = {};
-        }
-      }
-
-      // Ensure base structure
-      if (!existingConfig["$schema"]) {
-        existingConfig["$schema"] = "https://opencode.ai/config.json";
-      }
-
-      // Ensure mcp object exists
-      const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
-      existingConfig["mcp"] = mcpSection;
-
-      // Add the new MCP server entry
+      // Step 1: Add the new MCP server entry
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
         enabled: true,
@@ -2090,18 +2133,46 @@ export default function App() {
         }
         mcpEntryConfig["command"] = entry.command;
       }
-      mcpSection[slug] = mcpEntryConfig;
-      console.log("[connectMcp] merged MCP config:", existingConfig);
+      if (canUseOpenworkServer) {
+        await openworkClient.addMcp(openworkWorkspaceId, {
+          name: slug,
+          config: mcpEntryConfig,
+        });
+        console.log("[connectMcp] added MCP via OpenWork server");
+      } else {
+        console.log("[connectMcp] reading opencode config for projectDir:", projectDir);
+        const configFile = await readOpencodeConfig("project", projectDir);
+        console.log("[connectMcp] config file result:", configFile);
 
-      // Step 3: Write the updated config back
-      const writeResult = await writeOpencodeConfig(
-        "project",
-        projectDir,
-        `${JSON.stringify(existingConfig, null, 2)}\n`
-      );
-      console.log("[connectMcp] writeOpencodeConfig result:", writeResult);
-      if (!writeResult.ok) {
-        throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
+        let existingConfig: Record<string, unknown> = {};
+        if (configFile.exists && configFile.content?.trim()) {
+          try {
+            existingConfig = parse(configFile.content) ?? {};
+            console.log("[connectMcp] parsed existing config:", existingConfig);
+          } catch (parseErr) {
+            console.warn("[connectMcp] failed to parse existing config, starting fresh:", parseErr);
+            existingConfig = {};
+          }
+        }
+
+        if (!existingConfig["$schema"]) {
+          existingConfig["$schema"] = "https://opencode.ai/config.json";
+        }
+
+        const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
+        existingConfig["mcp"] = mcpSection;
+        mcpSection[slug] = mcpEntryConfig;
+        console.log("[connectMcp] merged MCP config:", existingConfig);
+
+        const writeResult = await writeOpencodeConfig(
+          "project",
+          projectDir,
+          `${JSON.stringify(existingConfig, null, 2)}\n`
+        );
+        console.log("[connectMcp] writeOpencodeConfig result:", writeResult);
+        if (!writeResult.ok) {
+          throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
+        }
       }
 
       // Step 4: Call SDK mcp.add to update runtime state
@@ -2534,18 +2605,36 @@ export default function App() {
     const workspaceType = workspaceStore.activeWorkspaceDisplay().workspaceType;
     const workspaceRoot = workspaceStore.activeWorkspacePath().trim();
     const activeClient = client();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = openworkServerCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.read;
 
     let cancelled = false;
 
     const applyDefault = async () => {
       let configDefault: ModelRef | null = null;
 
-      if (isTauriRuntime() && workspaceType === "local" && workspaceRoot) {
-        try {
-          const configFile = await readOpencodeConfig("project", workspaceRoot);
-          configDefault = parseDefaultModelFromConfig(configFile.content);
-        } catch {
-          // ignore
+      if (workspaceType === "local" && workspaceRoot) {
+        if (canUseOpenworkServer) {
+          try {
+            const config = await openworkClient.getConfig(openworkWorkspaceId);
+            const model = typeof config.opencode?.model === "string" ? config.opencode.model : null;
+            configDefault = parseModelRef(model);
+          } catch {
+            // ignore
+          }
+        } else if (isTauriRuntime()) {
+          try {
+            const configFile = await readOpencodeConfig("project", workspaceRoot);
+            configDefault = parseDefaultModelFromConfig(configFile.content);
+          } catch {
+            // ignore
+          }
         }
       } else if (activeClient) {
         try {
@@ -2590,10 +2679,30 @@ export default function App() {
     const root = workspaceStore.activeWorkspacePath().trim();
     if (!root) return;
     const nextModel = defaultModel();
+    const openworkClient = openworkServerClient();
+    const openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = openworkServerCapabilities();
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.config?.write;
     let cancelled = false;
 
     const writeConfig = async () => {
       try {
+        if (canUseOpenworkServer) {
+          const config = await openworkClient.getConfig(openworkWorkspaceId);
+          const currentModel = typeof config.opencode?.model === "string" ? parseModelRef(config.opencode.model) : null;
+          if (currentModel && modelEquals(currentModel, nextModel)) return;
+
+          await openworkClient.patchConfig(openworkWorkspaceId, {
+            opencode: { model: formatModelRef(nextModel) },
+          });
+          markReloadRequired("config");
+          return;
+        }
+
         const configFile = await readOpencodeConfig("project", root);
         const existingModel = parseDefaultModelFromConfig(configFile.content);
         if (existingModel && modelEquals(existingModel, nextModel)) return;

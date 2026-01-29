@@ -1,6 +1,6 @@
 import { spawnSync } from "child_process";
 import { existsSync, mkdirSync } from "fs";
-import { dirname, join } from "path";
+import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 
@@ -8,15 +8,32 @@ const TARGET_TRIPLE = "x86_64-pc-windows-msvc";
 const DOWNLOAD_URL =
   "https://github.com/anomalyco/opencode/releases/latest/download/opencode-windows-x64.zip";
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const sidecarDir = join(__dirname, "..", "src-tauri", "sidecars");
+const openworkServerName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
+const openworkServerPath = join(sidecarDir, openworkServerName);
+
+const openworkServerDir = resolve(__dirname, "..", "..", "server");
+const targetSidecarPath = join(sidecarDir, `opencode-${TARGET_TRIPLE}.exe`);
+const devSidecarPath = join(sidecarDir, "opencode.exe");
+
+if (!existsSync(openworkServerPath)) {
+  mkdirSync(sidecarDir, { recursive: true });
+  const buildResult = spawnSync(
+    "bun",
+    ["./script/build.ts", "--outdir", sidecarDir, "--filename", "openwork-server"],
+    { cwd: openworkServerDir, stdio: "inherit" }
+  );
+
+  if (buildResult.status !== 0) {
+    process.exit(buildResult.status ?? 1);
+  }
+}
+
 if (process.platform !== "win32") {
   console.log("Skipping Windows sidecar download (non-Windows host).");
   process.exit(0);
 }
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const sidecarDir = join(__dirname, "..", "src-tauri", "sidecars");
-const targetSidecarPath = join(sidecarDir, `opencode-${TARGET_TRIPLE}.exe`);
-const devSidecarPath = join(sidecarDir, "opencode.exe");
 
 if (existsSync(targetSidecarPath)) {
   console.log(`OpenCode sidecar already present: ${targetSidecarPath}`);

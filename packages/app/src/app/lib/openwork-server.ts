@@ -165,10 +165,17 @@ export class OpenworkServerError extends Error {
   }
 }
 
-function buildHeaders(token?: string, extra?: Record<string, string>) {
+function buildHeaders(
+  token?: string,
+  hostToken?: string,
+  extra?: Record<string, string>,
+) {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+  }
+  if (hostToken) {
+    headers["X-OpenWork-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -179,12 +186,12 @@ function buildHeaders(token?: string, extra?: Record<string, string>) {
 async function requestJson<T>(
   baseUrl: string,
   path: string,
-  options: { method?: string; token?: string; body?: unknown } = {},
+  options: { method?: string; token?: string; hostToken?: string; body?: unknown } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
   const response = await fetch(url, {
     method: options.method ?? "GET",
-    headers: buildHeaders(options.token),
+    headers: buildHeaders(options.token, options.hostToken),
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
 
@@ -200,70 +207,88 @@ async function requestJson<T>(
   return json as T;
 }
 
-export function createOpenworkServerClient(options: { baseUrl: string; token?: string }) {
+export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
   const token = options.token;
+  const hostToken = options.hostToken;
 
   return {
     baseUrl,
     token,
     health: () => requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health"),
-    capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token }),
-    listWorkspaces: () => requestJson<{ items: OpenworkWorkspaceInfo[] }>(baseUrl, "/workspaces", { token }),
+    capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken }),
+    listWorkspaces: () => requestJson<{ items: OpenworkWorkspaceInfo[] }>(baseUrl, "/workspaces", { token, hostToken }),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
-        { token },
+        { token, hostToken },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
         token,
+        hostToken,
         method: "PATCH",
         body: payload,
       }),
-    listPlugins: (workspaceId: string) =>
-      requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(baseUrl, `/workspace/${workspaceId}/plugins`, {
-        token,
-      }),
+    listPlugins: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
+      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+      return requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/plugins${query}`,
+        {
+          token,
+          hostToken,
+        },
+      );
+    },
     addPlugin: (workspaceId: string, spec: string) =>
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins`,
-        { token, method: "POST", body: { spec } },
+        { token, hostToken, method: "POST", body: { spec } },
       ),
     removePlugin: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkPluginItem[]; loadOrder: string[] }>(
         baseUrl,
         `/workspace/${workspaceId}/plugins/${encodeURIComponent(name)}`,
-        { token, method: "DELETE" },
+        { token, hostToken, method: "DELETE" },
       ),
-    listSkills: (workspaceId: string) =>
-      requestJson<{ items: OpenworkSkillItem[] }>(baseUrl, `/workspace/${workspaceId}/skills`, { token }),
+    listSkills: (workspaceId: string, options?: { includeGlobal?: boolean }) => {
+      const query = options?.includeGlobal ? "?includeGlobal=true" : "";
+      return requestJson<{ items: OpenworkSkillItem[] }>(
+        baseUrl,
+        `/workspace/${workspaceId}/skills${query}`,
+        { token, hostToken },
+      );
+    },
     upsertSkill: (workspaceId: string, payload: { name: string; content: string; description?: string }) =>
       requestJson<OpenworkSkillItem>(baseUrl, `/workspace/${workspaceId}/skills`, {
         token,
+        hostToken,
         method: "POST",
         body: payload,
       }),
     listMcp: (workspaceId: string) =>
-      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token }),
+      requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, { token, hostToken }),
     addMcp: (workspaceId: string, payload: { name: string; config: Record<string, unknown> }) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp`, {
         token,
+        hostToken,
         method: "POST",
         body: payload,
       }),
     removeMcp: (workspaceId: string, name: string) =>
       requestJson<{ items: OpenworkMcpItem[] }>(baseUrl, `/workspace/${workspaceId}/mcp/${encodeURIComponent(name)}`, {
         token,
+        hostToken,
         method: "DELETE",
       }),
     listCommands: (workspaceId: string, scope: "workspace" | "global" = "workspace") =>
       requestJson<{ items: OpenworkCommandItem[] }>(
         baseUrl,
         `/workspace/${workspaceId}/commands?scope=${scope}`,
-        { token },
+        { token, hostToken },
       ),
     upsertCommand: (
       workspaceId: string,
@@ -271,12 +296,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     ) =>
       requestJson<{ items: OpenworkCommandItem[] }>(baseUrl, `/workspace/${workspaceId}/commands`, {
         token,
+        hostToken,
         method: "POST",
         body: payload,
       }),
     deleteCommand: (workspaceId: string, name: string) =>
       requestJson<{ ok: boolean }>(baseUrl, `/workspace/${workspaceId}/commands/${encodeURIComponent(name)}`, {
         token,
+        hostToken,
         method: "DELETE",
       }),
   };

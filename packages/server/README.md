@@ -12,6 +12,14 @@ pnpm --filter @different-ai/openwork-server dev -- \
 
 The server logs the client token and host token on boot when they are auto-generated.
 
+## Build a binary
+
+```bash
+pnpm --filter @different-ai/openwork-server build:bin
+```
+
+This emits a standalone `openwork-server` binary in `packages/server/dist/bin` (or `openwork-server.exe` on Windows). Use `build:bin:all` to compile additional targets when Bun supports cross-compilation on your host.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).

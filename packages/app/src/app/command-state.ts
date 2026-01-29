@@ -117,6 +117,8 @@ export function createCommandState(options: {
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      Boolean(openworkClient && openworkWorkspaceId && openworkCapabilities?.commands?.write);
 
     if (isRemoteWorkspace) {
       if (draft.scope !== "workspace") {
@@ -129,12 +131,14 @@ export function createCommandState(options: {
       }
     }
 
-    if (!isRemoteWorkspace && !isTauriRuntime()) {
+    const useOpenworkServer = draft.scope === "workspace" && canUseOpenworkServer;
+
+    if (!isRemoteWorkspace && !useOpenworkServer && !isTauriRuntime()) {
       options.setError(t("app.error.workspace_commands_desktop", currentLocale()));
       return;
     }
 
-    if (!isRemoteWorkspace && draft.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
+    if (!isRemoteWorkspace && !useOpenworkServer && draft.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return;
     }
@@ -165,7 +169,7 @@ export function createCommandState(options: {
 
     try {
       const workspaceRoot = options.activeWorkspaceRoot().trim();
-      if (isRemoteWorkspace && openworkClient && openworkWorkspaceId) {
+      if (useOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.upsertCommand(openworkWorkspaceId, {
           name: safeName,
           description: draft.description || undefined,
@@ -234,6 +238,8 @@ export function createCommandState(options: {
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      Boolean(openworkClient && openworkWorkspaceId && openworkCapabilities?.commands?.write);
 
     if (isRemoteWorkspace) {
       if (command.scope !== "workspace") {
@@ -246,12 +252,14 @@ export function createCommandState(options: {
       }
     }
 
-    if (!isRemoteWorkspace && !isTauriRuntime()) {
+    const useOpenworkServer = command.scope === "workspace" && canUseOpenworkServer;
+
+    if (!isRemoteWorkspace && !useOpenworkServer && !isTauriRuntime()) {
       options.setError(t("app.error.workspace_commands_desktop", currentLocale()));
       return;
     }
 
-    if (!isRemoteWorkspace && command.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
+    if (!isRemoteWorkspace && !useOpenworkServer && command.scope === "workspace" && !options.activeWorkspaceRoot().trim()) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return;
     }
@@ -263,7 +271,7 @@ export function createCommandState(options: {
 
     try {
       const workspaceRoot = options.activeWorkspaceRoot().trim();
-      if (isRemoteWorkspace && openworkClient && openworkWorkspaceId) {
+      if (useOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.deleteCommand(openworkWorkspaceId, command.name);
       } else {
         await opencodeCommandDelete({
@@ -336,6 +344,8 @@ export function createCommandState(options: {
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      Boolean(openworkClient && openworkWorkspaceId && openworkCapabilities?.commands?.read);
     if (!c) return;
 
     try {
@@ -343,20 +353,22 @@ export function createCommandState(options: {
       let workspaceNames = new Set<string>();
       let globalNames = new Set<string>();
 
-      if (isRemoteWorkspace) {
-        if (openworkClient && openworkWorkspaceId && openworkCapabilities?.commands?.read) {
-          try {
-            const response = await openworkClient.listCommands(openworkWorkspaceId, "workspace");
-            workspaceNames = new Set(response.items.map((item) => item.name));
-          } catch {
-            workspaceNames = new Set();
-          }
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        try {
+          const response = await openworkClient.listCommands(openworkWorkspaceId, "workspace");
+          workspaceNames = new Set(response.items.map((item) => item.name));
+        } catch {
+          workspaceNames = new Set();
         }
-      } else if (isTauriRuntime()) {
+      }
+
+      if (!isRemoteWorkspace && isTauriRuntime()) {
         if (root) {
           try {
             const names = await opencodeCommandList({ scope: "workspace", projectDir: root });
-            workspaceNames = new Set(names);
+            if (!canUseOpenworkServer) {
+              workspaceNames = new Set(names);
+            }
           } catch {
             workspaceNames = new Set();
           }
@@ -367,7 +379,7 @@ export function createCommandState(options: {
         } catch {
           globalNames = new Set();
         }
-      } else if (root) {
+      } else if (!isRemoteWorkspace && root) {
         try {
           const nodes = unwrap(
             await c.file.list({ directory: root, path: COMMANDS_PATH }),

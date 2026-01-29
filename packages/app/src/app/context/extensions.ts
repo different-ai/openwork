@@ -85,18 +85,70 @@ export function createExtensionsStore(options: {
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
     const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isHostMode = options.mode() === "host";
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.read;
     if (!root) {
       setSkills([]);
       setSkillsStatus(translate("skills.pick_workspace_first"));
       return;
     }
 
+    if ((isRemoteWorkspace || isHostMode) && canUseOpenworkServer) {
+      if (root !== skillsRoot) {
+        skillsLoaded = false;
+      }
+
+      if (!optionsOverride?.force && skillsLoaded) {
+        return;
+      }
+
+      if (refreshSkillsInFlight) {
+        return;
+      }
+
+      refreshSkillsInFlight = true;
+      refreshSkillsAborted = false;
+
+      try {
+        setSkillsStatus(null);
+        const response = await openworkClient.listSkills(openworkWorkspaceId, {
+          includeGlobal: isHostMode,
+        });
+        if (refreshSkillsAborted) return;
+        const next: SkillCard[] = Array.isArray(response.items)
+          ? response.items.map((entry) => ({
+              name: entry.name,
+              description: entry.description,
+              path: entry.path,
+            }))
+          : [];
+        setSkills(next);
+        if (!next.length) {
+          setSkillsStatus(translate("skills.no_skills_found"));
+        }
+        skillsLoaded = true;
+        skillsRoot = root;
+      } catch (e) {
+        if (refreshSkillsAborted) return;
+        setSkills([]);
+        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      } finally {
+        refreshSkillsInFlight = false;
+      }
+
+      return;
+    }
+
     // Host/Tauri mode: read directly from `.opencode/skills` or `.claude/skills`
     // so the UI still works even if the OpenCode engine is stopped or unreachable.
-    if (options.mode() === "host" && isTauriRuntime()) {
+    if (isHostMode && isTauriRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -125,50 +177,6 @@ export function createExtensionsStore(options: {
             }))
           : [];
 
-        setSkills(next);
-        if (!next.length) {
-          setSkillsStatus(translate("skills.no_skills_found"));
-        }
-        skillsLoaded = true;
-        skillsRoot = root;
-      } catch (e) {
-        if (refreshSkillsAborted) return;
-        setSkills([]);
-        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
-      } finally {
-        refreshSkillsInFlight = false;
-      }
-
-      return;
-    }
-
-    if (isRemoteWorkspace && openworkClient && openworkWorkspaceId && openworkCapabilities?.skills?.read) {
-      if (root !== skillsRoot) {
-        skillsLoaded = false;
-      }
-
-      if (!optionsOverride?.force && skillsLoaded) {
-        return;
-      }
-
-      if (refreshSkillsInFlight) {
-        return;
-      }
-
-      refreshSkillsInFlight = true;
-      refreshSkillsAborted = false;
-
-      try {
-        setSkillsStatus(null);
-        const response = await openworkClient.listSkills(openworkWorkspaceId);
-        if (refreshSkillsAborted) return;
-        const next: SkillCard[] = Array.isArray(response.items)
-          ? response.items.map((entry) => ({
-              name: entry.name,
-              description: entry.description,
-              path: entry.path,
-            }))
-          : [];
         setSkills(next);
         if (!next.length) {
           setSkillsStatus(translate("skills.no_skills_found"));
@@ -262,9 +270,15 @@ export function createExtensionsStore(options: {
 
   async function refreshPlugins(scopeOverride?: PluginScope) {
     const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isHostMode = options.mode() === "host";
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.plugins?.read;
 
     // Skip if already in flight
     if (refreshPluginsInFlight) {
@@ -301,6 +315,40 @@ export function createExtensionsStore(options: {
       try {
         setPluginStatus(null);
         setSidebarPluginStatus(null);
+
+        const result = await openworkClient.listPlugins(openworkWorkspaceId);
+        if (refreshPluginsAborted) return;
+
+        const configItems = result.items.filter((item) => item.source === "config");
+        const list = configItems.map((item) => item.spec);
+        setPluginList(list);
+        setSidebarPluginList(list);
+
+        if (!list.length) {
+          setPluginStatus("No plugins configured yet.");
+        }
+      } catch (e) {
+        if (refreshPluginsAborted) return;
+        setPluginList([]);
+        setSidebarPluginStatus("Failed to load plugins.");
+        setSidebarPluginList([]);
+        setPluginStatus(e instanceof Error ? e.message : "Failed to load plugins.");
+      } finally {
+        refreshPluginsInFlight = false;
+      }
+
+      return;
+    }
+
+    if (isHostMode && scope === "project" && canUseOpenworkServer) {
+      setPluginConfig(null);
+      setPluginConfigPath("opencode.json (openwork server)");
+
+      try {
+        setPluginStatus(null);
+        setSidebarPluginStatus(null);
+
+        if (refreshPluginsAborted) return;
 
         const result = await openworkClient.listPlugins(openworkWorkspaceId);
         if (refreshPluginsAborted) return;
@@ -392,9 +440,15 @@ export function createExtensionsStore(options: {
     const isManualInput = pluginNameOverride == null;
 
     const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isHostMode = options.mode() === "host";
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.plugins?.write;
 
     if (!pluginName) {
       if (isManualInput) {
@@ -413,6 +467,20 @@ export function createExtensionsStore(options: {
         return;
       }
 
+      try {
+        setPluginStatus(null);
+        await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        if (isManualInput) {
+          setPluginInput("");
+        }
+        await refreshPlugins("project");
+      } catch (e) {
+        setPluginStatus(e instanceof Error ? e.message : "Failed to add plugin.");
+      }
+      return;
+    }
+
+    if (isHostMode && pluginScope() === "project" && canUseOpenworkServer) {
       try {
         setPluginStatus(null);
         await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
@@ -526,11 +594,17 @@ export function createExtensionsStore(options: {
 
   async function installSkillCreator() {
     const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isHostMode = options.mode() === "host";
     const openworkClient = options.openworkServerClient();
     const openworkWorkspaceId = options.openworkServerWorkspaceId();
     const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.write;
 
-    if (isRemoteWorkspace) {
+    if (isRemoteWorkspace || (isHostMode && canUseOpenworkServer)) {
       if (!openworkClient || !openworkWorkspaceId || !openworkCapabilities?.skills?.write) {
         setSkillsStatus("OpenWork server unavailable. Connect to install skills.");
         return;
@@ -561,7 +635,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (options.mode() !== "host") {
+    if (!isHostMode) {
       options.setError(translate("skills.host_only_error"));
       return;
     }

@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
+    "build:bin": "bun ./script/build.ts --outdir dist/bin",
+    "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-windows-x64",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
