@@ -1,4 +1,4 @@
-import * as fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -89,26 +89,18 @@ function outputName(filename: string, target?: string) {
 }
 
 async function buildOnce(entrypoint: string, outdir: string, filename: string, target?: string) {
-  fs.mkdirSync(outdir, { recursive: true });
+  mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, outputName(filename, target));
 
-  const result = await bun.build({
-    entrypoints: [entrypoint],
-    outfile,
-    target,
-    minify: true,
-    sourcemap: "none",
-    compile: true,
-  });
-
-  if (!result.success) {
-    for (const log of result.logs) {
-      console.error(log.message);
-    }
-    process.exit(1);
+  const args = ["build", entrypoint, "--compile", "--outfile", outfile];
+  if (target) {
+    args.push("--target", target);
   }
 
-  console.log(`Built ${outfile}`);
+  const result = spawnSync("bun", args, { stdio: "inherit" });
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
 }
 
 const options = readArgs(bun.argv.slice(2));

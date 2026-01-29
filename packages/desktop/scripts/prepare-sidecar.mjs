@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -17,8 +17,31 @@ const openworkServerDir = resolve(__dirname, "..", "..", "server");
 const targetSidecarPath = join(sidecarDir, `opencode-${TARGET_TRIPLE}.exe`);
 const devSidecarPath = join(sidecarDir, "opencode.exe");
 
-if (!existsSync(openworkServerPath)) {
+const isStubBinary = (filePath) => {
+  try {
+    const stat = statSync(filePath);
+    if (!stat.isFile()) return true;
+    if (stat.size < 1024) {
+      const content = readFileSync(filePath, "utf8");
+      if (content.includes("Bun is required")) return true;
+    }
+  } catch {
+    return true;
+  }
+  return false;
+};
+
+const shouldBuildOpenworkServer = !existsSync(openworkServerPath) || isStubBinary(openworkServerPath);
+
+if (shouldBuildOpenworkServer) {
   mkdirSync(sidecarDir, { recursive: true });
+  if (existsSync(openworkServerPath)) {
+    try {
+      unlinkSync(openworkServerPath);
+    } catch {
+      // ignore
+    }
+  }
   const buildResult = spawnSync(
     "bun",
     ["./script/build.ts", "--outdir", sidecarDir, "--filename", "openwork-server"],
