@@ -12,7 +12,7 @@ It's an **extensible, open-source alternative** to “Claude Work”.
 <img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 19 02 PM" src="https://github.com/user-attachments/assets/7a1b8662-19a0-4327-87c9-c0295a0d54f1" />
 
 
-Openwork is desgined around the idea that you can easily ship your
+OpenWork is designed around the idea that you can easily ship your AI-driven workflows as polished, user-ready products.
 
 It’s a native desktop app that runs **OpenCode** under the hood, but presents it as a clean, guided workflow:
 - pick a workspace
