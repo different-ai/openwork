@@ -1,13 +1,24 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
-import { ChevronDown, HardDrive, RefreshCcw, Shield, Smartphone } from "lucide-solid";
+import { ChevronDown, HardDrive, MessageCircle, RefreshCcw, Shield, Smartphone, X } from "lucide-solid";
 import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { EngineInfo, OpenworkServerInfo } from "../lib/tauri";
+import type { EngineInfo, OpenworkServerInfo, OwpenbotStatus, OwpenbotPairingRequest
+} from "../lib/tauri";
+import {
+  getOwpenbotStatus,
+  getOwpenbotQr,
+  setOwpenbotDmPolicy,
+  setOwpenbotAllowlist,
+  setOwpenbotTelegramToken,
+  getOwpenbotPairingRequests,
+  approveOwpenbotPairing,
+  denyOwpenbotPairing,
+} from "../lib/tauri";
 
 export type SettingsViewProps = {
   mode: "host" | "client" | null;
@@ -79,6 +90,385 @@ export type SettingsViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
 };
+
+// Owpenbot Settings Component
+function OwpenbotSettings(props: { busy: boolean }) {
+  const [owpenbotStatus, setOwpenbotStatus] = createSignal<OwpenbotStatus | null>(null);
+  const [qrCode, setQrCode] = createSignal<string | null>(null);
+  const [qrLoading, setQrLoading] = createSignal(false);
+  const [pairingRequests, setPairingRequests] = createSignal<OwpenbotPairingRequest[]>([]);
+  const [telegramToken, setTelegramToken] = createSignal("");
+  const [telegramTokenVisible, setTelegramTokenVisible] = createSignal(false);
+  const [newAllowlistEntry, setNewAllowlistEntry] = createSignal("");
+  const [savingPolicy, setSavingPolicy] = createSignal(false);
+  const [savingAllowlist, setSavingAllowlist] = createSignal(false);
+  const [savingTelegram, setSavingTelegram] = createSignal(false);
+
+  // Load owpenbot status on mount
+  onMount(async () => {
+    await refreshStatus();
+    await refreshPairingRequests();
+  });
+
+  const refreshStatus = async () => {
+    const status = await getOwpenbotStatus();
+    setOwpenbotStatus(status);
+  };
+
+  const refreshPairingRequests = async () => {
+    const requests = await getOwpenbotPairingRequests();
+    setPairingRequests(requests);
+  };
+
+  const showQrCode = async () => {
+    setQrLoading(true);
+    try {
+      const qr = await getOwpenbotQr();
+      if (qr) {
+        setQrCode(qr.qr);
+      }
+    } finally {
+      setQrLoading(false);
+    }
+  };
+
+  const hideQrCode = () => {
+    setQrCode(null);
+  };
+
+  const handleDmPolicyChange = async (policy: OwpenbotStatus["whatsapp"]["dmPolicy"]) => {
+    setSavingPolicy(true);
+    try {
+      await setOwpenbotDmPolicy(policy);
+      await refreshStatus();
+    } finally {
+      setSavingPolicy(false);
+    }
+  };
+
+  const handleAddAllowlistEntry = async () => {
+    const entry = newAllowlistEntry().trim();
+    if (!entry) return;
+    
+    setSavingAllowlist(true);
+    try {
+      const current = owpenbotStatus()?.whatsapp.allowFrom || [];
+      if (!current.includes(entry)) {
+        await setOwpenbotAllowlist([...current, entry]);
+        await refreshStatus();
+      }
+      setNewAllowlistEntry("");
+    } finally {
+      setSavingAllowlist(false);
+    }
+  };
+
+  const handleRemoveAllowlistEntry = async (entry: string) => {
+    setSavingAllowlist(true);
+    try {
+      const current = owpenbotStatus()?.whatsapp.allowFrom || [];
+      await setOwpenbotAllowlist(current.filter((e) => e !== entry));
+      await refreshStatus();
+    } finally {
+      setSavingAllowlist(false);
+    }
+  };
+
+  const handleSaveTelegramToken = async () => {
+    const token = telegramToken().trim();
+    if (!token) return;
+    
+    setSavingTelegram(true);
+    try {
+      await setOwpenbotTelegramToken(token);
+      await refreshStatus();
+      setTelegramToken("");
+    } finally {
+      setSavingTelegram(false);
+    }
+  };
+
+  const handleApprovePairing = async (code: string) => {
+    await approveOwpenbotPairing(code);
+    await refreshPairingRequests();
+  };
+
+  const handleDenyPairing = async (code: string) => {
+    await denyOwpenbotPairing(code);
+    await refreshPairingRequests();
+  };
+
+  const bridgeStatusStyle = createMemo(() => {
+    if (owpenbotStatus()?.running) {
+      return "bg-green-7/10 text-green-11 border-green-7/20";
+    }
+    return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
+  const whatsappStatusStyle = createMemo(() => {
+    if (owpenbotStatus()?.whatsapp.linked) {
+      return "text-green-11";
+    }
+    return "text-gray-9";
+  });
+
+  const telegramStatusStyle = createMemo(() => {
+    if (owpenbotStatus()?.telegram.configured) {
+      return "text-green-11";
+    }
+    return "text-gray-9";
+  });
+
+  const dmPolicyOptions: { value: OwpenbotStatus["whatsapp"]["dmPolicy"]; label: string; description: string }[] = [
+    { value: "pairing", label: "Pairing", description: "Requires approval for new contacts" },
+    { value: "allowlist", label: "Allowlist", description: "Only specific numbers can message" },
+    { value: "open", label: "Open", description: "Anyone can message (public)" },
+    { value: "disabled", label: "Disabled", description: "DMs are disabled" },
+  ];
+
+  return (
+    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+      <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+        <div>
+          <div class="flex items-center gap-2">
+            <MessageCircle size={16} class="text-gray-11" />
+            <div class="text-sm font-medium text-gray-12">Messaging Bridge</div>
+            <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/10 text-amber-11 border border-amber-7/30">
+              Coming Soon
+            </span>
+          </div>
+          <div class="text-xs text-gray-10 mt-1">Connect WhatsApp and Telegram to chat with your AI.</div>
+        </div>
+        <div class={`text-xs px-2 py-1 rounded-full border ${bridgeStatusStyle()}`}>
+          {owpenbotStatus()?.running ? "Running" : "Offline"}
+        </div>
+      </div>
+
+      {/* WhatsApp Section */}
+      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full bg-green-7/20 flex items-center justify-center">
+              <span class="text-xs">W</span>
+            </div>
+            <span class="text-sm font-medium text-gray-12">WhatsApp</span>
+          </div>
+          <span class={`text-xs ${whatsappStatusStyle()}`}>
+            {owpenbotStatus()?.whatsapp.linked ? "Linked" : "Not linked"}
+          </span>
+        </div>
+
+        {/* QR Code Section */}
+        <Show when={!owpenbotStatus()?.whatsapp.linked}>
+          <div class="space-y-3">
+            <Show
+              when={qrCode()}
+              fallback={
+                <Button
+                  variant="secondary"
+                  class="w-full"
+                  onClick={showQrCode}
+                  disabled={props.busy || qrLoading()}
+                >
+                  {qrLoading() ? "Loading QR..." : "Show QR Code to Link"}
+                </Button>
+              }
+            >
+              <div class="relative">
+                <div class="flex justify-center p-4 bg-white rounded-lg">
+                  <img
+                    src={`data:image/png;base64,${qrCode()}`}
+                    alt="WhatsApp QR Code"
+                    class="w-48 h-48"
+                  />
+                </div>
+                <button
+                  class="absolute top-2 right-2 p-1 rounded-full bg-gray-12/80 text-gray-1 hover:bg-gray-12"
+                  onClick={hideQrCode}
+                >
+                  <X size={14} />
+                </button>
+                <div class="text-xs text-gray-10 text-center mt-2">
+                  Scan with WhatsApp to link your account
+                </div>
+              </div>
+            </Show>
+          </div>
+        </Show>
+
+        {/* DM Policy */}
+        <div class="space-y-2">
+          <div class="text-xs font-medium text-gray-11">DM Policy</div>
+          <div class="grid grid-cols-2 gap-2">
+            <For each={dmPolicyOptions}>
+              {(option) => (
+                <button
+                  class={`px-3 py-2 rounded-lg text-left transition-colors ${
+                    owpenbotStatus()?.whatsapp.dmPolicy === option.value
+                      ? "bg-gray-4 border border-gray-7"
+                      : "bg-gray-2/60 border border-gray-6/50 hover:bg-gray-3"
+                  }`}
+                  onClick={() => handleDmPolicyChange(option.value)}
+                  disabled={props.busy || savingPolicy()}
+                >
+                  <div class="text-xs font-medium text-gray-12">{option.label}</div>
+                  <div class="text-[11px] text-gray-10">{option.description}</div>
+                </button>
+              )}
+            </For>
+          </div>
+        </div>
+
+        {/* Allowlist Editor */}
+        <Show when={owpenbotStatus()?.whatsapp.dmPolicy === "allowlist"}>
+          <div class="space-y-2">
+            <div class="text-xs font-medium text-gray-11">Allowed Numbers</div>
+            <div class="flex gap-2">
+              <input
+                type="text"
+                value={newAllowlistEntry()}
+                onInput={(e) => setNewAllowlistEntry(e.currentTarget.value)}
+                placeholder="+1234567890"
+                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+                disabled={props.busy || savingAllowlist()}
+              />
+              <Button
+                variant="secondary"
+                class="text-xs h-9 px-3"
+                onClick={handleAddAllowlistEntry}
+                disabled={props.busy || savingAllowlist() || !newAllowlistEntry().trim()}
+              >
+                Add
+              </Button>
+            </div>
+            <Show when={(owpenbotStatus()?.whatsapp.allowFrom || []).length > 0}>
+              <div class="flex flex-wrap gap-2 mt-2">
+                <For each={owpenbotStatus()?.whatsapp.allowFrom || []}>
+                  {(entry) => (
+                    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-3 border border-gray-6 text-xs text-gray-12">
+                      {entry}
+                      <button
+                        class="p-0.5 rounded hover:bg-gray-4"
+                        onClick={() => handleRemoveAllowlistEntry(entry)}
+                        disabled={props.busy || savingAllowlist()}
+                      >
+                        <X size={12} class="text-gray-10" />
+                      </button>
+                    </span>
+                  )}
+                </For>
+              </div>
+            </Show>
+          </div>
+        </Show>
+      </div>
+
+      {/* Telegram Section */}
+      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full bg-blue-7/20 flex items-center justify-center">
+              <span class="text-xs">T</span>
+            </div>
+            <span class="text-sm font-medium text-gray-12">Telegram</span>
+          </div>
+          <span class={`text-xs ${telegramStatusStyle()}`}>
+            {owpenbotStatus()?.telegram.configured ? "Configured" : "Not configured"}
+          </span>
+        </div>
+
+        <div class="space-y-2">
+          <div class="text-xs font-medium text-gray-11">Bot Token</div>
+          <div class="flex gap-2">
+            <div class="flex-1 flex items-center gap-2">
+              <input
+                type={telegramTokenVisible() ? "text" : "password"}
+                value={telegramToken()}
+                onInput={(e) => setTelegramToken(e.currentTarget.value)}
+                placeholder="Paste token from @BotFather"
+                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+                disabled={props.busy || savingTelegram()}
+              />
+              <Button
+                variant="outline"
+                class="text-xs h-9 px-3 shrink-0"
+                onClick={() => setTelegramTokenVisible((prev) => !prev)}
+              >
+                {telegramTokenVisible() ? "Hide" : "Show"}
+              </Button>
+            </div>
+            <Button
+              variant="secondary"
+              class="text-xs h-9 px-3"
+              onClick={handleSaveTelegramToken}
+              disabled={props.busy || savingTelegram() || !telegramToken().trim()}
+            >
+              Save
+            </Button>
+          </div>
+          <div class="text-[11px] text-gray-8">
+            Create a bot with <span class="font-mono">@BotFather</span> on Telegram and paste the token here.
+          </div>
+        </div>
+
+        <Show when={owpenbotStatus()?.telegram.configured}>
+          <div class="flex items-center justify-between bg-gray-2/50 rounded-lg p-3">
+            <div class="text-xs text-gray-11">
+              Bot is {owpenbotStatus()?.telegram.enabled ? "enabled" : "disabled"}
+            </div>
+          </div>
+        </Show>
+      </div>
+
+      {/* Pairing Requests */}
+      <Show when={pairingRequests().length > 0}>
+        <div class="bg-gray-1 rounded-xl border border-amber-7/30 p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-amber-9 animate-pulse" />
+            <span class="text-sm font-medium text-gray-12">Pending Pairing Requests</span>
+          </div>
+          <div class="divide-y divide-gray-6/50">
+            <For each={pairingRequests()}>
+              {(request) => (
+                <div class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12 truncate">{request.peerId}</div>
+                    <div class="text-[11px] text-gray-9">
+                      {request.platform === "whatsapp" ? "WhatsApp" : "Telegram"} · {formatRelativeTime(request.timestamp)}
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2 shrink-0">
+                    <Button
+                      variant="secondary"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={() => handleApprovePairing(request.code)}
+                      disabled={props.busy}
+                    >
+                      Approve
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={() => handleDenyPairing(request.code)}
+                      disabled={props.busy}
+                    >
+                      Deny
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
+      </Show>
+
+      {/* Info Note */}
+      <div class="text-[11px] text-gray-8">
+        Messaging bridge connects your WhatsApp and Telegram to OpenCode. Messages are processed locally.
+      </div>
+    </div>
+  );
+}
 
 export default function SettingsView(props: SettingsViewProps) {
   const updateState = () => props.updateStatus?.state ?? "idle";
@@ -585,6 +975,8 @@ export default function SettingsView(props: SettingsViewProps) {
           System mode follows your OS preference automatically.
         </div>
       </div>
+
+      <OwpenbotSettings busy={props.busy} />
 
       <SettingsKeybinds
         items={props.keybindItems}
