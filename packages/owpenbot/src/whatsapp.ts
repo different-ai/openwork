@@ -30,6 +30,7 @@ export type WhatsAppAdapter = {
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(peerId: string, text: string): Promise<void>;
+  sendFile(peerId: string, filePath: string, caption?: string): Promise<void>;
   sendTyping(peerId: string): Promise<void>;
 };
 
@@ -217,6 +218,53 @@ export function createWhatsAppAdapter(
       if (!socket) throw new Error("WhatsApp socket not initialized");
       const sent = await socket.sendMessage(peerId, { text });
       recordSentMessage(sent?.key?.id);
+    },
+    async sendFile(peerId: string, filePath: string, caption = "") {
+      if (!socket) throw new Error("WhatsApp socket not initialized");
+
+      const ext = path.extname(filePath).toLowerCase();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let msgContent: any = {};
+
+      try {
+        if (!fs.existsSync(filePath)) {
+          const sent = await socket.sendMessage(peerId, {
+            text: "⚠️ Error: File not found.",
+          });
+          recordSentMessage(sent?.key?.id);
+          return;
+        }
+
+        if ([".jpg", ".jpeg", ".png", ".gif"].includes(ext)) {
+          msgContent = { image: { url: filePath }, caption: caption };
+        } else {
+          let mimetype = "application/octet-stream";
+          if (ext === ".pdf") mimetype = "application/pdf";
+          if (ext === ".txt") mimetype = "text/plain";
+
+          msgContent = {
+            document: { url: filePath },
+            mimetype: mimetype,
+            fileName: path.basename(filePath),
+            caption: caption,
+          };
+        }
+
+        const sent = await socket.sendMessage(peerId, msgContent);
+        recordSentMessage(sent?.key?.id);
+      } catch (err: unknown) {
+        log.error({ error: err, filePath }, "failed to send file");
+        let errorMessage: string;
+        if (err instanceof Error) {
+          errorMessage = err.message || "Unknown error";
+        } else {
+          errorMessage = err != null ? String(err) : "Unknown error";
+        }
+        const sent = await socket.sendMessage(peerId, {
+          text: `⚠️ Error sending file: ${errorMessage}`,
+        });
+        recordSentMessage(sent?.key?.id);
+      }
     },
     async sendTyping(peerId: string) {
       if (!socket) return;

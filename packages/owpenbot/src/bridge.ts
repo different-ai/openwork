@@ -12,12 +12,13 @@ import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createTelegramAdapter } from "./telegram.js";
 import { createWhatsAppAdapter } from "./whatsapp.js";
 
-type Adapter = {
+   type Adapter = {
   name: ChannelName;
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(peerId: string, text: string): Promise<void>;
+  sendFile?: (peerId: string, filePath: string, caption?: string) => Promise<void>;
   sendTyping?: (peerId: string) => Promise<void>;
 };
 
@@ -327,6 +328,16 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     if (options.display !== false) {
       reporter?.onOutbound?.({ channel, peerId, text, kind });
     }
+
+    // CHECK IF IT'S A FILE COMMAND
+    if (text.startsWith("FILE:")) {
+      const filePath = text.substring(5).trim();
+      if (adapter.sendFile) {
+        await adapter.sendFile(peerId, filePath);
+        return; // Stop here, don't send text
+      }
+    }
+
     const chunks = chunkText(text, adapter.maxTextLength);
     for (const chunk of chunks) {
       logger.info({ channel, peerId, length: chunk.length }, "sending message");
