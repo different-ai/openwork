@@ -11,7 +11,7 @@ import type {
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
 import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { EngineInfo, OpenworkServerInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -57,6 +57,7 @@ export type DashboardViewProps = {
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
   engineInfo: EngineInfo | null;
+  owpenbotInfo: OwpenbotInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -875,6 +876,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
                   engineInfo={props.engineInfo}
+                  owpenbotInfo={props.owpenbotInfo}
                   updateOpenworkServerSettings={props.updateOpenworkServerSettings}
                   resetOpenworkServerSettings={props.resetOpenworkServerSettings}
                   testOpenworkServerConnection={props.testOpenworkServerConnection}

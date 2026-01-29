@@ -432,6 +432,18 @@ export type OwpenbotStatus = {
   opencode: OwpenbotOpencodeStatus;
 };
 
+export type OwpenbotInfo = {
+  running: boolean;
+  workspacePath: string | null;
+  opencodeUrl: string | null;
+  qrData: string | null;
+  whatsappLinked: boolean;
+  telegramConfigured: boolean;
+  pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
+};
+
 export type OwpenbotQr = {
   qr: string; // base64 encoded
   format: "png" | "ascii";
@@ -447,27 +459,14 @@ export type OwpenbotPairingRequest = {
 // Owpenbot functions - call Tauri commands that wrap owpenbot CLI
 export async function getOwpenbotStatus(): Promise<OwpenbotStatus | null> {
   try {
-    const result = await invoke<Record<string, unknown>>("owpenbot_status");
-    // Transform CLI JSON output to OwpenbotStatus type
-    return {
-      running: (result.running as boolean) ?? false,
-      config: (result.config as string) ?? "",
-      whatsapp: {
-        linked: (result.whatsapp as Record<string, unknown>)?.linked as boolean ?? false,
-        dmPolicy: ((result.whatsapp as Record<string, unknown>)?.dmPolicy as OwpenbotWhatsAppStatus["dmPolicy"]) ?? "pairing",
-        allowFrom: ((result.whatsapp as Record<string, unknown>)?.allowFrom as string[]) ?? [],
-      },
-      telegram: {
-        configured: (result.telegram as Record<string, unknown>)?.configured as boolean ?? false,
-        enabled: (result.telegram as Record<string, unknown>)?.enabled as boolean ?? false,
-      },
-      opencode: {
-        url: (result.opencode as Record<string, unknown>)?.url as string ?? "",
-      },
-    };
+    return await invoke<OwpenbotStatus>("owpenbot_status");
   } catch {
     return null;
   }
+}
+
+export async function owpenbotInfo(): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_info");
 }
 
 export async function getOwpenbotQr(): Promise<OwpenbotQr | null> {
@@ -486,7 +485,7 @@ export async function setOwpenbotDmPolicy(
   policy: OwpenbotWhatsAppStatus["dmPolicy"],
 ): Promise<ExecResult> {
   try {
-    await invoke("owpenbot_config_set", { key: "whatsapp.dmPolicy", value: policy });
+    await invoke("owpenbot_config_set", { key: "channels.whatsapp.dmPolicy", value: policy });
     return { ok: true, status: 0, stdout: "", stderr: "" };
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };
@@ -495,8 +494,10 @@ export async function setOwpenbotDmPolicy(
 
 export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecResult> {
   try {
-    // Join allowlist into comma-separated string for CLI
-    await invoke("owpenbot_config_set", { key: "whatsapp.allowFrom", value: allowlist.join(",") });
+    await invoke("owpenbot_config_set", {
+      key: "channels.whatsapp.allowFrom",
+      value: JSON.stringify(allowlist),
+    });
     return { ok: true, status: 0, stdout: "", stderr: "" };
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };
@@ -505,7 +506,7 @@ export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecRes
 
 export async function setOwpenbotTelegramToken(token: string): Promise<ExecResult> {
   try {
-    await invoke("owpenbot_config_set", { key: "telegram.token", value: token });
+    await invoke("owpenbot_config_set", { key: "channels.telegram.token", value: token });
     return { ok: true, status: 0, stdout: "", stderr: "" };
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };
@@ -514,14 +515,22 @@ export async function setOwpenbotTelegramToken(token: string): Promise<ExecResul
 
 export async function getOwpenbotPairingRequests(): Promise<OwpenbotPairingRequest[]> {
   try {
-    const result = await invoke<Record<string, unknown>>("owpenbot_pairing_list");
-    const requests = (result.requests as Array<Record<string, unknown>>) ?? [];
-    return requests.map((r) => ({
-      code: r.code as string,
-      peerId: r.peerId as string,
-      platform: r.platform as "whatsapp" | "telegram",
-      timestamp: r.timestamp as number,
-    }));
+    const result = await invoke<unknown>("owpenbot_pairing_list");
+    const requests = Array.isArray(result) ? result : [];
+    return requests
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
+      .map((entry) => {
+        const channel = String(entry.channel ?? "whatsapp");
+        const createdAt = String(entry.createdAt ?? "");
+        const platform: "whatsapp" | "telegram" = channel === "telegram" ? "telegram" : "whatsapp";
+        return {
+          code: String(entry.code ?? ""),
+          peerId: String(entry.peerId ?? ""),
+          platform,
+          timestamp: createdAt ? Date.parse(createdAt) : Date.now(),
+        };
+      })
+      .filter((entry) => entry.code && entry.peerId);
   } catch {
     return [];
   }
