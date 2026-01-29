@@ -96,14 +96,18 @@ export default function MessageList(props: MessageListProps) {
     return "";
   };
 
+  // Note: expandedStepIds now tracks COLLAPSED steps (inverted logic for default-expanded behavior)
   const toggleSteps = (id: string, relatedIds: string[] = []) => {
     props.setExpandedStepIds((current) => {
       const next = new Set(current);
-      const expanded = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
-      if (expanded) {
+      // Inverted: if in set = collapsed, so check if collapsed to expand (remove from set)
+      const isCollapsed = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
+      if (isCollapsed) {
+        // Currently collapsed -> expand by removing from set
         next.delete(id);
         relatedIds.forEach((relatedId) => next.delete(relatedId));
       } else {
+        // Currently expanded -> collapse by adding to set
         next.add(id);
         relatedIds.forEach((relatedId) => next.delete(relatedId));
       }
@@ -111,9 +115,10 @@ export default function MessageList(props: MessageListProps) {
     });
   };
 
+  // Inverted: steps are expanded by default (when NOT in the set)
   const isStepsExpanded = (id: string, relatedIds: string[] = []) =>
-    props.expandedStepIds.has(id) ||
-    relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
+    !props.expandedStepIds.has(id) &&
+    !relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
   const renderablePartsForMessage = (message: MessageWithParts) =>
     message.parts.filter((part) => {
@@ -257,7 +262,7 @@ export default function MessageList(props: MessageListProps) {
                     </button>
                     <Show when={expanded()}>
                       <div
-                        class={`mt-3 rounded-xl border p-3 ${
+                        class={`mt-3 rounded-xl border p-3 max-h-96 overflow-auto ${
                           block.isUser
                             ? "border-gray-6 bg-gray-1/60"
                             : "border-gray-6/70 bg-gray-2/40"
@@ -358,7 +363,7 @@ export default function MessageList(props: MessageListProps) {
                               </button>
                               <Show when={expanded()}>
                                 <div
-                                  class={`mt-3 rounded-xl border p-3 ${
+                                  class={`mt-3 rounded-xl border p-3 max-h-96 overflow-auto ${
                                     block.isUser
                                       ? "border-gray-6 bg-gray-1/60"
                                       : "border-gray-6/70 bg-gray-2/40"
