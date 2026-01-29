@@ -893,7 +893,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                   <div class="space-y-1">
                     <div class="text-[11px] text-gray-7 font-mono truncate">
-                      {props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl || "Base URL unavailable"}
+                      {(props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) || "Base URL unavailable"}
                     </div>
                     <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.openworkServerHostInfo?.pid ?? "—"}</div>
                   </div>
