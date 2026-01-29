@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File } from "lucide-solid";
+import { Check, ChevronDown, Circle, Copy, File, Sparkles } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep } from "../../utils";
@@ -185,11 +185,22 @@ export default function MessageList(props: MessageListProps) {
           const summary = summarizeStep(part);
           return (
             <div class="flex items-start gap-3 text-xs text-gray-11">
-              <div class="mt-0.5 h-5 w-5 rounded-full border border-gray-7 flex items-center justify-center text-gray-10">
-                {part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+              <div class={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center ${
+                summary.isSkill 
+                  ? "border-purple-7 bg-purple-3 text-purple-10" 
+                  : "border-gray-7 text-gray-10"
+              }`}>
+                {summary.isSkill ? <Sparkles size={12} /> : part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
               </div>
-              <div>
-                <div class="text-gray-12">{summary.title}</div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-12">{summary.title}</span>
+                  <Show when={summary.isSkill}>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                      skill
+                    </span>
+                  </Show>
+                </div>
                 <Show when={summary.detail}>
                   <div class="mt-1 text-gray-10">{summary.detail}</div>
                 </Show>
