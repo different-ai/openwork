@@ -145,3 +145,118 @@ pub async fn owpenbot_qr(app: AppHandle) -> Result<String, String> {
 
     response.qr.ok_or_else(|| "No QR code returned".to_string())
 }
+
+#[tauri::command]
+pub async fn owpenbot_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command
+        .args(["status", "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to get status: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse status: {e}"))
+}
+
+#[tauri::command]
+pub async fn owpenbot_config_set(
+    app: AppHandle,
+    key: String,
+    value: String,
+) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command
+        .args(["config", "set", &key, &value])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to set config: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to set config: {stderr}"));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn owpenbot_pairing_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command
+        .args(["pairing", "list", "--json"])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to list pairing requests: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    
+    serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse pairing list: {e}"))
+}
+
+#[tauri::command]
+pub async fn owpenbot_pairing_approve(app: AppHandle, code: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command
+        .args(["pairing", "approve", &code])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to approve pairing: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to approve pairing: {stderr}"));
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn owpenbot_pairing_deny(app: AppHandle, code: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command
+        .args(["pairing", "deny", &code])
+        .output()
+        .await
+        .map_err(|e| format!("Failed to deny pairing: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to deny pairing: {stderr}"));
+    }
+
+    Ok(())
+}

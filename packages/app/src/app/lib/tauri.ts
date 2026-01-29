@@ -444,48 +444,105 @@ export type OwpenbotPairingRequest = {
   timestamp: number;
 };
 
-// Owpenbot placeholder functions
-// These will call Tauri commands once implemented in the backend
+// Owpenbot functions - call Tauri commands that wrap owpenbot CLI
 export async function getOwpenbotStatus(): Promise<OwpenbotStatus | null> {
-  // TODO: invoke("owpenbot_status")
-  return null;
+  try {
+    const result = await invoke<Record<string, unknown>>("owpenbot_status");
+    // Transform CLI JSON output to OwpenbotStatus type
+    return {
+      running: (result.running as boolean) ?? false,
+      config: (result.config as string) ?? "",
+      whatsapp: {
+        linked: (result.whatsapp as Record<string, unknown>)?.linked as boolean ?? false,
+        dmPolicy: ((result.whatsapp as Record<string, unknown>)?.dmPolicy as OwpenbotWhatsAppStatus["dmPolicy"]) ?? "pairing",
+        allowFrom: ((result.whatsapp as Record<string, unknown>)?.allowFrom as string[]) ?? [],
+      },
+      telegram: {
+        configured: (result.telegram as Record<string, unknown>)?.configured as boolean ?? false,
+        enabled: (result.telegram as Record<string, unknown>)?.enabled as boolean ?? false,
+      },
+      opencode: {
+        url: (result.opencode as Record<string, unknown>)?.url as string ?? "",
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function getOwpenbotQr(): Promise<OwpenbotQr | null> {
-  // TODO: invoke("owpenbot_qr")
-  return null;
+  try {
+    const qrBase64 = await invoke<string>("owpenbot_qr");
+    return {
+      qr: qrBase64,
+      format: "png",
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function setOwpenbotDmPolicy(
   policy: OwpenbotWhatsAppStatus["dmPolicy"],
 ): Promise<ExecResult> {
-  // TODO: invoke("owpenbot_set_dm_policy", { policy })
-  return { ok: false, status: 1, stdout: "", stderr: "Not implemented" };
+  try {
+    await invoke("owpenbot_config_set", { key: "whatsapp.dmPolicy", value: policy });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
 }
 
 export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecResult> {
-  // TODO: invoke("owpenbot_set_allowlist", { allowlist })
-  return { ok: false, status: 1, stdout: "", stderr: "Not implemented" };
+  try {
+    // Join allowlist into comma-separated string for CLI
+    await invoke("owpenbot_config_set", { key: "whatsapp.allowFrom", value: allowlist.join(",") });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
 }
 
 export async function setOwpenbotTelegramToken(token: string): Promise<ExecResult> {
-  // TODO: invoke("owpenbot_set_telegram_token", { token })
-  return { ok: false, status: 1, stdout: "", stderr: "Not implemented" };
+  try {
+    await invoke("owpenbot_config_set", { key: "telegram.token", value: token });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
 }
 
 export async function getOwpenbotPairingRequests(): Promise<OwpenbotPairingRequest[]> {
-  // TODO: invoke("owpenbot_pairing_requests")
-  return [];
+  try {
+    const result = await invoke<Record<string, unknown>>("owpenbot_pairing_list");
+    const requests = (result.requests as Array<Record<string, unknown>>) ?? [];
+    return requests.map((r) => ({
+      code: r.code as string,
+      peerId: r.peerId as string,
+      platform: r.platform as "whatsapp" | "telegram",
+      timestamp: r.timestamp as number,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 export async function approveOwpenbotPairing(code: string): Promise<ExecResult> {
-  // TODO: invoke("owpenbot_approve_pairing", { code })
-  return { ok: false, status: 1, stdout: "", stderr: "Not implemented" };
+  try {
+    await invoke("owpenbot_pairing_approve", { code });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
 }
 
 export async function denyOwpenbotPairing(code: string): Promise<ExecResult> {
-  // TODO: invoke("owpenbot_deny_pairing", { code })
-  return { ok: false, status: 1, stdout: "", stderr: "Not implemented" };
+  try {
+    await invoke("owpenbot_pairing_deny", { code });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
 }
 
 export async function opencodeMcpAuth(

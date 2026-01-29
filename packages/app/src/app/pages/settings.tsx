@@ -233,9 +233,6 @@ function OwpenbotSettings(props: { busy: boolean }) {
           <div class="flex items-center gap-2">
             <MessageCircle size={16} class="text-gray-11" />
             <div class="text-sm font-medium text-gray-12">Messaging Bridge</div>
-            <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/10 text-amber-11 border border-amber-7/30">
-              Coming Soon
-            </span>
           </div>
           <div class="text-xs text-gray-10 mt-1">Connect WhatsApp and Telegram to chat with your AI.</div>
         </div>

@@ -2607,7 +2607,7 @@ dependencies = [
 
 [[package]]
 name = "openwork"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "gethostname",
  "json5",
