@@ -471,13 +471,24 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string } {
+export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const state = record.state ?? {};
     const title = state.title ? String(state.title) : toolName;
     const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
+    
+    // Detect skill trigger
+    if (toolName === "skill") {
+      const skillName = state.metadata?.name || title.replace(/^Loaded skill:\s*/i, "");
+      if (output) {
+        const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
+        return { title, isSkill: true, skillName, detail: short };
+      }
+      return { title, isSkill: true, skillName };
+    }
+    
     if (output) {
       const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
       return { title, detail: short };
