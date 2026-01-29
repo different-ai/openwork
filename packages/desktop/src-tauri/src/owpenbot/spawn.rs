@@ -9,7 +9,7 @@ pub fn build_owpenbot_args(
     workspace_path: &str,
     opencode_url: Option<&str>,
 ) -> Vec<String> {
-    let mut args = vec!["start".to_string(), workspace_path.to_string()];
+    let args = vec!["start".to_string(), workspace_path.to_string()];
 
     if let Some(url) = opencode_url {
         if !url.trim().is_empty() {

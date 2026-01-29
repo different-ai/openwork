@@ -682,6 +682,62 @@ program
   });
 
 // -----------------------------------------------------------------------------
+// logs command
+// -----------------------------------------------------------------------------
+
+program
+  .command("logs")
+  .description("View recent logs")
+  .option("--tail <lines>", "Number of lines to show", "50")
+  .option("--follow, -f", "Follow log output (not implemented)")
+  .option("--json", "Output as JSON")
+  .action((opts) => {
+    const config = loadConfig(process.env, { requireOpencode: false });
+    const useJson = opts.json || program.opts().json;
+    const tailLines = Number.parseInt(opts.tail, 10) || 50;
+
+    if (!fs.existsSync(config.logFile)) {
+      if (useJson) {
+        outputJson({ error: "Log file not found", path: config.logFile, lines: [] });
+      } else {
+        console.log(`Log file not found: ${config.logFile}`);
+      }
+      process.exit(1);
+    }
+
+    try {
+      const content = fs.readFileSync(config.logFile, "utf-8");
+      const allLines = content.split("\n").filter(Boolean);
+      const lines = allLines.slice(-tailLines);
+
+      if (useJson) {
+        // Try to parse each line as JSON for structured output
+        const parsed = lines.map((line) => {
+          try {
+            return JSON.parse(line);
+          } catch {
+            return { raw: line };
+          }
+        });
+        outputJson({ path: config.logFile, count: lines.length, lines: parsed });
+      } else {
+        console.log(`Log file: ${config.logFile}`);
+        console.log(`Showing last ${lines.length} lines:\n`);
+        for (const line of lines) {
+          console.log(line);
+        }
+      }
+    } catch (error) {
+      if (useJson) {
+        outputJson({ error: String(error), path: config.logFile });
+      } else {
+        console.error(`Failed to read logs: ${String(error)}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// -----------------------------------------------------------------------------
 // send command
 // -----------------------------------------------------------------------------
 
