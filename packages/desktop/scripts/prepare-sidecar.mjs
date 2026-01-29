@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "fs";
 import { dirname, join, resolve } from "path";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
@@ -12,6 +12,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const sidecarDir = join(__dirname, "..", "src-tauri", "sidecars");
 const openworkServerName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
 const openworkServerPath = join(sidecarDir, openworkServerName);
+const openworkServerTargetTriple = (() => {
+  if (process.platform === "darwin") {
+    return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+  }
+  if (process.platform === "linux") {
+    return process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu";
+  }
+  return null;
+})();
+const openworkServerTargetPath = openworkServerTargetTriple
+  ? join(sidecarDir, `openwork-server-${openworkServerTargetTriple}`)
+  : null;
 
 const openworkServerDir = resolve(__dirname, "..", "..", "server");
 const targetSidecarPath = join(sidecarDir, `opencode-${TARGET_TRIPLE}.exe`);
@@ -50,6 +62,20 @@ if (shouldBuildOpenworkServer) {
 
   if (buildResult.status !== 0) {
     process.exit(buildResult.status ?? 1);
+  }
+}
+
+if (openworkServerTargetPath) {
+  const shouldCopyTarget = !existsSync(openworkServerTargetPath) || isStubBinary(openworkServerTargetPath);
+  if (shouldCopyTarget && existsSync(openworkServerPath)) {
+    try {
+      if (existsSync(openworkServerTargetPath)) {
+        unlinkSync(openworkServerTargetPath);
+      }
+    } catch {
+      // ignore
+    }
+    copyFileSync(openworkServerPath, openworkServerTargetPath);
   }
 }
 
