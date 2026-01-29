@@ -7,9 +7,48 @@ use crate::types::OwpenbotInfo;
 use crate::utils::truncate_output;
 
 #[tauri::command]
-pub fn owpenbot_info(manager: State<OwpenbotManager>) -> OwpenbotInfo {
-    let mut state = manager.inner.lock().expect("owpenbot mutex poisoned");
-    OwpenbotManager::snapshot_locked(&mut state)
+pub async fn owpenbot_info(
+    app: AppHandle,
+    manager: State<'_, OwpenbotManager>,
+) -> Result<OwpenbotInfo, String> {
+    let mut info = {
+        let mut state = manager
+            .inner
+            .lock()
+            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
+        OwpenbotManager::snapshot_locked(&mut state)
+    };
+
+    if let Ok(status) = owpenbot_json(&app, &["status", "--json"], "get status").await {
+        if let Some(opencode) = status.get("opencode") {
+            if let Some(url) = opencode.get("url").and_then(|value| value.as_str()) {
+                let trimmed = url.trim();
+                if !trimmed.is_empty() {
+                    info.opencode_url = Some(trimmed.to_string());
+                }
+            }
+            if let Some(directory) = opencode.get("directory").and_then(|value| value.as_str()) {
+                let trimmed = directory.trim();
+                if !trimmed.is_empty() {
+                    info.workspace_path = Some(trimmed.to_string());
+                }
+            }
+        }
+
+        if let Some(whatsapp) = status.get("whatsapp") {
+            if let Some(linked) = whatsapp.get("linked").and_then(|value| value.as_bool()) {
+                info.whatsapp_linked = linked;
+            }
+        }
+
+        if let Some(telegram) = status.get("telegram") {
+            if let Some(configured) = telegram.get("configured").and_then(|value| value.as_bool()) {
+                info.telegram_configured = configured;
+            }
+        }
+    }
+
+    Ok(info)
 }
 
 #[tauri::command]
