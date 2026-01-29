@@ -7,7 +7,12 @@ import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { ChevronDown, HardDrive, MessageCircle, RefreshCcw, Shield, Smartphone, X } from "lucide-solid";
 import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { EngineInfo, OpenworkServerInfo, OwpenbotStatus, OwpenbotPairingRequest
+import type {
+  EngineInfo,
+  OpenworkServerInfo,
+  OwpenbotInfo,
+  OwpenbotStatus,
+  OwpenbotPairingRequest,
 } from "../lib/tauri";
 import {
   getOwpenbotStatus,
@@ -35,6 +40,7 @@ export type SettingsViewProps = {
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
   engineInfo: EngineInfo | null;
+  owpenbotInfo: OwpenbotInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -550,6 +556,18 @@ export default function SettingsView(props: SettingsViewProps) {
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   });
 
+  const owpenbotStatusLabel = createMemo(() => {
+    if (!isTauriRuntime()) return "Unavailable";
+    return props.owpenbotInfo?.running ? "Running" : "Offline";
+  });
+
+  const owpenbotStatusStyle = createMemo(() => {
+    if (!isTauriRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    return props.owpenbotInfo?.running
+      ? "bg-green-7/10 text-green-11 border-green-7/20"
+      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
   const openworkAuditStatusLabel = createMemo(() => {
     if (!props.openworkServerWorkspaceId) return "Unavailable";
     if (props.openworkAuditStatus === "loading") return "Loading";
@@ -599,6 +617,16 @@ export default function SettingsView(props: SettingsViewProps) {
   const openworkStderr = () => {
     if (!props.openworkServerHostInfo) return "Logs are available on the host.";
     return props.openworkServerHostInfo.lastStderr?.trim() || "No stderr captured yet.";
+  };
+
+  const owpenbotStdout = () => {
+    if (!isTauriRuntime()) return "Available in the desktop app.";
+    return props.owpenbotInfo?.lastStdout?.trim() || "No stdout captured yet.";
+  };
+
+  const owpenbotStderr = () => {
+    if (!isTauriRuntime()) return "Available in the desktop app.";
+    return props.owpenbotInfo?.lastStderr?.trim() || "No stderr captured yet.";
   };
 
   const buildOpenworkSettings = () => ({
@@ -1234,7 +1262,7 @@ export default function SettingsView(props: SettingsViewProps) {
                 <div class="text-xs text-gray-10">Sidecar health, capabilities, and audit trail.</div>
               </div>
 
-              <div class="grid md:grid-cols-2 gap-4">
+              <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                 <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                   <div class="flex items-center justify-between gap-3">
                     <div>
@@ -1297,6 +1325,41 @@ export default function SettingsView(props: SettingsViewProps) {
                       <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
                       <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
                         {openworkStderr()}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                  <div class="flex items-center justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">Owpenbot sidecar</div>
+                      <div class="text-xs text-gray-10">Messaging bridge service.</div>
+                    </div>
+                    <div class={`text-xs px-2 py-1 rounded-full border ${owpenbotStatusStyle()}`}>
+                      {owpenbotStatusLabel()}
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="text-[11px] text-gray-7 font-mono truncate">
+                      {props.owpenbotInfo?.opencodeUrl?.trim() || "OpenCode URL unavailable"}
+                    </div>
+                    <div class="text-[11px] text-gray-7 font-mono truncate">
+                      {props.owpenbotInfo?.workspacePath?.trim() || "No workspace directory"}
+                    </div>
+                    <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.owpenbotInfo?.pid ?? "—"}</div>
+                  </div>
+                  <div class="grid gap-2">
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {owpenbotStdout()}
+                      </pre>
+                    </div>
+                    <div>
+                      <div class="text-[11px] text-gray-9 mb-1">Last stderr</div>
+                      <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                        {owpenbotStderr()}
                       </pre>
                     </div>
                   </div>

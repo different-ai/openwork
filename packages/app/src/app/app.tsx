@@ -123,7 +123,9 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   openworkServerInfo,
+  owpenbotInfo,
   type OpenworkServerInfo,
+  type OwpenbotInfo,
 } from "./lib/tauri";
 import {
   createOpenworkServerClient,
@@ -229,6 +231,7 @@ export default function App() {
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
   const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
+  const [owpenbotInfoState, setOwpenbotInfoState] = createSignal<OwpenbotInfo | null>(null);
   const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
@@ -406,6 +409,32 @@ export default function App() {
         if (active) setOpenworkServerHostInfo(info);
       } catch {
         if (active) setOpenworkServerHostInfo(null);
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 10_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!developerMode()) {
+      setOwpenbotInfoState(null);
+      return;
+    }
+
+    let active = true;
+
+    const run = async () => {
+      try {
+        const info = await owpenbotInfo();
+        if (active) setOwpenbotInfoState(info);
+      } catch {
+        if (active) setOwpenbotInfoState(null);
       }
     };
 
@@ -3375,6 +3404,7 @@ export default function App() {
     openworkAuditStatus: openworkAuditStatus(),
     openworkAuditError: openworkAuditError(),
     engineInfo: workspaceStore.engine(),
+    owpenbotInfo: owpenbotInfoState(),
     updateOpenworkServerSettings,
     resetOpenworkServerSettings,
     testOpenworkServerConnection,

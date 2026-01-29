@@ -110,6 +110,11 @@ pub fn owpenbot_stop(manager: State<OwpenbotManager>) -> Result<OwpenbotInfo, St
 #[tauri::command]
 pub async fn owpenbot_qr(app: AppHandle) -> Result<String, String> {
     use tauri_plugin_shell::ShellExt;
+    use base64::engine::general_purpose;
+    use base64::Engine as _;
+    use image::{DynamicImage, ImageFormat, Luma};
+    use qrcode::QrCode;
+    use std::io::Cursor;
 
     let command = match app.shell().sidecar("owpenbot") {
         Ok(command) => command,
@@ -117,7 +122,7 @@ pub async fn owpenbot_qr(app: AppHandle) -> Result<String, String> {
     };
 
     let output = command
-        .args(["whatsapp", "qr", "--format", "base64", "--json"])
+        .args(["whatsapp", "qr", "--format", "ascii", "--json"])
         .output()
         .await
         .map_err(|e| format!("Failed to get QR code: {e}"))?;
@@ -143,28 +148,85 @@ pub async fn owpenbot_qr(app: AppHandle) -> Result<String, String> {
         return Err(error);
     }
 
-    response.qr.ok_or_else(|| "No QR code returned".to_string())
+    let qr_data = response.qr.ok_or_else(|| "No QR code returned".to_string())?;
+    let code = QrCode::new(qr_data.as_bytes()).map_err(|e| format!("Failed to encode QR: {e}"))?;
+    let image = code
+        .render::<Luma<u8>>()
+        .min_dimensions(256, 256)
+        .build();
+    let mut buffer = Vec::new();
+    DynamicImage::ImageLuma8(image)
+        .write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
+        .map_err(|e| format!("Failed to encode QR image: {e}"))?;
+    Ok(general_purpose::STANDARD.encode(buffer))
 }
 
 #[tauri::command]
-pub async fn owpenbot_status(app: AppHandle) -> Result<serde_json::Value, String> {
-    use tauri_plugin_shell::ShellExt;
+pub async fn owpenbot_status(
+    app: AppHandle,
+    manager: State<'_, OwpenbotManager>,
+) -> Result<serde_json::Value, String> {
+    let status = owpenbot_json(&app, &["status", "--json"], "get status").await?;
+    let whatsapp = owpenbot_json(&app, &["whatsapp", "status", "--json"], "get WhatsApp status").await?;
+    let telegram = owpenbot_json(&app, &["telegram", "status", "--json"], "get Telegram status").await?;
 
-    let command = match app.shell().sidecar("owpenbot") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
+    let running = {
+        let mut state = manager
+            .inner
+            .lock()
+            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
+        OwpenbotManager::snapshot_locked(&mut state).running
     };
 
-    let output = command
-        .args(["status", "--json"])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to get status: {e}"))?;
+    let config_path = status
+        .get("config")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let opencode_url = status
+        .get("opencode")
+        .and_then(|value| value.get("url"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse status: {e}"))
+    let whatsapp_linked = whatsapp
+        .get("linked")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let whatsapp_dm_policy = whatsapp
+        .get("dmPolicy")
+        .and_then(|value| value.as_str())
+        .unwrap_or("pairing");
+    let whatsapp_allow_from = whatsapp
+        .get("allowFrom")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let telegram_configured = telegram
+        .get("configured")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let telegram_enabled = telegram
+        .get("enabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    Ok(serde_json::json!({
+        "running": running,
+        "config": config_path,
+        "whatsapp": {
+            "linked": whatsapp_linked,
+            "dmPolicy": whatsapp_dm_policy,
+            "allowFrom": whatsapp_allow_from,
+        },
+        "telegram": {
+            "configured": telegram_configured,
+            "enabled": telegram_enabled,
+        },
+        "opencode": {
+            "url": opencode_url,
+        },
+    }))
 }
 
 #[tauri::command]
@@ -196,6 +258,14 @@ pub async fn owpenbot_config_set(
 
 #[tauri::command]
 pub async fn owpenbot_pairing_list(app: AppHandle) -> Result<serde_json::Value, String> {
+    owpenbot_json(&app, &["pairing", "list", "--json"], "list pairing requests").await
+}
+
+async fn owpenbot_json(
+    app: &AppHandle,
+    args: &[&str],
+    context: &str,
+) -> Result<serde_json::Value, String> {
     use tauri_plugin_shell::ShellExt;
 
     let command = match app.shell().sidecar("owpenbot") {
@@ -204,15 +274,18 @@ pub async fn owpenbot_pairing_list(app: AppHandle) -> Result<serde_json::Value, 
     };
 
     let output = command
-        .args(["pairing", "list", "--json"])
+        .args(args)
         .output()
         .await
-        .map_err(|e| format!("Failed to list pairing requests: {e}"))?;
+        .map_err(|e| format!("Failed to {context}: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Failed to {context}: {stderr}"));
+    }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
-    serde_json::from_str(&stdout)
-        .map_err(|e| format!("Failed to parse pairing list: {e}"))
+    serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse {context}: {e}"))
 }
 
 #[tauri::command]
