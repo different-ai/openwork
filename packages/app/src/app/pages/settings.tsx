@@ -243,11 +243,68 @@ function OwpenbotSettings(props: { busy: boolean }) {
             <MessageCircle size={16} class="text-gray-11" />
             <div class="text-sm font-medium text-gray-12">Messaging Bridge</div>
           </div>
-          <div class="text-xs text-gray-10 mt-1">Connect WhatsApp and Telegram to chat with your AI.</div>
+          <div class="text-xs text-gray-10 mt-1">Connect Telegram and WhatsApp to chat with your AI.</div>
         </div>
         <div class={`text-xs px-2 py-1 rounded-full border ${bridgeStatusStyle()}`}>
           {owpenbotStatus()?.running ? "Running" : "Offline"}
         </div>
+      </div>
+
+      {/* Telegram Section */}
+      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-full bg-blue-7/20 flex items-center justify-center">
+              <span class="text-xs">T</span>
+            </div>
+            <span class="text-sm font-medium text-gray-12">Telegram</span>
+          </div>
+          <span class={`text-xs ${telegramStatusStyle()}`}>
+            {owpenbotStatus()?.telegram.configured ? "Configured" : "Not configured"}
+          </span>
+        </div>
+
+        <div class="space-y-2">
+          <div class="text-xs font-medium text-gray-11">Bot Token</div>
+          <div class="flex gap-2">
+            <div class="flex-1 flex items-center gap-2">
+              <input
+                type={telegramTokenVisible() ? "text" : "password"}
+                value={telegramToken()}
+                onInput={(e) => setTelegramToken(e.currentTarget.value)}
+                placeholder="Paste token from @BotFather"
+                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+                disabled={props.busy || savingTelegram()}
+              />
+              <Button
+                variant="outline"
+                class="text-xs h-9 px-3 shrink-0"
+                onClick={() => setTelegramTokenVisible((prev) => !prev)}
+              >
+                {telegramTokenVisible() ? "Hide" : "Show"}
+              </Button>
+            </div>
+            <Button
+              variant="secondary"
+              class="text-xs h-9 px-3"
+              onClick={handleSaveTelegramToken}
+              disabled={props.busy || savingTelegram() || !telegramToken().trim()}
+            >
+              Save
+            </Button>
+          </div>
+          <div class="text-[11px] text-gray-8">
+            Create a bot with <span class="font-mono">@BotFather</span> on Telegram and paste the token here.
+          </div>
+        </div>
+
+        <Show when={owpenbotStatus()?.telegram.configured}>
+          <div class="flex items-center justify-between bg-gray-2/50 rounded-lg p-3">
+            <div class="text-xs text-gray-11">
+              Bot is {owpenbotStatus()?.telegram.enabled ? "enabled" : "disabled"}
+            </div>
+          </div>
+        </Show>
       </div>
 
       {/* WhatsApp Section */}
@@ -258,10 +315,17 @@ function OwpenbotSettings(props: { busy: boolean }) {
               <span class="text-xs">W</span>
             </div>
             <span class="text-sm font-medium text-gray-12">WhatsApp</span>
+            <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/10 text-amber-11 border border-amber-7/30">
+              Alpha
+            </span>
           </div>
           <span class={`text-xs ${whatsappStatusStyle()}`}>
             {owpenbotStatus()?.whatsapp.linked ? "Linked" : "Not linked"}
           </span>
+        </div>
+
+        <div class="text-[11px] text-amber-11">
+          Help wanted: WhatsApp linking is unstable right now. Contributors welcome.
         </div>
 
         {/* QR Code Section */}
@@ -365,63 +429,6 @@ function OwpenbotSettings(props: { busy: boolean }) {
                 </For>
               </div>
             </Show>
-          </div>
-        </Show>
-      </div>
-
-      {/* Telegram Section */}
-      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full bg-blue-7/20 flex items-center justify-center">
-              <span class="text-xs">T</span>
-            </div>
-            <span class="text-sm font-medium text-gray-12">Telegram</span>
-          </div>
-          <span class={`text-xs ${telegramStatusStyle()}`}>
-            {owpenbotStatus()?.telegram.configured ? "Configured" : "Not configured"}
-          </span>
-        </div>
-
-        <div class="space-y-2">
-          <div class="text-xs font-medium text-gray-11">Bot Token</div>
-          <div class="flex gap-2">
-            <div class="flex-1 flex items-center gap-2">
-              <input
-                type={telegramTokenVisible() ? "text" : "password"}
-                value={telegramToken()}
-                onInput={(e) => setTelegramToken(e.currentTarget.value)}
-                placeholder="Paste token from @BotFather"
-                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-                disabled={props.busy || savingTelegram()}
-              />
-              <Button
-                variant="outline"
-                class="text-xs h-9 px-3 shrink-0"
-                onClick={() => setTelegramTokenVisible((prev) => !prev)}
-              >
-                {telegramTokenVisible() ? "Hide" : "Show"}
-              </Button>
-            </div>
-            <Button
-              variant="secondary"
-              class="text-xs h-9 px-3"
-              onClick={handleSaveTelegramToken}
-              disabled={props.busy || savingTelegram() || !telegramToken().trim()}
-            >
-              Save
-            </Button>
-          </div>
-          <div class="text-[11px] text-gray-8">
-            Create a bot with <span class="font-mono">@BotFather</span> on Telegram and paste the token here.
-          </div>
-        </div>
-
-        <Show when={owpenbotStatus()?.telegram.configured}>
-          <div class="flex items-center justify-between bg-gray-2/50 rounded-lg p-3">
-            <div class="text-xs text-gray-11">
-              Bot is {owpenbotStatus()?.telegram.enabled ? "enabled" : "disabled"}
-            </div>
           </div>
         </Show>
       </div>
@@ -587,6 +594,12 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const tabLabel = (tab: SettingsTab) => {
     switch (tab) {
+      case "model":
+        return "Model";
+      case "keybinds":
+        return "Keybinds";
+      case "advanced":
+        return "Advanced";
       case "remote":
         return "Remote";
       case "messaging":
@@ -599,7 +612,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "remote", "messaging"];
+    const tabs: SettingsTab[] = ["general", "model", "keybinds", "advanced", "remote", "messaging"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -759,6 +772,48 @@ export default function SettingsView(props: SettingsViewProps) {
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
               <div>
+                <div class="text-sm font-medium text-gray-12">Appearance</div>
+                <div class="text-xs text-gray-10">Match the system or force light/dark mode.</div>
+              </div>
+
+              <div class="flex flex-wrap gap-2">
+                <Button
+                  variant={props.themeMode === "system" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("system")}
+                  disabled={props.busy}
+                >
+                  System
+                </Button>
+                <Button
+                  variant={props.themeMode === "light" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("light")}
+                  disabled={props.busy}
+                >
+                  Light
+                </Button>
+                <Button
+                  variant={props.themeMode === "dark" ? "secondary" : "outline"}
+                  class="text-xs h-8 py-0 px-3"
+                  onClick={() => props.setThemeMode("dark")}
+                  disabled={props.busy}
+                >
+                  Dark
+                </Button>
+              </div>
+
+              <div class="text-xs text-gray-7">
+                System mode follows your OS preference automatically.
+              </div>
+            </div>
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "model"}>
+          <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+              <div>
                 <div class="text-sm font-medium text-gray-12">Model</div>
                 <div class="text-xs text-gray-10">Defaults + thinking controls for runs.</div>
               </div>
@@ -808,52 +863,22 @@ export default function SettingsView(props: SettingsViewProps) {
                 </Button>
               </div>
             </div>
+          </div>
+        </Match>
 
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Appearance</div>
-                <div class="text-xs text-gray-10">Match the system or force light/dark mode.</div>
-              </div>
-
-              <div class="flex flex-wrap gap-2">
-                <Button
-                  variant={props.themeMode === "system" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("system")}
-                  disabled={props.busy}
-                >
-                  System
-                </Button>
-                <Button
-                  variant={props.themeMode === "light" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("light")}
-                  disabled={props.busy}
-                >
-                  Light
-                </Button>
-                <Button
-                  variant={props.themeMode === "dark" ? "secondary" : "outline"}
-                  class="text-xs h-8 py-0 px-3"
-                  onClick={() => props.setThemeMode("dark")}
-                  disabled={props.busy}
-                >
-                  Dark
-                </Button>
-              </div>
-
-              <div class="text-xs text-gray-7">
-                System mode follows your OS preference automatically.
-              </div>
-            </div>
-
+        <Match when={activeTab() === "keybinds"}>
+          <div class="space-y-6">
             <SettingsKeybinds
               items={props.keybindItems}
               onOverride={props.onOverrideKeybind}
               onReset={props.onResetKeybind}
               onResetAll={props.onResetAllKeybinds}
             />
+          </div>
+        </Match>
 
+        <Match when={activeTab() === "advanced"}>
+          <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">
                 <div>

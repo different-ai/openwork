@@ -58,8 +58,8 @@ export default function StatusBar(props: StatusBarProps) {
     const status = owpenbotStatus();
     if (!status) return "";
     const hints: string[] = [];
-    if (!status.whatsapp.linked) hints.push("Connect WhatsApp");
     if (!status.telegram.configured) hints.push("Connect Telegram");
+    if (!status.whatsapp.linked) hints.push("Connect WhatsApp (Alpha)");
     return hints.join(" / ");
   });
 
