@@ -229,7 +229,7 @@ export function createWhatsAppAdapter(
       try {
         if (!fs.existsSync(filePath)) {
           const sent = await socket.sendMessage(peerId, {
-            text: `⚠️ Error: File not found at ${filePath}`,
+            text: "⚠️ Error: File not found.",
           });
           recordSentMessage(sent?.key?.id);
           return;
