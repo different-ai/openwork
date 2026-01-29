@@ -36,7 +36,8 @@
     ],
     "externalBin": [
       "sidecars/opencode",
-      "sidecars/openwork-server"
+      "sidecars/openwork-server",
+      "sidecars/owpenbot"
     ]
   },
   "plugins": {

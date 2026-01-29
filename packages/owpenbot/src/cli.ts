@@ -682,6 +682,85 @@ program
   });
 
 // -----------------------------------------------------------------------------
+// send command
+// -----------------------------------------------------------------------------
+
+program
+  .command("send")
+  .description("Send a test message")
+  .requiredOption("--channel <channel>", "Channel: whatsapp or telegram")
+  .requiredOption("--to <recipient>", "Recipient ID (phone number or chat ID)")
+  .requiredOption("--message <text>", "Message text to send")
+  .action(async (opts) => {
+    const useJson = program.opts().json;
+    const channel = opts.channel as string;
+    const to = opts.to as string;
+    const message = opts.message as string;
+
+    if (channel !== "whatsapp" && channel !== "telegram") {
+      if (useJson) {
+        outputJson({ success: false, error: `Invalid channel: ${channel}. Must be 'whatsapp' or 'telegram'.` });
+      } else {
+        console.error(`Error: Invalid channel '${channel}'. Must be 'whatsapp' or 'telegram'.`);
+      }
+      process.exit(1);
+    }
+
+    const config = loadConfig(process.env, { requireOpencode: false });
+    const logger = createAppLogger(config);
+
+    try {
+      if (channel === "whatsapp") {
+        const { createWhatsAppAdapter } = await import("./whatsapp.js");
+        const adapter = createWhatsAppAdapter(config, logger, async () => {}, { printQr: false });
+        await adapter.start();
+        
+        // Format the recipient ID for WhatsApp
+        let peerId = to.trim();
+        if (!peerId.includes("@")) {
+          // Remove + prefix if present and add WhatsApp suffix
+          const cleaned = peerId.startsWith("+") ? peerId.slice(1) : peerId;
+          peerId = `${cleaned}@s.whatsapp.net`;
+        }
+        
+        await adapter.sendText(peerId, message);
+        await adapter.stop();
+        
+        if (useJson) {
+          outputJson({ success: true, channel, to: peerId, message });
+        } else {
+          console.log(`Message sent to ${peerId} via WhatsApp`);
+        }
+      } else {
+        const { createTelegramAdapter } = await import("./telegram.js");
+        const adapter = createTelegramAdapter(config, logger, async () => {});
+        // Note: Telegram adapter's start() begins long-polling, we just need to send
+        // Use the bot API directly for a one-shot send
+        const { Bot } = await import("grammy");
+        if (!config.telegramToken) {
+          throw new Error("Telegram bot token not configured. Use 'owpenbot telegram set-token <token>' first.");
+        }
+        const bot = new Bot(config.telegramToken);
+        await bot.api.sendMessage(Number(to), message);
+        
+        if (useJson) {
+          outputJson({ success: true, channel, to, message });
+        } else {
+          console.log(`Message sent to ${to} via Telegram`);
+        }
+      }
+      process.exit(0);
+    } catch (error) {
+      if (useJson) {
+        outputJson({ success: false, error: String(error) });
+      } else {
+        console.error(`Failed to send message: ${String(error)}`);
+      }
+      process.exit(1);
+    }
+  });
+
+// -----------------------------------------------------------------------------
 // Default action (no subcommand)
 // -----------------------------------------------------------------------------
 

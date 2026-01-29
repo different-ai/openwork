@@ -4,6 +4,7 @@ pub mod engine;
 pub mod misc;
 pub mod openwork_server;
 pub mod opkg;
+pub mod owpenbot;
 pub mod skills;
 pub mod updater;
 pub mod workspace;

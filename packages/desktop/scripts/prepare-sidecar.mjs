@@ -10,9 +10,9 @@ const DOWNLOAD_URL =
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const sidecarDir = join(__dirname, "..", "src-tauri", "sidecars");
-const openworkServerName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
-const openworkServerPath = join(sidecarDir, openworkServerName);
-const openworkServerTargetTriple = (() => {
+
+// Target triple for native platform binaries
+const nativeTargetTriple = (() => {
   if (process.platform === "darwin") {
     return process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
   }
@@ -21,11 +21,26 @@ const openworkServerTargetTriple = (() => {
   }
   return null;
 })();
+
+// openwork-server paths
+const openworkServerName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
+const openworkServerPath = join(sidecarDir, openworkServerName);
+const openworkServerTargetTriple = nativeTargetTriple;
 const openworkServerTargetPath = openworkServerTargetTriple
   ? join(sidecarDir, `openwork-server-${openworkServerTargetTriple}`)
   : null;
 
 const openworkServerDir = resolve(__dirname, "..", "..", "server");
+
+// owpenbot paths
+const owpenbotName = process.platform === "win32" ? "owpenbot.exe" : "owpenbot";
+const owpenbotPath = join(sidecarDir, owpenbotName);
+const owpenbotTargetTriple = nativeTargetTriple;
+const owpenbotTargetPath = owpenbotTargetTriple
+  ? join(sidecarDir, `owpenbot-${owpenbotTargetTriple}`)
+  : null;
+
+const owpenbotDir = resolve(__dirname, "..", "..", "owpenbot");
 const targetSidecarPath = join(sidecarDir, `opencode-${TARGET_TRIPLE}.exe`);
 const devSidecarPath = join(sidecarDir, "opencode.exe");
 
@@ -76,6 +91,43 @@ if (openworkServerTargetPath) {
       // ignore
     }
     copyFileSync(openworkServerPath, openworkServerTargetPath);
+  }
+}
+
+// Build owpenbot
+const shouldBuildOwpenbot = !existsSync(owpenbotPath) || isStubBinary(owpenbotPath);
+
+if (shouldBuildOwpenbot) {
+  mkdirSync(sidecarDir, { recursive: true });
+  if (existsSync(owpenbotPath)) {
+    try {
+      unlinkSync(owpenbotPath);
+    } catch {
+      // ignore
+    }
+  }
+  const owpenbotBuildResult = spawnSync(
+    "bun",
+    ["./script/build.ts", "--outdir", sidecarDir, "--filename", "owpenbot"],
+    { cwd: owpenbotDir, stdio: "inherit" }
+  );
+
+  if (owpenbotBuildResult.status !== 0) {
+    process.exit(owpenbotBuildResult.status ?? 1);
+  }
+}
+
+if (owpenbotTargetPath) {
+  const shouldCopyOwpenbotTarget = !existsSync(owpenbotTargetPath) || isStubBinary(owpenbotTargetPath);
+  if (shouldCopyOwpenbotTarget && existsSync(owpenbotPath)) {
+    try {
+      if (existsSync(owpenbotTargetPath)) {
+        unlinkSync(owpenbotTargetPath);
+      }
+    } catch {
+      // ignore
+    }
+    copyFileSync(owpenbotPath, owpenbotTargetPath);
   }
 }
 
