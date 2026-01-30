@@ -1,15 +1,39 @@
 {
-  "name": "@different-ai/openwork-headless",
+  "name": "openwrk",
   "version": "0.1.0",
-  "private": true,
+  "description": "Headless OpenWork host orchestrator for OpenCode + OpenWork server + Owpenbot",
   "type": "module",
   "bin": {
-    "openwork-headless": "dist/cli.js"
+    "openwrk": "dist/cli.js"
   },
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/headless"
+  },
+  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/headless",
+  "bugs": {
+    "url": "https://github.com/different-ai/openwork/issues"
+  },
+  "keywords": [
+    "openwork",
+    "opencode",
+    "headless",
+    "cli",
+    "agent"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.31"

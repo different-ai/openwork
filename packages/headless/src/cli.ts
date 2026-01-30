@@ -343,13 +343,13 @@ async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeCl
 
 function printHelp(): void {
   const message = [
-    "openwork-headless",
+    "openwrk",
     "",
     "Usage:",
-    "  openwork-headless start [--workspace <path>] [options]",
-    "  openwork-headless approvals list --openwork-url <url> --host-token <token>",
-    "  openwork-headless approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
-    "  openwork-headless status [--openwork-url <url>] [--opencode-url <url>]",
+    "  openwrk start [--workspace <path>] [options]",
+    "  openwrk approvals list --openwork-url <url> --host-token <token>",
+    "  openwrk approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
+    "  openwrk status [--openwork-url <url>] [--opencode-url <url>]",
     "",
     "Commands:",
     "  start                   Start OpenCode + OpenWork server + Owpenbot",
@@ -429,7 +429,7 @@ async function startOpencode(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENCODE_CLIENT: "openwork-headless",
+      OPENCODE_CLIENT: "openwrk",
       OPENWORK: "1",
       ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
       ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
@@ -886,7 +886,7 @@ async function runStart(args: ParsedArgs) {
   if (outputJson) {
     console.log(JSON.stringify(payload, null, 2));
   } else {
-    console.log("OpenWork Headless running");
+    console.log("Openwrk running");
     console.log(`Workspace: ${payload.workspace}`);
     console.log(`OpenCode: ${payload.opencode.baseUrl}`);
     console.log(`OpenCode connect URL: ${payload.opencode.connectUrl}`);

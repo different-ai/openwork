@@ -1,11 +1,18 @@
-# OpenWork Headless
+# Openwrk
 
 Headless host orchestrator for OpenCode + OpenWork server + Owpenbot. This is a CLI-first way to run host mode without the desktop UI.
 
 ## Quick start
 
 ```bash
-pnpm --filter @different-ai/openwork-headless dev -- \
+npm install -g openwrk
+openwrk start --workspace /path/to/workspace --approval auto
+```
+
+Or from source:
+
+```bash
+pnpm --filter openwrk dev -- \
   start --workspace /path/to/workspace --approval auto
 ```
 
@@ -19,11 +26,11 @@ The command prints pairing details (OpenWork server URL + token, OpenCode URL + 
 ## Approvals (manual mode)
 
 ```bash
-openwork-headless approvals list \
+openwrk approvals list \
   --openwork-url http://<host>:8787 \
   --host-token <token>
 
-openwork-headless approvals reply <id> --allow \
+openwrk approvals reply <id> --allow \
   --openwork-url http://<host>:8787 \
   --host-token <token>
 ```
@@ -31,7 +38,7 @@ openwork-headless approvals reply <id> --allow \
 ## Health checks
 
 ```bash
-openwork-headless status \
+openwrk status \
   --openwork-url http://<host>:8787 \
   --opencode-url http://<host>:4096
 ```
@@ -39,7 +46,7 @@ openwork-headless status \
 ## Smoke checks
 
 ```bash
-openwork-headless start --workspace /path/to/workspace --check --check-events
+openwrk start --workspace /path/to/workspace --check --check-events
 ```
 
 This starts the services, verifies health + SSE events, then exits cleanly.
@@ -49,7 +56,7 @@ This starts the services, verifies health + SSE events, then exits cleanly.
 Point to source CLIs for fast iteration:
 
 ```bash
-openwork-headless start \
+openwrk start \
   --workspace /path/to/workspace \
   --openwork-server-bin packages/server/src/cli.ts \
   --owpenbot-bin packages/owpenbot/src/cli.ts
