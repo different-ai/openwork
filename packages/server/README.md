@@ -5,7 +5,14 @@ Filesystem-backed API for OpenWork remote clients. This package provides the Ope
 ## Quick start
 
 ```bash
-pnpm --filter @different-ai/openwork-server dev -- \
+npm install -g openwork-server
+openwork-server --workspace /path/to/workspace --approval auto
+```
+
+Or from source:
+
+```bash
+pnpm --filter openwork-server dev -- \
   --workspace /path/to/workspace \
   --approval auto
 ```

@@ -1,7 +1,7 @@
 {
-  "name": "@different-ai/openwork-server",
+  "name": "openwork-server",
   "version": "0.1.0",
-  "private": true,
+  "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {
     "openwork-server": "dist/cli.js"
@@ -13,6 +13,30 @@
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-windows-x64",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/different-ai/openwork.git",
+    "directory": "packages/server"
+  },
+  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/server",
+  "bugs": {
+    "url": "https://github.com/different-ai/openwork/issues"
+  },
+  "keywords": [
+    "openwork",
+    "server",
+    "opencode",
+    "headless",
+    "cli"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "jsonc-parser": "^3.2.1",

@@ -29,7 +29,7 @@ The goal: make “agentic work” feel like a product, not a terminal.
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash`
   - run `owpenbot setup`, then `owpenbot whatsapp login`, then `owpenbot start`
   - full setup: [packages/owpenbot/README.md](./packages/owpenbot/README.md)
-- **Openwrk (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
+- **Openwrk (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwrk`.
   - docs: [packages/headless/README.md](./packages/headless/README.md)
 
 

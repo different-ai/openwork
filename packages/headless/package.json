@@ -1,6 +1,6 @@
 {
   "name": "openwrk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Headless OpenWork host orchestrator for OpenCode + OpenWork server + Owpenbot",
   "type": "module",
   "bin": {
@@ -36,7 +36,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.1.31"
+    "@opencode-ai/sdk": "^1.1.31",
+    "openwork-server": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -4,7 +4,9 @@ import { randomUUID } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { hostname, networkInterfaces } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { access } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
@@ -158,6 +160,15 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
+async function isExecutable(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function ensureWorkspace(workspace: string): Promise<string> {
   const resolved = resolve(workspace);
   await mkdir(resolved, { recursive: true });
@@ -292,11 +303,20 @@ function prefixStream(
   });
 }
 
+function shouldUseBun(bin: string): boolean {
+  if (!bin.endsWith(`${join("dist", "cli.js")}`)) return false;
+  if (bin.includes("openwork-server")) return true;
+  return bin.includes(`${join("packages", "server")}`);
+}
+
 function resolveBinCommand(bin: string): { command: string; prefixArgs: string[] } {
   if (bin.endsWith(".ts")) {
     return { command: "bun", prefixArgs: [bin, "--"] };
   }
   if (bin.endsWith(".js")) {
+    if (shouldUseBun(bin)) {
+      return { command: "bun", prefixArgs: [bin, "--"] };
+    }
     return { command: "node", prefixArgs: [bin, "--"] };
   }
   return { command: bin, prefixArgs: [] };
@@ -307,6 +327,26 @@ function resolveBinPath(bin: string): string {
     return resolve(process.cwd(), bin);
   }
   return bin;
+}
+
+async function resolveOpenworkServerBin(explicit?: string): Promise<string> {
+  if (explicit) {
+    return resolveBinPath(explicit);
+  }
+
+  const require = createRequire(import.meta.url);
+  try {
+    const pkgPath = require.resolve("openwork-server/package.json");
+    const pkgDir = dirname(pkgPath);
+    const cliPath = join(pkgDir, "dist", "cli.js");
+    if (await isExecutable(cliPath)) {
+      return cliPath;
+    }
+  } catch {
+    // ignore
+  }
+
+  return "openwork-server";
 }
 
 async function waitForHealthy(url: string, timeoutMs = 10_000, pollMs = 250): Promise<void> {
@@ -760,8 +800,8 @@ async function runStart(args: ParsedArgs) {
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
-  const openworkServerBin = resolveBinPath(
-    readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN ?? "openwork-server",
+  const openworkServerBin = await resolveOpenworkServerBin(
+    readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN,
   );
   const owpenbotBin = resolveBinPath(readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN ?? "owpenbot");
   const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
