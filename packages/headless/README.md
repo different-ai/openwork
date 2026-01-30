@@ -9,6 +9,8 @@ npm install -g openwrk
 openwrk start --workspace /path/to/workspace --approval auto
 ```
 
+`openwrk` ships as a compiled binary, so Bun is not required at runtime.
+
 `openwrk` installs the OpenWork server dependency automatically. No extra install needed.
 
 Or from source:

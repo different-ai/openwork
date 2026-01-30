@@ -9,6 +9,8 @@ npm install -g openwork-server
 openwork-server --workspace /path/to/workspace --approval auto
 ```
 
+`openwork-server` ships as a compiled binary, so Bun is not required at runtime.
+
 Or from source:
 
 ```bash

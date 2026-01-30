@@ -1,18 +1,19 @@
 {
   "name": "openwork-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Filesystem-backed API for OpenWork remote clients",
   "type": "module",
   "bin": {
-    "openwork-server": "dist/cli.js"
+    "openwork-server": "dist/bin/openwork-server"
   },
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "build:bin": "bun ./script/build.ts --outdir dist/bin",
+    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-windows-x64",
     "start": "bun dist/cli.js",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "pnpm build:bin"
   },
   "files": [
     "dist",

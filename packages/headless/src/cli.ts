@@ -338,9 +338,25 @@ async function resolveOpenworkServerBin(explicit?: string): Promise<string> {
   try {
     const pkgPath = require.resolve("openwork-server/package.json");
     const pkgDir = dirname(pkgPath);
+    const binaryPath = join(pkgDir, "dist", "bin", "openwork-server");
+    if (await isExecutable(binaryPath)) {
+      return binaryPath;
+    }
     const cliPath = join(pkgDir, "dist", "cli.js");
     if (await isExecutable(cliPath)) {
       return cliPath;
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const selfPath = process.execPath || process.argv[0];
+    if (selfPath) {
+      const bundledServer = join(dirname(selfPath), "openwork-server");
+      if (await isExecutable(bundledServer)) {
+        return bundledServer;
+      }
     }
   } catch {
     // ignore
