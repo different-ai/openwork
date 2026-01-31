@@ -11,7 +11,11 @@ openwrk start --workspace /path/to/workspace --approval auto
 
 `openwrk` ships as a compiled binary, so Bun is not required at runtime.
 
-`openwrk` installs the OpenWork server dependency automatically. No extra install needed.
+`openwrk` bundles and validates exact versions of `openwork-server` + `owpenbot` using a
+SHA-256 manifest. It will refuse to start if the bundled binaries are missing or tampered with.
+
+For development overrides only, set `OPENWRK_ALLOW_EXTERNAL=1` to use locally installed
+`openwork-server` or `owpenbot` binaries.
 
 Or from source:
 

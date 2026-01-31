@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { hostname, networkInterfaces } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { once } from "node:events";
@@ -26,6 +28,16 @@ type ParsedArgs = {
 type ChildHandle = {
   name: string;
   child: ReturnType<typeof spawn>;
+};
+
+type VersionInfo = {
+  version: string;
+  sha256: string;
+};
+
+type VersionManifest = {
+  dir: string;
+  entries: Record<string, VersionInfo>;
 };
 
 type FieldsResult<T> = {
@@ -322,6 +334,53 @@ function resolveBinCommand(bin: string): { command: string; prefixArgs: string[]
   return { command: bin, prefixArgs: [] };
 }
 
+async function readVersionManifest(): Promise<VersionManifest | null> {
+  const candidates = [dirname(process.execPath), dirname(fileURLToPath(import.meta.url))];
+  for (const dir of candidates) {
+    const manifestPath = join(dir, "versions.json");
+    if (await fileExists(manifestPath)) {
+      try {
+        const payload = await readFile(manifestPath, "utf8");
+        const entries = JSON.parse(payload) as Record<string, VersionInfo>;
+        return { dir, entries };
+      } catch {
+        return { dir, entries: {} };
+      }
+    }
+  }
+  return null;
+}
+
+async function sha256File(path: string): Promise<string> {
+  const data = await readFile(path);
+  return createHash("sha256").update(data).digest("hex");
+}
+
+async function verifyBinary(path: string, expected?: VersionInfo): Promise<void> {
+  if (!expected) return;
+  const hash = await sha256File(path);
+  if (hash !== expected.sha256) {
+    throw new Error(`Integrity check failed for ${path}`);
+  }
+}
+
+async function resolveBundledBinary(
+  manifest: VersionManifest | null,
+  name: string,
+  allowExternal: boolean,
+): Promise<string | null> {
+  if (!manifest) return null;
+  const bundled = join(manifest.dir, name);
+  if (!(await isExecutable(bundled))) {
+    if (allowExternal) return null;
+    throw new Error(`Bundled binary missing: ${name}`);
+  }
+  if (!allowExternal) {
+    await verifyBinary(bundled, manifest.entries[name]);
+  }
+  return bundled;
+}
+
 function resolveBinPath(bin: string): string {
   if (bin.includes("/") || bin.startsWith(".")) {
     return resolve(process.cwd(), bin);
@@ -329,9 +388,16 @@ function resolveBinPath(bin: string): string {
   return bin;
 }
 
-async function resolveOpenworkServerBin(explicit?: string): Promise<string> {
-  if (explicit) {
-    return resolveBinPath(explicit);
+async function resolveOpenworkServerBin(options: {
+  explicit?: string;
+  manifest: VersionManifest | null;
+  allowExternal: boolean;
+}): Promise<string> {
+  const bundled = await resolveBundledBinary(options.manifest, "openwork-server", options.allowExternal);
+  if (bundled) return bundled;
+
+  if (options.explicit) {
+    return resolveBinPath(options.explicit);
   }
 
   const require = createRequire(import.meta.url);
@@ -350,19 +416,21 @@ async function resolveOpenworkServerBin(explicit?: string): Promise<string> {
     // ignore
   }
 
-  try {
-    const selfPath = process.execPath || process.argv[0];
-    if (selfPath) {
-      const bundledServer = join(dirname(selfPath), "openwork-server");
-      if (await isExecutable(bundledServer)) {
-        return bundledServer;
-      }
-    }
-  } catch {
-    // ignore
-  }
-
   return "openwork-server";
+}
+
+async function resolveOwpenbotBin(options: {
+  explicit?: string;
+  manifest: VersionManifest | null;
+  allowExternal: boolean;
+}): Promise<string> {
+  const bundled = await resolveBundledBinary(options.manifest, "owpenbot", options.allowExternal);
+  if (bundled) return bundled;
+
+  if (options.explicit) {
+    return resolveBinPath(options.explicit);
+  }
+  return "owpenbot";
 }
 
 async function waitForHealthy(url: string, timeoutMs = 10_000, pollMs = 250): Promise<void> {
@@ -434,6 +502,7 @@ function printHelp(): void {
     "  --openwork-server-bin <p> Path to openwork-server binary",
     "  --owpenbot-bin <path>     Path to owpenbot binary (default: owpenbot)",
     "  --no-owpenbot             Disable owpenbot sidecar",
+    "  --allow-external          Allow external sidecar binaries (dev only)",
     "  --check                   Run health checks then exit",
     "  --check-events            Verify SSE events during check",
     "  --json                    Output JSON when applicable",
@@ -816,10 +885,18 @@ async function runStart(args: ParsedArgs) {
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
-  const openworkServerBin = await resolveOpenworkServerBin(
-    readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN,
-  );
-  const owpenbotBin = resolveBinPath(readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN ?? "owpenbot");
+  const manifest = await readVersionManifest();
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const openworkServerBin = await resolveOpenworkServerBin({
+    explicit: readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN,
+    manifest,
+    allowExternal,
+  });
+  const owpenbotBin = await resolveOwpenbotBin({
+    explicit: readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN,
+    manifest,
+    allowExternal,
+  });
   const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
 
   const opencodeBaseUrl = `http://127.0.0.1:${opencodePort}`;
