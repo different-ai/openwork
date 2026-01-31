@@ -5,7 +5,7 @@
   "opencodeVersion": "1.1.45",
   "type": "module",
   "scripts": {
-    "dev": "tauri dev --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
+    "dev": "tauri dev --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:5173\\\"}}\"",
     "build": "tauri build",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
   },
