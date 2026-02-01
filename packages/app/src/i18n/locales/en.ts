@@ -19,6 +19,8 @@ export default {
   "dashboard.new_workspace": "New Workspace...",
   "dashboard.new_remote_workspace": "Add Remote Workspace...",
   "dashboard.forget_workspace": "Forget workspace",
+  "dashboard.forget_workspace_confirm_title": "Forget workspace?",
+  "dashboard.forget_workspace_confirm_message": "This removes it from your list. You can add it again later.",
   "dashboard.remote": "Remote",
   "dashboard.connection": "Connection",
   "dashboard.local_engine": "Local Engine",

@@ -19,6 +19,8 @@ export default {
   "dashboard.new_workspace": "新建工作区...",
   "dashboard.new_remote_workspace": "添加远程工作区...",
   "dashboard.forget_workspace": "忘记工作区",
+  "dashboard.forget_workspace_confirm_title": "忘记这个工作区？",
+  "dashboard.forget_workspace_confirm_message": "这会把它从列表中移除，你可以稍后再添加。",
   "dashboard.remote": "远程",
   "dashboard.connection": "连接",
   "dashboard.local_engine": "本地引擎",

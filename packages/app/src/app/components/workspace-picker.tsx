@@ -1,9 +1,10 @@
-import { For, Show, createEffect, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { Check, Globe, Loader2, Plus, Search, Trash2, Upload } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
+import ConfirmModal from "./confirm-modal";
 
 export default function WorkspacePicker(props: {
   open: boolean;
@@ -36,6 +37,7 @@ export default function WorkspacePicker(props: {
 
   const totalCount = createMemo(() => props.workspaces.length);
   let searchInputRef: HTMLInputElement | undefined;
+  const [forgetTarget, setForgetTarget] = createSignal<WorkspaceInfo | null>(null);
 
   createEffect(() => {
     if (props.open) {
@@ -136,7 +138,7 @@ export default function WorkspacePicker(props: {
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      props.onForget(ws.id);
+                      setForgetTarget(ws);
                     }}
                     class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
                     title={translate("dashboard.forget_workspace")}
@@ -184,6 +186,21 @@ export default function WorkspacePicker(props: {
             </div>
           </div>
         </div>
+        <ConfirmModal
+          open={Boolean(forgetTarget())}
+          title={translate("dashboard.forget_workspace_confirm_title")}
+          message={translate("dashboard.forget_workspace_confirm_message")}
+          confirmLabel={translate("dashboard.forget_workspace")}
+          cancelLabel={translate("common.cancel")}
+          variant="danger"
+          onCancel={() => setForgetTarget(null)}
+          onConfirm={() => {
+            const target = forgetTarget();
+            if (!target) return;
+            props.onForget(target.id);
+            setForgetTarget(null);
+          }}
+        />
       </div>
     </Show>
   );
