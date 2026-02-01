@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -48,5 +48,13 @@ function run(command, args, cwd) {
 }
 
 const owpenbotRepo = resolveOwpenbotRepo();
-run("pnpm", ["install"], owpenbotRepo);
-run("pnpm", ["build:bin"], owpenbotRepo);
+run("bun", ["install"], owpenbotRepo);
+const pkg = JSON.parse(readFileSync(resolve(owpenbotRepo, "package.json"), "utf8"));
+const scripts = pkg?.scripts ?? {};
+if (scripts["build:bin"]) {
+  run("bun", ["run", "build:bin"], owpenbotRepo);
+} else if (scripts["build:binary"]) {
+  run("bun", ["run", "build:binary"], owpenbotRepo);
+} else {
+  run("bun", ["build", "--compile", "src/cli.ts", "--outfile", "dist/bin/owpenbot"], owpenbotRepo);
+}
