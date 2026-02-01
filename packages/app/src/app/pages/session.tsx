@@ -1143,13 +1143,15 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex items-center gap-3">
             <Button
               variant="ghost"
-              class="!p-2 rounded-full"
+              class="!p-2 rounded-full md:!px-3 md:!py-2 md:rounded-xl"
               onClick={() => {
                 props.setTab("sessions");
                 props.setView("dashboard");
               }}
+              title="Back to dashboard"
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
+              <span class="hidden md:inline text-xs">Back</span>
             </Button>
              <WorkspaceChip
                workspace={props.activeWorkspaceDisplay}
