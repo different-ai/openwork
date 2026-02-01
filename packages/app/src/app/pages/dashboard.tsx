@@ -31,6 +31,8 @@ import StatusBar from "../components/status-bar";
 import ProviderAuthModal from "../components/provider-auth-modal";
 import {
   Command,
+  Copy,
+  Check,
   Cpu,
   Calendar,
   Package,
@@ -282,6 +284,8 @@ export default function DashboardView(props: DashboardViewProps) {
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [taskDraft, setTaskDraft] = createSignal("");
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
+  const [copiedWorkspaceId, setCopiedWorkspaceId] = createSignal<string | null>(null);
+  let copyTimeout: number | undefined;
 
   const canCreateTask = createMemo(
     () => !props.newTaskDisabled && taskDraft().trim().length > 0
@@ -318,6 +322,35 @@ export default function DashboardView(props: DashboardViewProps) {
       // Errors are surfaced in the modal.
     } finally {
       setProviderAuthActionBusy(false);
+    }
+  };
+
+  onCleanup(() => {
+    if (copyTimeout !== undefined) {
+      window.clearTimeout(copyTimeout);
+    }
+  });
+
+  const workspacePathLabel = (workspace: WorkspaceInfo) =>
+    workspace.workspaceType === "remote"
+      ? workspace.baseUrl ?? workspace.path
+      : workspace.path;
+
+  const handleCopyWorkspace = async (workspace: WorkspaceInfo) => {
+    const value = workspacePathLabel(workspace)?.trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedWorkspaceId(workspace.id);
+      if (copyTimeout !== undefined) {
+        window.clearTimeout(copyTimeout);
+      }
+      copyTimeout = window.setTimeout(() => {
+        setCopiedWorkspaceId(null);
+        copyTimeout = undefined;
+      }, 2000);
+    } catch {
+      // ignore
     }
   };
 
@@ -654,10 +687,21 @@ export default function DashboardView(props: DashboardViewProps) {
                             <div class="text-sm font-semibold text-gray-12 truncate">
                               {workspace.displayName ?? workspace.name}
                             </div>
-                            <div class="text-xs text-gray-10 font-mono truncate">
-                              {workspace.workspaceType === "remote"
-                                ? workspace.baseUrl ?? workspace.path
-                                : workspace.path}
+                            <div class="flex items-center gap-2 text-xs text-gray-10 font-mono">
+                              <span class="truncate min-w-0">
+                                {workspacePathLabel(workspace)}
+                              </span>
+                              <button
+                                type="button"
+                                class="shrink-0 rounded-md p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                                onClick={() => handleCopyWorkspace(workspace)}
+                                title={copiedWorkspaceId() === workspace.id ? "Copied" : "Copy path"}
+                                aria-label="Copy workspace path"
+                              >
+                                <Show when={copiedWorkspaceId() === workspace.id} fallback={<Copy size={12} />}>
+                                  <Check size={12} class="text-green-11" />
+                                </Show>
+                              </button>
                             </div>
                           </div>
                           <span class="text-[11px] text-gray-9">
