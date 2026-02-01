@@ -747,15 +747,15 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "sessions"}>
               <section>
                 <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
-                  Recent Sessions
+                  Sessions
                 </h3>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
-                  <For each={props.sessions.slice(0, 3)}>
+                  <For each={props.sessions}>
                     {(s, idx) => (
                       <button
                         class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
-                          idx() !== Math.min(props.sessions.length, 3) - 1
+                          idx() !== props.sessions.length - 1
                             ? "border-b border-gray-6/50"
                             : ""
                         }`}
