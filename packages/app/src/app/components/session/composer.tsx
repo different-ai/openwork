@@ -274,6 +274,7 @@ export default function Composer(props: ComposerProps) {
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
+  const attachmentsDisabled = createMemo(() => props.isRemoteWorkspace);
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
@@ -1140,6 +1141,7 @@ export default function Composer(props: ComposerProps) {
                         multiple
                         accept={ACCEPTED_FILE_TYPES.join(",")}
                         class="hidden"
+                        disabled={attachmentsDisabled()}
                         onChange={(event: Event) => {
                           const target = event.currentTarget as HTMLInputElement;
                           const files = Array.from(target.files ?? []);
@@ -1149,15 +1151,21 @@ export default function Composer(props: ComposerProps) {
                       />
                       <button
                         type="button"
-                        class="p-2 rounded-xl border border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
+                        class={`p-2 rounded-xl border transition-colors ${
+                          attachmentsDisabled()
+                            ? "border-gray-6 text-gray-7 cursor-not-allowed"
+                            : "border-gray-6 text-gray-10 hover:text-gray-12 hover:border-gray-7"
+                        }`}
                         onClick={() => {
-                          if (props.isRemoteWorkspace) {
-                            props.onToast("Attachments are unavailable in remote workspaces.");
-                            return;
-                          }
+                          if (attachmentsDisabled()) return;
                           fileInputRef?.click();
                         }}
-                        title="Attach files"
+                        disabled={attachmentsDisabled()}
+                        title={
+                          attachmentsDisabled()
+                            ? "Attachments are unavailable in remote workspaces."
+                            : "Attach files"
+                        }
                       >
                         <Paperclip size={16} />
                       </button>
