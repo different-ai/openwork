@@ -1133,6 +1133,12 @@ export default function Composer(props: ComposerProps) {
                       </Show>
                     </div>
 
+                    <Show when={!props.prompt.trim() && !attachments().length}>
+                      <div class="mt-2 text-[10px] text-gray-8">
+                        Enter to send · Shift+Enter for newline
+                      </div>
+                    </Show>
+
                     <div class="absolute bottom-0 right-0 z-20 flex items-center gap-2">
                       <input
                         ref={fileInputRef}
