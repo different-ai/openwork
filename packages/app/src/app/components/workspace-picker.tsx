@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo } from "solid-js";
 
-import { Check, Globe, Loader2, Plus, Search, Trash2, Upload } from "lucide-solid";
+import { Check, Globe, Loader2, Plus, Search, Trash2, Upload, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import type { WorkspaceInfo } from "../lib/tauri";
@@ -35,6 +35,17 @@ export default function WorkspacePicker(props: {
   });
 
   const totalCount = createMemo(() => props.workspaces.length);
+  const filteredCount = createMemo(() => filtered().length);
+  const query = createMemo(() => props.search.trim());
+  const hasSearch = createMemo(() => query().length > 0);
+  const countLabel = createMemo(() => (totalCount() ? `${filteredCount()}/${totalCount()}` : `${filteredCount()}`));
+  const emptyTitle = createMemo(() => {
+    if (!totalCount()) return translate("dashboard.workspaces_empty");
+    if (hasSearch()) {
+      return translate("dashboard.workspaces_no_results").replace("{query}", query());
+    }
+    return translate("dashboard.workspaces_empty");
+  });
   let searchInputRef: HTMLInputElement | undefined;
 
   createEffect(() => {
@@ -62,90 +73,123 @@ export default function WorkspacePicker(props: {
                 placeholder={translate("dashboard.find_workspace")}
                 value={props.search}
                 onInput={(e) => props.onSearch(e.currentTarget.value)}
-                class="w-full bg-gray-1 border border-gray-6 rounded-lg py-1.5 pl-9 pr-3 text-sm text-gray-12 focus:outline-none focus:border-gray-7"
+                class="w-full bg-gray-1 border border-gray-6 rounded-lg py-1.5 pl-9 pr-9 text-sm text-gray-12 focus:outline-none focus:border-gray-7"
               />
+              <Show when={hasSearch()}>
+                <button
+                  type="button"
+                  class="absolute right-2 top-2.5 text-gray-9 hover:text-gray-12"
+                  aria-label={translate("dashboard.workspaces_clear_search")}
+                  onClick={() => props.onSearch("")}
+                >
+                  <X size={12} />
+                </button>
+              </Show>
             </div>
           </div>
 
           <div class="max-h-64 overflow-y-auto p-1">
             <div class="px-3 py-2 text-[10px] font-semibold text-gray-10 uppercase tracking-wider">
-              {translate("dashboard.workspaces")} ({totalCount()})
+              {translate("dashboard.workspaces")} ({countLabel()})
             </div>
 
-            <For each={filtered()}>
-              {(ws) => (
-                <div
-                  class={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
-                    props.activeWorkspaceId === ws.id
-                      ? "bg-gray-4 text-gray-12"
-                      : "text-gray-11 hover:text-gray-12 hover:bg-gray-4/50"
-                  }`}
-                >
-                  <button
-                    onClick={() => {
-                      const result = props.onSelect(ws.id);
-                      if (result instanceof Promise) {
-                        result.then((ok) => {
-                          if (ok !== false) props.onClose();
-                        });
-                        return;
-                      }
-                      if (result !== false) props.onClose();
-                    }}
-                    class="flex-1 text-left min-w-0"
-                  >
-                    <div class="flex items-center gap-2">
-                      <div class="font-medium truncate">{ws.name}</div>
-                      <Show when={ws.workspaceType === "remote"}>
-                        <span class="inline-flex items-center gap-1 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
-                          <Globe size={10} />
-                          {translate("dashboard.remote")}
-                        </span>
-                        <span class="inline-flex items-center text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-2 text-gray-10">
-                          {ws.remoteType === "openwork"
-                            ? translate("dashboard.remote_connection_openwork")
-                            : translate("dashboard.remote_connection_direct")}
-                        </span>
-                      </Show>
-                    </div>
-                    <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
-                      {ws.workspaceType === "remote"
-                        ? ws.remoteType === "openwork"
-                          ? ws.openworkHostUrl ?? ws.baseUrl ?? ws.path
-                          : ws.baseUrl ?? ws.path
-                        : ws.path}
-                    </div>
-                    <Show
-                      when={
-                        ws.workspaceType === "remote" &&
-                        (ws.directory || ws.openworkWorkspaceName)
-                      }
+            <Show
+              when={filteredCount()}
+              fallback={
+                <div class="px-3 py-8 text-xs text-gray-9 text-center space-y-2">
+                  <div>{emptyTitle()}</div>
+                  <Show when={hasSearch()}>
+                    <button
+                      type="button"
+                      class="text-xs text-gray-10 hover:text-gray-12 underline"
+                      onClick={() => props.onSearch("")}
                     >
-                      <div class="text-[10px] text-gray-8 truncate max-w-[200px]">
-                        {ws.openworkWorkspaceName ?? ws.directory}
-                      </div>
-                    </Show>
-                  </button>
-                  <Show when={props.activeWorkspaceId === ws.id}>
-                    <Check size={14} class="text-indigo-11" />
+                      {translate("dashboard.workspaces_clear_search")}
+                    </button>
                   </Show>
-                  <Show when={props.connectingWorkspaceId === ws.id}>
-                    <Loader2 size={14} class="text-gray-10 animate-spin" />
+                  <Show when={!totalCount() && !hasSearch()}>
+                    <div class="text-[10px] text-gray-8">
+                      {translate("dashboard.workspaces_empty_hint")}
+                    </div>
                   </Show>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.onForget(ws.id);
-                    }}
-                    class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
-                    title={translate("dashboard.forget_workspace")}
-                  >
-                    <Trash2 size={14} />
-                  </button>
                 </div>
-              )}
-            </For>
+              }
+            >
+              <For each={filtered()}>
+                {(ws) => (
+                  <div
+                    class={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors ${
+                      props.activeWorkspaceId === ws.id
+                        ? "bg-gray-4 text-gray-12"
+                        : "text-gray-11 hover:text-gray-12 hover:bg-gray-4/50"
+                    }`}
+                  >
+                    <button
+                      onClick={() => {
+                        const result = props.onSelect(ws.id);
+                        if (result instanceof Promise) {
+                          result.then((ok) => {
+                            if (ok !== false) props.onClose();
+                          });
+                          return;
+                        }
+                        if (result !== false) props.onClose();
+                      }}
+                      class="flex-1 text-left min-w-0"
+                    >
+                      <div class="flex items-center gap-2">
+                        <div class="font-medium truncate">{ws.name}</div>
+                        <Show when={ws.workspaceType === "remote"}>
+                          <span class="inline-flex items-center gap-1 text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
+                            <Globe size={10} />
+                            {translate("dashboard.remote")}
+                          </span>
+                          <span class="inline-flex items-center text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-2 text-gray-10">
+                            {ws.remoteType === "openwork"
+                              ? translate("dashboard.remote_connection_openwork")
+                              : translate("dashboard.remote_connection_direct")}
+                          </span>
+                        </Show>
+                      </div>
+                      <div class="text-[10px] text-gray-7 font-mono truncate max-w-[200px]">
+                        {ws.workspaceType === "remote"
+                          ? ws.remoteType === "openwork"
+                            ? ws.openworkHostUrl ?? ws.baseUrl ?? ws.path
+                            : ws.baseUrl ?? ws.path
+                          : ws.path}
+                      </div>
+                      <Show
+                        when={
+                          ws.workspaceType === "remote" &&
+                          (ws.directory || ws.openworkWorkspaceName)
+                        }
+                      >
+                        <div class="text-[10px] text-gray-8 truncate max-w-[200px]">
+                          {ws.openworkWorkspaceName ?? ws.directory}
+                        </div>
+                      </Show>
+                    </button>
+                    <Show when={props.activeWorkspaceId === ws.id}>
+                      <Check size={14} class="text-indigo-11" />
+                    </Show>
+                    <Show when={props.connectingWorkspaceId === ws.id}>
+                      <Loader2 size={14} class="text-gray-10 animate-spin" />
+                    </Show>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        props.onForget(ws.id);
+                      }}
+                      class="p-1 rounded-md text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                      title={translate("dashboard.forget_workspace")}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
           </div>
 
           <div class="p-2 border-t border-gray-6 bg-gray-2">
