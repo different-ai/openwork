@@ -801,6 +801,7 @@ function printHelp(): void {
     "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
     "  --owpenbot-bin <path>     Path to owpenbot binary (requires --allow-external)",
     "  --no-owpenbot             Disable owpenbot sidecar",
+    "  --owpenbot-required       Exit if owpenbot stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
     "  --check                   Run health checks then exit",
     "  --check-events            Verify SSE events during check",
@@ -1857,6 +1858,7 @@ async function runStart(args: ParsedArgs) {
   const explicitOpenworkServerBin = readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN;
   const explicitOwpenbotBin = readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN;
   const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
+  const owpenbotRequired = readBool(args.flags, "owpenbot-required", false, "OPENWRK_OWPENBOT_REQUIRED");
   const openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,
     manifest,
@@ -1971,7 +1973,14 @@ async function runStart(args: ParsedArgs) {
       opencodePassword,
     });
     children.push({ name: "owpenbot", child: owpenbotChild });
-    owpenbotChild.on("exit", (code, signal) => handleExit("owpenbot", code, signal));
+    owpenbotChild.on("exit", (code, signal) => {
+      if (owpenbotRequired) {
+        handleExit("owpenbot", code, signal);
+        return;
+      }
+      const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
+      console.warn(`[owpenbot] exited (${reason}). Continuing without owpenbot.`);
+    });
     owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
   }
 

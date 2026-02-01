@@ -14,6 +14,9 @@ openwrk start --workspace /path/to/workspace --approval auto
 `openwrk` bundles and validates exact versions of `openwork-server` + `owpenbot` using a
 SHA-256 manifest. It will refuse to start if the bundled binaries are missing or tampered with.
 
+Owpenbot is optional. If it exits, `openwrk` continues running unless you pass
+`--owpenbot-required` or set `OPENWRK_OWPENBOT_REQUIRED=1`.
+
 For development overrides only, set `OPENWRK_ALLOW_EXTERNAL=1` or pass `--allow-external` to use
 locally installed `openwork-server` or `owpenbot` binaries.
 
