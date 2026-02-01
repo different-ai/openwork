@@ -950,7 +950,10 @@ async function startOwpenbot(options: {
 }) {
   const args = ["start", options.workspace];
   if (options.opencodeUrl) {
-    args.push("--opencode-url", options.opencodeUrl);
+    const supports = await owpenbotSupportsOpencodeUrl(options.bin);
+    if (supports) {
+      args.push("--opencode-url", options.opencodeUrl);
+    }
   }
 
   const resolved = resolveBinCommand(options.bin);
@@ -959,6 +962,8 @@ async function startOwpenbot(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...(options.opencodeUrl ? { OPENCODE_URL: options.opencodeUrl } : {}),
+      OPENCODE_DIRECTORY: options.workspace,
       ...(options.opencodeUsername ? { OPENCODE_SERVER_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENCODE_SERVER_PASSWORD: options.opencodePassword } : {}),
     },
@@ -968,6 +973,40 @@ async function startOwpenbot(options: {
   prefixStream(child.stderr, "owpenbot", "stderr");
 
   return child;
+}
+
+async function owpenbotSupportsOpencodeUrl(bin: string): Promise<boolean> {
+  const resolved = resolveBinCommand(bin);
+  return new Promise((resolve) => {
+    const child = spawn(resolved.command, [...resolved.prefixArgs, "--help"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const timeout = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      resolve(output.includes("--opencode-url"));
+    }, 1500);
+
+    const onChunk = (chunk: unknown) => {
+      output += String(chunk ?? "");
+    };
+
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
+
+    child.on("exit", () => {
+      clearTimeout(timeout);
+      resolve(output.includes("--opencode-url"));
+    });
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+  });
 }
 
 async function verifyOwpenbotVersion(binary: ResolvedBinary): Promise<string | undefined> {
