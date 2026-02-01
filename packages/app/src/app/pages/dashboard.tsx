@@ -736,8 +736,16 @@ export default function DashboardView(props: DashboardViewProps) {
                   </For>
 
                   <Show when={!props.sessions.length}>
-                    <div class="p-6 text-sm text-gray-10">
-                      No sessions yet.
+                    <div class="p-6 text-sm text-gray-10 space-y-3">
+                      <div>No sessions yet.</div>
+                      <Button
+                        variant="secondary"
+                        class="text-xs h-8"
+                        onClick={props.createSessionAndOpen}
+                        disabled={props.newTaskDisabled}
+                      >
+                        Start a task
+                      </Button>
                     </div>
                   </Show>
                 </div>
