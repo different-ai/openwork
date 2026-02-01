@@ -21,6 +21,7 @@ export type SidebarProps = {
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
+  onViewAllSessions: () => void;
   sessionStatusById: Record<string, string>;
   onCreateSession: () => void;
   onDeleteSession: (id: string) => void;
@@ -29,6 +30,9 @@ export type SidebarProps = {
 
 export default function SessionSidebar(props: SidebarProps) {
   const realTodos = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
+  const sessionLimit = 8;
+  const visibleSessions = createMemo(() => props.sessions.slice(0, sessionLimit));
+  const hasMoreSessions = createMemo(() => props.sessions.length > sessionLimit);
 
   const progressDots = createMemo(() => {
     const activeTodos = realTodos();
@@ -96,7 +100,7 @@ export default function SessionSidebar(props: SidebarProps) {
         <div>
           <div class="text-xs text-gray-10 font-semibold mb-3 px-2 truncate">{props.workspaceName}</div>
           <div class="space-y-1">
-            <For each={props.sessions.slice(0, 8)}>
+            <For each={visibleSessions()}>
               {(session) => (
                 <button
                   class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
@@ -135,6 +139,14 @@ export default function SessionSidebar(props: SidebarProps) {
                 </button>
               )}
             </For>
+            <Show when={hasMoreSessions()}>
+              <button
+                class="w-full text-left px-3 py-2 rounded-lg text-xs text-gray-10 hover:text-gray-12 hover:bg-gray-2 transition-colors"
+                onClick={props.onViewAllSessions}
+              >
+                View all sessions ({props.sessions.length})
+              </button>
+            </Show>
           </div>
         </div>
 

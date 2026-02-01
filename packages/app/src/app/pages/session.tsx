@@ -1125,6 +1125,11 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const openSessionsList = () => {
+    props.setTab("sessions");
+    props.setView("dashboard");
+  };
+
   const openMcp = () => {
     props.setTab("mcp");
     props.setView("dashboard");
@@ -1178,25 +1183,26 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
-              <SessionSidebar
-                todos={props.todos}
-                expandedSections={props.expandedSidebarSections}
-                onToggleSection={(section) => {
-                  props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
-                }}
-                workspaceName={workspaceLabel()}
-                sessions={props.sessions}
-                selectedSessionId={props.selectedSessionId}
-                 onSelectSession={async (id) => {
-                   await props.selectSession(id);
-                   props.setView("session", id);
-                   props.setTab("sessions");
-                 }}
-                sessionStatusById={props.sessionStatusById}
-                onCreateSession={props.createSessionAndOpen}
-                onDeleteSession={handleDeleteSession}
-                newTaskDisabled={props.newTaskDisabled}
-              />
+                <SessionSidebar
+                  todos={props.todos}
+                  expandedSections={props.expandedSidebarSections}
+                  onToggleSection={(section) => {
+                    props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
+                  }}
+                  workspaceName={workspaceLabel()}
+                  sessions={props.sessions}
+                  selectedSessionId={props.selectedSessionId}
+                  onSelectSession={async (id) => {
+                    await props.selectSession(id);
+                    props.setView("session", id);
+                    props.setTab("sessions");
+                  }}
+                  onViewAllSessions={openSessionsList}
+                  sessionStatusById={props.sessionStatusById}
+                  onCreateSession={props.createSessionAndOpen}
+                  onDeleteSession={handleDeleteSession}
+                  newTaskDisabled={props.newTaskDisabled}
+                />
           </aside>
 
           <div
