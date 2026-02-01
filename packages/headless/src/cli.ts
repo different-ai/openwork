@@ -428,14 +428,10 @@ async function readPackageVersion(path: string): Promise<string | undefined> {
 }
 
 async function resolveOwpenbotRepoDir(): Promise<string | null> {
-  const envPath = process.env.OWPENBOT_REPO?.trim() || process.env.OWPENBOT_DIR?.trim();
+  const envPath = process.env.OWPENBOT_DIR?.trim();
   const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const repoRoot = resolve(root, "..", "..");
-  const candidates = [
-    envPath,
-    resolve(repoRoot, "..", "owpenbot"),
-    resolve(repoRoot, "vendor", "owpenbot"),
-  ].filter(Boolean) as string[];
+  const candidates = [envPath, resolve(repoRoot, "packages", "owpenbot")].filter(Boolean) as string[];
 
   for (const candidate of candidates) {
     const pkgPath = join(candidate, "package.json");
