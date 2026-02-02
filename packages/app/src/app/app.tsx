@@ -4187,7 +4187,7 @@ export default function App() {
     })),
     selectSession: selectSession,
     messages: activeMessages(),
-    messageTimings: isDemoMode() ? {} : messageTimings(),
+    messageTimings: messageTimings(),
     todos: activeTodos(),
     busyLabel: busyLabel(),
     developerMode: developerMode(),

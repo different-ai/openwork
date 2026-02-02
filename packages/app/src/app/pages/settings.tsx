@@ -282,7 +282,8 @@ function OwpenbotSettings(props: {
         setOwpenbotStatus(latestStatus);
       }
       const serverClient = openworkServerClient();
-      const useRemote = Boolean(serverClient && props.openworkServerWorkspaceId);
+      const workspaceId = props.openworkServerWorkspaceId;
+      const useRemote = Boolean(serverClient && workspaceId);
       debugOwpenbot("save-token:start", {
         mode: props.mode ?? "unknown",
         tauri: isTauriRuntime(),
@@ -299,6 +300,7 @@ function OwpenbotSettings(props: {
         ),
       });
       if (useRemote) {
+        if (!serverClient || !workspaceId) return;
         if (props.openworkServerStatus === "disconnected") {
           setTelegramFeedback(
             "error",
@@ -316,7 +318,7 @@ function OwpenbotSettings(props: {
         setTelegramFeedback("checking", "Saving token on the host...");
         try {
           await serverClient.setOwpenbotTelegramToken(
-            props.openworkServerWorkspaceId,
+            workspaceId,
             token,
             latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
           );
