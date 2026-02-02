@@ -2,9 +2,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use crate::engine::paths::{
-  resolve_opencode_env_override,
-  resolve_opencode_executable,
-  resolve_opencode_executable_without_override,
+    resolve_opencode_env_override, resolve_opencode_executable,
+    resolve_opencode_executable_without_override,
 };
 use crate::platform::command_for_program;
 use crate::utils::truncate_output;
@@ -144,6 +143,12 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, original }
         }
+
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, original }
+        }
     }
 
     impl Drop for EnvVarGuard {
@@ -194,6 +199,8 @@ mod tests {
     #[test]
     #[cfg(not(windows))]
     fn resolve_engine_path_prefers_sidecar() {
+        let _lock = ENV_LOCK.lock().expect("lock env");
+        let _guard = EnvVarGuard::unset("OPENCODE_BIN_PATH");
         let dir = unique_temp_dir("engine-path-test");
         std::fs::create_dir_all(&dir).expect("create temp dir");
 
@@ -228,7 +235,9 @@ mod tests {
         let (resolved, _in_path, notes) =
             resolve_engine_path(true, None, Some(sidecar_dir.as_path()));
         assert_eq!(resolved.as_ref(), Some(&override_path));
-        assert!(notes.iter().any(|note| note.contains("Using OPENCODE_BIN_PATH")));
+        assert!(notes
+            .iter()
+            .any(|note| note.contains("Using OPENCODE_BIN_PATH")));
 
         let _ = std::fs::remove_dir_all(&override_dir);
         let _ = std::fs::remove_dir_all(&sidecar_dir);
