@@ -21,6 +21,8 @@ pnpm --filter openwork-server dev -- \
 
 The server logs the client token and host token on boot when they are auto-generated.
 
+Add `--verbose` to print resolved config details on startup. Use `--version` to print the server version and exit.
+
 ## Config file
 
 Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CONFIG` or `--config`).
@@ -61,10 +63,12 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 ## Endpoints (initial)
 
 - `GET /health`
+- `GET /status`
 - `GET /capabilities`
 - `GET /workspaces`
 - `GET /workspace/:id/config`
 - `PATCH /workspace/:id/config`
+- `GET /workspace/:id/events`
 - `POST /workspace/:id/engine/reload`
 - `GET /workspace/:id/plugins`
 - `POST /workspace/:id/plugins`

@@ -53,6 +53,12 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
         : "MCP config changed. Reload to apply.";
     }
 
+    if (type === "config") {
+      return trimmedName
+        ? `Config '${trimmedName}' ${verb}. Reload to apply.`
+        : "Config changed. Reload to apply.";
+    }
+
     return "Config changed. Reload to apply.";
   };
 

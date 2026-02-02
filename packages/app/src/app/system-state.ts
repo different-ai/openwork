@@ -39,6 +39,7 @@ export function createSystemState(options: {
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
   refreshMcpServers?: () => Promise<void>;
   reloadWorkspaceEngine?: () => Promise<boolean>;
+  canReloadWorkspaceEngine?: () => boolean;
   setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
@@ -206,8 +207,11 @@ export function createSystemState(options: {
 
   const canReloadEngine = createMemo(() => {
     if (!reloadRequired()) return false;
-    if (!options.client()) return false;
     if (reloadBusy()) return false;
+    const override = options.canReloadWorkspaceEngine?.();
+    if (override === true) return true;
+    if (!options.client()) return false;
+    if (override === false) return false;
     if (options.mode() !== "host") return false;
     return true;
   });
@@ -221,7 +225,12 @@ export function createSystemState(options: {
     const initialClient = options.client();
     if (!initialClient) return;
 
-    if (options.mode() !== "host") {
+    const override = options.canReloadWorkspaceEngine?.();
+    if (override === false) {
+      setReloadError("Reload is unavailable for this workspace.");
+      return;
+    }
+    if (override !== true && options.mode() !== "host") {
       setReloadError("Reload is only available in Host mode.");
       return;
     }

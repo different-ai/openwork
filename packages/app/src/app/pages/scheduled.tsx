@@ -15,6 +15,8 @@ import {
 
 export type ScheduledTasksViewProps = {
   jobs: ScheduledJob[];
+  source: "local" | "remote";
+  sourceReady: boolean;
   status: string | null;
   busy: boolean;
   lastUpdatedAt: number | null;
@@ -59,12 +61,38 @@ const statusTone = (status?: string | null) => {
 };
 
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
-  const supported = createMemo(() => isTauriRuntime() && !props.isWindows);
+  const supported = createMemo(() => {
+    if (props.source === "remote") return props.sourceReady;
+    return isTauriRuntime() && !props.isWindows;
+  });
   const supportNote = createMemo(() => {
+    if (props.source === "remote") {
+      return props.sourceReady ? null : "OpenWork server unavailable. Connect to sync scheduled tasks.";
+    }
     if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
     if (props.isWindows) return "Scheduler is not supported on Windows yet.";
     return null;
   });
+  const sourceDescription = createMemo(() =>
+    props.source === "remote"
+      ? "Automations that run on a schedule from the connected OpenWork host."
+      : "Automations that run on a schedule from this device."
+  );
+  const sourceLabel = createMemo(() =>
+    props.source === "remote" ? "From OpenWork host" : "From local scheduler"
+  );
+  const schedulerLabel = createMemo(() => (props.source === "remote" ? "OpenWork host" : "Local"));
+  const schedulerHint = createMemo(() =>
+    props.source === "remote" ? "Remote instance" : "Launchd or systemd"
+  );
+  const schedulerUnavailableHint = createMemo(() =>
+    props.source === "remote" ? "OpenWork host unavailable" : "Desktop-only"
+  );
+  const deleteDescription = createMemo(() =>
+    props.source === "remote"
+      ? "This removes the schedule and deletes the job definition from the connected OpenWork host."
+      : "This removes the schedule and deletes the job definition from your machine."
+  );
 
   const lastUpdatedLabel = createMemo(() => {
     if (!props.lastUpdatedAt) return "Not synced yet";
@@ -99,7 +127,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <div>
               <h3 class="text-lg font-semibold text-gray-12">Scheduled Tasks</h3>
               <p class="text-sm text-gray-10 mt-1">
-                Automations that run on a schedule from this device.
+                {sourceDescription()}
               </p>
             </div>
             <Button
@@ -129,15 +157,15 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <div class="mt-2 text-lg font-semibold text-gray-12">
                 {supported() ? lastUpdatedLabel() : "Unavailable"}
               </div>
-              <div class="text-xs text-gray-9 mt-1">From local scheduler</div>
+              <div class="text-xs text-gray-9 mt-1">{sourceLabel()}</div>
             </div>
             <div class="rounded-2xl border border-gray-6/60 bg-gray-2/40 p-4">
               <div class="text-[11px] uppercase tracking-wider text-gray-10">Scheduler</div>
               <div class="mt-2 text-lg font-semibold text-gray-12">
-                {supported() ? "Local" : "Unavailable"}
+                {supported() ? schedulerLabel() : "Unavailable"}
               </div>
               <div class="text-xs text-gray-9 mt-1">
-                {supported() ? "Launchd or systemd" : "Desktop-only"}
+                {supported() ? schedulerHint() : schedulerUnavailableHint()}
               </div>
             </div>
           </div>
@@ -275,7 +303,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <div>
                   <h3 class="text-lg font-semibold text-gray-12">Delete scheduled task?</h3>
                   <p class="text-sm text-gray-11 mt-1">
-                    This removes the schedule and deletes the job definition from your machine.
+                    {deleteDescription()}
                   </p>
                 </div>
               </div>

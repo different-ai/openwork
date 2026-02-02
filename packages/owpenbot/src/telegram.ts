@@ -44,16 +44,40 @@ export function createTelegramAdapter(
 
     const chatType = msg.chat.type as string;
     const isGroup = chatType === "group" || chatType === "supergroup" || chatType === "channel";
+    
+    // In groups, check if groups are enabled
     if (isGroup && !config.groupsEnabled) {
-      logger.debug({ chatId: msg.chat.id, chatType }, "telegram message ignored (group disabled)");
+      logger.debug({ chatId: msg.chat.id, chatType }, "telegram message ignored (groups disabled)");
       return;
     }
 
-    const text = msg.text ?? msg.caption ?? "";
+    let text = msg.text ?? msg.caption ?? "";
     if (!text.trim()) return;
 
+    // In groups, only respond if the bot is @mentioned
+    if (isGroup) {
+      const botUsername = ctx.me?.username;
+      if (!botUsername) {
+        logger.debug({ chatId: msg.chat.id }, "telegram message ignored (bot username unknown)");
+        return;
+      }
+      
+      const mentionPattern = new RegExp(`@${botUsername}\\b`, "i");
+      if (!mentionPattern.test(text)) {
+        logger.debug({ chatId: msg.chat.id, botUsername }, "telegram message ignored (not mentioned)");
+        return;
+      }
+      
+      // Strip the @mention from the message
+      text = text.replace(mentionPattern, "").trim();
+      if (!text) {
+        logger.debug({ chatId: msg.chat.id }, "telegram message ignored (empty after removing mention)");
+        return;
+      }
+    }
+
     logger.debug(
-      { chatId: msg.chat.id, chatType, length: text.length, preview: text.slice(0, 120) },
+      { chatId: msg.chat.id, chatType, isGroup, length: text.length, preview: text.slice(0, 120) },
       "telegram message received",
     );
 

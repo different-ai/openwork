@@ -522,6 +522,47 @@ export function createSessionStore(options: {
       }
     }
 
+    if (event.type === "session.error") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const errorObj = record.error as Record<string, unknown> | undefined;
+        if (errorObj) {
+          // Handle different error types from OpenCode
+          const errorName = typeof errorObj.name === "string" ? errorObj.name : "Unknown";
+          let message = "An error occurred";
+
+          if (errorName === "ProviderAuthError") {
+            // Provider auth error - likely 401/403 from the API
+            const providerID = typeof errorObj.providerID === "string" ? errorObj.providerID : "provider";
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || `Authentication failed for ${providerID}. Please reconnect or check your API key.`;
+          } else if (errorName === "APIError") {
+            // API error - includes status code
+            const statusCode = typeof errorObj.statusCode === "number" ? errorObj.statusCode : undefined;
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            if (statusCode === 401 || statusCode === 403) {
+              message = errorMessage || "Authentication failed. Please check your API key or reconnect the provider.";
+            } else if (statusCode === 429) {
+              message = errorMessage || "Rate limit exceeded. Please wait and try again.";
+            } else {
+              message = errorMessage || `API error${statusCode ? ` (${statusCode})` : ""}`;
+            }
+          } else if (errorName === "MessageAbortedError") {
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || "Request was cancelled";
+          } else if (errorName === "MessageOutputLengthError") {
+            message = "Output length limit exceeded";
+          } else {
+            // Unknown or other error
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || "An unexpected error occurred";
+          }
+
+          options.setError(addOpencodeCacheHint(message));
+        }
+      }
+    }
+
     if (event.type === "message.updated") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
@@ -628,8 +669,9 @@ export function createSessionStore(options: {
     const c = options.client();
     if (!c) return;
 
-    const controller = new AbortController();
     let cancelled = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -681,10 +723,13 @@ export function createSessionStore(options: {
       timer = setTimeout(flush, Math.max(0, 16 - elapsed));
     };
 
-    (async () => {
+    const connectSse = async (controller: AbortController) => {
       try {
         const sub = await c.event.subscribe(undefined, { signal: controller.signal });
         let yielded = Date.now();
+
+        // Reset reconnect counter on successful connection
+        reconnectAttempt = 0;
 
         for await (const raw of sub.stream) {
           if (cancelled) break;
@@ -708,18 +753,46 @@ export function createSessionStore(options: {
           yielded = Date.now();
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
+
+        // Stream ended normally - attempt reconnect unless cancelled
+        if (!cancelled) {
+          options.setSseConnected(false);
+          scheduleReconnect(controller);
+        }
       } catch (e) {
         if (cancelled) return;
 
         const message = e instanceof Error ? e.message : String(e);
         if (message.toLowerCase().includes("abort")) return;
-        options.setError(message);
+
+        // Mark SSE as disconnected and schedule reconnect
+        options.setSseConnected(false);
+        scheduleReconnect(controller);
       }
-    })();
+    };
+
+    const scheduleReconnect = (oldController: AbortController) => {
+      if (cancelled) return;
+      oldController.abort();
+
+      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+      reconnectAttempt++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
+
+      reconnectTimer = setTimeout(() => {
+        if (cancelled) return;
+        const newController = new AbortController();
+        void connectSse(newController);
+      }, delay);
+    };
+
+    const controller = new AbortController();
+    void connectSse(controller);
 
     onCleanup(() => {
       cancelled = true;
       controller.abort();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       flush();
     });
   });

@@ -20,14 +20,7 @@ import type {
   WorkspaceDisplay,
 } from "../types";
 
-import {
-  AlertTriangle,
-  ArrowRight,
-  ChevronDown,
-  HardDrive,
-  Shield,
-  Zap,
-} from "lucide-solid";
+import { ArrowRight, ChevronDown, HardDrive, Shield, Zap } from "lucide-solid";
 
 import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
@@ -129,6 +122,7 @@ export type SessionViewProps = {
   openCommandRunModal: (command: WorkspaceCommand) => void;
   commandRegistryItems: () => CommandRegistryItem[];
   registerCommand: (command: CommandRegistryItem) => () => void;
+  deleteSession: (sessionId: string) => Promise<void>;
 };
 
 export default function SessionView(props: SessionViewProps) {
@@ -141,17 +135,29 @@ export default function SessionView(props: SessionViewProps) {
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [deleteBusy, setDeleteBusy] = createSignal(false);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
   const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
+  const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
+  const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
 
   const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
 
   const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
+
+  const isNearBottom = (el: HTMLElement, threshold = 80) => {
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distance <= threshold;
+  };
+
+  const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    messagesEndEl?.scrollIntoView({ behavior, block: "end" });
+  };
 
   const isAbsolutePath = (value: string) =>
     /^(?:[a-zA-Z]:[\\/]|\\\\|\/|~\/)/.test(value.trim());
@@ -439,23 +445,6 @@ export default function SessionView(props: SessionViewProps) {
     }
   });
 
-  const runDetail = createMemo(() => {
-    if (props.error) return props.error;
-    const status = props.sessionStatus;
-    if (runPhase() === "responding") return "Streaming response";
-    if (status === "retry") return "Retrying the last step";
-    if (status === "running") return "Working on your request";
-    if (status === "idle" && runStartedAt()) return "Queued";
-    return "";
-  });
-
-  const runLine = createMemo(() => {
-    const label = runLabel();
-    const detail = runDetail();
-    if (!detail) return label;
-    return `${label} · ${detail}`;
-  });
-
   const runElapsedMs = createMemo(() => {
     const start = runStartedAt();
     if (!start) return 0;
@@ -466,6 +455,15 @@ export default function SessionView(props: SessionViewProps) {
 
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
+  });
+
+  onMount(() => {
+    const container = chatContainerEl;
+    if (!container) return;
+    const update = () => setAutoScrollEnabled(isNearBottom(container));
+    update();
+    container.addEventListener("scroll", update, { passive: true });
+    onCleanup(() => container.removeEventListener("scroll", update));
   });
 
   createEffect(() => {
@@ -516,7 +514,13 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
-          messagesEndEl?.scrollIntoView({ behavior: "smooth" });
+          const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
+          if (shouldScroll) {
+            scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
+          }
+          if (scrollOnNextUpdate()) {
+            setScrollOnNextUpdate(false);
+          }
         }
       },
     ),
@@ -586,6 +590,19 @@ export default function SessionView(props: SessionViewProps) {
     return props.sessions.find((session) => session.id === id)?.title ?? "";
   });
 
+  const workspaceLabel = createMemo(() => {
+    const name = props.activeWorkspaceDisplay.name.trim();
+    if (name) return name;
+    return "Workspace";
+  });
+
+  const pickFallbackSessionId = (targetId: string) => {
+    const list = props.sessions.map((session) => session.id);
+    if (list.length <= 1) return null;
+    const index = list.indexOf(targetId);
+    if (index === -1) return list[0] ?? null;
+    return list[index + 1] ?? list[index - 1] ?? null;
+  };
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -622,6 +639,38 @@ export default function SessionView(props: SessionViewProps) {
       setCommandToast(message);
     } finally {
       setRenameBusy(false);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string) => {
+    if (deleteBusy()) return;
+    const targetId = sessionId?.trim();
+    if (!targetId) {
+      setCommandToast("No session selected");
+      return;
+    }
+    const targetTitle = props.sessions.find((session) => session.id === targetId)?.title ?? "this session";
+    const confirmed = window.confirm(`Delete session "${targetTitle}"?`);
+    if (!confirmed) return;
+    const fallbackId = pickFallbackSessionId(targetId);
+    setDeleteBusy(true);
+    try {
+      await props.deleteSession(targetId);
+      setCommandToast("Session deleted");
+      if (props.selectedSessionId !== targetId) return;
+      if (fallbackId) {
+        await Promise.resolve(props.selectSession(fallbackId));
+        props.setView("session", fallbackId);
+        props.setTab("sessions");
+        return;
+      }
+      props.setView("dashboard");
+      props.setTab("sessions");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setCommandToast(message);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -1060,7 +1109,8 @@ export default function SessionView(props: SessionViewProps) {
       }
       return;
     }
-
+    setScrollOnNextUpdate(true);
+    scrollToLatest("auto");
     startRun();
     props.sendPromptAsync(draft).catch(() => undefined);
   };
@@ -1128,23 +1178,25 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
-             <SessionSidebar
-               todos={props.todos}
-               expandedSections={props.expandedSidebarSections}
-               onToggleSection={(section) => {
-                 props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
-               }}
-               sessions={props.sessions}
-               selectedSessionId={props.selectedSessionId}
-                onSelectSession={async (id) => {
-                  await props.selectSession(id);
-                  props.setView("session", id);
-                  props.setTab("sessions");
+              <SessionSidebar
+                todos={props.todos}
+                expandedSections={props.expandedSidebarSections}
+                onToggleSection={(section) => {
+                  props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
                 }}
-               sessionStatusById={props.sessionStatusById}
-               onCreateSession={props.createSessionAndOpen}
-               newTaskDisabled={props.newTaskDisabled}
-             />
+                workspaceName={workspaceLabel()}
+                sessions={props.sessions}
+                selectedSessionId={props.selectedSessionId}
+                 onSelectSession={async (id) => {
+                   await props.selectSession(id);
+                   props.setView("session", id);
+                   props.setTab("sessions");
+                 }}
+                sessionStatusById={props.sessionStatusById}
+                onCreateSession={props.createSessionAndOpen}
+                onDeleteSession={handleDeleteSession}
+                newTaskDisabled={props.newTaskDisabled}
+              />
           </aside>
 
           <div
@@ -1221,7 +1273,7 @@ export default function SessionView(props: SessionViewProps) {
                         </div>
                       </Show>
                       <div
-                        class={`w-full flex items-center justify-between gap-3 text-xs font-mono ${
+                        class={`w-full flex items-center justify-between gap-3 text-xs ${
                           runPhase() === "error" ? "text-red-11" : "text-gray-9"
                         }`}
                         role="status"
@@ -1229,14 +1281,40 @@ export default function SessionView(props: SessionViewProps) {
                       >
                         <div class="flex items-center gap-2 min-w-0">
                           <Show
-                            when={runPhase() !== "error"}
-                            fallback={<AlertTriangle size={12} class="shrink-0" />}
+                            when={runPhase() === "responding"}
+                            fallback={
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full ${
+                                  runPhase() === "error" ? "bg-red-9/80" : "bg-gray-8/80"
+                                }`}
+                              />
+                            }
                           >
-                            <Zap size={12} class="shrink-0" />
+                            <span class="flex items-center gap-1">
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/80" : "bg-gray-8/80"
+                                }`}
+                              />
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/60" : "bg-gray-8/60"
+                                }`}
+                                style={{ "animation-delay": "120ms" }}
+                              />
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/40" : "bg-gray-8/40"
+                                }`}
+                                style={{ "animation-delay": "240ms" }}
+                              />
+                            </span>
                           </Show>
-                          <span class="truncate">{runLine()}</span>
+                          <span class="truncate">{runLabel()}</span>
                         </div>
-                        <span class="shrink-0">{runElapsedLabel()}</span>
+                        <Show when={props.developerMode}>
+                          <span class="shrink-0 text-[10px] text-gray-8">{runElapsedLabel()}</span>
+                        </Show>
                       </div>
                     </div>
                   </div>

@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const bunRuntime = (globalThis as typeof globalThis & {
@@ -93,6 +93,15 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   const outfile = join(outdir, outputName(filename, target));
 
   const args = ["build", entrypoint, "--compile", "--outfile", outfile];
+  const pkgPath = resolve("package.json");
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
+    if (typeof pkg.version === "string" && pkg.version.trim()) {
+      args.push("--define", `__OWPENBOT_VERSION__=\"${pkg.version.trim()}\"`);
+    }
+  } catch {
+    // ignore
+  }
   if (target) {
     args.push("--target", target);
   }

@@ -7,9 +7,12 @@ use crate::engine::doctor::{
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
 use crate::commands::owpenbot::owpenbot_start;
+use crate::openwrk::{self, OpenwrkSpawnOptions};
+use crate::openwrk::manager::OpenwrkManager;
 use crate::openwork_server::{manager::OpenworkServerManager, resolve_connect_url, start_openwork_server};
 use crate::owpenbot::manager::OwpenbotManager;
-use crate::types::{EngineDoctorResult, EngineInfo, ExecResult};
+use crate::owpenbot::spawn::resolve_owpenbot_health_port;
+use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use serde_json::json;
 use tauri_plugin_shell::process::CommandEvent;
@@ -24,18 +27,64 @@ struct OutputState {
 }
 
 #[tauri::command]
-pub fn engine_info(manager: State<EngineManager>) -> EngineInfo {
+pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<OpenwrkManager>) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
+    if state.runtime == EngineRuntime::Openwrk {
+        let data_dir = openwrk_manager
+            .inner
+            .lock()
+            .ok()
+            .and_then(|state| state.data_dir.clone())
+            .unwrap_or_else(openwrk::resolve_openwrk_data_dir);
+        let last_stdout = openwrk_manager
+            .inner
+            .lock()
+            .ok()
+            .and_then(|state| state.last_stdout.clone());
+        let last_stderr = openwrk_manager
+            .inner
+            .lock()
+            .ok()
+            .and_then(|state| state.last_stderr.clone());
+        let status = openwrk::resolve_openwrk_status(&data_dir, last_stderr.clone());
+        let opencode = status.opencode.clone();
+        let base_url = opencode
+            .as_ref()
+            .map(|entry| format!("http://127.0.0.1:{}", entry.port));
+        let project_dir = status
+            .active_id
+            .as_ref()
+            .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
+            .map(|ws| ws.path.clone())
+            .or_else(|| state.project_dir.clone());
+        return EngineInfo {
+            running: status.running,
+            runtime: state.runtime.clone(),
+            base_url,
+            project_dir,
+            hostname: Some("127.0.0.1".to_string()),
+            port: opencode.as_ref().map(|entry| entry.port),
+            opencode_username: state.opencode_username.clone(),
+            opencode_password: state.opencode_password.clone(),
+            pid: opencode.as_ref().map(|entry| entry.pid),
+            last_stdout,
+            last_stderr,
+        };
+    }
     EngineManager::snapshot_locked(&mut state)
 }
 
 #[tauri::command]
 pub fn engine_stop(
     manager: State<EngineManager>,
+    openwrk_manager: State<OpenwrkManager>,
     openwork_manager: State<OpenworkServerManager>,
     owpenbot_manager: State<OwpenbotManager>,
 ) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
+    if let Ok(mut openwrk_state) = openwrk_manager.inner.lock() {
+        OpenwrkManager::stop_locked(&mut openwrk_state);
+    }
     EngineManager::stop_locked(&mut state);
     if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
         OpenworkServerManager::stop_locked(&mut openwork_state);
@@ -129,10 +178,13 @@ pub fn engine_install() -> Result<ExecResult, String> {
 pub fn engine_start(
     app: AppHandle,
     manager: State<EngineManager>,
+    openwrk_manager: State<OpenwrkManager>,
     openwork_manager: State<OpenworkServerManager>,
     owpenbot_manager: State<OwpenbotManager>,
     project_dir: String,
     prefer_sidecar: Option<bool>,
+    runtime: Option<EngineRuntime>,
+    workspace_paths: Option<Vec<String>>,
 ) -> Result<EngineInfo, String> {
     let project_dir = project_dir.trim().to_string();
     if project_dir.is_empty() {
@@ -157,6 +209,12 @@ pub fn engine_start(
         }
     }
 
+    let runtime = runtime.unwrap_or(EngineRuntime::Direct);
+    let mut workspace_paths = workspace_paths.unwrap_or_default();
+    workspace_paths.retain(|path| !path.trim().is_empty());
+    workspace_paths.retain(|path| path.trim() != project_dir);
+    workspace_paths.insert(0, project_dir.clone());
+
     let bind_host = std::env::var("OPENWORK_OPENCODE_BIND_HOST")
         .ok()
         .filter(|value| !value.trim().is_empty())
@@ -180,6 +238,10 @@ pub fn engine_start(
 
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     EngineManager::stop_locked(&mut state);
+    if let Ok(mut openwrk_state) = openwrk_manager.inner.lock() {
+        OpenwrkManager::stop_locked(&mut openwrk_state);
+    }
+    state.runtime = runtime.clone();
 
     let resource_dir = app.path().resource_dir().ok();
     let current_bin_dir = tauri::process::current_binary(&app.env())
@@ -201,6 +263,166 @@ pub fn engine_start(
         && sidecar_candidate
             .as_ref()
             .is_some_and(|candidate| candidate == &program);
+
+    if runtime == EngineRuntime::Openwrk {
+        drop(state);
+        let data_dir = openwrk::resolve_openwrk_data_dir();
+        let daemon_port = find_free_port()?;
+        let daemon_host = "127.0.0.1".to_string();
+        let opencode_bin = program.to_string_lossy().to_string();
+        let spawn_options = OpenwrkSpawnOptions {
+            data_dir: data_dir.clone(),
+            daemon_host: daemon_host.clone(),
+            daemon_port,
+            opencode_bin,
+            opencode_host: bind_host.clone(),
+            opencode_workdir: project_dir.clone(),
+            opencode_port: None,
+            opencode_username: opencode_username.clone(),
+            opencode_password: opencode_password.clone(),
+            cors: Some("*".to_string()),
+        };
+
+        let (mut rx, child) = openwrk::spawn_openwrk_daemon(&app, &spawn_options)?;
+        {
+            let mut openwrk_state = openwrk_manager
+                .inner
+                .lock()
+                .map_err(|_| "openwrk mutex poisoned".to_string())?;
+            openwrk_state.child = Some(child);
+            openwrk_state.child_exited = false;
+            openwrk_state.data_dir = Some(data_dir.clone());
+            openwrk_state.last_stdout = None;
+            openwrk_state.last_stderr = None;
+        }
+
+        let openwrk_state_handle = openwrk_manager.inner.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(line_bytes) => {
+                        let line = String::from_utf8_lossy(&line_bytes).to_string();
+                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                            let next = state
+                                .last_stdout
+                                .as_deref()
+                                .unwrap_or_default()
+                                .to_string()
+                                + &line;
+                            state.last_stdout = Some(truncate_output(&next, 8000));
+                        }
+                    }
+                    CommandEvent::Stderr(line_bytes) => {
+                        let line = String::from_utf8_lossy(&line_bytes).to_string();
+                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                            let next = state
+                                .last_stderr
+                                .as_deref()
+                                .unwrap_or_default()
+                                .to_string()
+                                + &line;
+                            state.last_stderr = Some(truncate_output(&next, 8000));
+                        }
+                    }
+                    CommandEvent::Terminated(_) => {
+                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                            state.child_exited = true;
+                        }
+                    }
+                    CommandEvent::Error(message) => {
+                        if let Ok(mut state) = openwrk_state_handle.try_lock() {
+                            state.child_exited = true;
+                            let next = state
+                                .last_stderr
+                                .as_deref()
+                                .unwrap_or_default()
+                                .to_string()
+                                + &message;
+                            state.last_stderr = Some(truncate_output(&next, 8000));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        let daemon_base_url = format!("http://{}:{}", daemon_host, daemon_port);
+        let health = openwrk::wait_for_openwrk(&daemon_base_url, 10_000)
+            .map_err(|e| format!("Failed to start openwrk: {e}"))?;
+        let opencode = health
+            .opencode
+            .ok_or_else(|| "Openwrk did not report OpenCode status".to_string())?;
+        let opencode_port = opencode.port;
+        let opencode_base_url = format!("http://127.0.0.1:{opencode_port}");
+        let opencode_connect_url =
+            resolve_connect_url(opencode_port).unwrap_or_else(|| opencode_base_url.clone());
+
+        if let Ok(mut state) = manager.inner.lock() {
+            state.runtime = EngineRuntime::Openwrk;
+            state.child = None;
+            state.child_exited = false;
+            state.project_dir = Some(project_dir.clone());
+            state.hostname = Some("127.0.0.1".to_string());
+            state.port = Some(opencode_port);
+            state.base_url = Some(opencode_base_url.clone());
+            state.opencode_username = opencode_username.clone();
+            state.opencode_password = opencode_password.clone();
+            state.last_stdout = None;
+            state.last_stderr = None;
+        }
+
+        let owpenbot_health_port = match resolve_owpenbot_health_port() {
+            Ok(port) => Some(port),
+            Err(error) => {
+                if let Ok(mut state) = manager.inner.lock() {
+                    state.last_stderr = Some(truncate_output(&format!("Owpenbot health port: {error}"), 8000));
+                }
+                None
+            }
+        };
+
+        if let Err(error) = start_openwork_server(
+            &app,
+            &openwork_manager,
+            &workspace_paths,
+            Some(&opencode_connect_url),
+            opencode_username.as_deref(),
+            opencode_password.as_deref(),
+            owpenbot_health_port,
+        ) {
+            if let Ok(mut state) = manager.inner.lock() {
+                state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+            }
+        }
+
+        if let Err(error) = owpenbot_start(
+            app.clone(),
+            owpenbot_manager,
+            project_dir.clone(),
+            Some(opencode_connect_url),
+            opencode_username.clone(),
+            opencode_password.clone(),
+            owpenbot_health_port,
+        ) {
+            if let Ok(mut state) = manager.inner.lock() {
+                state.last_stderr = Some(truncate_output(&format!("Owpenbot: {error}"), 8000));
+            }
+        }
+
+        return Ok(EngineInfo {
+            running: true,
+            runtime: EngineRuntime::Openwrk,
+            base_url: Some(opencode_base_url),
+            project_dir: Some(project_dir),
+            hostname: Some("127.0.0.1".to_string()),
+            port: Some(opencode_port),
+            opencode_username,
+            opencode_password,
+            pid: Some(opencode.pid),
+            last_stdout: None,
+            last_stderr: None,
+        });
+    }
 
     let (mut rx, child) = spawn_engine(
         &app,
@@ -334,13 +556,22 @@ pub fn engine_start(
     state.opencode_password = opencode_password.clone();
 
     let opencode_connect_url = resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    let owpenbot_health_port = match resolve_owpenbot_health_port() {
+        Ok(port) => Some(port),
+        Err(error) => {
+            state.last_stderr = Some(truncate_output(&format!("Owpenbot health port: {error}"), 8000));
+            None
+        }
+    };
+
     if let Err(error) = start_openwork_server(
         &app,
         &openwork_manager,
-        &state.project_dir.clone().unwrap_or_default(),
+        &workspace_paths,
         Some(&opencode_connect_url),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
+        owpenbot_health_port,
     ) {
         state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
     }
@@ -352,6 +583,7 @@ pub fn engine_start(
         Some(opencode_connect_url),
         opencode_username,
         opencode_password,
+        owpenbot_health_port,
     ) {
         state.last_stderr = Some(truncate_output(&format!("Owpenbot: {error}"), 8000));
     }

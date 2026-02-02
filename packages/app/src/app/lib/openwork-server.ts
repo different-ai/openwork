@@ -1,3 +1,7 @@
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { isTauriRuntime } from "../utils";
+import type { ScheduledJob } from "./tauri";
+
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
   plugins: { read: boolean; write: boolean };
@@ -7,6 +11,21 @@ export type OpenworkServerCapabilities = {
 };
 
 export type OpenworkServerStatus = "connected" | "disconnected" | "limited";
+
+export type OpenworkServerDiagnostics = {
+  ok: boolean;
+  version: string;
+  uptimeMs: number;
+  readOnly: boolean;
+  approval: { mode: "manual" | "auto"; timeoutMs: number };
+  corsOrigins: string[];
+  workspaceCount: number;
+  activeWorkspaceId: string | null;
+  workspace: OpenworkWorkspaceInfo | null;
+  authorizedRoots: string[];
+  server: { host: string; port: number; configPath?: string | null };
+  tokenSource: { client: string; host: string };
+};
 
 export type OpenworkServerSettings = {
   urlOverride?: string;
@@ -27,6 +46,11 @@ export type OpenworkWorkspaceInfo = {
     username?: string;
     password?: string;
   };
+};
+
+export type OpenworkWorkspaceList = {
+  items: OpenworkWorkspaceInfo[];
+  activeId?: string | null;
 };
 
 export type OpenworkPluginItem = {
@@ -61,6 +85,14 @@ export type OpenworkMcpItem = {
   disabledByTools?: boolean;
 };
 
+export type OpenworkOwpenbotTelegramResult = {
+  ok: boolean;
+  telegram?: {
+    configured: boolean;
+    enabled: boolean;
+  };
+};
+
 export type OpenworkActor = {
   type: "remote" | "host";
   clientId?: string;
@@ -74,6 +106,22 @@ export type OpenworkAuditEntry = {
   action: string;
   target: string;
   summary: string;
+  timestamp: number;
+};
+
+export type OpenworkReloadTrigger = {
+  type: "skill" | "plugin" | "config" | "mcp";
+  name?: string;
+  action?: "added" | "removed" | "updated";
+  path?: string;
+};
+
+export type OpenworkReloadEvent = {
+  id: string;
+  seq: number;
+  workspaceId: string;
+  reason: "plugins" | "skills" | "mcp" | "config";
+  trigger?: OpenworkReloadTrigger;
   timestamp: number;
 };
 
@@ -206,13 +254,17 @@ function buildHeaders(
   return headers;
 }
 
+// Use Tauri's fetch when running in the desktop app to avoid CORS issues
+const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+
 async function requestJson<T>(
   baseUrl: string,
   path: string,
   options: { method?: string; token?: string; hostToken?: string; body?: unknown } = {},
 ): Promise<T> {
   const url = `${baseUrl}${path}`;
-  const response = await fetch(url, {
+  const fetchImpl = resolveFetch();
+  const response = await fetchImpl(url, {
     method: options.method ?? "GET",
     headers: buildHeaders(options.token, options.hostToken),
     body: options.body ? JSON.stringify(options.body) : undefined,
@@ -240,13 +292,35 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken }),
+    status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken }),
-    listWorkspaces: () => requestJson<{ items: OpenworkWorkspaceInfo[] }>(baseUrl, "/workspaces", { token, hostToken }),
+    listWorkspaces: () => requestJson<OpenworkWorkspaceList>(baseUrl, "/workspaces", { token, hostToken }),
+    activateWorkspace: (workspaceId: string) =>
+      requestJson<{ activeId: string; workspace: OpenworkWorkspaceInfo }>(
+        baseUrl,
+        `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
+        { token, hostToken, method: "POST" },
+      ),
     getConfig: (workspaceId: string) =>
       requestJson<{ opencode: Record<string, unknown>; openwork: Record<string, unknown>; updatedAt?: number | null }>(
         baseUrl,
         `/workspace/${workspaceId}/config`,
         { token, hostToken },
+      ),
+    setOwpenbotTelegramToken: (
+      workspaceId: string,
+      tokenValue: string,
+      healthPort?: number | null,
+    ) =>
+      requestJson<OpenworkOwpenbotTelegramResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/owpenbot/telegram-token`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: { token: tokenValue, healthPort },
+        },
       ),
     patchConfig: (workspaceId: string, payload: { opencode?: Record<string, unknown>; openwork?: Record<string, unknown> }) =>
       requestJson<{ updatedAt?: number | null }>(baseUrl, `/workspace/${workspaceId}/config`, {
@@ -255,6 +329,14 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         method: "PATCH",
         body: payload,
       }),
+    listReloadEvents: (workspaceId: string, options?: { since?: number }) => {
+      const query = typeof options?.since === "number" ? `?since=${options.since}` : "";
+      return requestJson<{ items: OpenworkReloadEvent[]; cursor?: number }>(
+        baseUrl,
+        `/workspace/${workspaceId}/events${query}`,
+        { token, hostToken },
+      );
+    },
     reloadEngine: (workspaceId: string) =>
       requestJson<{ ok: boolean; reloadedAt?: number }>(baseUrl, `/workspace/${workspaceId}/engine/reload`, {
         token,
@@ -339,6 +421,16 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         method: "DELETE",
       }),
+    listScheduledJobs: (workspaceId: string) =>
+      requestJson<{ items: ScheduledJob[] }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs`, { token, hostToken }),
+    deleteScheduledJob: (workspaceId: string, name: string) =>
+      requestJson<{ job: ScheduledJob }>(baseUrl, `/workspace/${workspaceId}/scheduler/jobs/${encodeURIComponent(name)}`,
+        {
+          token,
+          hostToken,
+          method: "DELETE",
+        },
+      ),
   };
 }
 

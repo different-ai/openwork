@@ -87,6 +87,12 @@ export class BridgeStore {
     stmt.run(channel, peerId, sessionId, now, now);
   }
 
+  deleteSession(channel: ChannelName, peerId: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM sessions WHERE channel = ? AND peer_id = ?");
+    const result = stmt.run(channel, peerId);
+    return result.changes > 0;
+  }
+
   isAllowed(channel: ChannelName, peerId: string): boolean {
     const stmt = this.db.prepare(
       "SELECT channel, peer_id, created_at FROM allowlist WHERE channel = ? AND peer_id = ?",

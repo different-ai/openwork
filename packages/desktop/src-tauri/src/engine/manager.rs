@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
-use crate::types::EngineInfo;
+use crate::types::{EngineInfo, EngineRuntime};
 
 #[derive(Default)]
 pub struct EngineManager {
@@ -11,6 +11,7 @@ pub struct EngineManager {
 
 #[derive(Default)]
 pub struct EngineState {
+    pub runtime: EngineRuntime,
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub project_dir: Option<String>,
@@ -36,6 +37,7 @@ impl EngineManager {
 
         EngineInfo {
             running,
+            runtime: state.runtime.clone(),
             base_url: state.base_url.clone(),
             project_dir: state.project_dir.clone(),
             hostname: state.hostname.clone(),
@@ -53,6 +55,7 @@ impl EngineManager {
             let _ = child.kill();
         }
         state.child_exited = true;
+        state.runtime = EngineRuntime::Direct;
         state.base_url = None;
         state.project_dir = None;
         state.hostname = None;

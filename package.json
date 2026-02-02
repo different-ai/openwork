@@ -25,6 +25,7 @@
     "bump:minor": "pnpm --filter @different-ai/openwork-ui bump:minor",
     "bump:major": "pnpm --filter @different-ai/openwork-ui bump:major",
     "bump:set": "pnpm --filter @different-ai/openwork-ui bump:set",
+    "release:review": "node scripts/release/review.mjs",
     "tauri": "pnpm --filter @different-ai/openwork exec tauri"
   },
   "pnpm": {

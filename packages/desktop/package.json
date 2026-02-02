@@ -1,8 +1,9 @@
 {
   "name": "@different-ai/openwork",
   "private": true,
-  "version": "0.8.5",
+  "version": "0.11.5",
   "opencodeVersion": "1.1.45",
+  "owpenbotVersion": "0.1.19",
   "type": "module",
   "scripts": {
     "dev": "tauri dev --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:5173\\\"}}\"",

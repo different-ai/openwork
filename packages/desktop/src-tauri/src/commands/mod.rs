@@ -2,6 +2,7 @@ pub mod command_files;
 pub mod config;
 pub mod engine;
 pub mod misc;
+pub mod openwrk;
 pub mod openwork_server;
 pub mod opkg;
 pub mod owpenbot;

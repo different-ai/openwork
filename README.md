@@ -1,15 +1,23 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
 # OpenWork
+> Make your company feel 1000× more productive.
 
+We give AI agents the tools your team already uses and let them learn from your behavior. The more you use OpenWork, the more connected your tools become, the more knowledge accumulates, and the bigger the chunks of work you can automate.
+
+OpenWork is the simplest interface to opencode. Double-click, pick a folder, and you get three things instantly:
+1. Zero-friction setup — your existing opencode configuration just works, no migration needed
+2. Chat access — WhatsApp and Telegram ready to go (one token, done)
+3. Cloud-ready — every app doubles as a client; deploy to the cloud and access from anywhere
 > **The easiest way to create safe agentic workflow and share them with your team**
-
-OpenWork is built on top of [opencode](https://opencode.ai) it lets you turn your opencode config into usable experiences for non-technical users.
 
 It's an **extensible, open-source alternative** to “Claude Work”.
 
 
-<img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 19 02 PM" src="https://github.com/user-attachments/assets/7a1b8662-19a0-4327-87c9-c0295a0d54f1" />
+<img width="1292" height="932" alt="Screenshot 2026-01-31 at 16 22 39" src="https://github.com/user-attachments/assets/5742be91-9cfb-4212-b32d-cf2a27b1c093" />
+
+
+<img width="1292" height="932" alt="Screenshot 2026-01-31 at 13 43 30" src="https://github.com/user-attachments/assets/6639d1ef-c831-406e-a812-87fde403e6d5" />
 
 
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
@@ -23,12 +31,13 @@ It’s a native desktop app that runs **OpenCode** under the hood, but presents 
 
 The goal: make “agentic work” feel like a product, not a terminal.
 
+
 ## Alternate UIs
 
 - **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
-  - `curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash`
+  - `curl -fsSL https://raw.githubusercontent.com/different-ai/owpenbot/dev/install.sh | bash`
   - run `owpenbot setup`, then `owpenbot whatsapp login`, then `owpenbot start`
-  - full setup: [packages/owpenbot/README.md](./packages/owpenbot/README.md)
+  - full setup: https://github.com/different-ai/owpenbot/blob/dev/README.md
 - **Openwrk (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwrk`.
   - docs: [packages/headless/README.md](./packages/headless/README.md)
 

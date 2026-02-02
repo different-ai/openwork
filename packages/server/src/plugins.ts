@@ -7,7 +7,7 @@ import { opencodeConfigPath, projectPluginsDir } from "./workspace-files.js";
 import { exists } from "./utils.js";
 import { validatePluginSpec } from "./validators.js";
 
-function normalizePluginSpec(spec: string): string {
+export function normalizePluginSpec(spec: string): string {
   const trimmed = spec.trim();
   if (trimmed.startsWith("file:") || trimmed.startsWith("http:") || trimmed.startsWith("https:") || trimmed.startsWith("git:")) {
     return trimmed;
@@ -72,21 +72,24 @@ export async function listPlugins(workspaceRoot: string, includeGlobal: boolean)
   };
 }
 
-export async function addPlugin(workspaceRoot: string, spec: string): Promise<void> {
+export async function addPlugin(workspaceRoot: string, spec: string): Promise<boolean> {
   validatePluginSpec(spec);
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
   const normalized = normalizePluginSpec(spec);
   const existing = pluginSpecs.find((item) => normalizePluginSpec(item) === normalized);
-  if (existing) return;
+  if (existing) return false;
   pluginSpecs.push(spec);
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { plugin: pluginSpecs });
+  return true;
 }
 
-export async function removePlugin(workspaceRoot: string, name: string): Promise<void> {
+export async function removePlugin(workspaceRoot: string, name: string): Promise<boolean> {
   const { data: config } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const pluginSpecs = pluginListFromConfig(config);
   const normalized = normalizePluginSpec(name);
   const filtered = pluginSpecs.filter((item) => normalizePluginSpec(item) !== normalized);
+  if (filtered.length === pluginSpecs.length) return false;
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { plugin: filtered });
+  return true;
 }

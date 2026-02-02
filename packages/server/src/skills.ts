@@ -113,7 +113,7 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
 export async function upsertSkill(
   workspaceRoot: string,
   payload: { name: string; content: string; description?: string },
-): Promise<string> {
+): Promise<{ path: string; action: "added" | "updated" }> {
   const name = payload.name.trim();
   validateSkillName(name);
   if (!payload.content) {
@@ -146,6 +146,7 @@ export async function upsertSkill(
   const skillDir = join(baseDir, name);
   await mkdir(skillDir, { recursive: true });
   const skillPath = join(skillDir, "SKILL.md");
+  const existed = await exists(skillPath);
   await writeFile(skillPath, content.endsWith("\n") ? content : content + "\n", "utf8");
-  return skillPath;
+  return { path: skillPath, action: existed ? "updated" : "added" };
 }

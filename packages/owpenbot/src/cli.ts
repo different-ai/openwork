@@ -20,7 +20,23 @@ import { truncateText } from "./text.js";
 import { loginWhatsApp, unpairWhatsApp } from "./whatsapp.js";
 import { hasWhatsAppCreds } from "./whatsapp-session.js";
 
-const VERSION = "0.1.16";
+declare const __OWPENBOT_VERSION__: string | undefined;
+
+const VERSION = (() => {
+  if (typeof __OWPENBOT_VERSION__ === "string" && __OWPENBOT_VERSION__.trim()) {
+    return __OWPENBOT_VERSION__.trim();
+  }
+  try {
+    const pkgPath = new URL("../package.json", import.meta.url);
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as { version?: string };
+    if (typeof pkg.version === "string" && pkg.version.trim()) {
+      return pkg.version.trim();
+    }
+  } catch {
+    // ignore
+  }
+  return "0.0.0";
+})();
 
 // -----------------------------------------------------------------------------
 // JSON output helpers
@@ -294,6 +310,7 @@ program
     if (useJson) {
       outputJson({
         config: config.configPath,
+        healthPort: config.healthPort ?? null,
         whatsapp: {
           linked: whatsappLinked,
           dmPolicy: config.whatsappDmPolicy,
@@ -311,6 +328,7 @@ program
       });
     } else {
       console.log(`Config: ${config.configPath}`);
+      console.log(`Health port: ${config.healthPort ?? "(not set)"}`);
       console.log(`WhatsApp linked: ${whatsappLinked ? "yes" : "no"}`);
       console.log(`WhatsApp DM policy: ${config.whatsappDmPolicy}`);
       console.log(`Telegram configured: ${config.telegramToken ? "yes" : "no"}`);

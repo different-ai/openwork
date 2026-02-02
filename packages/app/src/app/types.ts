@@ -93,6 +93,8 @@ export type View = "onboarding" | "dashboard" | "session" | "proto";
 
 export type Mode = "host" | "client";
 
+export type EngineRuntime = "direct" | "openwrk";
+
 export type OnboardingStep = "mode" | "host" | "client" | "connecting";
 
 export type DashboardTab =

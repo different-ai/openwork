@@ -5,6 +5,7 @@ import TextInput from "./text-input";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
+import { opencodeMcpAuth } from "../lib/tauri";
 import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
 import { isTauriRuntime } from "../utils";
@@ -44,6 +45,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const [authorizationUrl, setAuthorizationUrl] = createSignal<string | null>(null);
   const [callbackInput, setCallbackInput] = createSignal("");
   const [manualAuthBusy, setManualAuthBusy] = createSignal(false);
+  const [cliAuthBusy, setCliAuthBusy] = createSignal(false);
+  const [cliAuthResult, setCliAuthResult] = createSignal<string | null>(null);
 
   let statusPoll: number | null = null;
 
@@ -220,6 +223,43 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
   };
 
+  const isInvalidRefreshToken = () => {
+    const message = error();
+    if (!message) return false;
+    const normalized = message.toLowerCase();
+    return (
+      normalized.includes("invalidgranterror") ||
+      normalized.includes("invalid refresh token") ||
+      normalized.includes("invalid_refresh_token")
+    );
+  };
+
+  const handleCliReauth = async () => {
+    const entry = props.entry;
+    if (!entry || cliAuthBusy()) return;
+    if (props.isRemoteWorkspace) return;
+    if (!isTauriRuntime()) return;
+
+    setCliAuthBusy(true);
+    setCliAuthResult(null);
+
+    try {
+      const result = await opencodeMcpAuth(props.projectDir, entry.name);
+      if (result.ok) {
+        setError(null);
+        setNeedsReload(true);
+        setReloadNotice(translate("mcp.auth.oauth_completed_reload"));
+      } else {
+        setCliAuthResult(result.stderr || result.stdout || translate("mcp.auth.reauth_failed"));
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : translate("mcp.auth.reauth_failed");
+      setCliAuthResult(message);
+    } finally {
+      setCliAuthBusy(false);
+    }
+  };
+
   // Start the OAuth flow when modal opens with an entry
   createEffect(
     on(
@@ -256,6 +296,8 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setCallbackInput("");
     setManualAuthBusy(false);
     setReloadNotice(null);
+    setCliAuthBusy(false);
+    setCliAuthResult(null);
     stopStatusPolling();
     props.onClose();
   };
@@ -486,6 +528,38 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                     <Button variant="ghost" onClick={handleRetry}>
                       {translate("mcp.auth.retry")}
                     </Button>
+                  </div>
+                </Show>
+
+                <Show when={isInvalidRefreshToken()}>
+                  <div class="pt-2 space-y-2">
+                    <p class="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token")}</p>
+                    <Show when={!props.isRemoteWorkspace}>
+                      <Show when={isTauriRuntime()}>
+                        <Button variant="secondary" onClick={handleCliReauth} disabled={cliAuthBusy()}>
+                          <Show
+                            when={cliAuthBusy()}
+                            fallback={translate("mcp.auth.reauth_action")}
+                          >
+                            <Loader2 size={14} class="animate-spin" />
+                            {translate("mcp.auth.reauth_running")}
+                          </Show>
+                        </Button>
+                      </Show>
+                      <Show when={!isTauriRuntime()}>
+                        <div class="text-[11px] text-red-10">
+                          {translate("mcp.auth.reauth_cli_hint", { server: serverName() })}
+                        </div>
+                      </Show>
+                    </Show>
+                    <Show when={props.isRemoteWorkspace}>
+                      <div class="text-[11px] text-red-10">
+                        {translate("mcp.auth.reauth_remote_hint")}
+                      </div>
+                    </Show>
+                    <Show when={cliAuthResult()}>
+                      <div class="text-[11px] text-red-10">{cliAuthResult()}</div>
+                    </Show>
                   </div>
                 </Show>
               </div>

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -9,17 +10,20 @@ type VersionInfo = {
 };
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const repoRoot = resolve(root, "..", "..");
 const targetDir = resolve(root, "dist");
 
 const serverBin = resolve(root, "..", "server", "dist", "bin", "openwork-server");
-const owpenbotBin = resolve(root, "..", "owpenbot", "dist", "bin", "owpenbot");
+const owpenbotRepo = process.env.OWPENBOT_DIR?.trim() || resolve(repoRoot, "packages", "owpenbot");
+if (!existsSync(resolve(owpenbotRepo, "package.json"))) {
+  throw new Error("Owpenbot package not found. Expected packages/owpenbot in the monorepo.");
+}
+const owpenbotBin = resolve(owpenbotRepo, "dist", "bin", "owpenbot");
 
 const serverPkg = JSON.parse(
   await readFile(resolve(root, "..", "server", "package.json"), "utf8"),
 ) as { version: string };
-const owpenbotPkg = JSON.parse(
-  await readFile(resolve(root, "..", "owpenbot", "package.json"), "utf8"),
-) as { version: string };
+const owpenbotPkg = JSON.parse(await readFile(resolve(owpenbotRepo, "package.json"), "utf8")) as { version: string };
 
 await mkdir(targetDir, { recursive: true });
 await copyFile(serverBin, resolve(targetDir, "openwork-server"));

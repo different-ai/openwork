@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
-import { homedir, hostname, networkInterfaces } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -16,8 +15,9 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
 type ApprovalMode = "manual" | "auto";
 
-const VERSION = "0.1.0";
+const FALLBACK_VERSION = "0.1.0";
 const DEFAULT_OPENWORK_PORT = 8787;
+const DEFAULT_OWPENBOT_HEALTH_PORT = 3005;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
 
@@ -36,17 +36,71 @@ type VersionInfo = {
   sha256: string;
 };
 
+type SidecarName = "openwork-server" | "owpenbot" | "opencode";
+
+type SidecarTarget =
+  | "darwin-arm64"
+  | "darwin-x64"
+  | "linux-x64"
+  | "linux-arm64"
+  | "windows-x64"
+  | "windows-arm64";
+
 type VersionManifest = {
   dir: string;
   entries: Record<string, VersionInfo>;
 };
 
-type BinarySource = "bundled" | "external";
+type RemoteSidecarAsset = {
+  asset?: string;
+  url?: string;
+  sha256?: string;
+  size?: number;
+};
+
+type RemoteSidecarEntry = {
+  version: string;
+  targets: Record<string, RemoteSidecarAsset>;
+};
+
+type RemoteSidecarManifest = {
+  version: string;
+  generatedAt?: string;
+  entries: Record<string, RemoteSidecarEntry>;
+};
+
+type SidecarConfig = {
+  dir: string;
+  baseUrl: string;
+  manifestUrl: string;
+  target: SidecarTarget | null;
+};
+
+type BinarySource = "bundled" | "external" | "downloaded";
+
+type BinarySourcePreference = "auto" | "bundled" | "downloaded" | "external";
 
 type ResolvedBinary = {
   bin: string;
   source: BinarySource;
   expectedVersion?: string;
+};
+
+type BinaryDiagnostics = {
+  path: string;
+  source: BinarySource;
+  expectedVersion?: string;
+  actualVersion?: string;
+};
+
+type SidecarDiagnostics = {
+  dir: string;
+  baseUrl: string;
+  manifestUrl: string;
+  target: SidecarTarget | null;
+  source: BinarySourcePreference;
+  opencodeSource: BinarySourcePreference;
+  allowExternal: boolean;
 };
 
 type RouterWorkspaceType = "local" | "remote";
@@ -76,10 +130,34 @@ type RouterOpencodeState = {
   startedAt: number;
 };
 
+type RouterBinaryInfo = {
+  path: string;
+  source: BinarySource;
+  expectedVersion?: string;
+  actualVersion?: string;
+};
+
+type RouterBinaryState = {
+  opencode?: RouterBinaryInfo;
+};
+
+type RouterSidecarState = {
+  dir: string;
+  baseUrl: string;
+  manifestUrl: string;
+  target: SidecarTarget | null;
+  source: BinarySourcePreference;
+  opencodeSource: BinarySourcePreference;
+  allowExternal: boolean;
+};
+
 type RouterState = {
   version: number;
   daemon?: RouterDaemonState;
   opencode?: RouterOpencodeState;
+  cliVersion?: string;
+  sidecar?: RouterSidecarState;
+  binaries?: RouterBinaryState;
   activeId: string;
   workspaces: RouterWorkspace[];
 };
@@ -207,6 +285,21 @@ function readNumber(
   return fallback;
 }
 
+function readBinarySource(
+  flags: Map<string, string | boolean>,
+  key: string,
+  fallback: BinarySourcePreference,
+  envKey?: string,
+): BinarySourcePreference {
+  const raw = readFlag(flags, key) ?? (envKey ? process.env[envKey] : undefined);
+  if (!raw) return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === "auto" || normalized === "bundled" || normalized === "downloaded" || normalized === "external") {
+    return normalized as BinarySourcePreference;
+  }
+  throw new Error(`Invalid ${key} value: ${raw}. Use auto|bundled|downloaded|external.`);
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -214,6 +307,49 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function resolveCliVersion(): Promise<string> {
+  const candidates = [
+    join(dirname(process.execPath), "..", "package.json"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+  ];
+
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      try {
+        const raw = await readFile(candidate, "utf8");
+        const parsed = JSON.parse(raw) as { version?: string };
+        if (parsed.version) return parsed.version;
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return FALLBACK_VERSION;
+}
+
+async function readPackageField(field: string): Promise<string | undefined> {
+  const candidates = [
+    join(dirname(process.execPath), "..", "package.json"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+  ];
+
+  for (const candidate of candidates) {
+    if (await fileExists(candidate)) {
+      try {
+        const raw = await readFile(candidate, "utf8");
+        const parsed = JSON.parse(raw) as Record<string, unknown>;
+        const value = parsed[field];
+        if (typeof value === "string" && value.trim()) return value.trim();
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return undefined;
 }
 
 async function isExecutable(path: string): Promise<boolean> {
@@ -395,6 +531,256 @@ async function readVersionManifest(): Promise<VersionManifest | null> {
   return null;
 }
 
+const remoteManifestCache = new Map<string, Promise<RemoteSidecarManifest | null>>();
+
+function resolveSidecarTarget(): SidecarTarget | null {
+  if (process.platform === "darwin") {
+    if (process.arch === "arm64") return "darwin-arm64";
+    if (process.arch === "x64") return "darwin-x64";
+    return null;
+  }
+  if (process.platform === "linux") {
+    if (process.arch === "arm64") return "linux-arm64";
+    if (process.arch === "x64") return "linux-x64";
+    return null;
+  }
+  if (process.platform === "win32") {
+    if (process.arch === "arm64") return "windows-arm64";
+    if (process.arch === "x64") return "windows-x64";
+    return null;
+  }
+  return null;
+}
+
+function resolveSidecarDir(flags: Map<string, string | boolean>): string {
+  const override =
+    readFlag(flags, "sidecar-dir") ??
+    process.env.OPENWRK_SIDECAR_DIR ??
+    process.env.OPENWORK_SIDECAR_DIR;
+  if (override && override.trim()) return resolve(override.trim());
+  return join(resolveRouterDataDir(flags), "sidecars");
+}
+
+function resolveSidecarBaseUrl(flags: Map<string, string | boolean>, cliVersion: string): string {
+  const override = readFlag(flags, "sidecar-base-url") ?? process.env.OPENWRK_SIDECAR_BASE_URL;
+  if (override && override.trim()) return override.trim();
+  return `https://github.com/different-ai/openwork/releases/download/openwrk-v${cliVersion}`;
+}
+
+function resolveSidecarManifestUrl(flags: Map<string, string | boolean>, baseUrl: string): string {
+  const override = readFlag(flags, "sidecar-manifest") ?? process.env.OPENWRK_SIDECAR_MANIFEST_URL;
+  if (override && override.trim()) return override.trim();
+  return `${baseUrl.replace(/\/$/, "")}/openwrk-sidecars.json`;
+}
+
+function resolveSidecarConfig(flags: Map<string, string | boolean>, cliVersion: string): SidecarConfig {
+  const baseUrl = resolveSidecarBaseUrl(flags, cliVersion);
+  return {
+    dir: resolveSidecarDir(flags),
+    baseUrl,
+    manifestUrl: resolveSidecarManifestUrl(flags, baseUrl),
+    target: resolveSidecarTarget(),
+  };
+}
+
+async function fetchRemoteManifest(url: string): Promise<RemoteSidecarManifest | null> {
+  const cached = remoteManifestCache.get(url);
+  if (cached) return cached;
+  const task = (async () => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return null;
+      return (await response.json()) as RemoteSidecarManifest;
+    } catch {
+      return null;
+    }
+  })();
+  remoteManifestCache.set(url, task);
+  return task;
+}
+
+function resolveAssetUrl(baseUrl: string, asset?: string, url?: string): string | null {
+  if (url && url.trim()) return url.trim();
+  if (asset && asset.trim()) return `${baseUrl.replace(/\/$/, "")}/${asset.trim()}`;
+  return null;
+}
+
+function resolveAssetName(asset?: string, url?: string): string | null {
+  if (asset && asset.trim()) return asset.trim();
+  if (url && url.trim()) {
+    try {
+      return basename(new URL(url).pathname);
+    } catch {
+      const parts = url.split("/").filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : null;
+    }
+  }
+  return null;
+}
+
+async function downloadToPath(url: string, dest: string): Promise<void> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to download ${url} (HTTP ${response.status})`);
+  }
+  const buffer = Buffer.from(await response.arrayBuffer());
+  await mkdir(dirname(dest), { recursive: true });
+  const tmpPath = `${dest}.tmp-${randomUUID()}`;
+  await writeFile(tmpPath, buffer);
+  await rename(tmpPath, dest);
+}
+
+async function ensureExecutable(path: string): Promise<void> {
+  if (process.platform === "win32") return;
+  try {
+    await chmod(path, 0o755);
+  } catch {
+    // ignore
+  }
+}
+
+async function downloadSidecarBinary(options: {
+  name: SidecarName;
+  sidecar: SidecarConfig;
+}): Promise<ResolvedBinary | null> {
+  if (!options.sidecar.target) return null;
+  const manifest = await fetchRemoteManifest(options.sidecar.manifestUrl);
+  if (!manifest) return null;
+  const entry = manifest.entries[options.name];
+  if (!entry) return null;
+  const targetInfo = entry.targets[options.sidecar.target];
+  if (!targetInfo) return null;
+
+  const assetName = resolveAssetName(targetInfo.asset, targetInfo.url);
+  const assetUrl = resolveAssetUrl(options.sidecar.baseUrl, targetInfo.asset, targetInfo.url);
+  if (!assetName || !assetUrl) return null;
+
+  const targetDir = join(options.sidecar.dir, entry.version, options.sidecar.target);
+  const targetPath = join(targetDir, assetName);
+  if (await fileExists(targetPath)) {
+    if (targetInfo.sha256) {
+      try {
+        await verifyBinary(targetPath, { version: entry.version, sha256: targetInfo.sha256 });
+        await ensureExecutable(targetPath);
+        return { bin: targetPath, source: "downloaded", expectedVersion: entry.version };
+      } catch {
+        await rm(targetPath, { force: true });
+      }
+    } else {
+      await ensureExecutable(targetPath);
+      return { bin: targetPath, source: "downloaded", expectedVersion: entry.version };
+    }
+  }
+
+  await downloadToPath(assetUrl, targetPath);
+  if (targetInfo.sha256) {
+    await verifyBinary(targetPath, { version: entry.version, sha256: targetInfo.sha256 });
+  }
+  await ensureExecutable(targetPath);
+  return { bin: targetPath, source: "downloaded", expectedVersion: entry.version };
+}
+
+function resolveOpencodeAsset(target: SidecarTarget): string | null {
+  const assets: Record<SidecarTarget, string> = {
+    "darwin-arm64": "opencode-darwin-arm64.zip",
+    "darwin-x64": "opencode-darwin-x64-baseline.zip",
+    "linux-x64": "opencode-linux-x64-baseline.tar.gz",
+    "linux-arm64": "opencode-linux-arm64.tar.gz",
+    "windows-x64": "opencode-windows-x64-baseline.zip",
+    "windows-arm64": "opencode-windows-arm64.zip",
+  };
+  return assets[target] ?? null;
+}
+
+async function runCommand(command: string, args: string[], cwd?: string): Promise<void> {
+  const child = spawn(command, args, { cwd, stdio: "inherit" });
+  const result = await Promise.race([
+    once(child, "exit").then(([code]) => ({ type: "exit" as const, code })),
+    once(child, "error").then(([error]) => ({ type: "error" as const, error })),
+  ]);
+  if (result.type === "error") {
+    throw new Error(`Command failed: ${command} ${args.join(" ")}: ${String(result.error)}`);
+  }
+  if (result.code !== 0) {
+    throw new Error(`Command failed: ${command} ${args.join(" ")}`);
+  }
+}
+
+async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?: string): Promise<string | null> {
+  if (!expectedVersion) return null;
+  if (!sidecar.target) return null;
+
+  const assetOverride = process.env.OPENWRK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
+  const asset = assetOverride?.trim() || resolveOpencodeAsset(sidecar.target);
+  if (!asset) return null;
+
+  const version = expectedVersion.startsWith("v") ? expectedVersion.slice(1) : expectedVersion;
+  const url = `https://github.com/anomalyco/opencode/releases/download/v${version}/${asset}`;
+  const targetDir = join(sidecar.dir, "opencode", version, sidecar.target);
+  const targetPath = join(targetDir, process.platform === "win32" ? "opencode.exe" : "opencode");
+
+  if (await fileExists(targetPath)) {
+    const actual = await readCliVersion(targetPath);
+    if (actual === version) {
+      await ensureExecutable(targetPath);
+      return targetPath;
+    }
+  }
+
+  await mkdir(targetDir, { recursive: true });
+  const stamp = Date.now();
+  const archivePath = join(tmpdir(), `openwrk-opencode-${stamp}-${asset}`);
+  const extractDir = await mkdtemp(join(tmpdir(), "openwrk-opencode-"));
+
+  try {
+    await downloadToPath(url, archivePath);
+    if (process.platform === "win32") {
+      const psQuote = (value: string) => `'${value.replace(/'/g, "''")}'`;
+      const psScript = [
+        "$ErrorActionPreference = 'Stop'",
+        `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
+      ].join("; ");
+      await runCommand("powershell", ["-NoProfile", "-Command", psScript]);
+    } else if (asset.endsWith(".zip")) {
+      await runCommand("unzip", ["-q", archivePath, "-d", extractDir]);
+    } else if (asset.endsWith(".tar.gz")) {
+      await runCommand("tar", ["-xzf", archivePath, "-C", extractDir]);
+    } else {
+      throw new Error(`Unsupported opencode asset type: ${asset}`);
+    }
+
+    const entries = await readdir(extractDir, { withFileTypes: true });
+    const queue = entries.map((entry) => join(extractDir, entry.name));
+    let candidate: string | null = null;
+    while (queue.length) {
+      const current = queue.shift();
+      if (!current) break;
+      const statInfo = await stat(current);
+      if (statInfo.isDirectory()) {
+        const nested = await readdir(current, { withFileTypes: true });
+        queue.push(...nested.map((entry) => join(current, entry.name)));
+        continue;
+      }
+      const base = basename(current);
+      if (base === "opencode" || base === "opencode.exe") {
+        candidate = current;
+        break;
+      }
+    }
+
+    if (!candidate) {
+      throw new Error("OpenCode binary not found after extraction.");
+    }
+
+    await copyFile(candidate, targetPath);
+    await ensureExecutable(targetPath);
+    return targetPath;
+  } finally {
+    await rm(extractDir, { recursive: true, force: true });
+    await rm(archivePath, { force: true });
+  }
+}
+
 async function sha256File(path: string): Promise<string> {
   const data = await readFile(path);
   return createHash("sha256").update(data).digest("hex");
@@ -410,10 +796,16 @@ async function verifyBinary(path: string, expected?: VersionInfo): Promise<void>
 
 async function resolveBundledBinary(manifest: VersionManifest | null, name: string): Promise<string | null> {
   if (!manifest) return null;
-  const bundled = join(manifest.dir, name);
-  if (!(await isExecutable(bundled))) return null;
-  await verifyBinary(bundled, manifest.entries[name]);
-  return bundled;
+  const candidates = [join(manifest.dir, name)];
+  if (process.platform === "win32") {
+    candidates.push(join(manifest.dir, `${name}.exe`));
+  }
+  for (const bundled of candidates) {
+    if (!(await isExecutable(bundled))) continue;
+    await verifyBinary(bundled, manifest.entries[name]);
+    return bundled;
+  }
+  return null;
 }
 
 async function readPackageVersion(path: string): Promise<string | undefined> {
@@ -427,19 +819,46 @@ async function readPackageVersion(path: string): Promise<string | undefined> {
   }
 }
 
+async function resolveOwpenbotRepoDir(): Promise<string | null> {
+  const envPath = process.env.OWPENBOT_DIR?.trim();
+  const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  const repoRoot = resolve(root, "..", "..");
+  const candidates = [envPath, resolve(repoRoot, "packages", "owpenbot")].filter(Boolean) as string[];
+
+  for (const candidate of candidates) {
+    const pkgPath = join(candidate, "package.json");
+    if (await fileExists(pkgPath)) return candidate;
+  }
+
+  return null;
+}
+
 async function resolveExpectedVersion(
   manifest: VersionManifest | null,
-  name: "openwork-server" | "owpenbot",
+  name: SidecarName,
 ): Promise<string | undefined> {
   const manifestVersion = manifest?.entries[name]?.version;
   if (manifestVersion) return manifestVersion;
 
   try {
     const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
-    const localDir = name === "openwork-server" ? "server" : "owpenbot";
-    const localPath = join(root, "..", localDir, "package.json");
-    const localVersion = await readPackageVersion(localPath);
-    if (localVersion) return localVersion;
+    if (name === "openwork-server") {
+      const localPath = join(root, "..", "server", "package.json");
+      const localVersion = await readPackageVersion(localPath);
+      if (localVersion) return localVersion;
+    }
+    if (name === "owpenbot") {
+      const repoDir = await resolveOwpenbotRepoDir();
+      const localPath = repoDir ? join(repoDir, "package.json") : join(root, "..", "owpenbot", "package.json");
+      const localVersion = await readPackageVersion(localPath);
+      if (localVersion) return localVersion;
+    }
+    if (name === "opencode") {
+      const envVersion = process.env.OPENCODE_VERSION?.trim();
+      if (envVersion) return envVersion.startsWith("v") ? envVersion.slice(1) : envVersion;
+      const pkgVersion = await readPackageField("opencodeVersion");
+      if (pkgVersion) return pkgVersion.startsWith("v") ? pkgVersion.slice(1) : pkgVersion;
+    }
   } catch {
     // ignore
   }
@@ -453,7 +872,8 @@ async function resolveExpectedVersion(
     } catch {
       // ignore
     }
-  } else {
+  }
+  if (name === "owpenbot") {
     try {
       const pkgPath = require.resolve("owpenwork/package.json");
       const version = await readPackageVersion(pkgPath);
@@ -532,76 +952,265 @@ async function resolveOpenworkServerBin(options: {
   explicit?: string;
   manifest: VersionManifest | null;
   allowExternal: boolean;
+  sidecar: SidecarConfig;
+  source: BinarySourcePreference;
 }): Promise<ResolvedBinary> {
   if (options.explicit && !options.allowExternal) {
     throw new Error("openwork-server-bin requires --allow-external");
   }
+  if (options.explicit && options.source !== "auto" && options.source !== "external") {
+    throw new Error("openwork-server-bin requires --sidecar-source external or auto");
+  }
 
   const expectedVersion = await resolveExpectedVersion(options.manifest, "openwork-server");
+  const resolveExternal = async (): Promise<ResolvedBinary> => {
+    if (!options.allowExternal) {
+      throw new Error("External openwork-server requires --allow-external");
+    }
+    if (options.explicit) {
+      const resolved = resolveBinPath(options.explicit);
+      if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
+        throw new Error(`openwork-server-bin not found: ${resolved}`);
+      }
+      return { bin: resolved, source: "external", expectedVersion };
+    }
+
+    const require = createRequire(import.meta.url);
+    try {
+      const pkgPath = require.resolve("openwork-server/package.json");
+      const pkgDir = dirname(pkgPath);
+      const binaryPath = join(pkgDir, "dist", "bin", "openwork-server");
+      if (await isExecutable(binaryPath)) {
+        return { bin: binaryPath, source: "external", expectedVersion };
+      }
+      const cliPath = join(pkgDir, "dist", "cli.js");
+      if (await isExecutable(cliPath)) {
+        return { bin: cliPath, source: "external", expectedVersion };
+      }
+    } catch {
+      // ignore
+    }
+
+    return { bin: "openwork-server", source: "external", expectedVersion };
+  };
+
+  if (options.source === "bundled") {
+    const bundled = await resolveBundledBinary(options.manifest, "openwork-server");
+    if (!bundled) {
+      throw new Error("Bundled openwork-server binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+    }
+    return { bin: bundled, source: "bundled", expectedVersion };
+  }
+
+  if (options.source === "downloaded") {
+    const downloaded = await downloadSidecarBinary({ name: "openwork-server", sidecar: options.sidecar });
+    if (!downloaded) {
+      throw new Error("openwork-server download failed. Check sidecar manifest or base URL.");
+    }
+    return downloaded;
+  }
+
+  if (options.source === "external") {
+    return resolveExternal();
+  }
+
   const bundled = await resolveBundledBinary(options.manifest, "openwork-server");
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
   }
 
+  if (options.explicit) {
+    return resolveExternal();
+  }
+
+  const downloaded = await downloadSidecarBinary({ name: "openwork-server", sidecar: options.sidecar });
+  if (downloaded) return downloaded;
+
   if (!options.allowExternal) {
-    throw new Error("Bundled openwork-server binary missing. Use --allow-external for dev or rebuild openwrk.");
+    throw new Error(
+      "Bundled openwork-server binary missing and download failed. Use --allow-external or --sidecar-source external.",
+    );
+  }
+
+  return resolveExternal();
+}
+
+async function resolveOpencodeBin(options: {
+  explicit?: string;
+  manifest: VersionManifest | null;
+  allowExternal: boolean;
+  sidecar: SidecarConfig;
+  source: BinarySourcePreference;
+}): Promise<ResolvedBinary> {
+  if (options.explicit && !options.allowExternal) {
+    throw new Error("opencode-bin requires --allow-external");
+  }
+  if (options.explicit && options.source !== "auto" && options.source !== "external") {
+    throw new Error("opencode-bin requires --opencode-source external or auto");
+  }
+
+  const expectedVersion = await resolveExpectedVersion(options.manifest, "opencode");
+  const resolveExternal = async (): Promise<ResolvedBinary> => {
+    if (!options.allowExternal) {
+      throw new Error("External opencode requires --allow-external");
+    }
+    if (options.explicit) {
+      const resolved = resolveBinPath(options.explicit);
+      if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
+        throw new Error(`opencode-bin not found: ${resolved}`);
+      }
+      return { bin: resolved, source: "external", expectedVersion };
+    }
+    return { bin: "opencode", source: "external", expectedVersion };
+  };
+
+  if (options.source === "bundled") {
+    const bundled = await resolveBundledBinary(options.manifest, "opencode");
+    if (!bundled) {
+      throw new Error("Bundled opencode binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+    }
+    return { bin: bundled, source: "bundled", expectedVersion };
+  }
+
+  if (options.source === "downloaded") {
+    const downloaded = await downloadSidecarBinary({ name: "opencode", sidecar: options.sidecar });
+    if (downloaded) return downloaded;
+    const opencodeDownloaded = await resolveOpencodeDownload(options.sidecar, expectedVersion);
+    if (opencodeDownloaded) {
+      return { bin: opencodeDownloaded, source: "downloaded", expectedVersion };
+    }
+    throw new Error("opencode download failed. Check sidecar manifest or OPENCODE_VERSION.");
+  }
+
+  if (options.source === "external") {
+    return resolveExternal();
+  }
+
+  const bundled = await resolveBundledBinary(options.manifest, "opencode");
+  if (bundled && !(options.allowExternal && options.explicit)) {
+    return { bin: bundled, source: "bundled", expectedVersion };
   }
 
   if (options.explicit) {
-    const resolved = resolveBinPath(options.explicit);
-    if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
-      throw new Error(`openwork-server-bin not found: ${resolved}`);
-    }
-    return { bin: resolved, source: "external", expectedVersion };
+    return resolveExternal();
   }
 
-  const require = createRequire(import.meta.url);
-  try {
-    const pkgPath = require.resolve("openwork-server/package.json");
-    const pkgDir = dirname(pkgPath);
-    const binaryPath = join(pkgDir, "dist", "bin", "openwork-server");
-    if (await isExecutable(binaryPath)) {
-      return { bin: binaryPath, source: "external", expectedVersion };
-    }
-    const cliPath = join(pkgDir, "dist", "cli.js");
-    if (await isExecutable(cliPath)) {
-      return { bin: cliPath, source: "external", expectedVersion };
-    }
-  } catch {
-    // ignore
+  const downloaded = await downloadSidecarBinary({ name: "opencode", sidecar: options.sidecar });
+  if (downloaded) return downloaded;
+
+  const opencodeDownloaded = await resolveOpencodeDownload(options.sidecar, expectedVersion);
+  if (opencodeDownloaded) {
+    return { bin: opencodeDownloaded, source: "downloaded", expectedVersion };
   }
 
-  return { bin: "openwork-server", source: "external", expectedVersion };
+  if (!options.allowExternal) {
+    throw new Error(
+      "Bundled opencode binary missing and download failed. Use --allow-external or --opencode-source external.",
+    );
+  }
+
+  return resolveExternal();
 }
 
 async function resolveOwpenbotBin(options: {
   explicit?: string;
   manifest: VersionManifest | null;
   allowExternal: boolean;
+  sidecar: SidecarConfig;
+  source: BinarySourcePreference;
 }): Promise<ResolvedBinary> {
   if (options.explicit && !options.allowExternal) {
     throw new Error("owpenbot-bin requires --allow-external");
   }
+  if (options.explicit && options.source !== "auto" && options.source !== "external") {
+    throw new Error("owpenbot-bin requires --sidecar-source external or auto");
+  }
 
   const expectedVersion = await resolveExpectedVersion(options.manifest, "owpenbot");
+  const resolveExternal = async (): Promise<ResolvedBinary> => {
+    if (!options.allowExternal) {
+      throw new Error("External owpenbot requires --allow-external");
+    }
+    if (options.explicit) {
+      const resolved = resolveBinPath(options.explicit);
+      if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
+        throw new Error(`owpenbot-bin not found: ${resolved}`);
+      }
+      return { bin: resolved, source: "external", expectedVersion };
+    }
+
+    const repoDir = await resolveOwpenbotRepoDir();
+    if (repoDir) {
+      const binPath = join(repoDir, "dist", "bin", "owpenbot");
+      if (await isExecutable(binPath)) {
+        return { bin: binPath, source: "external", expectedVersion };
+      }
+      const cliPath = join(repoDir, "dist", "cli.js");
+      if (await fileExists(cliPath)) {
+        return { bin: cliPath, source: "external", expectedVersion };
+      }
+    }
+
+    const require = createRequire(import.meta.url);
+    try {
+      const pkgPath = require.resolve("owpenwork/package.json");
+      const pkgDir = dirname(pkgPath);
+      const binaryPath = join(pkgDir, "dist", "bin", "owpenbot");
+      if (await isExecutable(binaryPath)) {
+        return { bin: binaryPath, source: "external", expectedVersion };
+      }
+      const cliPath = join(pkgDir, "dist", "cli.js");
+      if (await isExecutable(cliPath)) {
+        return { bin: cliPath, source: "external", expectedVersion };
+      }
+    } catch {
+      // ignore
+    }
+
+    throw new Error(
+      "owpenbot binary not found. Install the owpenwork dependency or pass --owpenbot-bin with --allow-external.",
+    );
+  };
+
+  if (options.source === "bundled") {
+    const bundled = await resolveBundledBinary(options.manifest, "owpenbot");
+    if (!bundled) {
+      throw new Error("Bundled owpenbot binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+    }
+    return { bin: bundled, source: "bundled", expectedVersion };
+  }
+
+  if (options.source === "downloaded") {
+    const downloaded = await downloadSidecarBinary({ name: "owpenbot", sidecar: options.sidecar });
+    if (!downloaded) {
+      throw new Error("owpenbot download failed. Check sidecar manifest or base URL.");
+    }
+    return downloaded;
+  }
+
+  if (options.source === "external") {
+    return resolveExternal();
+  }
+
   const bundled = await resolveBundledBinary(options.manifest, "owpenbot");
   if (bundled && !(options.allowExternal && options.explicit)) {
     return { bin: bundled, source: "bundled", expectedVersion };
   }
 
-  if (!options.allowExternal) {
-    throw new Error("Bundled owpenbot binary missing. Use --allow-external for dev or rebuild openwrk.");
-  }
-
   if (options.explicit) {
-    const resolved = resolveBinPath(options.explicit);
-    if ((resolved.includes("/") || resolved.startsWith(".")) && !(await fileExists(resolved))) {
-      throw new Error(`owpenbot-bin not found: ${resolved}`);
-    }
-    return { bin: resolved, source: "external", expectedVersion };
+    return resolveExternal();
   }
 
-  return { bin: "owpenbot", source: "external", expectedVersion };
+  const downloaded = await downloadSidecarBinary({ name: "owpenbot", sidecar: options.sidecar });
+  if (downloaded) return downloaded;
+
+  if (!options.allowExternal) {
+    throw new Error(
+      "Bundled owpenbot binary missing and download failed. Use --allow-external or --sidecar-source external.",
+    );
+  }
+
+  return resolveExternal();
 }
 
 function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
@@ -633,6 +1242,9 @@ async function loadRouterState(path: string): Promise<RouterState> {
       version: 1,
       daemon: undefined,
       opencode: undefined,
+      cliVersion: undefined,
+      sidecar: undefined,
+      binaries: undefined,
       activeId: "",
       workspaces: [],
     };
@@ -745,7 +1357,7 @@ function printHelp(): void {
     "  --data-dir <path>         Data dir for openwrk router state",
     "  --daemon-host <host>      Host for openwrk router daemon (default: 127.0.0.1)",
     "  --daemon-port <port>      Port for openwrk router daemon (default: random)",
-    "  --opencode-bin <path>     Path to opencode binary (default: opencode)",
+    "  --opencode-bin <path>     Path to opencode binary (requires --allow-external)",
     "  --opencode-host <host>    Bind host for opencode serve (default: 0.0.0.0)",
     "  --opencode-port <port>    Port for opencode serve (default: random)",
     "  --opencode-workdir <p>    Workdir for router-managed opencode serve",
@@ -764,11 +1376,19 @@ function printHelp(): void {
     "  --connect-host <host>     Override LAN host used for pairing URLs",
     "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
     "  --owpenbot-bin <path>     Path to owpenbot binary (requires --allow-external)",
+    "  --owpenbot-health-port <p> Health server port for owpenbot (default: 3005)",
     "  --no-owpenbot             Disable owpenbot sidecar",
+    "  --owpenbot-required       Exit if owpenbot stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
+    "  --sidecar-dir <path>      Cache directory for downloaded sidecars",
+    "  --sidecar-base-url <url>  Base URL for sidecar downloads",
+    "  --sidecar-manifest <url>  Override sidecar manifest URL",
+    "  --sidecar-source <mode>   auto | bundled | downloaded | external",
+    "  --opencode-source <mode>  auto | bundled | downloaded | external",
     "  --check                   Run health checks then exit",
     "  --check-events            Verify SSE events during check",
     "  --json                    Output JSON when applicable",
+    "  --verbose                 Print additional diagnostics",
     "  --help                    Show help",
     "  --version                 Show version",
   ].join("\n");
@@ -845,6 +1465,7 @@ async function startOpenworkServer(options: {
   opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  owpenbotHealthPort?: number;
 }) {
   const args = [
     "--host",
@@ -892,6 +1513,7 @@ async function startOpenworkServer(options: {
       ...process.env,
       OPENWORK_TOKEN: options.token,
       OPENWORK_HOST_TOKEN: options.hostToken,
+      ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
       ...(options.opencodeBaseUrl ? { OPENWORK_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
       ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
@@ -911,10 +1533,14 @@ async function startOwpenbot(options: {
   opencodeUrl?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  owpenbotHealthPort?: number;
 }) {
   const args = ["start", options.workspace];
   if (options.opencodeUrl) {
-    args.push("--opencode-url", options.opencodeUrl);
+    const supports = await owpenbotSupportsOpencodeUrl(options.bin);
+    if (supports) {
+      args.push("--opencode-url", options.opencodeUrl);
+    }
   }
 
   const resolved = resolveBinCommand(options.bin);
@@ -923,6 +1549,9 @@ async function startOwpenbot(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...(options.opencodeUrl ? { OPENCODE_URL: options.opencodeUrl } : {}),
+      OPENCODE_DIRECTORY: options.workspace,
+      ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
       ...(options.opencodeUsername ? { OPENCODE_SERVER_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENCODE_SERVER_PASSWORD: options.opencodePassword } : {}),
     },
@@ -934,9 +1563,49 @@ async function startOwpenbot(options: {
   return child;
 }
 
+async function owpenbotSupportsOpencodeUrl(bin: string): Promise<boolean> {
+  const resolved = resolveBinCommand(bin);
+  return new Promise((resolve) => {
+    const child = spawn(resolved.command, [...resolved.prefixArgs, "--help"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    const timeout = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      resolve(output.includes("--opencode-url"));
+    }, 1500);
+
+    const onChunk = (chunk: unknown) => {
+      output += String(chunk ?? "");
+    };
+
+    child.stdout?.on("data", onChunk);
+    child.stderr?.on("data", onChunk);
+
+    child.on("exit", () => {
+      clearTimeout(timeout);
+      resolve(output.includes("--opencode-url"));
+    });
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+  });
+}
+
 async function verifyOwpenbotVersion(binary: ResolvedBinary): Promise<string | undefined> {
   const actual = await readCliVersion(binary.bin);
   assertVersionMatch("owpenbot", binary.expectedVersion, actual, binary.bin);
+  return actual;
+}
+
+async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | undefined> {
+  const actual = await readCliVersion(binary.bin);
+  assertVersionMatch("opencode", binary.expectedVersion, actual, binary.bin);
   return actual;
 }
 
@@ -950,7 +1619,7 @@ async function verifyOpenworkServer(input: {
   expectedOpencodeDirectory?: string;
   expectedOpencodeUsername?: string;
   expectedOpencodePassword?: string;
-}) {
+}): Promise<string | undefined> {
   const health = await fetchJson(`${input.baseUrl}/health`);
   const actualVersion = typeof health?.version === "string" ? health.version : undefined;
   assertVersionMatch("openwork-server", input.expectedVersion, actualVersion, `${input.baseUrl}/health`);
@@ -999,6 +1668,8 @@ async function verifyOpenworkServer(input: {
 
   const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
   await fetchJson(`${input.baseUrl}/approvals`, { headers: hostHeaders });
+
+  return actualVersion;
 }
 
 async function runChecks(input: {
@@ -1110,6 +1781,13 @@ function outputError(error: unknown, json: boolean): void {
   console.error(message);
 }
 
+function createVerboseLogger(enabled: boolean) {
+  return (message: string) => {
+    if (!enabled) return;
+    console.log(`[openwrk] ${message}`);
+  };
+}
+
 async function spawnRouterDaemon(args: ParsedArgs, dataDir: string, host: string, port: number) {
   const self = resolveSelfCommand();
   const commandArgs = [
@@ -1131,6 +1809,10 @@ async function spawnRouterDaemon(args: ParsedArgs, dataDir: string, host: string
   const opencodeUsername = readFlag(args.flags, "opencode-username") ?? process.env.OPENWORK_OPENCODE_USERNAME;
   const opencodePassword = readFlag(args.flags, "opencode-password") ?? process.env.OPENWORK_OPENCODE_PASSWORD;
   const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWRK_OPENCODE_CORS;
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const sidecarSource = readFlag(args.flags, "sidecar-source") ?? process.env.OPENWRK_SIDECAR_SOURCE;
+  const opencodeSource = readFlag(args.flags, "opencode-source") ?? process.env.OPENWRK_OPENCODE_SOURCE;
+  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
 
   if (opencodeBin) commandArgs.push("--opencode-bin", opencodeBin);
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
@@ -1139,6 +1821,10 @@ async function spawnRouterDaemon(args: ParsedArgs, dataDir: string, host: string
   if (opencodeUsername) commandArgs.push("--opencode-username", opencodeUsername);
   if (opencodePassword) commandArgs.push("--opencode-password", opencodePassword);
   if (corsValue) commandArgs.push("--cors", corsValue);
+  if (allowExternal) commandArgs.push("--allow-external");
+  if (sidecarSource) commandArgs.push("--sidecar-source", sidecarSource);
+  if (opencodeSource) commandArgs.push("--opencode-source", opencodeSource);
+  if (verbose) commandArgs.push("--verbose");
 
   const child = spawn(self.command, commandArgs, {
     detached: true,
@@ -1308,6 +1994,10 @@ async function runInstanceCommand(args: ParsedArgs) {
 
 async function runRouterDaemon(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
+  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
+  const logVerbose = createVerboseLogger(verbose && !outputJson);
+  const sidecarSource = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
+  const opencodeSource = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
   const dataDir = resolveRouterDataDir(args.flags);
   const statePath = routerStatePath(dataDir);
   let state = await loadRouterState(statePath);
@@ -1318,7 +2008,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     "127.0.0.1",
   );
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWRK_OPENCODE_BIN ?? "opencode";
+  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWRK_OPENCODE_BIN;
   const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWRK_OPENCODE_HOST ?? "127.0.0.1";
   const opencodePassword =
     readFlag(args.flags, "opencode-password") ??
@@ -1344,7 +2034,49 @@ async function runRouterDaemon(args: ParsedArgs) {
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
 
+  const cliVersion = await resolveCliVersion();
+  const sidecar = resolveSidecarConfig(args.flags, cliVersion);
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const manifest = await readVersionManifest();
+  logVerbose(`cli version: ${cliVersion}`);
+  logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
+  logVerbose(`sidecar dir: ${sidecar.dir}`);
+  logVerbose(`sidecar base URL: ${sidecar.baseUrl}`);
+  logVerbose(`sidecar manifest: ${sidecar.manifestUrl}`);
+  logVerbose(`sidecar source: ${sidecarSource}`);
+  logVerbose(`opencode source: ${opencodeSource}`);
+  logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
+  const opencodeBinary = await resolveOpencodeBin({
+    explicit: opencodeBin,
+    manifest,
+    allowExternal,
+    sidecar,
+    source: opencodeSource,
+  });
+  logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
+
   let opencodeChild: ReturnType<typeof spawn> | null = null;
+
+  const updateDiagnostics = (actualVersion?: string) => {
+    state.cliVersion = cliVersion;
+    state.sidecar = {
+      dir: sidecar.dir,
+      baseUrl: sidecar.baseUrl,
+      manifestUrl: sidecar.manifestUrl,
+      target: sidecar.target,
+      source: sidecarSource,
+      opencodeSource,
+      allowExternal,
+    };
+    state.binaries = {
+      opencode: {
+        path: opencodeBinary.bin,
+        source: opencodeBinary.source,
+        expectedVersion: opencodeBinary.expectedVersion,
+        actualVersion,
+      },
+    };
+  };
 
   const ensureOpencode = async () => {
     const existing = state.opencode;
@@ -1356,6 +2088,10 @@ async function runRouterDaemon(args: ParsedArgs) {
       });
       try {
         await waitForOpencodeHealthy(client, 2000, 200);
+        if (!state.sidecar || !state.cliVersion || !state.binaries?.opencode) {
+          updateDiagnostics(state.binaries?.opencode?.actualVersion);
+          await saveRouterState(statePath, state);
+        }
         return { baseUrl: existing.baseUrl, client };
       } catch {
         // restart
@@ -1366,8 +2102,10 @@ async function runRouterDaemon(args: ParsedArgs) {
       await stopChild(opencodeChild);
     }
 
+    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
+    logVerbose(`opencode version: ${opencodeActualVersion ?? "unknown"}`);
     const child = await startOpencode({
-      bin: opencodeBin,
+      bin: opencodeBinary.bin,
       workspace: resolvedWorkdir,
       bindHost: opencodeHost,
       port: opencodePort,
@@ -1389,6 +2127,7 @@ async function runRouterDaemon(args: ParsedArgs) {
       baseUrl,
       startedAt: nowMs(),
     };
+    updateDiagnostics(opencodeActualVersion);
     await saveRouterState(statePath, state);
     return { baseUrl, client };
   };
@@ -1427,16 +2166,19 @@ async function runRouterDaemon(args: ParsedArgs) {
     };
 
     try {
-      if (req.method === "GET" && url.pathname === "/health") {
-        send(200, {
-          ok: true,
-          daemon: state.daemon ?? null,
-          opencode: state.opencode ?? null,
-          activeId: state.activeId,
-          workspaceCount: state.workspaces.length,
-        });
-        return;
-      }
+        if (req.method === "GET" && url.pathname === "/health") {
+          send(200, {
+            ok: true,
+            daemon: state.daemon ?? null,
+            opencode: state.opencode ?? null,
+            activeId: state.activeId,
+            workspaceCount: state.workspaces.length,
+            cliVersion: state.cliVersion ?? null,
+            sidecar: state.sidecar ?? null,
+            binaries: state.binaries ?? null,
+          });
+          return;
+        }
 
       if (req.method === "GET" && url.pathname === "/workspaces") {
         send(200, { activeId: state.activeId, workspaces: state.workspaces });
@@ -1736,11 +2478,15 @@ async function runStart(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const checkOnly = readBool(args.flags, "check", false);
   const checkEvents = readBool(args.flags, "check-events", false);
+  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
+  const logVerbose = createVerboseLogger(verbose && !outputJson);
+  const sidecarSource = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
+  const opencodeSource = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
 
   const workspace = readFlag(args.flags, "workspace") ?? process.env.OPENWORK_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN ?? "opencode";
+  const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
   const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_BIND_HOST ?? "0.0.0.0";
   const opencodePort = await resolvePort(
     readNumber(args.flags, "opencode-port", undefined, "OPENWORK_OPENCODE_PORT"),
@@ -1760,6 +2506,11 @@ async function runStart(args: ParsedArgs) {
     "127.0.0.1",
     DEFAULT_OPENWORK_PORT,
   );
+  const owpenbotHealthPort = await resolvePort(
+    readNumber(args.flags, "owpenbot-health-port", undefined, "OWPENBOT_HEALTH_PORT"),
+    "127.0.0.1",
+    DEFAULT_OWPENBOT_HEALTH_PORT,
+  );
   const openworkToken = readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? randomUUID();
   const openworkHostToken = readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
   const approvalMode =
@@ -1777,23 +2528,51 @@ async function runStart(args: ParsedArgs) {
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
+  const cliVersion = await resolveCliVersion();
+  const sidecar = resolveSidecarConfig(args.flags, cliVersion);
   const manifest = await readVersionManifest();
   const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  logVerbose(`cli version: ${cliVersion}`);
+  logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
+  logVerbose(`sidecar dir: ${sidecar.dir}`);
+  logVerbose(`sidecar base URL: ${sidecar.baseUrl}`);
+  logVerbose(`sidecar manifest: ${sidecar.manifestUrl}`);
+  logVerbose(`sidecar source: ${sidecarSource}`);
+  logVerbose(`opencode source: ${opencodeSource}`);
+  logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
+  const opencodeBinary = await resolveOpencodeBin({
+    explicit: explicitOpencodeBin,
+    manifest,
+    allowExternal,
+    sidecar,
+    source: opencodeSource,
+  });
   const explicitOpenworkServerBin = readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN;
   const explicitOwpenbotBin = readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN;
   const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
+  const owpenbotRequired = readBool(args.flags, "owpenbot-required", false, "OPENWRK_OWPENBOT_REQUIRED");
   const openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,
     manifest,
     allowExternal,
+    sidecar,
+    source: sidecarSource,
   });
   const owpenbotBinary = owpenbotEnabled
     ? await resolveOwpenbotBin({
         explicit: explicitOwpenbotBin,
         manifest,
         allowExternal,
+        sidecar,
+        source: sidecarSource,
       })
     : null;
+  let owpenbotActualVersion: string | undefined;
+  logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
+  logVerbose(`openwork-server bin: ${openworkServerBinary.bin} (${openworkServerBinary.source})`);
+  if (owpenbotBinary) {
+    logVerbose(`owpenbot bin: ${owpenbotBinary.bin} (${owpenbotBinary.source})`);
+  }
 
   const opencodeBaseUrl = `http://127.0.0.1:${opencodePort}`;
   const opencodeConnect = resolveConnectUrl(opencodePort, connectHost);
@@ -1824,149 +2603,205 @@ async function runStart(args: ParsedArgs) {
     void shutdown().then(() => process.exit(1));
   };
 
-  const opencodeChild = await startOpencode({
-    bin: opencodeBin,
-    workspace: resolvedWorkspace,
-    bindHost: opencodeBindHost,
-    port: opencodePort,
-    username: opencodeUsername,
-    password: opencodePassword,
-    corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-  });
-  children.push({ name: "opencode", child: opencodeChild });
-  opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
-  opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
-
-  const authHeaders: Record<string, string> = {};
-  if (opencodeUsername && opencodePassword) {
-    authHeaders.Authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
-  }
-  const opencodeClient = createOpencodeClient({
-    baseUrl: opencodeBaseUrl,
-    directory: resolvedWorkspace,
-    headers: Object.keys(authHeaders).length ? authHeaders : undefined,
-  });
-
-  await waitForOpencodeHealthy(opencodeClient);
-
-  const openworkChild = await startOpenworkServer({
-    bin: openworkServerBinary.bin,
-    host: openworkHost,
-    port: openworkPort,
-    workspace: resolvedWorkspace,
-    token: openworkToken,
-    hostToken: openworkHostToken,
-    approvalMode: approvalMode === "auto" ? "auto" : "manual",
-    approvalTimeoutMs,
-    readOnly,
-    corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-    opencodeBaseUrl: opencodeConnectUrl,
-    opencodeDirectory: resolvedWorkspace,
-    opencodeUsername,
-    opencodePassword,
-  });
-  children.push({ name: "openwork-server", child: openworkChild });
-  openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
-  openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
-
-  await waitForHealthy(openworkBaseUrl);
-
-  await verifyOpenworkServer({
-    baseUrl: openworkBaseUrl,
-    token: openworkToken,
-    hostToken: openworkHostToken,
-    expectedVersion: openworkServerBinary.expectedVersion,
-    expectedWorkspace: resolvedWorkspace,
-    expectedOpencodeBaseUrl: opencodeConnectUrl,
-    expectedOpencodeDirectory: resolvedWorkspace,
-    expectedOpencodeUsername: opencodeUsername,
-    expectedOpencodePassword: opencodePassword,
-  });
-
-  if (owpenbotEnabled) {
-    if (!owpenbotBinary) {
-      throw new Error("Owpenbot binary missing.");
-    }
-    await verifyOwpenbotVersion(owpenbotBinary);
-    const owpenbotChild = await startOwpenbot({
-      bin: owpenbotBinary.bin,
+  try {
+    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
+    const opencodeChild = await startOpencode({
+      bin: opencodeBinary.bin,
       workspace: resolvedWorkspace,
-      opencodeUrl: opencodeConnectUrl,
-      opencodeUsername,
-      opencodePassword,
-    });
-    children.push({ name: "owpenbot", child: owpenbotChild });
-    owpenbotChild.on("exit", (code, signal) => handleExit("owpenbot", code, signal));
-    owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
-  }
-
-  const payload = {
-    workspace: resolvedWorkspace,
-    approval: {
-      mode: approvalMode,
-      timeoutMs: approvalTimeoutMs,
-      readOnly,
-    },
-    opencode: {
-      baseUrl: opencodeBaseUrl,
-      connectUrl: opencodeConnectUrl,
-      username: opencodeUsername,
-      password: opencodePassword,
       bindHost: opencodeBindHost,
       port: opencodePort,
-    },
-    openwork: {
-      baseUrl: openworkBaseUrl,
-      connectUrl: openworkConnectUrl,
+      username: opencodeUsername,
+      password: opencodePassword,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+    });
+    children.push({ name: "opencode", child: opencodeChild });
+    opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
+    opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
+
+    const authHeaders: Record<string, string> = {};
+    if (opencodeUsername && opencodePassword) {
+      authHeaders.Authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
+    }
+    const opencodeClient = createOpencodeClient({
+      baseUrl: opencodeBaseUrl,
+      directory: resolvedWorkspace,
+      headers: Object.keys(authHeaders).length ? authHeaders : undefined,
+    });
+
+    await waitForOpencodeHealthy(opencodeClient);
+
+    const openworkChild = await startOpenworkServer({
+      bin: openworkServerBinary.bin,
       host: openworkHost,
       port: openworkPort,
+      workspace: resolvedWorkspace,
       token: openworkToken,
       hostToken: openworkHostToken,
-    },
-    owpenbot: {
-      enabled: owpenbotEnabled,
-    },
-  };
+      approvalMode: approvalMode === "auto" ? "auto" : "manual",
+      approvalTimeoutMs,
+      readOnly,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+      opencodeBaseUrl: opencodeConnectUrl,
+      opencodeDirectory: resolvedWorkspace,
+      opencodeUsername,
+      opencodePassword,
+      owpenbotHealthPort,
+    });
+    children.push({ name: "openwork-server", child: openworkChild });
+    openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+    openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
 
-  if (outputJson) {
-    console.log(JSON.stringify(payload, null, 2));
-  } else {
-    console.log("Openwrk running");
-    console.log(`Workspace: ${payload.workspace}`);
-    console.log(`OpenCode: ${payload.opencode.baseUrl}`);
-    console.log(`OpenCode connect URL: ${payload.opencode.connectUrl}`);
-    if (payload.opencode.username && payload.opencode.password) {
-      console.log(`OpenCode auth: ${payload.opencode.username} / ${payload.opencode.password}`);
-    }
-    console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
-    console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
-    console.log(`Client token: ${payload.openwork.token}`);
-    console.log(`Host token: ${payload.openwork.hostToken}`);
-  }
+    await waitForHealthy(openworkBaseUrl);
 
-  if (checkOnly) {
-    try {
-      await runChecks({
-        opencodeClient,
-        openworkUrl: openworkBaseUrl,
-        openworkToken,
-        checkEvents,
-      });
-      if (!outputJson) {
-        console.log("Checks: ok");
+    const openworkActualVersion = await verifyOpenworkServer({
+      baseUrl: openworkBaseUrl,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      expectedVersion: openworkServerBinary.expectedVersion,
+      expectedWorkspace: resolvedWorkspace,
+      expectedOpencodeBaseUrl: opencodeConnectUrl,
+      expectedOpencodeDirectory: resolvedWorkspace,
+      expectedOpencodeUsername: opencodeUsername,
+      expectedOpencodePassword: opencodePassword,
+    });
+    logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
+
+    if (owpenbotEnabled) {
+      if (!owpenbotBinary) {
+        throw new Error("Owpenbot binary missing.");
       }
-    } catch (error) {
-      console.error(`Checks failed: ${String(error)}`);
-      await shutdown();
-      process.exit(1);
+      owpenbotActualVersion = await verifyOwpenbotVersion(owpenbotBinary);
+      logVerbose(`owpenbot version: ${owpenbotActualVersion ?? "unknown"}`);
+      const owpenbotChild = await startOwpenbot({
+        bin: owpenbotBinary.bin,
+        workspace: resolvedWorkspace,
+        opencodeUrl: opencodeConnectUrl,
+        opencodeUsername,
+        opencodePassword,
+        owpenbotHealthPort,
+      });
+      children.push({ name: "owpenbot", child: owpenbotChild });
+      owpenbotChild.on("exit", (code, signal) => {
+        if (owpenbotRequired) {
+          handleExit("owpenbot", code, signal);
+          return;
+        }
+        const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
+        console.warn(`[owpenbot] exited (${reason}). Continuing without owpenbot.`);
+      });
+      owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
     }
-    await shutdown();
-    process.exit(0);
-  }
 
-  process.on("SIGINT", () => shutdown().then(() => process.exit(0)));
-  process.on("SIGTERM", () => shutdown().then(() => process.exit(0)));
-  await new Promise(() => undefined);
+    const payload = {
+      workspace: resolvedWorkspace,
+      approval: {
+        mode: approvalMode,
+        timeoutMs: approvalTimeoutMs,
+        readOnly,
+      },
+      opencode: {
+        baseUrl: opencodeBaseUrl,
+        connectUrl: opencodeConnectUrl,
+        username: opencodeUsername,
+        password: opencodePassword,
+        bindHost: opencodeBindHost,
+        port: opencodePort,
+        version: opencodeActualVersion,
+      },
+      openwork: {
+        baseUrl: openworkBaseUrl,
+        connectUrl: openworkConnectUrl,
+        host: openworkHost,
+        port: openworkPort,
+        token: openworkToken,
+        hostToken: openworkHostToken,
+        version: openworkActualVersion,
+      },
+      owpenbot: {
+        enabled: owpenbotEnabled,
+        version: owpenbotEnabled ? owpenbotActualVersion : undefined,
+        healthPort: owpenbotHealthPort,
+      },
+      diagnostics: {
+        cliVersion,
+        sidecar: {
+          dir: sidecar.dir,
+          baseUrl: sidecar.baseUrl,
+          manifestUrl: sidecar.manifestUrl,
+          target: sidecar.target,
+          source: sidecarSource,
+          opencodeSource,
+          allowExternal,
+        } as SidecarDiagnostics,
+        binaries: {
+          opencode: {
+            path: opencodeBinary.bin,
+            source: opencodeBinary.source,
+            expectedVersion: opencodeBinary.expectedVersion,
+            actualVersion: opencodeActualVersion,
+          } as BinaryDiagnostics,
+          openworkServer: {
+            path: openworkServerBinary.bin,
+            source: openworkServerBinary.source,
+            expectedVersion: openworkServerBinary.expectedVersion,
+            actualVersion: openworkActualVersion,
+          } as BinaryDiagnostics,
+          owpenbot: owpenbotBinary
+            ? ({
+                path: owpenbotBinary.bin,
+                source: owpenbotBinary.source,
+                expectedVersion: owpenbotBinary.expectedVersion,
+                actualVersion: owpenbotActualVersion,
+              } as BinaryDiagnostics)
+            : null,
+        },
+      },
+    };
+
+    if (outputJson) {
+      console.log(JSON.stringify(payload, null, 2));
+    } else {
+      console.log("Openwrk running");
+      console.log(`Workspace: ${payload.workspace}`);
+      console.log(`OpenCode: ${payload.opencode.baseUrl}`);
+      console.log(`OpenCode connect URL: ${payload.opencode.connectUrl}`);
+      if (payload.opencode.username && payload.opencode.password) {
+        console.log(`OpenCode auth: ${payload.opencode.username} / ${payload.opencode.password}`);
+      }
+      console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
+      console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
+      console.log(`Client token: ${payload.openwork.token}`);
+      console.log(`Host token: ${payload.openwork.hostToken}`);
+    }
+
+    if (checkOnly) {
+      try {
+        await runChecks({
+          opencodeClient,
+          openworkUrl: openworkBaseUrl,
+          openworkToken,
+          checkEvents,
+        });
+        if (!outputJson) {
+          console.log("Checks: ok");
+        }
+      } catch (error) {
+        console.error(`Checks failed: ${String(error)}`);
+        await shutdown();
+        process.exit(1);
+      }
+      await shutdown();
+      process.exit(0);
+    }
+
+    process.on("SIGINT", () => shutdown().then(() => process.exit(0)));
+    process.on("SIGTERM", () => shutdown().then(() => process.exit(0)));
+    await new Promise(() => undefined);
+  } catch (error) {
+    await shutdown();
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
 
 async function main() {
@@ -1976,7 +2811,7 @@ async function main() {
     return;
   }
   if (readBool(args.flags, "version", false) || args.flags.get("version") === true) {
-    console.log(VERSION);
+    console.log(await resolveCliVersion());
     return;
   }
 

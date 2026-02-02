@@ -7,7 +7,7 @@ Read INFRASTRUCTURE.md
 ## Why OpenWork Exists
 
 **Cowork is closed-source and locked to Claude Max.** We need an open alternative.
-**Mobile-first matters.** People want to run tasks from their phones.
+**Mobile-first matters.** People want to run tasks from their phones, including via messaging surfaces like WhatsApp and Telegram through owpenbot.
 **Slick UI is non-negotiable.** The experience must feel premium, not utilitarian.
 
 ## Agent Guidelines for development
@@ -139,3 +139,18 @@ If the workflow needs to be re-run for an existing tag (e.g. notarization retry)
 * Release: `gh release view vX.Y.Z --repo different-ai/openwork`
 
 Confirm the DMG assets are attached and versioned correctly.
+
+## Skill: Publish openwrk (npm)
+
+This is separate from app release tags. Use `.opencode/skills/openwrk-npm-publish/SKILL.md`.
+
+1.  Ensure the default branch is up to date and clean.
+2.  Bump `packages/headless/package.json` (`version`).
+3.  Commit the bump.
+4.  Build and upload sidecar assets for the same version tag:
+    * `pnpm --filter openwrk build:sidecars`
+    * `gh release create openwrk-vX.Y.Z packages/headless/dist/sidecars/* --repo different-ai/openwork`
+5.  Publish:
+    * `pnpm --filter openwrk publish --access public`
+6.  Verify:
+    * `npm view openwrk version`

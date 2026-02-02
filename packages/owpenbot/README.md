@@ -97,8 +97,8 @@ owpenwork doctor --reset
 
 ## Defaults
 
-- SQLite at `~/.owpenbot/owpenbot.db` unless overridden.
-- Config stored at `~/.owpenbot/owpenbot.json` (created by `owpenwork` or `owpenwork setup`).
+- SQLite at `~/.openwork/owpenbot/owpenbot.db` unless overridden.
+- Config stored at `~/.openwork/owpenbot/owpenbot.json` (created by `owpenwork` or `owpenwork setup`).
 - DM policy defaults to `pairing` unless changed in setup.
 - Group chats are disabled unless `GROUPS_ENABLED=true`.
 

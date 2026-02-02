@@ -3,6 +3,7 @@ mod config;
 mod engine;
 mod fs;
 mod opkg;
+mod openwrk;
 mod openwork_server;
 mod owpenbot;
 mod paths;
@@ -20,6 +21,7 @@ use commands::command_files::{
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
 use commands::misc::{opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
+use commands::openwrk::{openwrk_instance_dispose, openwrk_status, openwrk_workspace_activate};
 use commands::openwork_server::openwork_server_info;
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::opkg::{import_skill, opkg_install};
@@ -35,6 +37,7 @@ use commands::workspace::{
     workspace_openwork_write, workspace_set_active, workspace_update_remote,
 };
 use engine::manager::EngineManager;
+use openwrk::manager::OpenwrkManager;
 use openwork_server::manager::OpenworkServerManager;
 use owpenbot::manager::OwpenbotManager;
 use workspace::watch::WorkspaceWatchState;
@@ -53,6 +56,7 @@ pub fn run() {
 
     builder
         .manage(EngineManager::default())
+        .manage(OpenwrkManager::default())
         .manage(OpenworkServerManager::default())
         .manage(OwpenbotManager::default())
         .manage(WorkspaceWatchState::default())
@@ -62,6 +66,9 @@ pub fn run() {
             engine_info,
             engine_doctor,
             engine_install,
+            openwrk_status,
+            openwrk_workspace_activate,
+            openwrk_instance_dispose,
             openwork_server_info,
             owpenbot_info,
             owpenbot_start,

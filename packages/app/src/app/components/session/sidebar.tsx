@@ -1,4 +1,4 @@
-import { For, Show, createMemo } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import { Check, ChevronDown, Plus } from "lucide-solid";
 
 import type { TodoItem } from "../../types";
@@ -17,11 +17,13 @@ export type SidebarProps = {
   todos: TodoItem[];
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
-  sessions: Array<{ id: string; title: string; slug?: string | null; workspaceLabel?: string | null }>;
+  workspaceName: string;
+  sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   sessionStatusById: Record<string, string>;
   onCreateSession: () => void;
+  onDeleteSession: (id: string) => void;
   newTaskDisabled: boolean;
 };
 
@@ -34,6 +36,47 @@ export default function SessionSidebar(props: SidebarProps) {
     if (!total) return [] as boolean[];
     const completed = activeTodos.filter((todo) => todo.status === "completed").length;
     return Array.from({ length: total }, (_, idx) => idx < completed);
+  });
+
+  const [contextMenu, setContextMenu] = createSignal<null | {
+    sessionId: string;
+    x: number;
+    y: number;
+  }>(null);
+
+  const closeContextMenu = () => setContextMenu(null);
+
+  const openContextMenu = (event: MouseEvent, sessionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ sessionId, x: event.clientX, y: event.clientY });
+  };
+
+  const contextMenuStyle = createMemo(() => {
+    const menu = contextMenu();
+    if (!menu) return undefined;
+    const width = 188;
+    const height = 96;
+    if (typeof window === "undefined") {
+      return { left: `${menu.x}px`, top: `${menu.y}px` };
+    }
+    const maxX = Math.max(12, window.innerWidth - width - 12);
+    const maxY = Math.max(12, window.innerHeight - height - 12);
+    return {
+      left: `${Math.min(menu.x, maxX)}px`,
+      top: `${Math.min(menu.y, maxY)}px`,
+    };
+  });
+
+  createEffect(() => {
+    if (!contextMenu()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeContextMenu();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });
 
   return (
@@ -51,7 +94,7 @@ export default function SessionSidebar(props: SidebarProps) {
 
       <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
         <div>
-          <div class="text-[10px] text-gray-9 uppercase tracking-widest font-semibold mb-3 px-2">Recents</div>
+          <div class="text-xs text-gray-10 font-semibold mb-3 px-2 truncate">{props.workspaceName}</div>
           <div class="space-y-1">
             <For each={props.sessions.slice(0, 8)}>
               {(session) => (
@@ -62,22 +105,16 @@ export default function SessionSidebar(props: SidebarProps) {
                       : "text-gray-11 hover:text-gray-12 hover:bg-gray-2"
                   }`}
                   onClick={() => props.onSelectSession(session.id)}
+                  onContextMenu={(event) => openContextMenu(event, session.id)}
                 >
                     <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
-                      <div class="min-w-0 flex items-center gap-2">
-                        <div class="truncate">{session.title}</div>
-                        <Show when={session.workspaceLabel}>
-                          <div class="shrink-0 text-[9px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-4 text-gray-10 border border-gray-6/50">
-                            {session.workspaceLabel}
-                          </div>
-                        </Show>
-                      </div>
+                      <div class="truncate">{session.title}</div>
                       <Show
                         when={
                           props.sessionStatusById[session.id] &&
-                        props.sessionStatusById[session.id] !== "idle"
-                      }
-                    >
+                          props.sessionStatusById[session.id] !== "idle"
+                        }
+                      >
                       <span
                         class={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
                           props.sessionStatusById[session.id] === "running"
@@ -141,6 +178,47 @@ export default function SessionSidebar(props: SidebarProps) {
           </Show>
         </div>
       </div>
+
+      <Show when={contextMenu()}>
+        {(menu) => (
+          <div
+            class="fixed inset-0 z-50"
+            onClick={closeContextMenu}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              closeContextMenu();
+            }}
+          >
+            <div
+              class="fixed w-44 rounded-xl border border-gray-6 bg-gray-1 shadow-2xl shadow-gray-12/10 p-1"
+              style={contextMenuStyle()}
+              role="menu"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                class="w-full text-left px-3 py-2 text-sm rounded-lg text-gray-12 hover:bg-gray-2 transition-colors"
+                role="menuitem"
+                onClick={() => {
+                  props.onCreateSession();
+                  closeContextMenu();
+                }}
+              >
+                New task
+              </button>
+              <button
+                class="w-full text-left px-3 py-2 text-sm rounded-lg text-red-11 hover:bg-red-1/40 transition-colors"
+                role="menuitem"
+                onClick={() => {
+                  props.onDeleteSession(menu().sessionId);
+                  closeContextMenu();
+                }}
+              >
+                Delete session
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

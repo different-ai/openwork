@@ -36,18 +36,26 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
   }));
 }
 
-export async function addMcp(workspaceRoot: string, name: string, config: Record<string, unknown>): Promise<void> {
+export async function addMcp(
+  workspaceRoot: string,
+  name: string,
+  config: Record<string, unknown>,
+): Promise<{ action: "added" | "updated" }> {
   validateMcpName(name);
   validateMcpConfig(config);
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
+  const existed = Object.prototype.hasOwnProperty.call(mcpMap, name);
   mcpMap[name] = config;
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  return { action: existed ? "updated" : "added" };
 }
 
-export async function removeMcp(workspaceRoot: string, name: string): Promise<void> {
+export async function removeMcp(workspaceRoot: string, name: string): Promise<boolean> {
   const { data } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const mcpMap = getMcpConfig(data);
+  if (!Object.prototype.hasOwnProperty.call(mcpMap, name)) return false;
   delete mcpMap[name];
   await updateJsoncTopLevel(opencodeConfigPath(workspaceRoot), { mcp: mcpMap });
+  return true;
 }

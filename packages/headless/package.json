@@ -1,25 +1,25 @@
 {
   "name": "openwrk",
-  "version": "0.1.5",
+  "version": "0.1.15",
   "description": "Headless OpenWork host orchestrator for OpenCode + OpenWork server + Owpenbot",
   "type": "module",
+  "opencodeVersion": "1.1.45",
   "bin": {
     "openwrk": "dist/openwrk"
   },
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "build:bin": "pnpm --filter openwork-server build:bin && pnpm --filter owpenwork build:bin && bun build --compile src/cli.ts --outfile dist/openwrk && bun scripts/build-bin.ts",
+    "build:bin": "node scripts/clean-dist.mjs && bun build --compile src/cli.ts --outfile dist/openwrk",
+    "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun build --compile src/cli.ts --outfile dist/openwrk && bun scripts/build-bin.ts",
+    "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:router": "pnpm build && node scripts/router.mjs",
     "prepublishOnly": "pnpm build:bin"
   },
   "files": [
     "dist",
-    "README.md",
-    "dist/openwork-server",
-    "dist/owpenbot",
-    "dist/versions.json"
+    "README.md"
   ],
   "repository": {
     "type": "git",
@@ -43,7 +43,8 @@
   },
   "dependencies": {
     "@opencode-ai/sdk": "^1.1.31",
-    "openwork-server": "^0.1.0"
+    "openwork-server": "0.1.2",
+    "owpenwork": "0.1.19"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

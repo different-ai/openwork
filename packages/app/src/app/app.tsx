@@ -56,6 +56,7 @@ import type {
   DashboardTab,
   MessageWithParts,
   Mode,
+  EngineRuntime,
   ModelOption,
   ModelRef,
   OnboardingStep,
@@ -129,7 +130,9 @@ import {
   schedulerDeleteJob,
   schedulerListJobs,
   openworkServerInfo,
+  openwrkStatus,
   owpenbotInfo,
+  type OpenwrkStatus,
   type OpenworkServerInfo,
   type OwpenbotInfo,
 } from "./lib/tauri";
@@ -141,6 +144,7 @@ import {
   clearOpenworkServerSettings,
   type OpenworkAuditEntry,
   type OpenworkServerCapabilities,
+  type OpenworkServerDiagnostics,
   type OpenworkServerStatus,
   type OpenworkServerSettings,
   OpenworkServerError,
@@ -228,6 +232,8 @@ export default function App() {
     isTauriRuntime() ? "sidecar" : "path"
   );
 
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("direct");
+
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
 
@@ -238,7 +244,9 @@ export default function App() {
   const [openworkServerCheckedAt, setOpenworkServerCheckedAt] = createSignal<number | null>(null);
   const [openworkServerWorkspaceId, setOpenworkServerWorkspaceId] = createSignal<string | null>(null);
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
+  const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
   const [owpenbotInfoState, setOwpenbotInfoState] = createSignal<OwpenbotInfo | null>(null);
+  const [openwrkStatusState, setOpenwrkStatusState] = createSignal<OpenwrkStatus | null>(null);
   const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
@@ -431,6 +439,43 @@ export default function App() {
   });
 
   createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!developerMode()) {
+      setOpenworkServerDiagnostics(null);
+      return;
+    }
+
+    const client = openworkServerClient();
+    if (!client || openworkServerStatus() === "disconnected") {
+      setOpenworkServerDiagnostics(null);
+      return;
+    }
+
+    let active = true;
+    let busy = false;
+
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const status = await client.status();
+        if (active) setOpenworkServerDiagnostics(status);
+      } catch {
+        if (active) setOpenworkServerDiagnostics(null);
+      } finally {
+        busy = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 10_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
     if (!isTauriRuntime()) return;
     if (!developerMode()) return;
 
@@ -468,6 +513,32 @@ export default function App() {
         if (active) setOwpenbotInfoState(info);
       } catch {
         if (active) setOwpenbotInfoState(null);
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 10_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!developerMode()) {
+      setOpenwrkStatusState(null);
+      return;
+    }
+
+    let active = true;
+
+    const run = async () => {
+      try {
+        const status = await openwrkStatus();
+        if (active) setOpenwrkStatusState(status);
+      } catch {
+        if (active) setOpenwrkStatusState(null);
       }
     };
 
@@ -744,6 +815,26 @@ export default function App() {
     }
 
     await renameSession(sessionID, trimmed);
+  }
+
+  async function deleteSessionById(sessionID: string) {
+    const trimmed = sessionID.trim();
+    if (!trimmed) return;
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
+    unwrap(await c.session.delete(params));
+    await loadSessions(root || undefined).catch(() => undefined);
+
+    const nextStatus = { ...sessionStatusById() };
+    if (nextStatus[trimmed]) {
+      delete nextStatus[trimmed];
+      setSessionStatusById(nextStatus);
+    }
   }
 
   async function openConnectFlow() {
@@ -1041,48 +1132,6 @@ export default function App() {
     abortRefreshes,
   } = extensionsStore;
 
-  const refreshScheduledJobs = async (options?: { force?: boolean }) => {
-    if (scheduledJobsBusy() && !options?.force) return;
-
-    if (!isTauriRuntime()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    if (isWindowsPlatform()) {
-      setScheduledJobs([]);
-      setScheduledJobsStatus(null);
-      return;
-    }
-
-    setScheduledJobsBusy(true);
-    setScheduledJobsStatus(null);
-
-    try {
-      const jobs = await schedulerListJobs();
-      setScheduledJobs(jobs);
-      setScheduledJobsUpdatedAt(Date.now());
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setScheduledJobs([]);
-      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
-    } finally {
-      setScheduledJobsBusy(false);
-    }
-  };
-
-  const deleteScheduledJob = async (name: string) => {
-    if (!isTauriRuntime()) {
-      throw new Error("Scheduled tasks require the desktop app.");
-    }
-    if (isWindowsPlatform()) {
-      throw new Error("Scheduler is not supported on Windows yet.");
-    }
-    const job = await schedulerDeleteJob(name);
-    setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
-    return job;
-  };
   const globalSync = useGlobalSync();
   const providers = createMemo(() => globalSync.data.provider.all ?? []);
   const providerDefaults = createMemo(() => globalSync.data.provider.default ?? {});
@@ -1275,14 +1324,46 @@ export default function App() {
     isWindowsPlatform,
     openworkServerSettings,
     updateOpenworkServerSettings,
+    openworkServerClient,
     onEngineStable: () => setReloadLastFinishedAtRef(Date.now()),
+    engineRuntime,
   });
 
   createEffect(() => {
     if (mode() !== "client") return;
     const active = workspaceStore.activeWorkspaceDisplay();
     if (active.workspaceType === "remote" && active.remoteType === "openwork") {
-      setOpenworkServerWorkspaceId(active.openworkWorkspaceId ?? null);
+      const storedId = active.openworkWorkspaceId ?? null;
+      if (storedId) {
+        setOpenworkServerWorkspaceId(storedId);
+        return;
+      }
+
+      const client = openworkServerClient();
+      if (!client || openworkServerStatus() !== "connected") {
+        setOpenworkServerWorkspaceId(null);
+        return;
+      }
+
+      let cancelled = false;
+
+      const resolveWorkspace = async () => {
+        try {
+          const response = await client.listWorkspaces();
+          if (cancelled) return;
+          const match = response.items?.[0];
+          setOpenworkServerWorkspaceId(match?.id ?? null);
+        } catch {
+          if (!cancelled) setOpenworkServerWorkspaceId(null);
+        }
+      };
+
+      void resolveWorkspace();
+
+      onCleanup(() => {
+        cancelled = true;
+      });
+
       return;
     }
     setOpenworkServerWorkspaceId(null);
@@ -1304,10 +1385,9 @@ export default function App() {
       try {
         const response = await client.listWorkspaces();
         if (cancelled) return;
-        const match = response.items.find(
-          (entry) => normalizeDirectoryPath(entry.path) === root,
-        );
-        setOpenworkServerWorkspaceId(match?.id ?? null);
+        const items = Array.isArray(response.items) ? response.items : [];
+        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
+        setOpenworkServerWorkspaceId(response.activeId ?? match?.id ?? null);
       } catch {
         if (!cancelled) setOpenworkServerWorkspaceId(null);
       }
@@ -1351,8 +1431,9 @@ export default function App() {
         const response = await client.listWorkspaces();
         if (!active) return;
         const items = Array.isArray(response.items) ? response.items : [];
-        const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : items[0];
-        setDevtoolsWorkspaceId(match?.id ?? null);
+        const activeMatch = response.activeId ? items.find((item) => item.id === response.activeId) : null;
+        const match = root ? items.find((item) => normalizeDirectoryPath(item.path) === root) : activeMatch ?? items[0];
+        setDevtoolsWorkspaceId(activeMatch?.id ?? match?.id ?? null);
       } catch {
         if (active) setDevtoolsWorkspaceId(null);
       }
@@ -1878,6 +1959,58 @@ export default function App() {
 
   loadCommandsRef = loadCommands;
 
+  const [openworkReloadCursor, setOpenworkReloadCursor] = createSignal<number | null>(null);
+  const [openworkReloadUnsupported, setOpenworkReloadUnsupported] = createSignal(false);
+
+  const resolveOpenworkReloadTarget = () => {
+    if (openworkServerStatus() !== "connected") return null;
+    const client = openworkServerClient();
+    if (!client) return null;
+    const workspaceId = openworkServerWorkspaceId();
+    if (!workspaceId) return null;
+    return { client, workspaceId };
+  };
+
+  const canReloadViaOpenworkServer = createMemo(() => Boolean(resolveOpenworkReloadTarget()));
+
+  const canReloadWorkspace = createMemo(() => {
+    if (canReloadViaOpenworkServer()) return true;
+    if (mode() !== "host") return false;
+    if (!isTauriRuntime()) return false;
+    return true;
+  });
+
+  const reloadWorkspaceEngineFromUi = async () => {
+    const target = resolveOpenworkReloadTarget();
+    if (target) {
+      try {
+        await target.client.reloadEngine(target.workspaceId);
+        return true;
+      } catch (error) {
+        if (error instanceof OpenworkServerError && error.status === 404) {
+          if (error.code === "workspace_not_found") {
+            const response = await target.client.listWorkspaces();
+            const workspaceId = response.items?.[0]?.id;
+            if (workspaceId) {
+              setOpenworkServerWorkspaceId(workspaceId);
+              await target.client.reloadEngine(workspaceId);
+              return true;
+            }
+          }
+          if (mode() === "host" && isTauriRuntime()) {
+            return workspaceStore.reloadWorkspaceEngine();
+          }
+          throw new Error("OpenWork server reload endpoint not found. Update the host to enable reloads.");
+        }
+        throw error;
+      }
+    }
+    if (mode() !== "host" || !isTauriRuntime()) {
+      throw new Error("Reload is unavailable for this workspace.");
+    }
+    return workspaceStore.reloadWorkspaceEngine();
+  };
+
   const systemState = createSystemState({
     client,
     mode,
@@ -1886,7 +2019,8 @@ export default function App() {
     refreshPlugins,
     refreshSkills,
     refreshMcpServers,
-    reloadWorkspaceEngine: () => workspaceStore.reloadWorkspaceEngine(),
+    reloadWorkspaceEngine: reloadWorkspaceEngineFromUi,
+    canReloadWorkspaceEngine: () => canReloadWorkspace(),
     setProviders,
     setProviderDefaults,
     setProviderConnectedIds,
@@ -1970,6 +2104,74 @@ export default function App() {
     markReloadRequiredRaw(reason, options?.trigger);
   };
 
+  const openworkReloadKey = createMemo(
+    () => `${openworkServerWorkspaceId() ?? ""}|${openworkServerUrl().trim()}`,
+  );
+
+  createEffect(() => {
+    openworkReloadKey();
+    setOpenworkReloadCursor(null);
+    setOpenworkReloadUnsupported(false);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (openworkReloadUnsupported()) return;
+    const client = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    if (!client || openworkServerStatus() !== "connected" || !workspaceId) return;
+
+    let active = true;
+    let busy = false;
+
+    const run = async () => {
+      if (busy) return;
+      busy = true;
+      try {
+        const response = await client.listReloadEvents(workspaceId, {
+          since: openworkReloadCursor() ?? undefined,
+        });
+        if (!active) return;
+        const items = Array.isArray(response.items) ? response.items : [];
+        for (const entry of items) {
+          if (reloadReasons().includes(entry.reason)) {
+            markReloadRequiredRaw(entry.reason, entry.trigger);
+          } else {
+            markReloadRequired(entry.reason, { trigger: entry.trigger });
+          }
+        }
+        if (typeof response.cursor === "number") {
+          setOpenworkReloadCursor(response.cursor);
+        } else if (items.length) {
+          setOpenworkReloadCursor(items[items.length - 1].seq);
+        }
+      } catch (error) {
+        if (error instanceof OpenworkServerError && error.status === 404) {
+          if (error.code === "workspace_not_found") {
+            try {
+              const response = await client.listWorkspaces();
+              const nextWorkspaceId = response.items?.[0]?.id ?? null;
+              setOpenworkServerWorkspaceId(nextWorkspaceId);
+            } catch {
+              setOpenworkServerWorkspaceId(null);
+            }
+          } else {
+            setOpenworkReloadUnsupported(true);
+          }
+        }
+      } finally {
+        busy = false;
+      }
+    };
+
+    run();
+    const interval = window.setInterval(run, 8_000);
+    onCleanup(() => {
+      active = false;
+      window.clearInterval(interval);
+    });
+  });
+
   const extractReloadTriggerFromPath = (reason: ReloadReason, rawPath?: string): ReloadTrigger | null => {
     if (!rawPath) return null;
     const normalized = rawPath.replace(/\\/g, "/");
@@ -2037,7 +2239,7 @@ export default function App() {
   const reloadBlockedReason = createMemo(() => {
     if (!reloadRequired()) return null;
     if (!client()) return t("reload.toast_blocked_connect", currentLocale());
-    if (mode() !== "host") return t("reload.toast_blocked_host", currentLocale());
+    if (!canReloadWorkspace()) return t("reload.toast_blocked_host", currentLocale());
     if (anyActiveRuns()) return t("reload.toast_blocked_runs", currentLocale());
     return null;
   });
@@ -2124,6 +2326,112 @@ export default function App() {
     stopHost,
     setEngineInstallLogs,
   } = workspaceStore;
+
+  // Scheduler helpers - must be defined after workspaceStore
+  const resolveOpenworkScheduler = () => {
+    const isRemoteWorkspace = workspaceStore.activeWorkspaceDisplay().workspaceType === "remote";
+    if (!isRemoteWorkspace) return null;
+    const client = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    if (openworkServerStatus() !== "connected" || !client || !workspaceId) return null;
+    return { client, workspaceId };
+  };
+
+  const scheduledJobsSource = createMemo<"local" | "remote">(() => {
+    return workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
+  });
+
+  const scheduledJobsSourceReady = createMemo(() => {
+    if (scheduledJobsSource() !== "remote") return true;
+    const client = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    return openworkServerStatus() === "connected" && Boolean(client && workspaceId);
+  });
+
+  const refreshScheduledJobs = async (options?: { force?: boolean }) => {
+    if (scheduledJobsBusy() && !options?.force) return;
+
+    if (scheduledJobsSource() === "remote") {
+      const scheduler = resolveOpenworkScheduler();
+      if (!scheduler) {
+        setScheduledJobs([]);
+        const status =
+          openworkServerStatus() === "disconnected"
+            ? "OpenWork server unavailable. Connect to sync scheduled tasks."
+            : openworkServerStatus() === "limited"
+              ? "OpenWork server needs a token to load scheduled tasks."
+              : "OpenWork server not ready.";
+        setScheduledJobsStatus(status);
+        return;
+      }
+
+      setScheduledJobsBusy(true);
+      setScheduledJobsStatus(null);
+
+      try {
+        const response = await scheduler.client.listScheduledJobs(scheduler.workspaceId);
+        const jobs = Array.isArray(response.items) ? response.items : [];
+        setScheduledJobs(jobs);
+        setScheduledJobsUpdatedAt(Date.now());
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setScheduledJobs([]);
+        setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+      } finally {
+        setScheduledJobsBusy(false);
+      }
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setScheduledJobs([]);
+      setScheduledJobsStatus(null);
+      return;
+    }
+
+    if (isWindowsPlatform()) {
+      setScheduledJobs([]);
+      setScheduledJobsStatus(null);
+      return;
+    }
+
+    setScheduledJobsBusy(true);
+    setScheduledJobsStatus(null);
+
+    try {
+      const jobs = await schedulerListJobs();
+      setScheduledJobs(jobs);
+      setScheduledJobsUpdatedAt(Date.now());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setScheduledJobs([]);
+      setScheduledJobsStatus(message || "Failed to load scheduled tasks.");
+    } finally {
+      setScheduledJobsBusy(false);
+    }
+  };
+
+  const deleteScheduledJob = async (name: string) => {
+    if (scheduledJobsSource() === "remote") {
+      const scheduler = resolveOpenworkScheduler();
+      if (!scheduler) {
+        throw new Error("OpenWork server unavailable. Connect to sync scheduled tasks.");
+      }
+      const response = await scheduler.client.deleteScheduledJob(scheduler.workspaceId, name);
+      setScheduledJobs((current) => current.filter((entry) => entry.slug !== response.job.slug));
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      throw new Error("Scheduled tasks require the desktop app.");
+    }
+    if (isWindowsPlatform()) {
+      throw new Error("Scheduler is not supported on Windows yet.");
+    }
+    const job = await schedulerDeleteJob(name);
+    setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
+    return;
+  };
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
@@ -2929,6 +3237,13 @@ export default function App() {
           setEngineSource(storedEngineSource);
         }
 
+        const storedEngineRuntime = window.localStorage.getItem(
+          "openwork.engineRuntime"
+        );
+        if (storedEngineRuntime === "direct" || storedEngineRuntime === "openwrk") {
+          setEngineRuntime(storedEngineRuntime);
+        }
+
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
         if (parsedDefaultModel) {
@@ -3298,6 +3613,15 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      window.localStorage.setItem("openwork.engineRuntime", engineRuntime());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
       window.localStorage.setItem(
         MODEL_PREF_KEY,
         formatModelRef(defaultModel())
@@ -3616,13 +3940,16 @@ export default function App() {
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
     openworkServerCapabilities: devtoolsCapabilities(),
+    openworkServerDiagnostics: openworkServerDiagnostics(),
     openworkServerWorkspaceId: resolvedDevtoolsWorkspaceId(),
     openworkAuditEntries: openworkAuditEntries(),
     openworkAuditStatus: openworkAuditStatus(),
     openworkAuditError: openworkAuditError(),
     opencodeConnectStatus: opencodeConnectStatus(),
     engineInfo: workspaceStore.engine(),
+    openwrkStatus: openwrkStatusState(),
     owpenbotInfo: owpenbotInfoState(),
+    engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
     updateOpenworkServerSettings,
     resetOpenworkServerSettings,
     testOpenworkServerConnection,
@@ -3651,6 +3978,8 @@ export default function App() {
     })),
     sessionStatusById: activeSessionStatusById(),
     scheduledJobs: scheduledJobs(),
+    scheduledJobsSource: scheduledJobsSource(),
+    scheduledJobsSourceReady: scheduledJobsSourceReady(),
     scheduledJobsStatus: scheduledJobsStatus(),
     scheduledJobsBusy: scheduledJobsBusy(),
     scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
@@ -3728,6 +4057,8 @@ export default function App() {
     anyActiveRuns: anyActiveRuns(),
     engineSource: engineSource(),
     setEngineSource,
+    engineRuntime: engineRuntime(),
+    setEngineRuntime,
     isWindows: isWindowsPlatform(),
     toggleDeveloperMode: () => setDeveloperMode((v) => !v),
     developerMode: developerMode(),
@@ -3882,6 +4213,7 @@ export default function App() {
     commandRegistryItems,
     registerCommand: commandRegistry.registerCommand,
     searchFiles: searchWorkspaceFiles,
+    deleteSession: deleteSessionById,
     onTryNotionPrompt: () => {
       setPrompt("setup my crm");
       setTryNotionPromptVisible(false);

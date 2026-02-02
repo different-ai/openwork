@@ -3,7 +3,7 @@ set -euo pipefail
 
 OWPENBOT_REF="${OWPENBOT_REF:-dev}"
 OWPENBOT_REPO="${OWPENBOT_REPO:-https://github.com/different-ai/openwork.git}"
-OWPENBOT_INSTALL_DIR="${OWPENBOT_INSTALL_DIR:-$HOME/.owpenbot/openwork}"
+OWPENBOT_INSTALL_DIR="${OWPENBOT_INSTALL_DIR:-$HOME/.openwork/owpenbot/openwork}"
 OWPENBOT_BIN_DIR="${OWPENBOT_BIN_DIR:-$HOME/.local/bin}"
 OWPENBOT_INSTALL_METHOD="${OWPENBOT_INSTALL_METHOD:-npm}"
 
@@ -12,7 +12,7 @@ usage() {
 Owpenbot installer (WhatsApp-first)
 
 Environment variables:
-  OWPENBOT_INSTALL_DIR  Install directory (default: ~/.owpenbot/openwork)
+  OWPENBOT_INSTALL_DIR  Install directory (default: ~/.openwork/owpenbot/openwork)
   OWPENBOT_REPO         Git repo (default: https://github.com/different-ai/openwork.git)
   OWPENBOT_REF          Git ref/branch (default: dev)
   OWPENBOT_BIN_DIR      Bin directory for owpenbot shim (default: ~/.local/bin)
@@ -102,7 +102,7 @@ else
       cat <<EOF > "$ENV_PATH"
 OPENCODE_URL=http://127.0.0.1:4096
 OPENCODE_DIRECTORY=
-WHATSAPP_AUTH_DIR=~/.owpenbot/whatsapp
+WHATSAPP_AUTH_DIR=~/.openwork/owpenbot/whatsapp
 EOF
       echo "Created $ENV_PATH (minimal)"
     fi

@@ -132,7 +132,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 360
     env:
-      MACOS_NOTARIZE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.notarize || vars.MACOS_NOTARIZE || 'false' }}
+      MACOS_NOTARIZE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.notarize || vars.MACOS_NOTARIZE || 'true' }}
 
     strategy:
       fail-fast: false

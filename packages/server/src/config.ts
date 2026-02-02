@@ -19,6 +19,8 @@ interface CliArgs {
   workspaces: string[];
   corsOrigins?: string[];
   readOnly?: boolean;
+  verbose?: boolean;
+  version?: boolean;
   help?: boolean;
 }
 
@@ -47,6 +49,14 @@ export function parseCliArgs(argv: string[]): CliArgs {
     if (!value) continue;
     if (value === "--help" || value === "-h") {
       args.help = true;
+      continue;
+    }
+    if (value === "--version") {
+      args.version = true;
+      continue;
+    }
+    if (value === "--verbose") {
+      args.verbose = true;
       continue;
     }
     if (value === "--config") {
@@ -145,6 +155,8 @@ export function printHelp(): void {
     "  --workspace <path>       Workspace root (repeatable)",
     "  --cors <origins>          Comma-separated origins or *",
     "  --read-only              Disable writes",
+    "  --verbose                Print resolved config",
+    "  --version                Show version",
   ].join("\n");
   console.log(message);
 }
@@ -161,7 +173,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const configDir = dirname(configPath);
 
   const envWorkspaces = parseList(process.env.OPENWORK_WORKSPACES);
-  const workspaceConfigs: WorkspaceConfig[] =
+  let workspaceConfigs: WorkspaceConfig[] =
     cli.workspaces.length > 0
       ? cli.workspaces.map((path) => ({ path }))
       : envWorkspaces.length > 0
@@ -178,13 +190,18 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const opencodePassword = cli.opencodePassword ?? envOpencodePassword ?? fileConfig.opencodePassword;
 
   if (workspaceConfigs.length > 0 && (opencodeBaseUrl || opencodeDirectory || opencodeUsername || opencodePassword)) {
-    workspaceConfigs[0] = {
-      ...workspaceConfigs[0],
-      baseUrl: opencodeBaseUrl ?? workspaceConfigs[0].baseUrl,
-      directory: opencodeDirectory ?? workspaceConfigs[0].directory,
-      opencodeUsername: opencodeUsername ?? workspaceConfigs[0].opencodeUsername,
-      opencodePassword: opencodePassword ?? workspaceConfigs[0].opencodePassword,
-    };
+    const allowDirectoryOverride = workspaceConfigs.length === 1 && opencodeDirectory;
+    workspaceConfigs = workspaceConfigs.map((workspace, index) => {
+      const nextDirectory =
+        workspace.directory ?? (allowDirectoryOverride && index === 0 ? opencodeDirectory : undefined);
+      return {
+        ...workspace,
+        baseUrl: workspace.baseUrl ?? opencodeBaseUrl,
+        directory: nextDirectory,
+        opencodeUsername: workspace.opencodeUsername ?? opencodeUsername,
+        opencodePassword: workspace.opencodePassword ?? opencodePassword,
+      };
+    });
   }
 
   const workspaces = buildWorkspaceInfos(workspaceConfigs, configDir);
@@ -251,6 +268,7 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     port: Number.isNaN(port) ? DEFAULT_PORT : port,
     token,
     hostToken,
+    configPath,
     approval,
     corsOrigins,
     workspaces,

@@ -2,8 +2,8 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { Logger } from "pino";
 
-import type { Config, ChannelName } from "./config.js";
-import { normalizeWhatsAppId } from "./config.js";
+import type { Config, ChannelName, OwpenbotConfigFile } from "./config.js";
+import { normalizeWhatsAppId, readConfigFile, writeConfigFile } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
@@ -72,6 +72,33 @@ const CHANNEL_LABELS: Record<ChannelName, string> = {
 };
 
 const TYPING_INTERVAL_MS = 6000;
+
+// Model presets for quick switching
+const MODEL_PRESETS: Record<string, ModelRef> = {
+  opus: { providerID: "anthropic", modelID: "claude-opus-4-5-20251101" },
+  codex: { providerID: "openai", modelID: "gpt-5.2-codex" },
+};
+
+// Per-user model overrides (channel:peerId -> ModelRef)
+const userModelOverrides = new Map<string, ModelRef>();
+
+function getUserModelKey(channel: ChannelName, peerId: string): string {
+  return `${channel}:${peerId}`;
+}
+
+function getUserModel(channel: ChannelName, peerId: string, defaultModel?: ModelRef): ModelRef | undefined {
+  const key = getUserModelKey(channel, peerId);
+  return userModelOverrides.get(key) ?? defaultModel;
+}
+
+function setUserModel(channel: ChannelName, peerId: string, model: ModelRef | undefined): void {
+  const key = getUserModelKey(channel, peerId);
+  if (model) {
+    userModelOverrides.set(key, model);
+  } else {
+    userModelOverrides.delete(key);
+  }
+}
 
 export async function startBridge(config: Config, logger: Logger, reporter?: BridgeReporter) {
   const reportStatus = reporter?.onStatus;
@@ -198,6 +225,9 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   await refreshHealth();
   const healthTimer = setInterval(refreshHealth, 30_000);
 
+  // Mutable runtime state for groups (persisted to config file)
+  let groupsEnabled = config.groupsEnabled;
+
   let stopHealthServer: (() => void) | null = null;
   if (config.healthPort) {
     stopHealthServer = startHealthServer(
@@ -213,8 +243,75 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           telegram: adapters.has("telegram"),
           whatsapp: adapters.has("whatsapp"),
         },
+        config: {
+          groupsEnabled,
+        },
       }),
       logger,
+      {
+        getGroupsEnabled: () => groupsEnabled,
+        setGroupsEnabled: async (enabled: boolean) => {
+          groupsEnabled = enabled;
+          // Also update config so adapters see the change
+          (config as any).groupsEnabled = enabled;
+          
+          // Persist to config file
+          const { config: current } = readConfigFile(config.configPath);
+          const next: OwpenbotConfigFile = {
+            ...current,
+            groupsEnabled: enabled,
+          };
+          next.version = next.version ?? 1;
+          writeConfigFile(config.configPath, next);
+          config.configFile = next;
+          
+          logger.info({ groupsEnabled: enabled }, "groups config updated");
+          return { groupsEnabled: enabled };
+        },
+        setTelegramToken: async (token: string) => {
+          const trimmed = token.trim();
+          if (!trimmed) {
+            throw new Error("Telegram token is required");
+          }
+
+          const { config: current } = readConfigFile(config.configPath);
+          const next: OwpenbotConfigFile = {
+            ...current,
+            channels: {
+              ...current.channels,
+              telegram: {
+                ...current.channels?.telegram,
+                token: trimmed,
+                enabled: true,
+              },
+            },
+          };
+          next.version = next.version ?? 1;
+          writeConfigFile(config.configPath, next);
+          config.configFile = next;
+          config.telegramToken = trimmed;
+          config.telegramEnabled = true;
+
+          const existing = adapters.get("telegram");
+          if (existing) {
+            try {
+              await existing.stop();
+            } catch (error) {
+              logger.warn({ error }, "failed to stop existing telegram adapter");
+            }
+            adapters.delete("telegram");
+          }
+
+          const adapter = createTelegramAdapter(config, logger, handleInbound);
+          adapters.set("telegram", adapter);
+          await adapter.start();
+
+          return {
+            configured: true,
+            enabled: true,
+          };
+        },
+      },
     );
   }
 
@@ -420,6 +517,13 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       }
     }
 
+    // Handle bot commands
+    const trimmedText = inbound.text.trim();
+    if (trimmedText.startsWith("/")) {
+      const commandHandled = await handleCommand(inbound.channel, inbound.peerId, trimmedText);
+      if (commandHandled) return;
+    }
+
     reporter?.onInbound?.({
       channel: inbound.channel,
       peerId: inbound.peerId,
@@ -451,10 +555,12 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       reportThinking(runState);
       startTyping(runState);
       try {
-        logger.debug({ sessionID, length: inbound.text.length }, "prompt start");
+        const effectiveModel = getUserModel(inbound.channel, peerKey, config.model);
+        logger.debug({ sessionID, length: inbound.text.length, model: effectiveModel }, "prompt start");
         const response = await client.session.prompt({
           sessionID,
           parts: [{ type: "text", text: inbound.text }],
+          ...(effectiveModel ? { model: effectiveModel } : {}),
         });
         const parts = (response as { parts?: Array<{ type?: string; text?: string; ignored?: boolean }> }).parts ?? [];
         const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
@@ -463,6 +569,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             sessionID,
             partCount: parts.length,
             textCount: textParts.length,
+            partTypes: parts.map((p) => p.type),
+            ignoredCount: parts.filter((p) => p.ignored).length,
           },
           "prompt response",
         );
@@ -482,8 +590,42 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           });
         }
       } catch (error) {
-        logger.error({ error }, "prompt failed");
-        await sendText(inbound.channel, inbound.peerId, "Error: failed to reach OpenCode.", {
+        // Log full error details for debugging
+        const errorDetails = {
+          message: error instanceof Error ? error.message : String(error),
+          name: error instanceof Error ? error.name : undefined,
+          stack: error instanceof Error ? error.stack?.split("\n").slice(0, 3).join("\n") : undefined,
+          cause: error instanceof Error ? (error as any).cause : undefined,
+          status: (error as any)?.status ?? (error as any)?.statusCode ?? undefined,
+        };
+        logger.error({ error: errorDetails, sessionID }, "prompt failed");
+        
+        // Extract meaningful error details
+        let errorMessage = "Error: failed to reach OpenCode.";
+        if (error instanceof Error) {
+          const msg = error.message || "";
+          // Check for common error patterns
+          if (msg.includes("401") || msg.includes("Unauthorized")) {
+            errorMessage = "Error: OpenCode authentication failed (401). Check credentials.";
+          } else if (msg.includes("403") || msg.includes("Forbidden")) {
+            errorMessage = "Error: OpenCode access forbidden (403).";
+          } else if (msg.includes("404") || msg.includes("Not Found")) {
+            errorMessage = "Error: OpenCode endpoint not found (404).";
+          } else if (msg.includes("429") || msg.includes("rate limit")) {
+            errorMessage = "Error: Rate limited. Please wait and try again.";
+          } else if (msg.includes("500") || msg.includes("Internal Server")) {
+            errorMessage = "Error: OpenCode server error (500).";
+          } else if (msg.includes("model") || msg.includes("provider")) {
+            errorMessage = `Error: Model/provider issue - ${msg.slice(0, 100)}`;
+          } else if (msg.includes("ECONNREFUSED") || msg.includes("connection")) {
+            errorMessage = "Error: Cannot connect to OpenCode. Is it running?";
+          } else if (msg.trim()) {
+            // Include the actual error message (truncated)
+            errorMessage = `Error: ${msg.slice(0, 150)}`;
+          }
+        }
+        
+        await sendText(inbound.channel, inbound.peerId, errorMessage, {
           kind: "system",
         });
       } finally {
@@ -492,6 +634,48 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         activeRuns.delete(sessionID);
       }
     });
+  }
+
+  async function handleCommand(channel: ChannelName, peerId: string, text: string): Promise<boolean> {
+    const parts = text.slice(1).split(/\s+/);
+    const command = parts[0]?.toLowerCase();
+    const args = parts.slice(1);
+
+    // Model switching commands
+    if (command && MODEL_PRESETS[command]) {
+      const model = MODEL_PRESETS[command];
+      setUserModel(channel, peerId, model);
+      await sendText(channel, peerId, `Model switched to ${model.providerID}/${model.modelID}`, { kind: "system" });
+      logger.info({ channel, peerId, model }, "model switched via command");
+      return true;
+    }
+
+    // /model command - show current model
+    if (command === "model") {
+      const current = getUserModel(channel, peerId, config.model);
+      const modelStr = current ? `${current.providerID}/${current.modelID}` : "default";
+      await sendText(channel, peerId, `Current model: ${modelStr}`, { kind: "system" });
+      return true;
+    }
+
+    // /reset command - clear model override and session
+    if (command === "reset") {
+      setUserModel(channel, peerId, undefined);
+      store.deleteSession(channel, peerId);
+      await sendText(channel, peerId, "Session and model reset. Send a message to start fresh.", { kind: "system" });
+      logger.info({ channel, peerId }, "session and model reset");
+      return true;
+    }
+
+    // /help command
+    if (command === "help") {
+      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/model - show current\n/reset - start fresh\n/help - this`;
+      await sendText(channel, peerId, helpText, { kind: "system" });
+      return true;
+    }
+
+    // Unknown command - don't handle, let it pass through as a message
+    return false;
   }
 
   async function createSession(message: InboundMessage): Promise<string> {

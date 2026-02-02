@@ -39,6 +39,7 @@ export interface ServerConfig {
   port: number;
   token: string;
   hostToken: string;
+  configPath?: string;
   approval: ApprovalConfig;
   corsOrigins: string[];
   workspaces: WorkspaceInfo[];
@@ -55,6 +56,24 @@ export interface Capabilities {
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
   config: { read: boolean; write: boolean };
+}
+
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config";
+
+export type ReloadTrigger = {
+  type: "skill" | "plugin" | "config" | "mcp";
+  name?: string;
+  action?: "added" | "removed" | "updated";
+  path?: string;
+};
+
+export interface ReloadEvent {
+  id: string;
+  seq: number;
+  workspaceId: string;
+  reason: ReloadReason;
+  trigger?: ReloadTrigger;
+  timestamp: number;
 }
 
 export interface ApiErrorBody {

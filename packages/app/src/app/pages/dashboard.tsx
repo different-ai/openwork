@@ -13,9 +13,15 @@ import type {
   View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
-import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { EngineInfo, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
+import { formatRelativeTime } from "../utils";
+import type {
+  OpenworkAuditEntry,
+  OpenworkServerCapabilities,
+  OpenworkServerDiagnostics,
+  OpenworkServerSettings,
+  OpenworkServerStatus,
+} from "../lib/openwork-server";
+import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
@@ -71,12 +77,14 @@ export type DashboardViewProps = {
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
+  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
+  openwrkStatus: OpenwrkStatus | null;
   owpenbotInfo: OwpenbotInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
@@ -113,6 +121,8 @@ export type DashboardViewProps = {
   }>;
   sessionStatusById: Record<string, string>;
   scheduledJobs: ScheduledJob[];
+  scheduledJobsSource: "local" | "remote";
+  scheduledJobsSourceReady: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
@@ -218,6 +228,8 @@ export type DashboardViewProps = {
   anyActiveRuns: boolean;
   engineSource: "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
+  engineRuntime: "direct" | "openwrk";
+  setEngineRuntime: (value: "direct" | "openwrk") => void;
   isWindows: boolean;
   toggleDeveloperMode: () => void;
   developerMode: boolean;
@@ -262,24 +274,6 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const quickCommands = createMemo(() => props.workspaceCommands.slice(0, 3));
   const canExportWorkspace = createMemo(() => props.activeWorkspaceDisplay.workspaceType !== "remote");
-  const workspaceDirectoryMap = createMemo(() =>
-    props.workspaces.map((workspace) => ({
-      id: workspace.id,
-      name: workspace.displayName ?? workspace.name,
-      path: normalizeDirectoryPath(
-        workspace.workspaceType === "remote"
-          ? workspace.directory ?? ""
-          : workspace.path
-      ),
-    }))
-  );
-
-  const workspaceLabelForSession = (directory?: string | null) => {
-    if (!directory) return null;
-    const normalized = normalizeDirectoryPath(directory);
-    if (!normalized) return null;
-    return workspaceDirectoryMap().find((workspace) => workspace.path === normalized)?.name ?? null;
-  };
 
   const openSessionFromList = (sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
@@ -735,13 +729,6 @@ export default function DashboardView(props: DashboardViewProps) {
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
-                              <Show when={workspaceLabelForSession(s.directory)}>
-                                {(label) => (
-                                  <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                    {label()}
-                                  </span>
-                                )}
-                              </Show>
                             </div>
                           </div>
                         </div>
@@ -798,13 +785,6 @@ export default function DashboardView(props: DashboardViewProps) {
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
-                              <Show when={workspaceLabelForSession(s.directory)}>
-                                {(label) => (
-                                  <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                    {label()}
-                                  </span>
-                                )}
-                              </Show>
                             </div>
                           </div>
                         </div>
@@ -830,6 +810,8 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
                 jobs={props.scheduledJobs}
+                source={props.scheduledJobsSource}
+                sourceReady={props.scheduledJobsSourceReady}
                 status={props.scheduledJobsStatus}
                 busy={props.scheduledJobsBusy}
                 lastUpdatedAt={props.scheduledJobsUpdatedAt}
@@ -934,12 +916,14 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerSettings={props.openworkServerSettings}
                   openworkServerHostInfo={props.openworkServerHostInfo}
                   openworkServerCapabilities={props.openworkServerCapabilities}
+                  openworkServerDiagnostics={props.openworkServerDiagnostics}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
+                  openwrkStatus={props.openwrkStatus}
                   owpenbotInfo={props.owpenbotInfo}
                   updateOpenworkServerSettings={props.updateOpenworkServerSettings}
                   resetOpenworkServerSettings={props.resetOpenworkServerSettings}
@@ -949,6 +933,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   stopHost={props.stopHost}
                   engineSource={props.engineSource}
                   setEngineSource={props.setEngineSource}
+                  engineRuntime={props.engineRuntime}
+                  setEngineRuntime={props.setEngineRuntime}
                   isWindows={props.isWindows}
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}

@@ -18,6 +18,7 @@ export type OwpenbotConfigFile = {
   version: number;
   opencodeUrl?: string;
   opencodeDirectory?: string;
+  groupsEnabled?: boolean;
   channels?: {
     whatsapp?: {
       dmPolicy?: DmPolicy;
@@ -38,6 +39,11 @@ export type OwpenbotConfigFile = {
   };
 };
 
+export type ModelRef = {
+  providerID: string;
+  modelID: string;
+};
+
 export type Config = {
   configPath: string;
   configFile: OwpenbotConfigFile;
@@ -45,6 +51,7 @@ export type Config = {
   opencodeDirectory: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  model?: ModelRef;
   telegramToken?: string;
   telegramEnabled: boolean;
   whatsappAuthDir: string;
@@ -84,6 +91,16 @@ function parseList(value: string | undefined): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function parseModel(value: string | undefined): ModelRef | undefined {
+  if (!value?.trim()) return undefined;
+  const parts = value.trim().split("/");
+  if (parts.length < 2) return undefined;
+  const providerID = parts[0];
+  const modelID = parts.slice(1).join("/");
+  if (!providerID || !modelID) return undefined;
+  return { providerID, modelID };
 }
 
 function expandHome(value: string): string {
@@ -184,7 +201,8 @@ export function loadConfig(
 ): Config {
   const requireOpencode = options.requireOpencode ?? false;
 
-  const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? "~/.owpenbot");
+  const defaultDataDir = path.join(os.homedir(), ".openwork", "owpenbot");
+  const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? defaultDataDir);
   const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
   const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
   const configPath = resolveConfigPath(dataDir, env);
@@ -217,6 +235,8 @@ export function loadConfig(
   const permissionMode = env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
 
   const telegramToken = env.TELEGRAM_BOT_TOKEN?.trim() || configFile.channels?.telegram?.token || undefined;
+  const healthPort = parseInteger(env.OWPENBOT_HEALTH_PORT) ?? 3005;
+  const model = parseModel(env.OWPENBOT_MODEL);
 
   return {
     configPath,
@@ -225,6 +245,7 @@ export function loadConfig(
     opencodeDirectory: resolvedDirectory,
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodePassword: env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
+    model,
     telegramToken,
     telegramEnabled: parseBoolean(
       env.TELEGRAM_ENABLED,
@@ -241,10 +262,10 @@ export function loadConfig(
     logFile,
     allowlist: envAllowlist,
     toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
-    groupsEnabled: parseBoolean(env.GROUPS_ENABLED, false),
+    groupsEnabled: parseBoolean(env.GROUPS_ENABLED, configFile.groupsEnabled ?? false),
     permissionMode,
     toolOutputLimit,
-    healthPort: parseInteger(env.OWPENBOT_HEALTH_PORT),
+    healthPort,
     logLevel: env.LOG_LEVEL?.trim() || "info",
   };
 }

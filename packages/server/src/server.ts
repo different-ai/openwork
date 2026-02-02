@@ -1,14 +1,17 @@
 import { readFile, writeFile, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
-import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor } from "./types.js";
+import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger } from "./types.js";
 import { ApprovalService } from "./approvals.js";
-import { addPlugin, listPlugins, removePlugin } from "./plugins.js";
+import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
 import { listSkills, upsertSkill } from "./skills.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
+import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
+import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
@@ -33,14 +36,20 @@ interface RequestContext {
   params: Record<string, string>;
   config: ServerConfig;
   approvals: ApprovalService;
+  reloadEvents: ReloadEventStore;
   actor?: Actor;
 }
 
 export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
+  const reloadEvents = new ReloadEventStore();
   const routes = createRoutes(config, approvals);
 
-  const server = Bun.serve({
+  const serverOptions: {
+    hostname: string;
+    port: number;
+    fetch: (request: Request) => Response | Promise<Response>;
+  } = {
     hostname: config.host,
     port: config.port,
     fetch: async (request: Request) => {
@@ -56,7 +65,15 @@ export function startServer(config: ServerConfig) {
 
       try {
         const actor = route.auth === "host" ? requireHost(request, config) : route.auth === "client" ? requireClient(request, config) : undefined;
-        const response = await route.handler({ request, url, params: route.params, config, approvals, actor });
+        const response = await route.handler({
+          request,
+          url,
+          params: route.params,
+          config,
+          approvals,
+          reloadEvents,
+          actor,
+        });
         return withCors(response, request, config);
       } catch (error) {
         const apiError = error instanceof ApiError
@@ -65,7 +82,11 @@ export function startServer(config: ServerConfig) {
         return withCors(jsonResponse(formatError(apiError), apiError.status), request, config);
       }
     },
-  });
+  };
+
+  (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
+
+  const server = Bun.serve(serverOptions);
 
   return server;
 }
@@ -103,6 +124,16 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function owpenbotDebugEnabled(): boolean {
+  return ["1", "true", "yes"].includes((process.env.OPENWORK_DEBUG_OWPENBOT ?? "").toLowerCase());
+}
+
+function logOwpenbotDebug(message: string, details?: Record<string, unknown>) {
+  if (!owpenbotDebugEnabled()) return;
+  const payload = details ? ` ${JSON.stringify(details)}` : "";
+  console.log(`[owpenbot] ${message}${payload}`);
 }
 
 function withCors(response: Response, request: Request, config: ServerConfig) {
@@ -154,13 +185,33 @@ function buildCapabilities(config: ServerConfig): Capabilities {
   };
 }
 
+function emitReloadEvent(
+  reloadEvents: ReloadEventStore,
+  workspace: WorkspaceInfo,
+  reason: ReloadReason,
+  trigger?: ReloadTrigger,
+) {
+  reloadEvents.record(workspace.id, reason, trigger);
+}
+
+function buildConfigTrigger(path: string): ReloadTrigger {
+  const name = path.split(/[\\/]/).filter(Boolean).pop();
+  return {
+    type: "config",
+    name: name || "opencode.json",
+    action: "updated",
+    path,
+  };
+}
+
 function serializeWorkspace(workspace: ServerConfig["workspaces"][number]) {
   const { opencodeUsername, opencodePassword, ...rest } = workspace;
+  const opencodeDirectory = resolveOpencodeDirectory(workspace);
   const opencode =
-    workspace.baseUrl || workspace.directory || opencodeUsername || opencodePassword
+    workspace.baseUrl || opencodeDirectory || opencodeUsername || opencodePassword
       ? {
           baseUrl: workspace.baseUrl,
-          directory: workspace.directory,
+          directory: opencodeDirectory ?? undefined,
           username: opencodeUsername,
           password: opencodePassword,
         }
@@ -178,6 +229,31 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
   });
 
+  addRoute(routes, "GET", "/status", "client", async () => {
+    const active = config.workspaces[0];
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      readOnly: config.readOnly,
+      approval: config.approval,
+      corsOrigins: config.corsOrigins,
+      workspaceCount: config.workspaces.length,
+      activeWorkspaceId: active?.id ?? null,
+      workspace: active ? serializeWorkspace(active) : null,
+      authorizedRoots: config.authorizedRoots,
+      server: {
+        host: config.host,
+        port: config.port,
+        configPath: config.configPath ?? null,
+      },
+      tokenSource: {
+        client: config.tokenSource,
+        host: config.hostTokenSource,
+      },
+    });
+  });
+
   addRoute(routes, "GET", "/capabilities", "client", async () => {
     return jsonResponse(buildCapabilities(config));
   });
@@ -185,7 +261,25 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
   addRoute(routes, "GET", "/workspaces", "client", async () => {
     const active = config.workspaces[0];
     const items = active ? [serializeWorkspace(active)] : [];
-    return jsonResponse({ items });
+    return jsonResponse({ items, activeId: active?.id ?? null });
+  });
+
+  addRoute(routes, "POST", "/workspaces/:id/activate", "host", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    config.workspaces = [
+      workspace,
+      ...config.workspaces.filter((entry) => entry.id !== workspace.id),
+    ];
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.activate",
+      target: "workspace",
+      summary: "Switched active workspace",
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace) });
   });
 
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
@@ -240,7 +334,61 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       timestamp: Date.now(),
     });
 
+    if (opencode) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
+    }
+
     return jsonResponse({ updatedAt: Date.now() });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/owpenbot/telegram-token", "client", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+    const token = typeof body.token === "string" ? body.token.trim() : "";
+    const healthPort = normalizeHealthPort(body.healthPort);
+    const requestHost = ctx.url.hostname;
+    logOwpenbotDebug("telegram-token:request", {
+      workspaceId: workspace.id,
+      actor: ctx.actor?.type ?? "unknown",
+      hasToken: Boolean(token),
+      healthPort: healthPort ?? null,
+      requestHost,
+    });
+    if (!token) {
+      throw new ApiError(400, "token_required", "Telegram token is required");
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "owpenbot.telegram.set-token",
+      summary: "Set Telegram bot token",
+      paths: [resolveOwpenbotConfigPath()],
+    });
+
+    const result = await updateOwpenbotTelegramToken(token, healthPort, requestHost);
+    logOwpenbotDebug("telegram-token:updated", { workspaceId: workspace.id });
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "owpenbot.telegram.set-token",
+      target: "owpenbot.telegram",
+      summary: "Updated Telegram bot token",
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse(result);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sinceParam = ctx.url.searchParams.get("since");
+    const parsedSince = sinceParam ? Number(sinceParam) : NaN;
+    const since = Number.isFinite(parsedSince) ? parsedSince : undefined;
+    const items = ctx.reloadEvents.list(workspace.id, since);
+    return jsonResponse({ items, cursor: ctx.reloadEvents.cursor() });
   });
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
@@ -276,13 +424,14 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const body = await readJsonBody(ctx.request);
     const spec = String(body.spec ?? "");
+    const normalized = normalizePluginSpec(spec);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.add",
       summary: `Add plugin ${spec}`,
       paths: [opencodeConfigPath(workspace.path)],
     });
-    await addPlugin(workspace.path, spec);
+    const changed = await addPlugin(workspace.path, spec);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -292,6 +441,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Added ${spec}`,
       timestamp: Date.now(),
     });
+    if (changed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "plugins", {
+        type: "plugin",
+        name: normalized,
+        action: "added",
+      });
+    }
     const result = await listPlugins(workspace.path, false);
     return jsonResponse(result);
   });
@@ -300,13 +456,14 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     ensureWritable(config);
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const name = ctx.params.name ?? "";
+    const normalized = normalizePluginSpec(name);
     await requireApproval(ctx, {
       workspaceId: workspace.id,
       action: "plugins.remove",
       summary: `Remove plugin ${name}`,
       paths: [opencodeConfigPath(workspace.path)],
     });
-    await removePlugin(workspace.path, name);
+    const removed = await removePlugin(workspace.path, name);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -316,6 +473,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Removed ${name}`,
       timestamp: Date.now(),
     });
+    if (removed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "plugins", {
+        type: "plugin",
+        name: normalized,
+        action: "removed",
+      });
+    }
     const result = await listPlugins(workspace.path, false);
     return jsonResponse(result);
   });
@@ -340,17 +504,23 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Upsert skill ${name}`,
       paths: [join(workspace.path, ".opencode", "skills", name, "SKILL.md")],
     });
-    const path = await upsertSkill(workspace.path, { name, content, description });
+    const result = await upsertSkill(workspace.path, { name, content, description });
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
       actor: ctx.actor ?? { type: "remote" },
       action: "skills.upsert",
-      target: path,
+      target: result.path,
       summary: `Upserted skill ${name}`,
       timestamp: Date.now(),
     });
-    return jsonResponse({ name, path, description: description ?? "", scope: "project" });
+    emitReloadEvent(ctx.reloadEvents, workspace, "skills", {
+      type: "skill",
+      name,
+      action: result.action,
+      path: result.path,
+    });
+    return jsonResponse({ name, path: result.path, description: description ?? "", scope: "project" });
   });
 
   addRoute(routes, "GET", "/workspace/:id/mcp", "client", async (ctx) => {
@@ -374,7 +544,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Add MCP ${name}`,
       paths: [opencodeConfigPath(workspace.path)],
     });
-    await addMcp(workspace.path, name, configPayload);
+    const result = await addMcp(workspace.path, name, configPayload);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -383,6 +553,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       target: "opencode.json",
       summary: `Added MCP ${name}`,
       timestamp: Date.now(),
+    });
+    emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+      type: "mcp",
+      name,
+      action: result.action,
     });
     const items = await listMcp(workspace.path);
     return jsonResponse({ items });
@@ -398,7 +573,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Remove MCP ${name}`,
       paths: [opencodeConfigPath(workspace.path)],
     });
-    await removeMcp(workspace.path, name);
+    const removed = await removeMcp(workspace.path, name);
     await recordAudit(workspace.path, {
       id: shortId(),
       workspaceId: workspace.id,
@@ -408,6 +583,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Removed MCP ${name}`,
       timestamp: Date.now(),
     });
+    if (removed) {
+      emitReloadEvent(ctx.reloadEvents, workspace, "mcp", {
+        type: "mcp",
+        name,
+        action: "removed",
+      });
+    }
     const items = await listMcp(workspace.path);
     return jsonResponse({ items });
   });
@@ -478,6 +660,36 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     return jsonResponse({ ok: true });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/scheduler/jobs", "client", async (ctx) => {
+    await resolveWorkspace(config, ctx.params.id);
+    const items = await listScheduledJobs();
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/scheduler/jobs/:name", "client", async (ctx) => {
+    ensureWritable(config);
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const name = ctx.params.name ?? "";
+    const { job, jobFile, systemPaths } = await resolveScheduledJob(name);
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "scheduler.delete",
+      summary: `Delete scheduled job ${job.name}`,
+      paths: [jobFile, ...systemPaths],
+    });
+    await deleteScheduledJob(job);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "scheduler.delete",
+      target: jobFile,
+      summary: `Deleted scheduled job ${job.name}`,
+      timestamp: Date.now(),
+    });
+    return jsonResponse({ job });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const exportPayload = await exportWorkspace(workspace);
@@ -504,6 +716,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: "Imported workspace config",
       timestamp: Date.now(),
     });
+    emitReloadEvent(ctx.reloadEvents, workspace, "config", buildConfigTrigger(opencodeConfigPath(workspace.path)));
     return jsonResponse({ ok: true });
   });
 
@@ -560,6 +773,100 @@ async function readJsonBody(request: Request): Promise<Record<string, unknown>> 
   } catch {
     throw new ApiError(400, "invalid_json", "Invalid JSON body");
   }
+}
+
+function parseInteger(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function expandHome(value: string): string {
+  if (value.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+}
+
+function resolveOwpenbotConfigPath(): string {
+  const override = process.env.OWPENBOT_CONFIG_PATH?.trim();
+  if (override) return expandHome(override);
+  const dataDir = process.env.OWPENBOT_DATA_DIR?.trim() || join(homedir(), ".openwork", "owpenbot");
+  return join(expandHome(dataDir), "owpenbot.json");
+}
+
+function resolveOwpenbotHealthPort(): number {
+  return parseInteger(process.env.OWPENBOT_HEALTH_PORT) ?? 3005;
+}
+
+function parseJsonResponse(text: string): unknown {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return trimmed;
+  }
+}
+
+function normalizeHealthPort(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const port = Math.trunc(value);
+  if (port <= 0 || port > 65535) return null;
+  return port;
+}
+
+async function updateOwpenbotTelegramToken(
+  token: string,
+  healthPortOverride?: number | null,
+  requestHost?: string | null,
+): Promise<Record<string, unknown>> {
+  const port = healthPortOverride ?? resolveOwpenbotHealthPort();
+  const candidates = ["127.0.0.1", requestHost].filter(
+    (host): host is string => Boolean(host && host.trim()),
+  );
+  let response: Response | null = null;
+  let lastError: unknown = null;
+
+  for (const host of candidates) {
+    const url = `http://${host}:${port}/config/telegram-token`;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (!response) {
+    throw new ApiError(502, "owpenbot_unreachable", "Owpenbot health server is unavailable", {
+      error: lastError ? String(lastError) : "no response",
+      port,
+      hosts: candidates,
+    });
+  }
+
+  const text = await response.text();
+  const parsed = parseJsonResponse(text);
+
+  if (!response.ok) {
+    const detail = typeof parsed === "object" && parsed && "error" in parsed
+      ? String((parsed as Record<string, unknown>).error)
+      : "Owpenbot request failed";
+    throw new ApiError(response.status, "owpenbot_request_failed", detail, {
+      status: response.status,
+      body: parsed,
+    });
+  }
+
+  if (parsed && typeof parsed === "object") {
+    return parsed as Record<string, unknown>;
+  }
+  return { ok: true };
 }
 
 async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {

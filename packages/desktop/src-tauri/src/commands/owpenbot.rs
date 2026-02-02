@@ -2,9 +2,23 @@ use tauri::{AppHandle, State};
 use tauri_plugin_shell::process::CommandEvent;
 
 use crate::owpenbot::manager::OwpenbotManager;
-use crate::owpenbot::spawn::spawn_owpenbot;
+use crate::owpenbot::spawn::{resolve_owpenbot_health_port, spawn_owpenbot, DEFAULT_OWPENBOT_HEALTH_PORT};
 use crate::types::OwpenbotInfo;
 use crate::utils::truncate_output;
+
+/// Check if owpenbot health endpoint is responding on given port
+fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
+    let url = format!("http://127.0.0.1:{}/health", port);
+    let agent = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(2))
+        .build();
+    let response = agent.get(&url).call().ok()?;
+    if response.status() == 200 {
+        response.into_json().ok()
+    } else {
+        None
+    }
+}
 
 #[tauri::command]
 pub async fn owpenbot_info(
@@ -18,6 +32,40 @@ pub async fn owpenbot_info(
             .map_err(|_| "owpenbot mutex poisoned".to_string())?;
         OwpenbotManager::snapshot_locked(&mut state)
     };
+
+    // If manager doesn't think owpenbot is running, check health endpoint as fallback
+    // This handles cases where owpenbot was started externally or by a previous app instance
+    if !info.running {
+        let health_port = {
+            manager.inner.lock().ok().and_then(|s| s.health_port)
+        }.unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
+        
+        if let Some(health) = check_health_endpoint(health_port) {
+            info.running = true;
+            if let Some(opencode) = health.get("opencode") {
+                if let Some(url) = opencode.get("url").and_then(|v| v.as_str()) {
+                    info.opencode_url = Some(url.to_string());
+                }
+            }
+            if let Some(channels) = health.get("channels") {
+                if let Some(telegram) = channels.get("telegram").and_then(|v| v.as_bool()) {
+                    info.telegram_configured = telegram;
+                }
+                if let Some(whatsapp) = channels.get("whatsapp").and_then(|v| v.as_bool()) {
+                    info.whatsapp_linked = whatsapp;
+                }
+            }
+        }
+    }
+
+    if info.version.is_none() {
+        if let Some(version) = owpenbot_version(&app).await {
+            info.version = Some(version.clone());
+            if let Ok(mut state) = manager.inner.lock() {
+                state.version = Some(version);
+            }
+        }
+    }
 
     // Only fetch from CLI status if manager doesn't have values (fallback for when sidecar isn't started)
     if info.opencode_url.is_none() || info.workspace_path.is_none() {
@@ -66,6 +114,7 @@ pub fn owpenbot_start(
     opencode_url: Option<String>,
     opencode_username: Option<String>,
     opencode_password: Option<String>,
+    health_port: Option<u16>,
 ) -> Result<OwpenbotInfo, String> {
     let mut state = manager
         .inner
@@ -73,18 +122,24 @@ pub fn owpenbot_start(
         .map_err(|_| "owpenbot mutex poisoned".to_string())?;
     OwpenbotManager::stop_locked(&mut state);
 
+    let resolved_health_port = match health_port {
+        Some(port) => port,
+        None => resolve_owpenbot_health_port()?,
+    };
     let (mut rx, child) = spawn_owpenbot(
         &app,
         &workspace_path,
         opencode_url.as_deref(),
         opencode_username.as_deref(),
         opencode_password.as_deref(),
+        resolved_health_port,
     )?;
 
     state.child = Some(child);
     state.child_exited = false;
     state.workspace_path = Some(workspace_path);
     state.opencode_url = opencode_url;
+    state.health_port = Some(resolved_health_port);
     state.last_stdout = None;
     state.last_stderr = None;
 
@@ -224,13 +279,24 @@ pub async fn owpenbot_status(
     let whatsapp = owpenbot_json(&app, &["whatsapp", "status", "--json"], "get WhatsApp status").await?;
     let telegram = owpenbot_json(&app, &["telegram", "status", "--json"], "get Telegram status").await?;
 
-    let running = {
+    let mut running = {
         let mut state = manager
             .inner
             .lock()
             .map_err(|_| "owpenbot mutex poisoned".to_string())?;
         OwpenbotManager::snapshot_locked(&mut state).running
     };
+
+    // If manager doesn't think owpenbot is running, check health endpoint as fallback
+    if !running {
+        let check_port = {
+            manager.inner.lock().ok().and_then(|s| s.health_port)
+        }.unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
+        
+        if check_health_endpoint(check_port).is_some() {
+            running = true;
+        }
+    }
 
     let config_path = status
         .get("config")
@@ -241,6 +307,19 @@ pub async fn owpenbot_status(
         .and_then(|value| value.get("url"))
         .and_then(|value| value.as_str())
         .unwrap_or_default();
+    let health_port = status
+        .get("healthPort")
+        .and_then(|value| value.as_u64());
+    let manager_health_port = {
+        let state = manager
+            .inner
+            .lock()
+            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
+        state.health_port
+    };
+    let health_port = manager_health_port
+        .map(|value| value as u64)
+        .or(health_port);
 
     let whatsapp_linked = whatsapp
         .get("linked")
@@ -268,6 +347,7 @@ pub async fn owpenbot_status(
     Ok(serde_json::json!({
         "running": running,
         "config": config_path,
+        "healthPort": health_port,
         "whatsapp": {
             "linked": whatsapp_linked,
             "dmPolicy": whatsapp_dm_policy,
@@ -340,6 +420,28 @@ async fn owpenbot_json(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse {context}: {e}"))
+}
+
+async fn owpenbot_version(app: &AppHandle) -> Option<String> {
+    use tauri_plugin_shell::ShellExt;
+
+    let command = match app.shell().sidecar("owpenbot") {
+        Ok(command) => command,
+        Err(_) => app.shell().command("owpenbot"),
+    };
+
+    let output = command.args(["--version"]).output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.to_string())
 }
 
 #[tauri::command]

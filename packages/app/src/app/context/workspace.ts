@@ -7,13 +7,15 @@ import type {
   WorkspaceDisplay,
   WorkspaceOpenworkConfig,
   WorkspacePreset,
+  EngineRuntime,
 } from "../types";
-import { addOpencodeCacheHint, isTauriRuntime, safeStringify, writeModePreference } from "../utils";
+import { addOpencodeCacheHint, isTauriRuntime, normalizeDirectoryPath, safeStringify, writeModePreference } from "../utils";
 import { unwrap } from "../lib/opencode";
 import {
   createOpenworkServerClient,
   normalizeOpenworkServerUrl,
   OpenworkServerError,
+  type OpenworkServerClient,
   type OpenworkServerSettings,
   type OpenworkWorkspaceInfo,
 } from "../lib/openwork-server";
@@ -24,6 +26,8 @@ import {
   engineInstall,
   engineStart,
   engineStop,
+  openwrkInstanceDispose,
+  openwrkWorkspaceActivate,
   pickFile,
   pickDirectory,
   saveFile,
@@ -90,8 +94,10 @@ export function createWorkspaceStore(options: {
   isWindowsPlatform: () => boolean;
   openworkServerSettings: () => OpenworkServerSettings;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
+  openworkServerClient?: () => OpenworkServerClient | null;
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
+  engineRuntime?: () => EngineRuntime;
 }) {
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
@@ -239,6 +245,40 @@ export function createWorkspaceStore(options: {
       directory: workspace.opencode?.directory?.trim() ?? workspace.directory?.trim() ?? "",
       auth: opencodeAuth,
     };
+  };
+
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "direct";
+
+  const resolveWorkspacePaths = () => {
+    const active = activeWorkspacePath().trim();
+    const locals = workspaces()
+      .filter((ws) => ws.workspaceType === "local")
+      .map((ws) => ws.path)
+      .filter((path): path is string => Boolean(path && path.trim()))
+      .map((path) => path.trim());
+    const resolved: string[] = [];
+    if (active) resolved.push(active);
+    for (const path of locals) {
+      if (!resolved.includes(path)) resolved.push(path);
+    }
+    return resolved;
+  };
+
+  const activateOpenworkHostWorkspace = async (workspacePath: string) => {
+    const client = options.openworkServerClient?.();
+    if (!client) return;
+    const targetPath = normalizeDirectoryPath(workspacePath);
+    if (!targetPath) return;
+    try {
+      const response = await client.listWorkspaces();
+      const items = Array.isArray(response.items) ? response.items : [];
+      const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+      if (!match?.id) return;
+      if (response.activeId === match.id) return;
+      await client.activateWorkspace(match.id);
+    } catch {
+      // ignore
+    }
   };
 
   async function refreshEngine() {
@@ -521,29 +561,62 @@ export function createWorkspaceStore(options: {
       options.setBusyStartedAt(Date.now());
 
       try {
-        // Stop the current engine
-        const info = await engineStop();
-        setEngine(info);
+        const runtime = resolveEngineRuntime();
+        if (runtime === "openwrk") {
+          await openwrkWorkspaceActivate({
+            workspacePath: next.path,
+            name: next.displayName?.trim() || next.name?.trim() || null,
+          });
+          await activateOpenworkHostWorkspace(next.path);
 
-        // Start engine with new workspace directory
-        const newInfo = await engineStart(next.path, { preferSidecar: options.engineSource() === "sidecar" });
-        setEngine(newInfo);
+          const newInfo = await engineInfo();
+          setEngine(newInfo);
 
-        const username = newInfo.opencodeUsername?.trim() ?? "";
-        const password = newInfo.opencodePassword?.trim() ?? "";
-        const auth = username && password ? { username, password } : undefined;
-        setEngineAuth(auth ?? null);
+          const username = newInfo.opencodeUsername?.trim() ?? "";
+          const password = newInfo.opencodePassword?.trim() ?? "";
+          const auth = username && password ? { username, password } : undefined;
+          setEngineAuth(auth ?? null);
 
-        // Reconnect to server
-        if (newInfo.baseUrl) {
-          const ok = await connectToServer(
-            newInfo.baseUrl,
-            newInfo.projectDir ?? undefined,
-            { reason: "workspace-restart" },
-            auth,
-          );
-          if (!ok) {
-            options.setError("Failed to reconnect after workspace switch");
+          if (newInfo.baseUrl) {
+            const ok = await connectToServer(
+              newInfo.baseUrl,
+              newInfo.projectDir ?? undefined,
+              { reason: "workspace-openwrk-switch" },
+              auth,
+            );
+            if (!ok) {
+              options.setError("Failed to reconnect after workspace switch");
+            }
+          }
+        } else {
+          // Stop the current engine
+          const info = await engineStop();
+          setEngine(info);
+
+          // Start engine with new workspace directory
+          const newInfo = await engineStart(next.path, {
+            preferSidecar: options.engineSource() === "sidecar",
+            runtime,
+            workspacePaths: resolveWorkspacePaths(),
+          });
+          setEngine(newInfo);
+
+          const username = newInfo.opencodeUsername?.trim() ?? "";
+          const password = newInfo.opencodePassword?.trim() ?? "";
+          const auth = username && password ? { username, password } : undefined;
+          setEngineAuth(auth ?? null);
+
+          // Reconnect to server
+          if (newInfo.baseUrl) {
+            const ok = await connectToServer(
+              newInfo.baseUrl,
+              newInfo.projectDir ?? undefined,
+              { reason: "workspace-restart" },
+              auth,
+            );
+            if (!ok) {
+              options.setError("Failed to reconnect after workspace switch");
+            }
           }
         }
       } catch (e) {
@@ -1112,7 +1185,11 @@ export function createWorkspaceStore(options: {
         setAuthorizedDirs([dir]);
       }
 
-      const info = await engineStart(dir, { preferSidecar: options.engineSource() === "sidecar" });
+      const info = await engineStart(dir, {
+        preferSidecar: options.engineSource() === "sidecar",
+        runtime: resolveEngineRuntime(),
+        workspacePaths: resolveWorkspacePaths(),
+      });
       setEngine(info);
 
       const username = info.opencodeUsername?.trim() ?? "";
@@ -1203,10 +1280,46 @@ export function createWorkspaceStore(options: {
     options.setBusyStartedAt(Date.now());
 
     try {
+      const runtime = engine()?.runtime ?? resolveEngineRuntime();
+      if (runtime === "openwrk") {
+        await openwrkInstanceDispose(root);
+        await openwrkWorkspaceActivate({
+          workspacePath: root,
+          name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
+        });
+
+        const nextInfo = await engineInfo();
+        setEngine(nextInfo);
+
+        const username = nextInfo.opencodeUsername?.trim() ?? "";
+        const password = nextInfo.opencodePassword?.trim() ?? "";
+        const auth = username && password ? { username, password } : undefined;
+        setEngineAuth(auth ?? null);
+
+        if (nextInfo.baseUrl) {
+          const ok = await connectToServer(
+            nextInfo.baseUrl,
+            nextInfo.projectDir ?? undefined,
+            { reason: "engine-reload-openwrk" },
+            auth,
+          );
+          if (!ok) {
+            options.setError("Failed to reconnect after reload");
+            return false;
+          }
+        }
+
+        return true;
+      }
+
       const info = await engineStop();
       setEngine(info);
 
-      const nextInfo = await engineStart(root, { preferSidecar: options.engineSource() === "sidecar" });
+      const nextInfo = await engineStart(root, {
+        preferSidecar: options.engineSource() === "sidecar",
+        runtime,
+        workspacePaths: resolveWorkspacePaths(),
+      });
       setEngine(nextInfo);
 
       const username = nextInfo.opencodeUsername?.trim() ?? "";

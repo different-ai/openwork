@@ -7,9 +7,18 @@ import TextInput from "../components/text-input";
 import SettingsKeybinds, { type KeybindSetting } from "../components/settings-keybinds";
 import { ChevronDown, HardDrive, MessageCircle, PlugZap, RefreshCcw, Shield, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab } from "../types";
-import type { OpenworkAuditEntry, OpenworkServerCapabilities, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import { createOpenworkServerClient } from "../lib/openwork-server";
+import type {
+  OpenworkAuditEntry,
+  OpenworkServerCapabilities,
+  OpenworkServerDiagnostics,
+  OpenworkServerSettings,
+  OpenworkServerStatus,
+} from "../lib/openwork-server";
 import type {
   EngineInfo,
+  OpenwrkBinaryInfo,
+  OpenwrkStatus,
   OpenworkServerInfo,
   OwpenbotInfo,
   OwpenbotStatus,
@@ -17,6 +26,7 @@ import type {
 } from "../lib/tauri";
 import {
   getOwpenbotStatus,
+  getOwpenbotStatusDetailed,
   getOwpenbotQr,
   setOwpenbotDmPolicy,
   setOwpenbotAllowlist,
@@ -24,6 +34,10 @@ import {
   getOwpenbotPairingRequests,
   approveOwpenbotPairing,
   denyOwpenbotPairing,
+  owpenbotRestart,
+  owpenbotStop,
+  getOwpenbotGroupsEnabled,
+  setOwpenbotGroupsEnabled,
 } from "../lib/tauri";
 
 export type SettingsViewProps = {
@@ -42,12 +56,14 @@ export type SettingsViewProps = {
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
+  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
+  openwrkStatus: OpenwrkStatus | null;
   owpenbotInfo: OwpenbotInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
@@ -61,6 +77,8 @@ export type SettingsViewProps = {
   onResetAllKeybinds: () => void;
   engineSource: "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
+  engineRuntime: "direct" | "openwrk";
+  setEngineRuntime: (value: "direct" | "openwrk") => void;
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
@@ -103,10 +121,20 @@ export type SettingsViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
+  engineDoctorVersion: string | null;
 };
 
 // Owpenbot Settings Component
-function OwpenbotSettings(props: { busy: boolean }) {
+function OwpenbotSettings(props: {
+  busy: boolean;
+  mode: "host" | "client" | null;
+  openworkServerStatus: OpenworkServerStatus;
+  openworkServerUrl: string;
+  openworkServerSettings: OpenworkServerSettings;
+  openworkServerWorkspaceId: string | null;
+  openworkServerHostInfo: OpenworkServerInfo | null;
+  developerMode: boolean;
+}) {
   const [owpenbotStatus, setOwpenbotStatus] = createSignal<OwpenbotStatus | null>(null);
   const [qrCode, setQrCode] = createSignal<string | null>(null);
   const [qrLoading, setQrLoading] = createSignal(false);
@@ -117,12 +145,54 @@ function OwpenbotSettings(props: { busy: boolean }) {
   const [savingPolicy, setSavingPolicy] = createSignal(false);
   const [savingAllowlist, setSavingAllowlist] = createSignal(false);
   const [savingTelegram, setSavingTelegram] = createSignal(false);
+  const [groupsEnabled, setGroupsEnabled] = createSignal<boolean | null>(null);
+  const [savingGroups, setSavingGroups] = createSignal(false);
+  const [telegramCheckState, setTelegramCheckState] = createSignal<
+    "idle" | "checking" | "success" | "warning" | "error"
+  >("idle");
+  const [telegramCheckMessage, setTelegramCheckMessage] = createSignal<string | null>(null);
+  const [telegramCheckDetail, setTelegramCheckDetail] = createSignal<string | null>(null);
+  const openworkServerClient = createMemo(() => {
+    const baseUrl = props.openworkServerUrl.trim();
+    const hostToken = props.openworkServerHostInfo?.hostToken?.trim() ?? "";
+    const clientToken = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+    const settingsToken = props.openworkServerSettings.token?.trim() ?? "";
+    const token = props.mode === "host" ? clientToken : settingsToken;
+    if (!baseUrl || !token || !props.openworkServerWorkspaceId) return null;
+    return createOpenworkServerClient({ baseUrl, token, hostToken });
+  });
+  const debugOwpenbot = (message: string, data?: Record<string, unknown>) => {
+    if (!props.developerMode) return;
+    const payload = data ? ` ${JSON.stringify(data)}` : "";
+    console.debug(`[owpenbot] ${message}${payload}`);
+  };
 
   // Load owpenbot status on mount
   onMount(async () => {
     await refreshStatus();
     await refreshPairingRequests();
+    await refreshGroupsEnabled();
   });
+
+  const refreshGroupsEnabled = async () => {
+    const enabled = await getOwpenbotGroupsEnabled();
+    setGroupsEnabled(enabled);
+  };
+
+  const handleGroupsToggle = async () => {
+    if (savingGroups()) return;
+    const current = groupsEnabled();
+    const newValue = current === null ? true : !current;
+    setSavingGroups(true);
+    try {
+      const result = await setOwpenbotGroupsEnabled(newValue);
+      if (result.ok) {
+        setGroupsEnabled(newValue);
+      }
+    } finally {
+      setSavingGroups(false);
+    }
+  };
 
   const refreshStatus = async () => {
     const status = await getOwpenbotStatus();
@@ -132,6 +202,47 @@ function OwpenbotSettings(props: { busy: boolean }) {
   const refreshPairingRequests = async () => {
     const requests = await getOwpenbotPairingRequests();
     setPairingRequests(requests);
+  };
+
+  const setTelegramFeedback = (
+    state: "checking" | "success" | "warning" | "error",
+    message: string,
+    detail?: string | null,
+  ) => {
+    setTelegramCheckState(state);
+    setTelegramCheckMessage(message);
+    setTelegramCheckDetail(detail ?? null);
+  };
+
+  const resetTelegramFeedback = () => {
+    setTelegramCheckState("idle");
+    setTelegramCheckMessage(null);
+    setTelegramCheckDetail(null);
+  };
+
+  const normalizeTelegramError = (raw: string) =>
+    raw.replace(/^Error:\s*/i, "").replace(/^Failed to [^:]+:\s*/i, "").trim();
+
+  const formatTelegramError = (raw: string) => {
+    const cleaned = normalizeTelegramError(raw);
+    const lower = cleaned.toLowerCase();
+    if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("token is wrong")) {
+      return {
+        summary: "Telegram rejected this token.",
+        detail: "Check the token in @BotFather and try again.",
+      };
+    }
+    if (lower.includes("409") || lower.includes("conflict") || lower.includes("getupdates")) {
+      return {
+        summary: "Another owpenbot instance is already running.",
+        detail: "Stop extra instances or revoke the token, then retry.",
+      };
+    }
+    const detail = cleaned.length > 180 ? `${cleaned.slice(0, 177)}...` : cleaned;
+    return {
+      summary: "Telegram check failed.",
+      detail: detail || null,
+    };
   };
 
   const showQrCode = async () => {
@@ -190,12 +301,108 @@ function OwpenbotSettings(props: { busy: boolean }) {
 
   const handleSaveTelegramToken = async () => {
     const token = telegramToken().trim();
-    if (!token) return;
-    
+    if (!token || savingTelegram()) return;
+
     setSavingTelegram(true);
     try {
-      await setOwpenbotTelegramToken(token);
-      await refreshStatus();
+      const latestStatus = await getOwpenbotStatus();
+      if (latestStatus) {
+        setOwpenbotStatus(latestStatus);
+      }
+      const serverClient = openworkServerClient();
+      const useRemote = Boolean(serverClient && props.openworkServerWorkspaceId);
+      debugOwpenbot("save-token:start", {
+        mode: props.mode ?? "unknown",
+        tauri: isTauriRuntime(),
+        useRemote,
+        openworkServerStatus: props.openworkServerStatus,
+        openworkServerUrl: props.openworkServerUrl,
+        openworkServerWorkspaceId: props.openworkServerWorkspaceId,
+        owpenbotHealthPort: latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
+        hasToken: Boolean(
+          (props.mode === "host"
+            ? props.openworkServerHostInfo?.clientToken?.trim()
+            : props.openworkServerSettings.token?.trim())
+          ?? false,
+        ),
+      });
+      if (useRemote) {
+        if (props.openworkServerStatus === "disconnected") {
+          setTelegramFeedback(
+            "error",
+            "OpenWork server is not connected.",
+            "Add a server URL and token, then try again.",
+          );
+          debugOwpenbot("save-token:remote-missing-client", {
+            openworkServerStatus: props.openworkServerStatus,
+            openworkServerUrl: props.openworkServerUrl,
+            openworkServerWorkspaceId: props.openworkServerWorkspaceId,
+          });
+          return;
+        }
+
+        setTelegramFeedback("checking", "Saving token on the host...");
+        try {
+          await serverClient.setOwpenbotTelegramToken(
+            props.openworkServerWorkspaceId,
+            token,
+            latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
+          );
+          debugOwpenbot("save-token:remote-success");
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          setTelegramFeedback("error", "Failed to save token.", detail || null);
+          debugOwpenbot("save-token:remote-error", { detail });
+          return;
+        }
+
+        setTelegramFeedback("success", "Telegram token saved.");
+        setTelegramToken("");
+        return;
+      }
+
+      setTelegramFeedback("checking", "Saving token and verifying Telegram...");
+      const result = await setOwpenbotTelegramToken(token);
+      if (!result.ok) {
+        const detail = normalizeTelegramError(result.stderr || "");
+        setTelegramFeedback("error", "Failed to save token.", detail || null);
+        debugOwpenbot("save-token:local-error", { detail });
+        return;
+      }
+
+      const statusResult = await getOwpenbotStatusDetailed();
+      if (!statusResult.ok) {
+        const parsed = formatTelegramError(statusResult.error || "Failed to verify Telegram.");
+        setOwpenbotStatus(null);
+        setTelegramFeedback("error", parsed.summary, parsed.detail);
+        return;
+      }
+
+      const status = statusResult.status;
+      setOwpenbotStatus(status);
+
+      if (!status.telegram.configured) {
+        setTelegramFeedback("error", "Token saved, but Telegram is still unconfigured.", "Check the token and try again.");
+        return;
+      }
+      if (!status.running) {
+        setTelegramFeedback(
+          "warning",
+          "Token saved, but the messaging bridge is offline.",
+          "Start OpenWork to activate Telegram.",
+        );
+        return;
+      }
+      if (!status.telegram.enabled) {
+        setTelegramFeedback(
+          "warning",
+          "Token saved, but Telegram is disabled.",
+          "Enable the bot or review owpenbot settings.",
+        );
+        return;
+      }
+
+      setTelegramFeedback("success", "Telegram connected.");
       setTelegramToken("");
     } finally {
       setSavingTelegram(false);
@@ -231,6 +438,21 @@ function OwpenbotSettings(props: { busy: boolean }) {
       return "text-green-11";
     }
     return "text-gray-9";
+  });
+
+  const telegramCheckStyle = createMemo(() => {
+    switch (telegramCheckState()) {
+      case "success":
+        return "bg-green-7/10 text-green-11 border-green-7/20";
+      case "warning":
+        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+      case "error":
+        return "bg-red-7/10 text-red-11 border-red-7/20";
+      case "checking":
+        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+      default:
+        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    }
   });
 
   const dmPolicyOptions: { value: OwpenbotStatus["whatsapp"]["dmPolicy"]; label: string; description: string }[] = [
@@ -276,7 +498,12 @@ function OwpenbotSettings(props: { busy: boolean }) {
               <input
                 type={telegramTokenVisible() ? "text" : "password"}
                 value={telegramToken()}
-                onInput={(e) => setTelegramToken(e.currentTarget.value)}
+                onInput={(e) => {
+                  setTelegramToken(e.currentTarget.value);
+                  if (telegramCheckState() !== "idle") {
+                    resetTelegramFeedback();
+                  }
+                }}
                 placeholder="Paste token from @BotFather"
                 class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
                 disabled={props.busy || savingTelegram()}
@@ -295,9 +522,17 @@ function OwpenbotSettings(props: { busy: boolean }) {
               onClick={handleSaveTelegramToken}
               disabled={props.busy || savingTelegram() || !telegramToken().trim()}
             >
-              Save
+              {savingTelegram() ? "Saving..." : "Save"}
             </Button>
           </div>
+          <Show when={telegramCheckState() !== "idle"}>
+            <div class={`text-[11px] px-2 py-1 rounded-lg border ${telegramCheckStyle()}`}>
+              {telegramCheckMessage()}
+            </div>
+            <Show when={telegramCheckDetail()}>
+              <div class="text-[11px] text-gray-9">{telegramCheckDetail()}</div>
+            </Show>
+          </Show>
           <div class="text-[11px] text-gray-8">
             Create a bot with <span class="font-mono">@BotFather</span> on Telegram and paste the token here.
           </div>
@@ -436,6 +671,24 @@ function OwpenbotSettings(props: { busy: boolean }) {
             </Show>
           </div>
         </Show>
+      </div>
+
+      {/* Groups Settings */}
+      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-sm font-medium text-gray-12">Group @Mentions</div>
+            <div class="text-xs text-gray-10">Respond when @mentioned in Telegram groups</div>
+          </div>
+          <Button
+            variant={groupsEnabled() ? "secondary" : "outline"}
+            class="text-xs h-8 py-0 px-3"
+            onClick={handleGroupsToggle}
+            disabled={props.busy || savingGroups() || groupsEnabled() === null}
+          >
+            {savingGroups() ? "Saving..." : groupsEnabled() ? "Enabled" : "Disabled"}
+          </Button>
+        </div>
       </div>
 
       {/* Pairing Requests */}
@@ -639,6 +892,60 @@ export default function SettingsView(props: SettingsViewProps) {
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   });
 
+  const [owpenbotRestarting, setOwpenbotRestarting] = createSignal(false);
+  const [owpenbotRestartError, setOwpenbotRestartError] = createSignal<string | null>(null);
+
+  const handleOwpenbotRestart = async () => {
+    if (owpenbotRestarting()) return;
+    const workspacePath = props.owpenbotInfo?.workspacePath?.trim() || props.engineInfo?.projectDir?.trim();
+    const opencodeUrl = props.owpenbotInfo?.opencodeUrl?.trim() || props.engineInfo?.baseUrl?.trim();
+    const opencodeUsername = props.engineInfo?.opencodeUsername?.trim() || undefined;
+    const opencodePassword = props.engineInfo?.opencodePassword?.trim() || undefined;
+    if (!workspacePath) {
+      setOwpenbotRestartError("No workspace path available");
+      return;
+    }
+    setOwpenbotRestarting(true);
+    setOwpenbotRestartError(null);
+    try {
+      await owpenbotRestart({
+        workspacePath,
+        opencodeUrl: opencodeUrl || undefined,
+        opencodeUsername,
+        opencodePassword,
+      });
+    } catch (e) {
+      setOwpenbotRestartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOwpenbotRestarting(false);
+    }
+  };
+
+  const handleOwpenbotStop = async () => {
+    if (owpenbotRestarting()) return;
+    setOwpenbotRestarting(true);
+    setOwpenbotRestartError(null);
+    try {
+      await owpenbotStop();
+    } catch (e) {
+      setOwpenbotRestartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOwpenbotRestarting(false);
+    }
+  };
+
+  const openwrkStatusLabel = createMemo(() => {
+    if (!props.openwrkStatus) return "Unavailable";
+    return props.openwrkStatus.running ? "Running" : "Offline";
+  });
+
+  const openwrkStatusStyle = createMemo(() => {
+    if (!props.openwrkStatus) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    return props.openwrkStatus.running
+      ? "bg-green-7/10 text-green-11 border-green-7/20"
+      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
   const openworkAuditStatusLabel = createMemo(() => {
     if (!props.openworkServerWorkspaceId) return "Unavailable";
     if (props.openworkAuditStatus === "loading") return "Loading";
@@ -734,6 +1041,41 @@ export default function SettingsView(props: SettingsViewProps) {
   const owpenbotStderr = () => {
     if (!isTauriRuntime()) return "Available in the desktop app.";
     return props.owpenbotInfo?.lastStderr?.trim() || "No stderr captured yet.";
+  };
+
+  const formatOpenwrkBinary = (binary?: OpenwrkBinaryInfo | null) => {
+    if (!binary) return "Binary unavailable";
+    const version = binary.actualVersion || binary.expectedVersion || "unknown";
+    return `${binary.source} · ${version}`;
+  };
+
+  const formatOpenwrkBinaryVersion = (binary?: OpenwrkBinaryInfo | null) => {
+    if (!binary) return "—";
+    return binary.actualVersion || binary.expectedVersion || "—";
+  };
+
+  const openwrkBinaryPath = () => props.openwrkStatus?.binaries?.opencode?.path ?? "—";
+  const openwrkSidecarSummary = () => {
+    const info = props.openwrkStatus?.sidecar;
+    if (!info) return "Sidecar config unavailable";
+    const source = info.source ?? "auto";
+    const target = info.target ?? "unknown";
+    return `${source} · ${target}`;
+  };
+
+  const appVersionLabel = () => (props.appVersion ? `v${props.appVersion}` : "—");
+  const opencodeVersionLabel = () => {
+    const fromOpenwrk = formatOpenwrkBinaryVersion(props.openwrkStatus?.binaries?.opencode ?? null);
+    if (fromOpenwrk !== "—") return fromOpenwrk;
+    return props.engineDoctorVersion ?? "—";
+  };
+  const openworkServerVersionLabel = () => props.openworkServerDiagnostics?.version ?? "—";
+  const owpenbotVersionLabel = () => props.owpenbotInfo?.version ?? "—";
+  const openwrkVersionLabel = () => props.openwrkStatus?.cliVersion ?? "—";
+
+  const formatUptime = (uptimeMs?: number | null) => {
+    if (!uptimeMs) return "—";
+    return formatRelativeTime(Date.now() - uptimeMs);
   };
 
   const buildOpenworkSettings = () => ({
@@ -1159,6 +1501,29 @@ export default function SettingsView(props: SettingsViewProps) {
                     Bundled engine is the most reliable option. Use System install only if you manage OpenCode yourself.
                   </div>
                 </div>
+
+                <div class="space-y-3">
+                  <div class="text-xs text-gray-10">Engine runtime</div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <Button
+                      variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
+                      onClick={() => props.setEngineRuntime("direct")}
+                      disabled={props.busy}
+                    >
+                      Direct (OpenCode)
+                    </Button>
+                    <Button
+                      variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
+                      onClick={() => props.setEngineRuntime("openwrk")}
+                      disabled={props.busy}
+                    >
+                      Openwrk orchestrator
+                    </Button>
+                  </div>
+                  <div class="text-[11px] text-gray-7">
+                    Applies the next time the engine starts or reloads.
+                  </div>
+                </div>
               </Show>
 
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
@@ -1490,7 +1855,16 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "messaging"}>
           <div class="space-y-6">
-            <OwpenbotSettings busy={props.busy} />
+            <OwpenbotSettings
+              busy={props.busy}
+              mode={props.mode}
+              openworkServerStatus={props.openworkServerStatus}
+              openworkServerUrl={props.openworkServerUrl}
+              openworkServerSettings={props.openworkServerSettings}
+              openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+              openworkServerHostInfo={props.openworkServerHostInfo}
+              developerMode={props.developerMode}
+            />
           </div>
         </Match>
 
@@ -1529,6 +1903,22 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">Versions</div>
+                        <div class="text-xs text-gray-10">Sidecar + desktop build info.</div>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="text-[11px] text-gray-7 font-mono truncate">Desktop app: {appVersionLabel()}</div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">Openwrk: {openwrkVersionLabel()}</div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          OpenWork server: {openworkServerVersionLabel()}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">Owpenbot: {owpenbotVersionLabel()}</div>
+                      </div>
+                    </div>
+
+                    <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
                           <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
@@ -1561,6 +1951,49 @@ export default function SettingsView(props: SettingsViewProps) {
                           </pre>
                         </div>
                       </div>
+                    </div>
+
+                    <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                      <div class="flex items-center justify-between gap-3">
+                        <div>
+                          <div class="text-sm font-medium text-gray-12">Openwrk daemon</div>
+                          <div class="text-xs text-gray-10">Workspace orchestration layer.</div>
+                        </div>
+                        <div class={`text-xs px-2 py-1 rounded-full border ${openwrkStatusStyle()}`}>
+                          {openwrkStatusLabel()}
+                        </div>
+                      </div>
+                      <div class="space-y-1">
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          {props.openwrkStatus?.dataDir ?? "Data directory unavailable"}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          Daemon: {props.openwrkStatus?.daemon?.baseUrl ?? "—"}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          OpenCode: {props.openwrkStatus?.opencode?.baseUrl ?? "—"}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          Openwrk version: {props.openwrkStatus?.cliVersion ?? "—"}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          Sidecar: {openwrkSidecarSummary()}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate" title={openwrkBinaryPath()}>
+                          Opencode binary: {formatOpenwrkBinary(props.openwrkStatus?.binaries?.opencode ?? null)}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          Active workspace: {props.openwrkStatus?.activeId ?? "—"}
+                        </div>
+                      </div>
+                      <Show when={props.openwrkStatus?.lastError}>
+                        <div>
+                          <div class="text-[11px] text-gray-9 mb-1">Last error</div>
+                          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
+                            {props.openwrkStatus?.lastError}
+                          </pre>
+                        </div>
+                      </Show>
                     </div>
 
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
@@ -1648,6 +2081,32 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.owpenbotInfo?.pid ?? "—"}</div>
                       </div>
+                      <div class="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          onClick={handleOwpenbotRestart}
+                          disabled={owpenbotRestarting() || !isTauriRuntime()}
+                          class="text-xs px-3 py-1.5"
+                        >
+                          <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${owpenbotRestarting() ? "animate-spin" : ""}`} />
+                          {owpenbotRestarting() ? "Restarting..." : "Restart"}
+                        </Button>
+                        <Show when={props.owpenbotInfo?.running}>
+                          <Button
+                            variant="ghost"
+                            onClick={handleOwpenbotStop}
+                            disabled={owpenbotRestarting()}
+                            class="text-xs px-3 py-1.5"
+                          >
+                            Stop
+                          </Button>
+                        </Show>
+                      </div>
+                      <Show when={owpenbotRestartError()}>
+                        <div class="text-xs text-red-11 bg-red-3/50 border border-red-6 rounded-lg p-2">
+                          {owpenbotRestartError()}
+                        </div>
+                      </Show>
                       <div class="grid gap-2">
                         <div>
                           <div class="text-[11px] text-gray-9 mb-1">Last stdout</div>
@@ -1663,6 +2122,34 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                       </div>
                     </div>
+                  </div>
+
+                  <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="text-sm font-medium text-gray-12">OpenWork server diagnostics</div>
+                      <div class="text-[11px] text-gray-8 font-mono truncate">
+                        {props.openworkServerDiagnostics?.version ?? "—"}
+                      </div>
+                    </div>
+                    <Show
+                      when={props.openworkServerDiagnostics}
+                      fallback={<div class="text-xs text-gray-9">Diagnostics unavailable.</div>}
+                    >
+                      {(diag) => (
+                        <div class="grid md:grid-cols-2 gap-2 text-xs text-gray-11">
+                          <div>Started: {formatUptime(diag().uptimeMs)}</div>
+                          <div>Read-only: {diag().readOnly ? "true" : "false"}</div>
+                          <div>
+                            Approval: {diag().approval.mode} ({diag().approval.timeoutMs}ms)
+                          </div>
+                          <div>Workspaces: {diag().workspaceCount}</div>
+                          <div>Active workspace: {diag().activeWorkspaceId ?? "—"}</div>
+                          <div>Config path: {diag().server.configPath ?? "default"}</div>
+                          <div>Token source: {diag().tokenSource.client}</div>
+                          <div>Host token source: {diag().tokenSource.host}</div>
+                        </div>
+                      )}
+                    </Show>
                   </div>
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">

@@ -1,8 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
+  runtime: "direct" | "openwrk";
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -27,6 +30,66 @@ export type OpenworkServerInfo = {
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+};
+
+export type OpenwrkDaemonState = {
+  pid: number;
+  port: number;
+  baseUrl: string;
+  startedAt: number;
+};
+
+export type OpenwrkOpencodeState = {
+  pid: number;
+  port: number;
+  baseUrl: string;
+  startedAt: number;
+};
+
+export type OpenwrkBinaryInfo = {
+  path: string;
+  source: string;
+  expectedVersion?: string | null;
+  actualVersion?: string | null;
+};
+
+export type OpenwrkBinaryState = {
+  opencode?: OpenwrkBinaryInfo | null;
+};
+
+export type OpenwrkSidecarInfo = {
+  dir?: string | null;
+  baseUrl?: string | null;
+  manifestUrl?: string | null;
+  target?: string | null;
+  source?: string | null;
+  opencodeSource?: string | null;
+  allowExternal?: boolean | null;
+};
+
+export type OpenwrkWorkspace = {
+  id: string;
+  name: string;
+  path: string;
+  workspaceType: string;
+  baseUrl?: string | null;
+  directory?: string | null;
+  createdAt?: number | null;
+  lastUsedAt?: number | null;
+};
+
+export type OpenwrkStatus = {
+  running: boolean;
+  dataDir: string;
+  daemon: OpenwrkDaemonState | null;
+  opencode: OpenwrkOpencodeState | null;
+  cliVersion?: string | null;
+  sidecar?: OpenwrkSidecarInfo | null;
+  binaries?: OpenwrkBinaryState | null;
+  activeId: string | null;
+  workspaceCount: number;
+  workspaces: OpenwrkWorkspace[];
+  lastError: string | null;
 };
 
 export type EngineDoctorResult = {
@@ -69,11 +132,13 @@ export type WorkspaceExportSummary = {
 
 export async function engineStart(
   projectDir: string,
-  options?: { preferSidecar?: boolean },
+  options?: { preferSidecar?: boolean; runtime?: "direct" | "openwrk"; workspacePaths?: string[] },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
     projectDir,
     preferSidecar: options?.preferSidecar ?? false,
+    runtime: options?.runtime ?? null,
+    workspacePaths: options?.workspacePaths ?? null,
   });
 }
 
@@ -248,6 +313,24 @@ export async function opencodeCommandDelete(input: {
 
 export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
+}
+
+export async function openwrkStatus(): Promise<OpenwrkStatus> {
+  return invoke<OpenwrkStatus>("openwrk_status");
+}
+
+export async function openwrkWorkspaceActivate(input: {
+  workspacePath: string;
+  name?: string | null;
+}): Promise<OpenwrkWorkspace> {
+  return invoke<OpenwrkWorkspace>("openwrk_workspace_activate", {
+    workspacePath: input.workspacePath,
+    name: input.name ?? null,
+  });
+}
+
+export async function openwrkInstanceDispose(workspacePath: string): Promise<boolean> {
+  return invoke<boolean>("openwrk_instance_dispose", { workspacePath });
 }
 
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
@@ -473,13 +556,19 @@ export type OwpenbotOpencodeStatus = {
 export type OwpenbotStatus = {
   running: boolean;
   config: string;
+  healthPort?: number | null;
   whatsapp: OwpenbotWhatsAppStatus;
   telegram: OwpenbotTelegramStatus;
   opencode: OwpenbotOpencodeStatus;
 };
 
+export type OwpenbotStatusResult =
+  | { ok: true; status: OwpenbotStatus }
+  | { ok: false; error: string };
+
 export type OwpenbotInfo = {
   running: boolean;
+  version: string | null;
   workspacePath: string | null;
   opencodeUrl: string | null;
   qrData: string | null;
@@ -508,6 +597,15 @@ export async function getOwpenbotStatus(): Promise<OwpenbotStatus | null> {
     return await invoke<OwpenbotStatus>("owpenbot_status");
   } catch {
     return null;
+  }
+}
+
+export async function getOwpenbotStatusDetailed(): Promise<OwpenbotStatusResult> {
+  try {
+    const status = await invoke<OwpenbotStatus>("owpenbot_status");
+    return { ok: true, status };
+  } catch (error) {
+    return { ok: false, error: String(error) };
   }
 }
 
@@ -552,7 +650,54 @@ export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecRes
 
 export async function setOwpenbotTelegramToken(token: string): Promise<ExecResult> {
   try {
-    await invoke("owpenbot_config_set", { key: "channels.telegram.token", value: token });
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/telegram-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      return { ok: false, status: response.status, stdout: "", stderr: message };
+    }
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function getOwpenbotGroupsEnabled(): Promise<boolean | null> {
+  try {
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data?.groupsEnabled ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setOwpenbotGroupsEnabled(enabled: boolean): Promise<ExecResult> {
+  try {
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      return { ok: false, status: response.status, stdout: "", stderr: message };
+    }
     return { ok: true, status: 0, stdout: "", stderr: "" };
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };
@@ -615,4 +760,35 @@ export async function opencodeMcpAuth(
     projectDir: safeProjectDir,
     serverName: safeServerName,
   });
+}
+
+export async function owpenbotStop(): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_stop");
+}
+
+export async function owpenbotStart(options: {
+  workspacePath: string;
+  opencodeUrl?: string;
+  opencodeUsername?: string;
+  opencodePassword?: string;
+  healthPort?: number;
+}): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_start", {
+    workspacePath: options.workspacePath,
+    opencodeUrl: options.opencodeUrl ?? null,
+    opencodeUsername: options.opencodeUsername ?? null,
+    opencodePassword: options.opencodePassword ?? null,
+    healthPort: options.healthPort ?? null,
+  });
+}
+
+export async function owpenbotRestart(options: {
+  workspacePath: string;
+  opencodeUrl?: string;
+  opencodeUsername?: string;
+  opencodePassword?: string;
+  healthPort?: number;
+}): Promise<OwpenbotInfo> {
+  await owpenbotStop();
+  return owpenbotStart(options);
 }
