@@ -162,6 +162,7 @@ pub fn spawn_openwrk_daemon(
         options.opencode_host.clone(),
         "--opencode-workdir".to_string(),
         options.opencode_workdir.clone(),
+        "--allow-external".to_string(),
     ];
 
     if let Some(port) = options.opencode_port {

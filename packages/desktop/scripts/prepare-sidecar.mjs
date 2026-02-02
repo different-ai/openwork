@@ -135,6 +135,22 @@ const owpenbotTargetName = owpenbotTargetTriple
   : null;
 const owpenbotTargetPath = owpenbotTargetName ? join(sidecarDir, owpenbotTargetName) : null;
 const owpenbotDir = resolve(__dirname, "..", "..", "owpenbot");
+
+// openwrk paths
+const openwrkBaseName = "openwrk";
+const openwrkName = process.platform === "win32" ? `${openwrkBaseName}.exe` : openwrkBaseName;
+const openwrkPath = join(sidecarDir, openwrkName);
+const openwrkBuildName = bunTarget
+  ? `${openwrkBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : openwrkName;
+const openwrkBuildPath = join(sidecarDir, openwrkBuildName);
+const openwrkTargetTriple = resolvedTargetTriple;
+const openwrkTargetName = openwrkTargetTriple
+  ? `${openwrkBaseName}-${openwrkTargetTriple}${openwrkTargetTriple.includes("windows") ? ".exe" : ""}`
+  : null;
+const openwrkTargetPath = openwrkTargetName ? join(sidecarDir, openwrkTargetName) : null;
+const openwrkDir = resolve(__dirname, "..", "..", "headless");
+
 const readHeader = (filePath, length = 256) => {
   const fd = openSync(filePath, "r");
   try {
@@ -485,9 +501,69 @@ if (existsSync(owpenbotBuildPath)) {
   }
 }
 
+// Build openwrk sidecar
+const shouldBuildOpenwrk = !existsSync(openwrkBuildPath) || isStubBinary(openwrkBuildPath);
+if (shouldBuildOpenwrk) {
+  mkdirSync(sidecarDir, { recursive: true });
+  if (existsSync(openwrkBuildPath)) {
+    try {
+      unlinkSync(openwrkBuildPath);
+    } catch {
+      // ignore
+    }
+  }
+  // openwrk uses bun build --compile directly
+  const openwrkCliPath = resolve(openwrkDir, "src", "cli.ts");
+  if (!existsSync(openwrkCliPath)) {
+    console.error(`Openwrk CLI source not found at ${openwrkCliPath}`);
+    process.exit(1);
+  }
+  const openwrkArgs = ["build", "--compile", openwrkCliPath, "--outfile", openwrkBuildPath];
+  if (bunTarget) {
+    openwrkArgs.push("--target", bunTarget);
+  }
+  const result = spawnSync("bun", openwrkArgs, { cwd: openwrkDir, stdio: "inherit" });
+  if (result.status !== 0) {
+    process.exit(result.status ?? 1);
+  }
+}
+
+if (existsSync(openwrkBuildPath)) {
+  const shouldCopyCanonical = !existsSync(openwrkPath) || isStubBinary(openwrkPath);
+  if (shouldCopyCanonical && openwrkBuildPath !== openwrkPath) {
+    try {
+      if (existsSync(openwrkPath)) unlinkSync(openwrkPath);
+    } catch {
+      // ignore
+    }
+    copyFileSync(openwrkBuildPath, openwrkPath);
+  }
+
+  if (openwrkTargetPath) {
+    const shouldCopyTarget = !existsSync(openwrkTargetPath) || isStubBinary(openwrkTargetPath);
+    if (shouldCopyTarget && openwrkBuildPath !== openwrkTargetPath) {
+      try {
+        if (existsSync(openwrkTargetPath)) unlinkSync(openwrkTargetPath);
+      } catch {
+        // ignore
+      }
+      copyFileSync(openwrkBuildPath, openwrkTargetPath);
+    }
+  }
+}
+
 const openworkServerVersion = (() => {
   try {
     const raw = readFileSync(resolve(openworkServerDir, "package.json"), "utf8");
+    return String(JSON.parse(raw).version ?? "").trim();
+  } catch {
+    return null;
+  }
+})();
+
+const openwrkVersion = (() => {
+  try {
+    const raw = readFileSync(resolve(openwrkDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -506,6 +582,10 @@ const versions = {
   owpenbot: {
     version: expectedOwpenbotVersion,
     sha256: existsSync(owpenbotPath) ? sha256File(owpenbotPath) : null,
+  },
+  openwrk: {
+    version: openwrkVersion,
+    sha256: existsSync(openwrkPath) ? sha256File(openwrkPath) : null,
   },
 };
 
