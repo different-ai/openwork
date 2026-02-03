@@ -1,5 +1,7 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
+English | [简体中文](./README_ZH.md) | [繁體中文](./README_ZH_hk.md)
+
 # OpenWork
 > Make your company feel 1000× more productive.
 
