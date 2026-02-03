@@ -1,0 +1,31 @@
+# //review-2026-02-15 @twishapatel12
+
+name: local-ollama-doc-qa
+description: Local document Q&A using Ollama
+
+inputs:
+  documents_path:
+    type: string
+    description: Path to a folder containing local documents
+  question:
+    type: string
+    description: Question to ask about the documents
+
+steps:
+  - id: retrieve
+    type: rag.retrieve
+    with:
+      path: "{{documents_path}}"
+
+  - id: answer
+    type: llm.generate
+    with:
+      provider: ollama
+      model: llama3
+      prompt: ../prompts/doc-qa.md
+      context: "{{steps.retrieve.context}}"
+      question: "{{question}}"
+
+outputs:
+  answer:
+    value: "{{steps.answer.text}}"
