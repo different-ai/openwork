@@ -228,6 +228,8 @@ export type DashboardViewProps = {
     downloadedBytes?: number;
     message?: string;
   } | null;
+  updateChannel: "stable" | "prerelease";
+  setUpdateChannel: (value: "stable" | "prerelease") => void;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
   checkForUpdates: () => void;
@@ -1025,6 +1027,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   downloadUpdate={props.downloadUpdate}
                   installUpdateAndRestart={props.installUpdateAndRestart}
                   anyActiveRuns={props.anyActiveRuns}
+                  updateChannel={props.updateChannel}
+                  setUpdateChannel={props.setUpdateChannel}
                   onResetStartupPreference={props.onResetStartupPreference}
                   openResetModal={props.openResetModal}
                   resetModalBusy={props.resetModalBusy}

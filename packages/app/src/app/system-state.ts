@@ -3,7 +3,6 @@ import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { ProviderListItem } from "./types";
 
-import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
 import type {
@@ -12,12 +11,17 @@ import type {
   ReloadReason,
   ReloadTrigger,
   ResetOpenworkMode,
-  UpdateHandle,
 } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
-import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
+import {
+  resetOpenworkState,
+  resetOpencodeCache,
+  updaterCheck,
+  updaterDownload,
+  updaterInstall,
+} from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
 export type NotionState = {
@@ -65,6 +69,8 @@ export function createSystemState(options: {
     setPendingUpdate,
     updateEnv,
     setUpdateEnv,
+    updateChannel,
+    setUpdateChannel,
   } = updater;
 
   const [resetModalOpen, setResetModalOpen] = createSignal(false);
@@ -375,7 +381,8 @@ export function createSystemState(options: {
     setUpdateStatus({ state: "checking", startedAt: Date.now() });
 
     try {
-      const update = (await check({ timeout: 8_000 })) as unknown as UpdateHandle | null;
+      const channel = updateChannel();
+      const update = await updaterCheck(channel);
       const checkedAt = Date.now();
 
       if (!update) {
@@ -384,14 +391,13 @@ export function createSystemState(options: {
         return;
       }
 
-      const notes = typeof update.body === "string" ? update.body : undefined;
-      setPendingUpdate({ update, version: update.version, notes });
+      setPendingUpdate({ version: update.version, notes: update.notes, date: update.date });
       setUpdateStatus({
         state: "available",
         lastCheckedAt: checkedAt,
         version: update.version,
         date: update.date,
-        notes,
+        notes: update.notes,
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -425,21 +431,18 @@ export function createSystemState(options: {
     });
 
     try {
-      await pending.update.download((event: any) => {
-        if (!event || typeof event !== "object") return;
-        const record = event as Record<string, any>;
-
+      await updaterDownload((event) => {
         setUpdateStatus((current) => {
           if (current.state !== "downloading") return current;
 
-          if (record.event === "Started") {
+          if (event.event === "Started") {
             const total =
-              record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
+              event.data && typeof event.data.contentLength === "number" ? event.data.contentLength : null;
             return { ...current, totalBytes: total };
           }
 
-          if (record.event === "Progress") {
-            const chunk = record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
+          if (event.event === "Progress") {
+            const chunk = event.data && typeof event.data.chunkLength === "number" ? event.data.chunkLength : 0;
             return { ...current, downloadedBytes: current.downloadedBytes + chunk };
           }
 
@@ -470,8 +473,15 @@ export function createSystemState(options: {
 
     options.setError(null);
     try {
-      await pending.update.install();
-      await pending.update.close();
+      setUpdateStatus((current) => {
+        if (current.state !== "ready") return current;
+        return { ...current, state: "applying" } as UpdateStatus;
+      });
+      await updaterInstall();
+      setUpdateStatus((current) => {
+        if (current.state !== "applying") return current;
+        return { ...current, state: "restart-required" } as UpdateStatus;
+      });
       await relaunch();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -505,6 +515,8 @@ export function createSystemState(options: {
     setPendingUpdate,
     updateEnv,
     setUpdateEnv,
+    updateChannel,
+    setUpdateChannel,
     checkForUpdates,
     downloadUpdate,
     installUpdateAndRestart,

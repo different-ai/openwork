@@ -30,7 +30,7 @@ use commands::owpenbot::{
     owpenbot_pairing_list, owpenbot_qr, owpenbot_start, owpenbot_status, owpenbot_stop,
 };
 use commands::skills::{install_skill_template, list_local_skills, uninstall_skill};
-use commands::updater::updater_environment;
+use commands::updater::{updater_check, updater_download, updater_environment, updater_install, PendingUpdateState};
 use commands::workspace::{
     workspace_add_authorized_root, workspace_bootstrap, workspace_create, workspace_create_remote,
     workspace_export_config, workspace_forget, workspace_import_config, workspace_openwork_read,
@@ -60,6 +60,7 @@ pub fn run() {
         .manage(OpenworkServerManager::default())
         .manage(OwpenbotManager::default())
         .manage(WorkspaceWatchState::default())
+        .manage(PendingUpdateState::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
             engine_stop,
@@ -101,6 +102,9 @@ pub fn run() {
             read_opencode_config,
             write_opencode_config,
             updater_environment,
+            updater_check,
+            updater_download,
+            updater_install,
             reset_openwork_state,
             reset_opencode_cache,
             opencode_mcp_auth,

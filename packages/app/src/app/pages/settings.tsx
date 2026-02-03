@@ -96,16 +96,18 @@ export type SettingsViewProps = {
   setThemeMode: (value: "light" | "dark" | "system") => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
-  updateStatus: {
-    state: string;
-    lastCheckedAt?: number | null;
-    version?: string;
-    date?: string;
-    notes?: string;
-    totalBytes?: number | null;
-    downloadedBytes?: number;
-    message?: string;
-  } | null;
+   updateStatus: {
+     state: string;
+     lastCheckedAt?: number | null;
+     version?: string;
+     date?: string;
+     notes?: string;
+     totalBytes?: number | null;
+     downloadedBytes?: number;
+     message?: string;
+   } | null;
+   updateChannel: "stable" | "prerelease";
+   setUpdateChannel: (value: "stable" | "prerelease") => void;
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   appVersion: string | null;
   checkForUpdates: () => void;
@@ -744,7 +746,7 @@ function OwpenbotSettings(props: {
 }
 
 export default function SettingsView(props: SettingsViewProps) {
-  const updateState = () => props.updateStatus?.state ?? "idle";
+   const updateState = () => props.updateStatus?.state ?? "idle";
   const updateNotes = () => props.updateStatus?.notes ?? null;
   const updateVersion = () => props.updateStatus?.version ?? null;
   const updateDate = () => props.updateStatus?.date ?? null;
@@ -782,13 +784,16 @@ export default function SettingsView(props: SettingsViewProps) {
         return "bg-red-7/10 text-red-11 border-red-7/20";
       case "checking":
       case "downloading":
+      case "applying":
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
       default:
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }
   });
 
-  const updateToolbarSpinning = createMemo(() => updateState() === "checking" || updateState() === "downloading");
+  const updateToolbarSpinning = createMemo(
+    () => updateState() === "checking" || updateState() === "downloading" || updateState() === "applying",
+  );
 
   const updateToolbarLabel = createMemo(() => {
     const state = updateState();
@@ -799,11 +804,17 @@ export default function SettingsView(props: SettingsViewProps) {
     if (state === "ready") {
       return `Ready to install${version ? ` · v${version}` : ""}`;
     }
+    if (state === "restart-required") {
+      return `Restart to finish${version ? ` · v${version}` : ""}`;
+    }
     if (state === "downloading") {
       const downloaded = updateDownloadedBytes() ?? 0;
       const total = updateTotalBytes();
       const progress = total != null ? `${formatBytes(downloaded)} / ${formatBytes(total)}` : formatBytes(downloaded);
       return `Downloading ${progress}`;
+    }
+    if (state === "applying") {
+      return "Applying update";
     }
     if (state === "checking") {
       return "Checking for updates";
@@ -817,7 +828,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const updateToolbarActionLabel = createMemo(() => {
     const state = updateState();
     if (state === "available") return "Download";
-    if (state === "ready") return "Install";
+    if (state === "ready" || state === "restart-required") return "Install";
     if (state === "error") return "Retry";
     if (state === "idle") return "Check";
     return null;
@@ -825,7 +836,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const updateToolbarDisabled = createMemo(() => {
     const state = updateState();
-    if (state === "checking" || state === "downloading") return true;
+     if (state === "checking" || state === "downloading" || state === "applying") return true;
     if (state === "ready" && props.anyActiveRuns) return true;
     return props.busy;
   });
@@ -837,7 +848,7 @@ export default function SettingsView(props: SettingsViewProps) {
       props.downloadUpdate();
       return;
     }
-    if (state === "ready") {
+     if (state === "ready" || state === "restart-required") {
       props.installUpdateAndRestart();
       return;
     }
@@ -1480,22 +1491,59 @@ export default function SettingsView(props: SettingsViewProps) {
                     when={props.updateEnv && props.updateEnv.supported === false}
                     fallback={
                       <>
-                        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
-                          <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">Automatic checks</div>
-                            <div class="text-xs text-gray-7">Once per day (quiet)</div>
-                          </div>
-                          <button
-                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                              props.updateAutoCheck
-                                ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
-                                : "text-gray-10 border-gray-6 hover:text-gray-12"
-                            }`}
-                            onClick={props.toggleUpdateAutoCheck}
-                          >
-                            {props.updateAutoCheck ? "On" : "Off"}
-                          </button>
-                        </div>
+                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                           <div class="space-y-0.5">
+                             <div class="text-sm text-gray-12">Automatic checks</div>
+                             <div class="text-xs text-gray-7">Once per day (quiet)</div>
+                           </div>
+                           <button
+                             class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                               props.updateAutoCheck
+                                 ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
+                                 : "text-gray-10 border-gray-6 hover:text-gray-12"
+                             }`}
+                             onClick={props.toggleUpdateAutoCheck}
+                           >
+                             {props.updateAutoCheck ? "On" : "Off"}
+                           </button>
+                         </div>
+
+                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                           <div class="space-y-0.5">
+                             <div class="text-sm text-gray-12">Update channel</div>
+                             <div class="text-xs text-gray-7">
+                               {props.updateChannel === "stable" ? "Stable releases only" : "Include prereleases"}
+                             </div>
+                           </div>
+                           <div class="flex items-center gap-2">
+                             <Button
+                               variant={props.updateChannel === "stable" ? "secondary" : "outline"}
+                               class="text-xs h-8 py-0 px-3"
+                               onClick={() => props.setUpdateChannel("stable")}
+                               disabled={
+                                 props.busy ||
+                                 updateState() === "checking" ||
+                                 updateState() === "downloading" ||
+                                 updateState() === "applying"
+                               }
+                             >
+                               Stable
+                             </Button>
+                             <Button
+                               variant={props.updateChannel === "prerelease" ? "secondary" : "outline"}
+                               class="text-xs h-8 py-0 px-3"
+                               onClick={() => props.setUpdateChannel("prerelease")}
+                               disabled={
+                                 props.busy ||
+                                 updateState() === "checking" ||
+                                 updateState() === "downloading" ||
+                                 updateState() === "applying"
+                               }
+                             >
+                               Prerelease
+                             </Button>
+                           </div>
+                         </div>
 
                         <div class="flex items-center justify-between gap-3 bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
@@ -1503,8 +1551,10 @@ export default function SettingsView(props: SettingsViewProps) {
                               <Switch>
                                 <Match when={updateState() === "checking"}>Checking...</Match>
                                 <Match when={updateState() === "available"}>Update available: v{updateVersion()}</Match>
-                                <Match when={updateState() === "downloading"}>Downloading...</Match>
-                                <Match when={updateState() === "ready"}>Ready to install: v{updateVersion()}</Match>
+                               <Match when={updateState() === "downloading"}>Downloading...</Match>
+                               <Match when={updateState() === "ready"}>Ready to install: v{updateVersion()}</Match>
+                               <Match when={updateState() === "applying"}>Applying update...</Match>
+                               <Match when={updateState() === "restart-required"}>Restart required: v{updateVersion()}</Match>
                                 <Match when={updateState() === "error"}>Update check failed</Match>
                                 <Match when={true}>Up to date</Match>
                               </Switch>
@@ -1531,36 +1581,43 @@ export default function SettingsView(props: SettingsViewProps) {
                           </div>
 
                           <div class="flex items-center gap-2">
-                            <Button
-                              variant="outline"
-                              class="text-xs h-8 py-0 px-3"
-                              onClick={props.checkForUpdates}
-                              disabled={props.busy || updateState() === "checking" || updateState() === "downloading"}
-                            >
-                              Check
-                            </Button>
+                             <Button
+                               variant="outline"
+                               class="text-xs h-8 py-0 px-3"
+                               onClick={props.checkForUpdates}
+                               disabled={
+                                 props.busy ||
+                                 updateState() === "checking" ||
+                                 updateState() === "downloading" ||
+                                 updateState() === "applying"
+                               }
+                             >
+                               Check
+                             </Button>
 
                             <Show when={updateState() === "available"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
-                                onClick={props.downloadUpdate}
-                                disabled={props.busy || updateState() === "downloading"}
-                              >
-                                Download
-                              </Button>
+                             <Button
+                               variant="secondary"
+                               class="text-xs h-8 py-0 px-3"
+                               onClick={props.downloadUpdate}
+                               disabled={
+                                 props.busy || updateState() === "downloading" || updateState() === "applying"
+                               }
+                             >
+                               Download
+                             </Button>
                             </Show>
 
                             <Show when={updateState() === "ready"}>
-                              <Button
-                                variant="secondary"
-                                class="text-xs h-8 py-0 px-3"
-                                onClick={props.installUpdateAndRestart}
-                                disabled={props.busy || props.anyActiveRuns}
-                                title={props.anyActiveRuns ? "Stop active runs to update" : ""}
-                              >
-                                Install & Restart
-                              </Button>
+                               <Button
+                                 variant="secondary"
+                                 class="text-xs h-8 py-0 px-3"
+                                 onClick={props.installUpdateAndRestart}
+                                 disabled={props.busy || props.anyActiveRuns || updateState() === "applying"}
+                                 title={props.anyActiveRuns ? "Stop active runs to update" : ""}
+                               >
+                                 Install & Restart
+                               </Button>
                             </Show>
                           </div>
                         </div>

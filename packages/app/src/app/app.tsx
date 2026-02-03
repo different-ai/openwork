@@ -2043,6 +2043,8 @@ export default function App() {
     setPendingUpdate,
     updateEnv,
     setUpdateEnv,
+    updateChannel,
+    setUpdateChannel,
     checkForUpdates,
     downloadUpdate,
     installUpdateAndRestart,
@@ -3340,6 +3342,11 @@ export default function App() {
           }
         }
 
+        const storedUpdateChannel = window.localStorage.getItem("openwork.updateChannel");
+        if (storedUpdateChannel === "stable" || storedUpdateChannel === "prerelease") {
+          setUpdateChannel(storedUpdateChannel);
+        }
+
         const storedNotionStatus = window.localStorage.getItem("openwork.notionStatus");
         if (
           storedNotionStatus === "disconnected" ||
@@ -3650,6 +3657,15 @@ export default function App() {
         "openwork.updateAutoCheck",
         updateAutoCheck() ? "1" : "0"
       );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("openwork.updateChannel", updateChannel());
     } catch {
       // ignore
     }
@@ -4059,6 +4075,8 @@ export default function App() {
     checkForUpdates: () => checkForUpdates(),
     downloadUpdate: () => downloadUpdate(),
     installUpdateAndRestart,
+    updateChannel: updateChannel(),
+    setUpdateChannel,
     anyActiveRuns: anyActiveRuns(),
     engineSource: engineSource(),
     setEngineSource,

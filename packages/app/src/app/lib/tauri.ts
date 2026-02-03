@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
@@ -496,8 +496,38 @@ export type UpdaterEnvironment = {
   appBundlePath: string | null;
 };
 
+export type UpdateChannel = "stable" | "prerelease";
+
+export type UpdaterCheckResult = {
+  version: string;
+  currentVersion: string;
+  date?: string;
+  notes?: string;
+} | null;
+
+export type UpdaterDownloadEvent =
+  | { event: "Started"; data: { contentLength?: number | null } }
+  | { event: "Progress"; data: { chunkLength: number } }
+  | { event: "Finished"; data: Record<string, never> };
+
 export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
   return invoke<UpdaterEnvironment>("updater_environment");
+}
+
+export async function updaterCheck(channel: UpdateChannel): Promise<UpdaterCheckResult> {
+  return invoke<UpdaterCheckResult>("updater_check", { channel });
+}
+
+export async function updaterDownload(
+  onEvent: (event: UpdaterDownloadEvent) => void,
+): Promise<void> {
+  const channel = new Channel<UpdaterDownloadEvent>();
+  channel.onmessage = onEvent;
+  await invoke("updater_download", { onEvent: channel });
+}
+
+export async function updaterInstall(): Promise<void> {
+  await invoke("updater_install");
 }
 
 export async function readOpencodeConfig(

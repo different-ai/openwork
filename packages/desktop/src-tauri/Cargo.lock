@@ -2746,6 +2746,7 @@ dependencies = [
  "tauri-plugin-shell",
  "tauri-plugin-updater",
  "ureq",
+ "url",
  "uuid",
  "walkdir",
  "zip 0.6.6",
