@@ -1,7 +1,6 @@
 import { For, Show } from "solid-js";
 
 import type { PluginScope } from "../types";
-import { isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
@@ -10,6 +9,9 @@ import { Cpu } from "lucide-solid";
 export type PluginsViewProps = {
   busy: boolean;
   activeWorkspaceRoot: string;
+  canEditPlugins: boolean;
+  canUseGlobalScope: boolean;
+  accessHint?: string | null;
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
@@ -64,12 +66,14 @@ export default function PluginsView(props: PluginsViewProps) {
               Project
             </button>
             <button
+              disabled={!props.canUseGlobalScope}
               class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 props.pluginScope === "global"
                   ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
                   : "text-gray-10 border-gray-6 hover:text-gray-12"
-              }`}
+              } ${!props.canUseGlobalScope ? "opacity-40 cursor-not-allowed hover:text-gray-10" : ""}`}
               onClick={() => {
+                if (!props.canUseGlobalScope) return;
                 props.setPluginScope("global");
                 props.refreshPlugins("global");
               }}
@@ -85,6 +89,9 @@ export default function PluginsView(props: PluginsViewProps) {
         <div class="flex flex-col gap-1 text-xs text-gray-10">
           <div>Config</div>
           <div class="text-gray-7 font-mono truncate">{props.pluginConfigPath ?? "Not loaded yet"}</div>
+          <Show when={props.accessHint}>
+            <div class="text-gray-9">{props.accessHint}</div>
+          </Show>
         </div>
 
         <div class="space-y-3">
@@ -121,7 +128,7 @@ export default function PluginsView(props: PluginsViewProps) {
                           disabled={
                             props.busy ||
                             isInstalled() ||
-                            !isTauriRuntime() ||
+                            !props.canEditPlugins ||
                             (props.pluginScope === "project" && !props.activeWorkspaceRoot.trim())
                           }
                         >
@@ -211,7 +218,7 @@ export default function PluginsView(props: PluginsViewProps) {
             <Button
               variant="secondary"
               onClick={() => props.addPlugin()}
-              disabled={props.busy || !props.pluginInput.trim()}
+              disabled={props.busy || !props.pluginInput.trim() || !props.canEditPlugins}
               class="md:mt-6"
             >
               Add

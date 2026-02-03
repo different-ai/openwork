@@ -1,4 +1,4 @@
-import { Show } from "solid-js";
+import { Show, createEffect } from "solid-js";
 import { X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
@@ -16,7 +16,19 @@ export type RenameSessionModalProps = {
 };
 
 export default function RenameSessionModal(props: RenameSessionModalProps) {
+  let inputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
+
+  createEffect(() => {
+    if (props.open) {
+      requestAnimationFrame(() => {
+        inputRef?.focus();
+        if (inputRef) {
+          inputRef.select();
+        }
+      });
+    }
+  });
 
   return (
     <Show when={props.open}>
@@ -35,6 +47,7 @@ export default function RenameSessionModal(props: RenameSessionModalProps) {
 
             <div class="mt-6">
               <TextInput
+                ref={inputRef}
                 label={translate("session.rename_label")}
                 value={props.title}
                 onInput={(e) => props.onTitleChange(e.currentTarget.value)}

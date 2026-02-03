@@ -3,39 +3,70 @@ import type {
   DashboardTab,
   McpServerEntry,
   McpStatusMap,
+  OpencodeConnectStatus,
   PluginScope,
+  ProviderListItem,
+  SettingsTab,
+  ScheduledJob,
   SkillCard,
-  WorkspaceTemplate,
+  StartupPreference,
+  WorkspaceCommand,
+  View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import type { WorkspaceInfo } from "../lib/tauri";
-import { formatRelativeTime, normalizeDirectoryPath } from "../utils";
+import { formatRelativeTime } from "../utils";
+import type {
+  OpenworkAuditEntry,
+  OpenworkServerCapabilities,
+  OpenworkServerDiagnostics,
+  OpenworkServerSettings,
+  OpenworkServerStatus,
+} from "../lib/openwork-server";
+import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
 import WorkspaceChip from "../components/workspace-chip";
 import McpView from "./mcp";
 import PluginsView from "./plugins";
+import ScheduledTasksView from "./scheduled";
 import SettingsView from "./settings";
+import type { KeybindSetting } from "../components/settings-keybinds";
 import SkillsView from "./skills";
-import TemplatesView from "./templates";
+import CommandsView from "./commands";
+import StatusBar from "../components/status-bar";
+import ProviderAuthModal from "../components/provider-auth-modal";
 import {
   Command,
+  Copy,
+  Check,
   Cpu,
-  FileText,
+  Calendar,
   Package,
   Play,
   Plus,
-  Settings,
   Server,
+  Terminal,
 } from "lucide-solid";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
-  view: "dashboard" | "session" | "onboarding";
-  setView: (view: "dashboard" | "session" | "onboarding") => void;
-  mode: "host" | "client" | null;
+  settingsTab: SettingsTab;
+  setSettingsTab: (tab: SettingsTab) => void;
+  providers: ProviderListItem[];
+  providerConnectedIds: string[];
+  providerAuthBusy: boolean;
+  providerAuthModalOpen: boolean;
+  providerAuthError: string | null;
+  providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
+  openProviderAuthModal: () => Promise<void>;
+  closeProviderAuthModal: () => void;
+  startProviderAuth: (providerId?: string) => Promise<string>;
+  submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  view: View;
+  setView: (view: View, sessionId?: string) => void;
+  startupPreference: StartupPreference | null;
   baseUrl: string;
   clientConnected: boolean;
   busy: boolean;
@@ -44,6 +75,28 @@ export type DashboardViewProps = {
   newTaskDisabled: boolean;
   headerStatus: string;
   error: string | null;
+  openworkServerStatus: OpenworkServerStatus;
+  openworkServerUrl: string;
+  openworkServerSettings: OpenworkServerSettings;
+  openworkServerHostInfo: OpenworkServerInfo | null;
+  openworkServerCapabilities: OpenworkServerCapabilities | null;
+  openworkServerDiagnostics: OpenworkServerDiagnostics | null;
+  openworkServerWorkspaceId: string | null;
+  openworkAuditEntries: OpenworkAuditEntry[];
+  openworkAuditStatus: "idle" | "loading" | "error";
+  openworkAuditError: string | null;
+  opencodeConnectStatus: OpencodeConnectStatus | null;
+  engineInfo: EngineInfo | null;
+  engineDoctorVersion: string | null;
+  openwrkStatus: OpenwrkStatus | null;
+  owpenbotInfo: OwpenbotInfo | null;
+  updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
+  resetOpenworkServerSettings: () => void;
+  testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
+  keybindItems: KeybindSetting[];
+  onOverrideKeybind: (id: string, keybind: string | null) => void;
+  onResetKeybind: (id: string) => void;
+  onResetAllKeybinds: () => void;
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaceSearch: string;
   setWorkspaceSearch: (value: string) => void;
@@ -54,6 +107,8 @@ export type DashboardViewProps = {
   filteredWorkspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
   activateWorkspace: (id: string) => Promise<boolean> | boolean;
+  exportWorkspaceConfig: () => void;
+  exportWorkspaceBusy: boolean;
   createWorkspaceOpen: boolean;
   setCreateWorkspaceOpen: (open: boolean) => void;
   createWorkspaceFlow: (
@@ -69,26 +124,43 @@ export type DashboardViewProps = {
     directory?: string | null;
   }>;
   sessionStatusById: Record<string, string>;
+  scheduledJobs: ScheduledJob[];
+  scheduledJobsSource: "local" | "remote";
+  scheduledJobsSourceReady: boolean;
+  scheduledJobsStatus: string | null;
+  scheduledJobsBusy: boolean;
+  scheduledJobsUpdatedAt: number | null;
+  refreshScheduledJobs: (options?: { force?: boolean }) => void;
+  deleteScheduledJob: (name: string) => Promise<void> | void;
   activeWorkspaceRoot: string;
-  workspaceTemplates: WorkspaceTemplate[];
-  globalTemplates: WorkspaceTemplate[];
-  setTemplateDraftTitle: (value: string) => void;
-  setTemplateDraftDescription: (value: string) => void;
-  setTemplateDraftPrompt: (value: string) => void;
-  setTemplateDraftScope: (value: "workspace" | "global") => void;
-  openTemplateModal: () => void;
-  resetTemplateDraft?: (scope?: "workspace" | "global") => void;
-  runTemplate: (template: WorkspaceTemplate) => void;
-  deleteTemplate: (templateId: string) => void;
+  workspaceCommands: WorkspaceCommand[];
+  globalCommands: WorkspaceCommand[];
+  otherCommands: WorkspaceCommand[];
+  setCommandDraftName: (value: string) => void;
+  setCommandDraftDescription: (value: string) => void;
+  setCommandDraftTemplate: (value: string) => void;
+  setCommandDraftScope: (value: "workspace" | "global") => void;
+  openCommandModal: () => void;
+  resetCommandDraft?: (scope?: "workspace" | "global") => void;
+  runCommand: (command: WorkspaceCommand) => void;
+  deleteCommand: (command: WorkspaceCommand) => void;
+  justSavedCommand?: { name: string; scope: string } | null;
+  clearJustSavedCommand?: () => void;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  skillsAccessHint?: string | null;
+  canInstallSkillCreator: boolean;
+  canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => void;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
+  pluginsAccessHint?: string | null;
+  canEditPlugins: boolean;
+  canUseGlobalPluginScope: boolean;
   pluginScope: PluginScope;
   setPluginScope: (scope: PluginScope) => void;
   pluginConfigPath: string | null;
@@ -126,6 +198,7 @@ export type DashboardViewProps = {
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
+  mcpReloadBlocked: boolean;
   reloadMcpEngine: () => void;
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
@@ -159,6 +232,8 @@ export type DashboardViewProps = {
   anyActiveRuns: boolean;
   engineSource: "path" | "sidecar";
   setEngineSource: (value: "path" | "sidecar") => void;
+  engineRuntime: "direct" | "openwrk";
+  setEngineRuntime: (value: "direct" | "openwrk") => void;
   isWindows: boolean;
   toggleDeveloperMode: () => void;
   developerMode: boolean;
@@ -177,12 +252,6 @@ export type DashboardViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
-  demoMode: boolean;
-  toggleDemoMode: () => void;
-  demoSequence: "cold-open" | "scheduler" | "summaries" | "groceries";
-  setDemoSequence: (
-    value: "cold-open" | "scheduler" | "summaries" | "groceries"
-  ) => void;
 };
 
 export default function DashboardView(props: DashboardViewProps) {
@@ -190,8 +259,10 @@ export default function DashboardView(props: DashboardViewProps) {
     switch (props.tab) {
       case "sessions":
         return "Sessions";
-      case "templates":
-        return "Templates";
+      case "scheduled":
+        return "Scheduled Tasks";
+      case "commands":
+        return "Commands";
       case "skills":
         return "Skills";
       case "plugins":
@@ -205,14 +276,15 @@ export default function DashboardView(props: DashboardViewProps) {
     }
   });
 
-  const quickTemplates = createMemo(() => props.workspaceTemplates.slice(0, 3));
+  const quickCommands = createMemo(() => props.workspaceCommands.slice(0, 3));
+  const canExportWorkspace = createMemo(() => props.activeWorkspaceDisplay.workspaceType !== "remote");
 
   const openSessionFromList = (sessionId: string) => {
     // Defer view switch to avoid click-through on the same event frame.
     window.setTimeout(() => {
-      props.setView("session");
-      props.setTab("sessions");
       void props.selectSession(sessionId);
+      props.setTab("sessions");
+      props.setView("session", sessionId);
     }, 0);
   };
 
@@ -220,6 +292,9 @@ export default function DashboardView(props: DashboardViewProps) {
   const [lastRefreshedTab, setLastRefreshedTab] = createSignal<string | null>(null);
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [taskDraft, setTaskDraft] = createSignal("");
+  const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
+  const [copiedWorkspaceId, setCopiedWorkspaceId] = createSignal<string | null>(null);
+  let copyTimeout: number | undefined;
 
   const canCreateTask = createMemo(
     () => !props.newTaskDisabled && taskDraft().trim().length > 0
@@ -231,6 +306,61 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setPrompt(value);
     props.createSessionAndOpen();
     setTaskDraft("");
+  };
+
+  const handleProviderAuthSelect = async (providerId: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.startProviderAuth(providerId);
+      props.closeProviderAuthModal();
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleProviderAuthApiKey = async (providerId: string, apiKey: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      await props.submitProviderApiKey(providerId, apiKey);
+      props.closeProviderAuthModal();
+    } catch {
+      // Errors are surfaced in the modal.
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  onCleanup(() => {
+    if (copyTimeout !== undefined) {
+      window.clearTimeout(copyTimeout);
+    }
+  });
+
+  const workspacePathLabel = (workspace: WorkspaceInfo) =>
+    workspace.workspaceType === "remote"
+      ? workspace.baseUrl ?? workspace.path
+      : workspace.path;
+
+  const handleCopyWorkspace = async (workspace: WorkspaceInfo) => {
+    const value = workspacePathLabel(workspace)?.trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedWorkspaceId(workspace.id);
+      if (copyTimeout !== undefined) {
+        window.clearTimeout(copyTimeout);
+      }
+      copyTimeout = window.setTimeout(() => {
+        setCopiedWorkspaceId(null);
+        copyTimeout = undefined;
+      }, 2000);
+    } catch {
+      // ignore
+    }
   };
 
   createEffect(() => {
@@ -258,6 +388,9 @@ export default function DashboardView(props: DashboardViewProps) {
         }
         if (currentTab === "mcp" && !cancelled) {
           await props.refreshMcpServers();
+        }
+        if (currentTab === "scheduled" && !cancelled) {
+          await props.refreshScheduledJobs();
         }
         if (currentTab === "sessions" && !cancelled) {
           // Stagger these calls to avoid request stacking
@@ -300,6 +433,11 @@ export default function DashboardView(props: DashboardViewProps) {
     );
   };
 
+  const openSettings = (tab: SettingsTab = "general") => {
+    props.setSettingsTab(tab);
+    props.setTab("settings");
+  };
+
   return (
     <div class="flex h-screen bg-gray-1 text-gray-12 overflow-hidden">
       <aside class="w-64 border-r border-gray-6 p-6 hidden md:flex flex-col justify-between bg-gray-1">
@@ -314,7 +452,8 @@ export default function DashboardView(props: DashboardViewProps) {
           <nav class="space-y-1">
             {navItem("home", "Dashboard", <Command size={18} />)}
             {navItem("sessions", "Sessions", <Play size={18} />)}
-            {navItem("templates", "Templates", <FileText size={18} />)}
+            {navItem("scheduled", "Scheduled Tasks", <Calendar size={18} />)}
+            {navItem("commands", "Commands", <Terminal size={18} />)}
             {navItem("skills", "Skills", <Package size={18} />)}
             {navItem("plugins", "Plugins", <Cpu size={18} />)}
             {navItem(
@@ -327,79 +466,36 @@ export default function DashboardView(props: DashboardViewProps) {
               </span>,
               <Server size={18} />,
             )}
-            {navItem("settings", "Settings", <Settings size={18} />)}
           </nav>
         </div>
 
         <div class="space-y-4">
-          <div class="px-3 py-3 rounded-xl bg-gray-2/50 border border-gray-6">
-            <div class="flex items-center gap-2 text-xs font-medium text-gray-11 mb-2">
-              Connection
-              <Show when={props.developerMode}>
-                <span class="text-gray-7">
-                  {props.mode === "host" ? "Local Engine" : "Client Mode"}
-                </span>
-              </Show>
-            </div>
-            <div class="flex items-center gap-2">
-              <div
-                class={`w-2 h-2 rounded-full ${
-                  props.clientConnected
-                    ? "bg-green-9 animate-pulse"
-                    : "bg-gray-6"
-                }`}
-              />
-              <span
-                class={`text-sm font-medium ${
-                  props.clientConnected ? "text-green-11" : "text-gray-10"
-                }`}
-              >
-                {props.clientConnected ? "Connected" : "Not connected"}
-              </span>
-            </div>
-            <Show when={props.developerMode}>
-              <div class="mt-2 text-[11px] text-gray-7 font-mono truncate">
-                {props.baseUrl}
-              </div>
-            </Show>
-          </div>
 
-          <Show when={!props.clientConnected && !props.demoMode}>
+          <Show
+            when={
+              props.activeWorkspaceDisplay.workspaceType === "remote" &&
+              props.openworkServerStatus === "disconnected"
+            }
+          >
+            <div class="text-[11px] text-gray-9 px-1">
+              OpenWork server is offline — remote tasks still run.
+            </div>
+          </Show>
+
+          <Show when={!props.clientConnected}>
             <Button
               variant="secondary"
-              onClick={() => props.setView("onboarding")}
+              onClick={() => props.setWorkspacePickerOpen(true)}
               disabled={props.busy}
               class="w-full"
             >
-              Connect
-            </Button>
-          </Show>
-
-          <Show when={props.mode === "host"}>
-            <Button
-              variant="danger"
-              onClick={props.stopHost}
-              disabled={props.busy}
-              class="w-full"
-            >
-              Stop & Disconnect
-            </Button>
-          </Show>
-
-          <Show when={props.mode === "client"}>
-            <Button
-              variant="outline"
-              onClick={props.stopHost}
-              disabled={props.busy}
-              class="w-full"
-            >
-              Disconnect
+              Connect folder
             </Button>
           </Show>
         </div>
       </aside>
 
-      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-0">
+      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-12">
         <header class="h-16 flex items-center justify-between px-6 md:px-10 border-b border-gray-6 sticky top-0 bg-gray-1/80 backdrop-blur-md z-10">
           <div class="flex items-center gap-3">
             <WorkspaceChip
@@ -421,6 +517,19 @@ export default function DashboardView(props: DashboardViewProps) {
           <div class="flex items-center gap-2">
             <Show when={props.tab === "home" || props.tab === "sessions"}>
               <Button
+                variant="outline"
+                class="text-xs h-9"
+                onClick={props.exportWorkspaceConfig}
+                disabled={!canExportWorkspace() || props.exportWorkspaceBusy}
+                title={
+                  !canExportWorkspace()
+                    ? "Export is only available for local workspaces"
+                    : "Export workspace config"
+                }
+              >
+                Share config
+              </Button>
+              <Button
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture?.(e.pointerId);
                 }}
@@ -436,20 +545,20 @@ export default function DashboardView(props: DashboardViewProps) {
               </Button>
             </Show>
 
-            <Show when={props.tab === "templates"}>
+            <Show when={props.tab === "commands"}>
               <Button
                 variant="secondary"
                 onClick={() => {
-                  const reset = props.resetTemplateDraft;
+                  const reset = props.resetCommandDraft;
                   if (reset) {
                     reset("workspace");
                   } else {
-                    props.setTemplateDraftTitle("");
-                    props.setTemplateDraftDescription("");
-                    props.setTemplateDraftPrompt("");
-                    props.setTemplateDraftScope("workspace");
+                    props.setCommandDraftName("");
+                    props.setCommandDraftDescription("");
+                    props.setCommandDraftTemplate("");
+                    props.setCommandDraftScope("workspace");
                   }
-                  props.openTemplateModal();
+                  props.openCommandModal();
                 }}
                 disabled={props.busy}
               >
@@ -514,37 +623,37 @@ export default function DashboardView(props: DashboardViewProps) {
               <section>
                 <div class="flex items-center justify-between mb-4">
                   <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
-                    Quick Start Templates
+                    Quick Start Commands
                   </h3>
                   <button
                     class="text-sm text-gray-10 hover:text-gray-12"
-                    onClick={() => props.setTab("templates")}
+                    onClick={() => props.setTab("commands")}
                   >
                     View all
                   </button>
                 </div>
 
                 <Show
-                  when={quickTemplates().length}
+                  when={quickCommands().length}
                   fallback={
                     <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-6 text-sm text-gray-10">
-                      No templates yet. Starter templates will appear here.
+                      No commands yet. Starter commands will appear here.
                     </div>
                   }
                 >
                   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <For each={quickTemplates()}>
-                      {(t) => (
+                    <For each={quickCommands()}>
+                      {(command) => (
                         <button
-                          onClick={() => props.runTemplate(t)}
+                          onClick={() => props.runCommand(command)}
                           class="group p-5 rounded-2xl bg-gray-2/30 border border-gray-6/50 hover:bg-gray-2 hover:border-gray-7 transition-all text-left"
                         >
                           <div class="w-10 h-10 rounded-full bg-gray-4 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                            <FileText size={20} class="text-indigo-11" />
+                            <Terminal size={20} class="text-indigo-11" />
                           </div>
-                          <h4 class="font-medium text-gray-12 mb-1">{t.title}</h4>
+                          <h4 class="font-medium text-gray-12 mb-1">/{command.name}</h4>
                           <p class="text-sm text-gray-10">
-                            {t.description || "Run a saved workflow"}
+                            {command.description || "Run a saved command"}
                           </p>
                         </button>
                       )}
@@ -554,72 +663,90 @@ export default function DashboardView(props: DashboardViewProps) {
               </section>
 
               <section>
-                <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
-                  Recent Sessions
-                </h3>
+                <div class="flex items-center justify-between mb-4">
+                  <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider">
+                    Workspaces
+                  </h3>
+                  <div class="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 px-3"
+                      onClick={props.exportWorkspaceConfig}
+                      disabled={!canExportWorkspace() || props.exportWorkspaceBusy}
+                      title={
+                        !canExportWorkspace()
+                          ? "Export is only available for local workspaces"
+                          : "Export workspace config"
+                      }
+                    >
+                      Share config
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      class="text-xs h-8 px-3"
+                      onClick={() => props.setWorkspacePickerOpen(true)}
+                    >
+                      <Plus size={14} />
+                      Add workspace
+                    </Button>
+                  </div>
+                </div>
 
-                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
-                  <For each={props.sessions.slice(0, 3)}>
-                    {(s, idx) => (
-                      <button
-                        class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
-                          idx() !== Math.min(props.sessions.length, 3) - 1
-                            ? "border-b border-gray-6/50"
-                            : ""
-                        }`}
-                        onPointerDown={(e) => {
-                          e.currentTarget.setPointerCapture?.(e.pointerId);
-                        }}
-                        onPointerUp={() => {
-                          openSessionFromList(s.id);
-                        }}
-                      >
-                        <div class="flex items-center gap-4">
-                          <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
-                            #{s.slug?.slice(0, 2) ?? ".."}
-                          </div>
-                          <div>
-                            <div class="font-medium text-sm text-gray-12">
-                              {s.title}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <For each={props.workspaces}>
+                    {(workspace) => (
+                      <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                        <div class="flex items-start justify-between">
+                          <div class="space-y-1 min-w-0">
+                            <div class="text-sm font-semibold text-gray-12 truncate">
+                              {workspace.displayName ?? workspace.name}
                             </div>
-                            <div class="text-xs text-gray-10 flex items-center gap-2">
-                              <span class="flex items-center gap-1">
-                                {formatRelativeTime(s.time.updated)}
+                            <div class="flex items-center gap-2 text-xs text-gray-10 font-mono">
+                              <span class="truncate min-w-0">
+                                {workspacePathLabel(workspace)}
                               </span>
-                              <Show
-                                when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
-                                }
+                              <button
+                                type="button"
+                                class="shrink-0 rounded-md p-1 text-gray-9 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                                onClick={() => handleCopyWorkspace(workspace)}
+                                title={copiedWorkspaceId() === workspace.id ? "Copied" : "Copy path"}
+                                aria-label="Copy workspace path"
                               >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                  this workspace
-                                </span>
-                              </Show>
+                                <Show when={copiedWorkspaceId() === workspace.id} fallback={<Copy size={12} />}>
+                                  <Check size={12} class="text-green-11" />
+                                </Show>
+                              </button>
                             </div>
                           </div>
-                        </div>
-                        <div class="flex items-center gap-4">
-                          <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
-                            <span class="w-1.5 h-1.5 rounded-full bg-current" />
-                            {props.sessionStatusById[s.id] ?? "idle"}
+                          <span class="text-[11px] text-gray-9">
+                            {workspace.workspaceType === "remote" ? "Remote" : "Local"}
                           </span>
                         </div>
-                      </button>
+                        <div class="flex items-center justify-end text-xs text-gray-9 h-8">
+                          <Show when={workspace.id === props.activeWorkspaceId}>
+                            <span class="text-green-11 font-medium flex items-center gap-1.5 !px-2">
+                              Active
+                            </span>
+                          </Show>
+                          <Show when={workspace.id !== props.activeWorkspaceId}>
+                            <Button
+                              variant="ghost"
+                              class="text-xs !px-2 py-1"
+                              onClick={() => props.activateWorkspace(workspace.id)}
+                              disabled={props.connectingWorkspaceId === workspace.id}
+                            >
+                              {props.connectingWorkspaceId === workspace.id
+                                ? "Switching..."
+                                : "Switch"}
+                            </Button>
+                          </Show>
+                        </div>
+                      </div>
                     )}
                   </For>
-
-                  <Show when={!props.sessions.length}>
-                    <div class="p-6 text-sm text-gray-10">
-                      No sessions yet.
-                    </div>
-                  </Show>
                 </div>
               </section>
-            </Match>
 
-            <Match when={props.tab === "sessions"}>
               <section>
                 <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
                   Recent Sessions
@@ -653,17 +780,70 @@ export default function DashboardView(props: DashboardViewProps) {
                               <span class="flex items-center gap-1">
                                 {formatRelativeTime(s.time.updated)}
                               </span>
-                              <Show
-                                when={
-                                  normalizeDirectoryPath(props.activeWorkspaceRoot) &&
-                                  normalizeDirectoryPath(s.directory) ===
-                                    normalizeDirectoryPath(props.activeWorkspaceRoot)
-                                }
-                              >
-                                <span class="text-[11px] px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-10">
-                                  this workspace
-                                </span>
-                              </Show>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="flex items-center gap-4">
+                          <span class="text-xs px-2 py-0.5 rounded-full border border-gray-7/60 text-gray-11 flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-current" />
+                            {props.sessionStatusById[s.id] ?? "idle"}
+                          </span>
+                        </div>
+                      </button>
+                    )}
+                  </For>
+
+                  <Show when={!props.sessions.length}>
+                    <div class="p-6 text-sm text-gray-10 space-y-3">
+                      <div>No sessions yet.</div>
+                      <Button
+                        variant="secondary"
+                        class="text-xs h-8"
+                        onClick={props.createSessionAndOpen}
+                        disabled={props.newTaskDisabled}
+                      >
+                        Start a task
+                      </Button>
+                    </div>
+                  </Show>
+                </div>
+              </section>
+            </Match>
+
+            <Match when={props.tab === "sessions"}>
+              <section>
+                <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">
+                  Sessions
+                </h3>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl overflow-hidden">
+                  <For each={props.sessions}>
+                    {(s, idx) => (
+                      <button
+                        class={`w-full p-4 flex items-center justify-between hover:bg-gray-4/50 transition-colors text-left ${
+                          idx() !== props.sessions.length - 1
+                            ? "border-b border-gray-6/50"
+                            : ""
+                        }`}
+                        onPointerDown={(e) => {
+                          e.currentTarget.setPointerCapture?.(e.pointerId);
+                        }}
+                        onPointerUp={() => {
+                          openSessionFromList(s.id);
+                        }}
+                      >
+                        <div class="flex items-center gap-4">
+                          <div class="w-8 h-8 rounded-full bg-gray-4 flex items-center justify-center text-xs text-gray-10 font-mono">
+                            #{s.slug?.slice(0, 2) ?? ".."}
+                          </div>
+                          <div>
+                            <div class="font-medium text-sm text-gray-12">
+                              {s.title}
+                            </div>
+                            <div class="text-xs text-gray-10 flex items-center gap-2">
+                              <span class="flex items-center gap-1">
+                                {formatRelativeTime(s.time.updated)}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -686,26 +866,44 @@ export default function DashboardView(props: DashboardViewProps) {
               </section>
             </Match>
 
-            <Match when={props.tab === "templates"}>
-              <TemplatesView
+            <Match when={props.tab === "scheduled"}>
+              <ScheduledTasksView
+                jobs={props.scheduledJobs}
+                source={props.scheduledJobsSource}
+                sourceReady={props.scheduledJobsSourceReady}
+                status={props.scheduledJobsStatus}
+                busy={props.scheduledJobsBusy}
+                lastUpdatedAt={props.scheduledJobsUpdatedAt}
+                refreshJobs={props.refreshScheduledJobs}
+                deleteJob={props.deleteScheduledJob}
+                isWindows={props.isWindows}
+              />
+            </Match>
+            <Match when={props.tab === "commands"}>
+              <CommandsView
                 busy={props.busy}
-                workspaceTemplates={props.workspaceTemplates}
-                globalTemplates={props.globalTemplates}
-                setTemplateDraftTitle={props.setTemplateDraftTitle}
-                setTemplateDraftDescription={props.setTemplateDraftDescription}
-                setTemplateDraftPrompt={props.setTemplateDraftPrompt}
-                setTemplateDraftScope={props.setTemplateDraftScope}
-                openTemplateModal={props.openTemplateModal}
-                resetTemplateDraft={props.resetTemplateDraft}
-                runTemplate={props.runTemplate}
-                deleteTemplate={props.deleteTemplate}
+                workspaceCommands={props.workspaceCommands}
+                globalCommands={props.globalCommands}
+                otherCommands={props.otherCommands}
+                setCommandDraftName={props.setCommandDraftName}
+                setCommandDraftDescription={props.setCommandDraftDescription}
+                setCommandDraftTemplate={props.setCommandDraftTemplate}
+                setCommandDraftScope={props.setCommandDraftScope}
+                openCommandModal={props.openCommandModal}
+                resetCommandDraft={props.resetCommandDraft}
+                runCommand={props.runCommand}
+                deleteCommand={props.deleteCommand}
+                justSavedCommand={props.justSavedCommand}
+                clearJustSavedCommand={props.clearJustSavedCommand}
               />
             </Match>
 
             <Match when={props.tab === "skills"}>
               <SkillsView
                 busy={props.busy}
-                mode={props.mode}
+                canInstallSkillCreator={props.canInstallSkillCreator}
+                canUseDesktopTools={props.canUseDesktopTools}
+                accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
@@ -720,6 +918,9 @@ export default function DashboardView(props: DashboardViewProps) {
               <PluginsView
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
+                canEditPlugins={props.canEditPlugins}
+                canUseGlobalScope={props.canUseGlobalPluginScope}
+                accessHint={props.pluginsAccessHint}
                 pluginScope={props.pluginScope}
                 setPluginScope={props.setPluginScope}
                 pluginConfigPath={props.pluginConfigPath}
@@ -738,7 +939,6 @@ export default function DashboardView(props: DashboardViewProps) {
 
             <Match when={props.tab === "mcp"}>
               <McpView
-                mode={props.mode}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
                 mcpServers={props.mcpServers}
@@ -751,21 +951,48 @@ export default function DashboardView(props: DashboardViewProps) {
                 quickConnect={props.quickConnect}
                 connectMcp={props.connectMcp}
                 showMcpReloadBanner={props.showMcpReloadBanner}
+                reloadBlocked={props.mcpReloadBlocked}
                 reloadMcpEngine={props.reloadMcpEngine}
               />
             </Match>
 
             <Match when={props.tab === "settings"}>
                 <SettingsView
-                  mode={props.mode}
+                  startupPreference={props.startupPreference}
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
                   busy={props.busy}
+                  settingsTab={props.settingsTab}
+                  setSettingsTab={props.setSettingsTab}
+                  providers={props.providers}
+                  providerConnectedIds={props.providerConnectedIds}
+                  providerAuthBusy={props.providerAuthBusy}
+                  openProviderAuthModal={props.openProviderAuthModal}
+                  openworkServerStatus={props.openworkServerStatus}
+                  openworkServerUrl={props.openworkServerUrl}
+                  openworkServerSettings={props.openworkServerSettings}
+                  openworkServerHostInfo={props.openworkServerHostInfo}
+                  openworkServerCapabilities={props.openworkServerCapabilities}
+                  openworkServerDiagnostics={props.openworkServerDiagnostics}
+                  openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                  openworkAuditEntries={props.openworkAuditEntries}
+                  openworkAuditStatus={props.openworkAuditStatus}
+                  openworkAuditError={props.openworkAuditError}
+                  opencodeConnectStatus={props.opencodeConnectStatus}
+                  engineInfo={props.engineInfo}
+                  openwrkStatus={props.openwrkStatus}
+                  owpenbotInfo={props.owpenbotInfo}
+                  engineDoctorVersion={props.engineDoctorVersion}
+                  updateOpenworkServerSettings={props.updateOpenworkServerSettings}
+                  resetOpenworkServerSettings={props.resetOpenworkServerSettings}
+                  testOpenworkServerConnection={props.testOpenworkServerConnection}
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}
                   stopHost={props.stopHost}
                   engineSource={props.engineSource}
                   setEngineSource={props.setEngineSource}
+                  engineRuntime={props.engineRuntime}
+                  setEngineRuntime={props.setEngineRuntime}
                   isWindows={props.isWindows}
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}
@@ -774,6 +1001,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleShowThinking={props.toggleShowThinking}
                   modelVariantLabel={props.modelVariantLabel}
                   editModelVariant={props.editModelVariant}
+                  keybindItems={props.keybindItems}
+                  onOverrideKeybind={props.onOverrideKeybind}
+                  onResetKeybind={props.onResetKeybind}
+                  onResetAllKeybinds={props.onResetAllKeybinds}
                   updateAutoCheck={props.updateAutoCheck}
                   toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
                   themeMode={props.themeMode}
@@ -799,10 +1030,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   notionError={props.notionError}
                   notionBusy={props.notionBusy}
                   connectNotion={props.connectNotion}
-                  demoMode={props.demoMode}
-                  toggleDemoMode={props.toggleDemoMode}
-                  demoSequence={props.demoSequence}
-                  setDemoSequence={props.setDemoSequence}
                 />
 
             </Match>
@@ -842,73 +1069,99 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </Show>
 
-        <nav class="md:hidden fixed bottom-0 left-0 right-0 border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
-          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "home" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("home")}
-            >
-              <Command size={18} />
-              Home
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "sessions" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("sessions")}
-            >
-              <Play size={18} />
-              Runs
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "templates" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("templates")}
-            >
-              <FileText size={18} />
-              Templates
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "skills" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("skills")}
-            >
-              <Package size={18} />
-              Skills
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("plugins")}
-            >
-              <Cpu size={18} />
-              Plugins
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("mcp")}
-            >
-              <Server size={18} />
-              MCPs
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "settings" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("settings")}
-            >
-              <Settings size={18} />
-              Settings
-            </button>
-          </div>
-        </nav>
+        <ProviderAuthModal
+          open={props.providerAuthModalOpen}
+          loading={props.providerAuthBusy}
+          submitting={providerAuthActionBusy()}
+          error={props.providerAuthError}
+          providers={props.providers}
+          connectedProviderIds={props.providerConnectedIds}
+          authMethods={props.providerAuthMethods}
+          onSelect={handleProviderAuthSelect}
+          onSubmitApiKey={handleProviderAuthApiKey}
+          onClose={props.closeProviderAuthModal}
+        />
+
+        <div class="fixed bottom-0 left-0 right-0">
+          <StatusBar
+            clientConnected={props.clientConnected}
+            openworkServerStatus={props.openworkServerStatus}
+            developerMode={props.developerMode}
+            onOpenSettings={() => openSettings("general")}
+            onOpenMessaging={() => openSettings("messaging")}
+            onOpenProviders={() => props.openProviderAuthModal()}
+            onOpenMcp={() => props.setTab("mcp")}
+            providerConnectedIds={props.providerConnectedIds}
+            mcpStatuses={props.mcpStatuses}
+          />
+          <nav class="md:hidden border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
+            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-7 gap-2">
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "home" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("home")}
+              >
+                <Command size={18} />
+                Home
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "sessions" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("sessions")}
+              >
+                <Play size={18} />
+                Runs
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("scheduled")}
+              >
+                <Calendar size={18} />
+                Schedule
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "commands" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("commands")}
+              >
+                <Terminal size={18} />
+                Commands
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "skills" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("skills")}
+              >
+                <Package size={18} />
+                Skills
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("plugins")}
+              >
+                <Cpu size={18} />
+                Plugins
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("mcp")}
+              >
+                <Server size={18} />
+                MCPs
+              </button>
+            </div>
+          </nav>
+        </div>
       </main>
     </div>
   );

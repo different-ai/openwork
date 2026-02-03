@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 
 import { CheckCircle2, FolderPlus, Loader2, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
@@ -17,11 +17,18 @@ export default function CreateWorkspaceModal(props: {
   subtitle?: string;
   confirmLabel?: string;
 }) {
+  let pickFolderRef: HTMLButtonElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
   const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);
   const [pickingFolder, setPickingFolder] = createSignal(false);
+
+  createEffect(() => {
+    if (props.open) {
+      requestAnimationFrame(() => pickFolderRef?.focus());
+    }
+  });
 
   const options = () => [
     {
@@ -99,6 +106,7 @@ export default function CreateWorkspaceModal(props: {
               <div class="ml-9">
                 <button
                   type="button"
+                  ref={pickFolderRef}
                   onClick={handlePickFolder}
                   disabled={pickingFolder() || submitting()}
                   class={`w-full border border-dashed border-gray-7 bg-gray-2/50 rounded-xl p-4 text-left transition ${

@@ -9,7 +9,7 @@ This skill is a template + checklist for creating skills in a workspace.
 
 ## What is a skill?
 
-A skill is a folder under `.opencode/skill/<skill-name>/` (or `.opencode/skills/<skill-name>/`) anchored by `SKILL.md`.
+A skill is a folder under `.opencode/skills/<skill-name>/` or `.claude/skills/<skill-name>/` anchored by `SKILL.md`.
 
 ## Design goals
 
@@ -22,12 +22,44 @@ A skill is a folder under `.opencode/skill/<skill-name>/` (or `.opencode/skills/
 
 ```
 .opencode/
-  skill/
+  skills/
     my-skill/
       SKILL.md
       README.md
       templates/
       scripts/
+```
+
+## Trigger phrases (critical)
+
+The description field is how Claude decides when to use your skill.
+Include 2-3 specific phrases that should trigger it.
+
+Bad example:
+"Use when working with content"
+
+Good examples:
+"Use when user mentions 'content pipeline', 'add to content database', or 'schedule a post'"
+"Triggers on: 'rotate PDF', 'flip PDF pages', 'change PDF orientation'"
+
+Quick validation:
+- Contains at least one quoted phrase
+- Uses "when" or "triggers"
+- Longer than ~50 characters
+
+## Frontmatter template
+
+```yaml
+---
+name: my-skill
+description: |
+  [What it does in one sentence]
+
+  Triggers when user mentions:
+  - "[specific phrase 1]"
+  - "[specific phrase 2]"
+  - "[specific phrase 3]"
+---
 ```
 
 ## Authoring checklist

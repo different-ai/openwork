@@ -1,15 +1,95 @@
 import { invoke } from "@tauri-apps/api/core";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
+  runtime: "direct" | "openwrk";
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
   port: number | null;
+  opencodeUsername: string | null;
+  opencodePassword: string | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
+};
+
+export type OpenworkServerInfo = {
+  running: boolean;
+  host: string | null;
+  port: number | null;
+  baseUrl: string | null;
+  connectUrl: string | null;
+  mdnsUrl: string | null;
+  lanUrl: string | null;
+  clientToken: string | null;
+  hostToken: string | null;
+  pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
+};
+
+export type OpenwrkDaemonState = {
+  pid: number;
+  port: number;
+  baseUrl: string;
+  startedAt: number;
+};
+
+export type OpenwrkOpencodeState = {
+  pid: number;
+  port: number;
+  baseUrl: string;
+  startedAt: number;
+};
+
+export type OpenwrkBinaryInfo = {
+  path: string;
+  source: string;
+  expectedVersion?: string | null;
+  actualVersion?: string | null;
+};
+
+export type OpenwrkBinaryState = {
+  opencode?: OpenwrkBinaryInfo | null;
+};
+
+export type OpenwrkSidecarInfo = {
+  dir?: string | null;
+  baseUrl?: string | null;
+  manifestUrl?: string | null;
+  target?: string | null;
+  source?: string | null;
+  opencodeSource?: string | null;
+  allowExternal?: boolean | null;
+};
+
+export type OpenwrkWorkspace = {
+  id: string;
+  name: string;
+  path: string;
+  workspaceType: string;
+  baseUrl?: string | null;
+  directory?: string | null;
+  createdAt?: number | null;
+  lastUsedAt?: number | null;
+};
+
+export type OpenwrkStatus = {
+  running: boolean;
+  dataDir: string;
+  daemon: OpenwrkDaemonState | null;
+  opencode: OpenwrkOpencodeState | null;
+  cliVersion?: string | null;
+  sidecar?: OpenwrkSidecarInfo | null;
+  binaries?: OpenwrkBinaryState | null;
+  activeId: string | null;
+  workspaceCount: number;
+  workspaces: OpenwrkWorkspace[];
+  lastError: string | null;
 };
 
 export type EngineDoctorResult = {
@@ -30,9 +110,13 @@ export type WorkspaceInfo = {
   path: string;
   preset: string;
   workspaceType: "local" | "remote";
+  remoteType?: "openwork" | "opencode" | null;
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -40,13 +124,21 @@ export type WorkspaceList = {
   workspaces: WorkspaceInfo[];
 };
 
+export type WorkspaceExportSummary = {
+  outputPath: string;
+  included: number;
+  excluded: string[];
+};
+
 export async function engineStart(
   projectDir: string,
-  options?: { preferSidecar?: boolean },
+  options?: { preferSidecar?: boolean; runtime?: "direct" | "openwrk"; workspacePaths?: string[] },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
     projectDir,
     preferSidecar: options?.preferSidecar ?? false,
+    runtime: options?.runtime ?? null,
+    workspacePaths: options?.workspacePaths ?? null,
   });
 }
 
@@ -74,11 +166,19 @@ export async function workspaceCreateRemote(input: {
   baseUrl: string;
   directory?: string | null;
   displayName?: string | null;
+  remoteType?: "openwork" | "opencode" | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
+    remoteType: input.remoteType ?? null,
+    openworkHostUrl: input.openworkHostUrl ?? null,
+    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
+    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
   });
 }
 
@@ -87,12 +187,20 @@ export async function workspaceUpdateRemote(input: {
   baseUrl?: string | null;
   directory?: string | null;
   displayName?: string | null;
+  remoteType?: "openwork" | "opencode" | null;
+  openworkHostUrl?: string | null;
+  openworkWorkspaceId?: string | null;
+  openworkWorkspaceName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
     baseUrl: input.baseUrl ?? null,
     directory: input.directory ?? null,
     displayName: input.displayName ?? null,
+    remoteType: input.remoteType ?? null,
+    openworkHostUrl: input.openworkHostUrl ?? null,
+    openworkWorkspaceId: input.openworkWorkspaceId ?? null,
+    openworkWorkspaceName: input.openworkWorkspaceName ?? null,
   });
 }
 
@@ -110,13 +218,35 @@ export async function workspaceAddAuthorizedRoot(input: {
   });
 }
 
-export type WorkspaceTemplate = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  createdAt: number;
-  scope?: "workspace" | "global";
+export async function workspaceExportConfig(input: {
+  workspaceId: string;
+  outputPath: string;
+}): Promise<WorkspaceExportSummary> {
+  return invoke<WorkspaceExportSummary>("workspace_export_config", {
+    workspaceId: input.workspaceId,
+    outputPath: input.outputPath,
+  });
+}
+
+export async function workspaceImportConfig(input: {
+  archivePath: string;
+  targetDir: string;
+  name?: string | null;
+}): Promise<WorkspaceList> {
+  return invoke<WorkspaceList>("workspace_import_config", {
+    archivePath: input.archivePath,
+    targetDir: input.targetDir,
+    name: input.name ?? null,
+  });
+}
+
+export type OpencodeCommandDraft = {
+  name: string;
+  description?: string;
+  template: string;
+  agent?: string;
+  model?: string;
+  subtask?: boolean;
 };
 
 export type WorkspaceOpenworkConfig = {
@@ -147,28 +277,64 @@ export async function workspaceOpenworkWrite(input: {
   });
 }
 
-export async function workspaceTemplateWrite(input: {
-  workspacePath: string;
-  template: WorkspaceTemplate;
-}): Promise<ExecResult> {
-  return invoke<ExecResult>("workspace_template_write", {
-    workspacePath: input.workspacePath,
-    template: input.template,
+export async function opencodeCommandList(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+}): Promise<string[]> {
+  return invoke<string[]>("opencode_command_list", {
+    scope: input.scope,
+    projectDir: input.projectDir,
   });
 }
 
-export async function workspaceTemplateDelete(input: {
-  workspacePath: string;
-  templateId: string;
+export async function opencodeCommandWrite(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+  command: OpencodeCommandDraft;
 }): Promise<ExecResult> {
-  return invoke<ExecResult>("workspace_template_delete", {
-    workspacePath: input.workspacePath,
-    templateId: input.templateId,
+  return invoke<ExecResult>("opencode_command_write", {
+    scope: input.scope,
+    projectDir: input.projectDir,
+    command: input.command,
+  });
+}
+
+export async function opencodeCommandDelete(input: {
+  scope: "workspace" | "global";
+  projectDir: string;
+  name: string;
+}): Promise<ExecResult> {
+  return invoke<ExecResult>("opencode_command_delete", {
+    scope: input.scope,
+    projectDir: input.projectDir,
+    name: input.name,
   });
 }
 
 export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
+}
+
+export async function openwrkStatus(): Promise<OpenwrkStatus> {
+  return invoke<OpenwrkStatus>("openwrk_status");
+}
+
+export async function openwrkWorkspaceActivate(input: {
+  workspacePath: string;
+  name?: string | null;
+}): Promise<OpenwrkWorkspace> {
+  return invoke<OpenwrkWorkspace>("openwrk_workspace_activate", {
+    workspacePath: input.workspacePath,
+    name: input.name ?? null,
+  });
+}
+
+export async function openwrkInstanceDispose(workspacePath: string): Promise<boolean> {
+  return invoke<boolean>("openwrk_instance_dispose", { workspacePath });
+}
+
+export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_info");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {
@@ -197,11 +363,75 @@ export async function pickDirectory(options?: {
   });
 }
 
+export async function pickFile(options?: {
+  title?: string;
+  defaultPath?: string;
+  multiple?: boolean;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | string[] | null> {
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  return open({
+    title: options?.title,
+    defaultPath: options?.defaultPath,
+    directory: false,
+    multiple: options?.multiple,
+    filters: options?.filters,
+  });
+}
+
+export async function saveFile(options?: {
+  title?: string;
+  defaultPath?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | null> {
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  return save({
+    title: options?.title,
+    defaultPath: options?.defaultPath,
+    filters: options?.filters,
+  });
+}
+
 export type ExecResult = {
   ok: boolean;
   status: number;
   stdout: string;
   stderr: string;
+};
+
+export type ScheduledJobRun = {
+  prompt?: string;
+  command?: string;
+  arguments?: string;
+  files?: string[];
+  agent?: string;
+  model?: string;
+  variant?: string;
+  title?: string;
+  share?: boolean;
+  continue?: boolean;
+  session?: string;
+  runFormat?: string;
+  attachUrl?: string;
+  port?: number;
+};
+
+export type ScheduledJob = {
+  slug: string;
+  name: string;
+  schedule: string;
+  prompt?: string;
+  attachUrl?: string;
+  run?: ScheduledJobRun;
+  source?: string;
+  workdir?: string;
+  createdAt: string;
+  updatedAt?: string;
+  lastRunAt?: string;
+  lastRunExitCode?: number;
+  lastRunError?: string;
+  lastRunSource?: string;
+  lastRunStatus?: string;
 };
 
 export async function engineInstall(): Promise<ExecResult> {
@@ -242,6 +472,7 @@ export type LocalSkillCard = {
   name: string;
   path: string;
   description?: string;
+  trigger?: string;
 };
 
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
@@ -298,6 +529,222 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
+export async function schedulerListJobs(): Promise<ScheduledJob[]> {
+  return invoke<ScheduledJob[]>("scheduler_list_jobs");
+}
+
+export async function schedulerDeleteJob(name: string): Promise<ScheduledJob> {
+  return invoke<ScheduledJob>("scheduler_delete_job", { name });
+}
+
+// Owpenbot types
+export type OwpenbotWhatsAppStatus = {
+  linked: boolean;
+  dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
+  allowFrom: string[];
+};
+
+export type OwpenbotTelegramStatus = {
+  configured: boolean;
+  enabled: boolean;
+};
+
+export type OwpenbotOpencodeStatus = {
+  url: string;
+};
+
+export type OwpenbotStatus = {
+  running: boolean;
+  config: string;
+  healthPort?: number | null;
+  whatsapp: OwpenbotWhatsAppStatus;
+  telegram: OwpenbotTelegramStatus;
+  opencode: OwpenbotOpencodeStatus;
+};
+
+export type OwpenbotStatusResult =
+  | { ok: true; status: OwpenbotStatus }
+  | { ok: false; error: string };
+
+export type OwpenbotInfo = {
+  running: boolean;
+  version: string | null;
+  workspacePath: string | null;
+  opencodeUrl: string | null;
+  qrData: string | null;
+  whatsappLinked: boolean;
+  telegramConfigured: boolean;
+  pid: number | null;
+  lastStdout: string | null;
+  lastStderr: string | null;
+};
+
+export type OwpenbotQr = {
+  qr: string; // base64 encoded
+  format: "png" | "ascii";
+};
+
+export type OwpenbotPairingRequest = {
+  code: string;
+  peerId: string;
+  platform: "whatsapp" | "telegram";
+  timestamp: number;
+};
+
+// Owpenbot functions - call Tauri commands that wrap owpenbot CLI
+export async function getOwpenbotStatus(): Promise<OwpenbotStatus | null> {
+  try {
+    return await invoke<OwpenbotStatus>("owpenbot_status");
+  } catch {
+    return null;
+  }
+}
+
+export async function getOwpenbotStatusDetailed(): Promise<OwpenbotStatusResult> {
+  try {
+    const status = await invoke<OwpenbotStatus>("owpenbot_status");
+    return { ok: true, status };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+export async function owpenbotInfo(): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_info");
+}
+
+export async function getOwpenbotQr(): Promise<OwpenbotQr | null> {
+  try {
+    const qrBase64 = await invoke<string>("owpenbot_qr");
+    return {
+      qr: qrBase64,
+      format: "png",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function setOwpenbotDmPolicy(
+  policy: OwpenbotWhatsAppStatus["dmPolicy"],
+): Promise<ExecResult> {
+  try {
+    await invoke("owpenbot_config_set", { key: "channels.whatsapp.dmPolicy", value: policy });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecResult> {
+  try {
+    await invoke("owpenbot_config_set", {
+      key: "channels.whatsapp.allowFrom",
+      value: JSON.stringify(allowlist),
+    });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function setOwpenbotTelegramToken(token: string): Promise<ExecResult> {
+  try {
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/telegram-token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      return { ok: false, status: response.status, stdout: "", stderr: message };
+    }
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function getOwpenbotGroupsEnabled(): Promise<boolean | null> {
+  try {
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json();
+    return data?.groupsEnabled ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setOwpenbotGroupsEnabled(enabled: boolean): Promise<ExecResult> {
+  try {
+    const status = await getOwpenbotStatus();
+    const healthPort = status?.healthPort ?? 3005;
+    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const message = await response.text();
+      return { ok: false, status: response.status, stdout: "", stderr: message };
+    }
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function getOwpenbotPairingRequests(): Promise<OwpenbotPairingRequest[]> {
+  try {
+    const result = await invoke<unknown>("owpenbot_pairing_list");
+    const requests = Array.isArray(result) ? result : [];
+    return requests
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
+      .map((entry) => {
+        const channel = String(entry.channel ?? "whatsapp");
+        const createdAt = String(entry.createdAt ?? "");
+        const platform: "whatsapp" | "telegram" = channel === "telegram" ? "telegram" : "whatsapp";
+        return {
+          code: String(entry.code ?? ""),
+          peerId: String(entry.peerId ?? ""),
+          platform,
+          timestamp: createdAt ? Date.parse(createdAt) : Date.now(),
+        };
+      })
+      .filter((entry) => entry.code && entry.peerId);
+  } catch {
+    return [];
+  }
+}
+
+export async function approveOwpenbotPairing(code: string): Promise<ExecResult> {
+  try {
+    await invoke("owpenbot_pairing_approve", { code });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
+export async function denyOwpenbotPairing(code: string): Promise<ExecResult> {
+  try {
+    await invoke("owpenbot_pairing_deny", { code });
+    return { ok: true, status: 0, stdout: "", stderr: "" };
+  } catch (e) {
+    return { ok: false, status: 1, stdout: "", stderr: String(e) };
+  }
+}
+
 export async function opencodeMcpAuth(
   projectDir: string,
   serverName: string,
@@ -313,4 +760,35 @@ export async function opencodeMcpAuth(
     projectDir: safeProjectDir,
     serverName: safeServerName,
   });
+}
+
+export async function owpenbotStop(): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_stop");
+}
+
+export async function owpenbotStart(options: {
+  workspacePath: string;
+  opencodeUrl?: string;
+  opencodeUsername?: string;
+  opencodePassword?: string;
+  healthPort?: number;
+}): Promise<OwpenbotInfo> {
+  return invoke<OwpenbotInfo>("owpenbot_start", {
+    workspacePath: options.workspacePath,
+    opencodeUrl: options.opencodeUrl ?? null,
+    opencodeUsername: options.opencodeUsername ?? null,
+    opencodePassword: options.opencodePassword ?? null,
+    healthPort: options.healthPort ?? null,
+  });
+}
+
+export async function owpenbotRestart(options: {
+  workspacePath: string;
+  opencodeUrl?: string;
+  opencodeUsername?: string;
+  opencodePassword?: string;
+  healthPort?: number;
+}): Promise<OwpenbotInfo> {
+  await owpenbotStop();
+  return owpenbotStart(options);
 }

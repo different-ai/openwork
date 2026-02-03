@@ -1,8 +1,16 @@
-import type { Message, Part, PermissionRequest as ApiPermissionRequest, Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type {
+  Message,
+  Part,
+  PermissionRequest as ApiPermissionRequest,
+  ProviderListResponse,
+  Session,
+} from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
-import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/tauri";
+import type { OpencodeConfigFile, ScheduledJob as TauriScheduledJob, WorkspaceInfo } from "./lib/tauri";
 
 export type Client = ReturnType<typeof createClient>;
+
+export type ProviderListItem = ProviderListResponse["all"][number];
 
 export type PlaceholderAssistantMessage = {
   id: string;
@@ -44,6 +52,29 @@ export type MessageGroup =
   | { kind: "text"; part: Part }
   | { kind: "steps"; id: string; parts: Part[] };
 
+export type PromptMode = "prompt" | "shell";
+
+export type ComposerPart =
+  | { type: "text"; text: string }
+  | { type: "agent"; name: string }
+  | { type: "file"; path: string; label?: string };
+
+export type ComposerAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "file";
+  dataUrl: string;
+};
+
+export type ComposerDraft = {
+  mode: PromptMode;
+  parts: ComposerPart[];
+  attachments: ComposerAttachment[];
+  text: string;
+};
+
 export type ArtifactItem = {
   id: string;
   name: string;
@@ -58,22 +89,62 @@ export type OpencodeEvent = {
   properties?: unknown;
 };
 
-export type View = "onboarding" | "dashboard" | "session";
+export type View = "onboarding" | "dashboard" | "session" | "proto";
 
-export type Mode = "host" | "client";
+export type StartupPreference = "local" | "server";
 
-export type OnboardingStep = "mode" | "host" | "client" | "connecting";
+export type EngineRuntime = "direct" | "openwrk";
 
-export type DashboardTab = "home" | "sessions" | "templates" | "skills" | "plugins" | "mcp" | "settings";
+export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
-export type DemoSequence = "cold-open" | "scheduler" | "summaries" | "groceries";
+export type DashboardTab =
+  | "home"
+  | "sessions"
+  | "scheduled"
+  | "commands"
+  | "skills"
+  | "plugins"
+  | "mcp"
+  | "settings";
+
+export type SettingsTab = "general" | "model" | "keybinds" | "advanced" | "remote" | "messaging" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 
 export type ResetOpenworkMode = "onboarding" | "all";
 
-export type WorkspaceTemplate = Template & {
-  scope: "workspace" | "global";
+export type CommandScope = "workspace" | "global" | "unknown";
+
+export type CommandRegistryScope = "global" | "session";
+
+export type CommandTriggerContext = {
+  source?: "palette" | "slash" | "keybind";
+};
+
+export type CommandRegistryItem = {
+  id: string;
+  title: string;
+  category?: string;
+  description?: string;
+  keybind?: string;
+  slash?: string;
+  scope?: CommandRegistryScope;
+  showInPalette?: boolean;
+  onSelect: (context?: CommandTriggerContext) => void;
+  onHighlight?: (context?: CommandTriggerContext) => void;
+};
+
+export type CommandDefinition = {
+  name: string;
+  description?: string;
+  template: string;
+  agent?: string;
+  model?: string;
+  subtask?: boolean;
+};
+
+export type WorkspaceCommand = CommandDefinition & {
+  scope: CommandScope;
 };
 
 export type WorkspaceOpenworkConfig = {
@@ -86,18 +157,11 @@ export type WorkspaceOpenworkConfig = {
   authorizedRoots: string[];
 };
 
-export type Template = {
-  id: string;
-  title: string;
-  description: string;
-  prompt: string;
-  createdAt: number;
-};
-
 export type SkillCard = {
   name: string;
   path: string;
   description?: string;
+  trigger?: string;
 };
 
 export type PluginInstallStep = {
@@ -146,7 +210,23 @@ export type McpStatus =
 
 export type McpStatusMap = Record<string, McpStatus>;
 
-export type ReloadReason = "plugins" | "skills" | "mcp";
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config";
+
+export type OpencodeConnectStatus = {
+  at: number;
+  baseUrl: string;
+  directory?: string | null;
+  reason?: string | null;
+  status: "connecting" | "connected" | "error";
+  error?: string | null;
+};
+
+export type ReloadTrigger = {
+  type: "skill" | "plugin" | "config" | "mcp";
+  name?: string;
+  action?: "added" | "removed" | "updated";
+  path?: string;
+};
 
 export type PendingPermission = ApiPermissionRequest & {
   receivedAt: number;
@@ -187,16 +267,17 @@ export type WorkspaceState = {
   root: string;
 };
 
+export type ScheduledJob = TauriScheduledJob;
+
 export type PluginState = {
   scope: PluginScope;
   config: OpencodeConfigFile | null;
   list: string[];
 };
 
-export type TemplateState = {
-  items: WorkspaceTemplate[];
-  workspaceLoaded: boolean;
-  globalLoaded: boolean;
+export type CommandState = {
+  items: WorkspaceCommand[];
+  loaded: boolean;
 };
 
 export type WorkspaceDisplay = WorkspaceInfo & {

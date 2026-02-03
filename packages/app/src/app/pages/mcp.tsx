@@ -24,7 +24,6 @@ import TextInput from "../components/text-input";
 import { currentLocale, t, type Language } from "../../i18n";
 
 export type McpViewProps = {
-  mode: "host" | "client" | null;
   busy: boolean;
   activeWorkspaceRoot: string;
   mcpServers: McpServerEntry[];
@@ -37,6 +36,7 @@ export type McpViewProps = {
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
   showMcpReloadBanner: boolean;
+  reloadBlocked: boolean;
   reloadMcpEngine: () => void;
 };
 
@@ -88,9 +88,7 @@ export default function McpView(props: McpViewProps) {
     props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
   );
 
-  const quickConnectList = createMemo(() =>
-    props.quickConnect.filter((entry) => entry.oauth),
-  );
+  const quickConnectList = createMemo(() => props.quickConnect);
 
   let configRequestId = 0;
   createEffect(() => {
@@ -179,8 +177,7 @@ export default function McpView(props: McpViewProps) {
     return status?.status === "connected";
   };
 
-  const canConnect = (entry: McpDirectoryInfo) =>
-    props.mode === "host" && isTauriRuntime() && !props.busy && !!props.activeWorkspaceRoot.trim();
+  const canConnect = () => !props.busy;
 
   return (
     <section class="space-y-6">
@@ -218,10 +215,17 @@ export default function McpView(props: McpViewProps) {
                 <div>
                   <div class="text-sm font-medium text-gray-12">{translate("mcp.reload_banner_title")}</div>
                   <div class="text-xs text-gray-10">
-                    {translate("mcp.reload_banner_description")}
+                    {props.reloadBlocked
+                      ? translate("mcp.reload_banner_description_blocked")
+                      : translate("mcp.reload_banner_description")}
                   </div>
                 </div>
-                <Button variant="secondary" onClick={() => props.reloadMcpEngine()}>
+                <Button
+                  variant="secondary"
+                  onClick={() => props.reloadMcpEngine()}
+                  disabled={props.reloadBlocked}
+                  title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+                >
                   {translate("mcp.reload_engine")}
                 </Button>
               </div>
@@ -240,7 +244,9 @@ export default function McpView(props: McpViewProps) {
                         <div>
                           <div class="text-sm font-medium text-gray-12">{entry.name}</div>
                           <div class="text-xs text-gray-10 mt-1">{entry.description}</div>
-                          <div class="text-xs text-gray-7 font-mono mt-1">{entry.url}</div>
+                          <div class="text-xs text-gray-7 font-mono mt-1">
+                            {entry.type === "local" ? entry.command?.join(" ") : entry.url}
+                          </div>
                         </div>
                         <div class="flex flex-col items-end gap-2">
                           <Show
@@ -255,7 +261,7 @@ export default function McpView(props: McpViewProps) {
                             <Button
                               variant="secondary"
                               onClick={() => props.connectMcp(entry)}
-                              disabled={!canConnect(entry) || props.mcpConnectingName === entry.name}
+                              disabled={!canConnect() || props.mcpConnectingName === entry.name}
                             >
                               {props.mcpConnectingName === entry.name ? (
                                 <>

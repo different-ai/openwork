@@ -1,0 +1,68 @@
+name: Feature request
+description: Suggest an improvement or new capability
+title: "[Feature]: "
+labels:
+  - feature
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Short description of the request.
+      placeholder: Add ...
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / goal
+      description: What user outcome are you trying to achieve?
+    validations:
+      required: true
+  - type: checkboxes
+    id: users
+    attributes:
+      label: Primary user(s)
+      options:
+        - label: Bob (IT / power user)
+        - label: Susan (non-technical)
+        - label: Other team roles
+  - type: textarea
+    id: opencode_alignment
+    attributes:
+      label: OpenCode primitive alignment
+      description: Is there an existing OpenCode primitive or API that covers this? If not, why is a thin OpenWork layer still needed?
+      placeholder: session.*, permission.*, skills/plugins, mcp...
+    validations:
+      required: true
+  - type: textarea
+    id: doc_alignment
+    attributes:
+      label: Alignment with VISION/PRINCIPLES/PRODUCT
+      description: How does this align with `VISION.md`, `PRINCIPLES.md`, and `PRODUCT.md`?
+    validations:
+      required: true
+  - type: textarea
+    id: testability
+    attributes:
+      label: Testability
+      description: How can we test this? (manual steps, tooling, screenshots)
+      placeholder: pnpm dev + chrome mcp + screenshots
+    validations:
+      required: true
+  - type: dropdown
+    id: ready_to_build
+    attributes:
+      label: Ready to build it yourself?
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Links, mockups, or related issues.
+    validations:
+      required: false

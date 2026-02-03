@@ -1,5 +1,5 @@
 import { For, Match, Show, Switch, createSignal } from "solid-js";
-import type { Mode, OnboardingStep } from "../types";
+import type { OnboardingStep, StartupPreference } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
 
@@ -11,12 +11,13 @@ import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, t } from "../../i18n";
 
 export type OnboardingViewProps = {
-  mode: Mode | null;
+  startupPreference: StartupPreference | null;
   onboardingStep: OnboardingStep;
-  rememberModeChoice: boolean;
+  rememberStartupChoice: boolean;
   busy: boolean;
-  baseUrl: string;
   clientDirectory: string;
+  openworkHostUrl: string;
+  openworkToken: string;
   newAuthorizedDir: string;
   authorizedDirs: string[];
   activeWorkspacePath: string;
@@ -36,16 +37,19 @@ export type OnboardingViewProps = {
   error: string | null;
   developerMode: boolean;
   isWindows: boolean;
-  onBaseUrlChange: (value: string) => void;
   onClientDirectoryChange: (value: string) => void;
-  onModeSelect: (mode: Mode) => void;
-  onRememberModeToggle: () => void;
+  onOpenworkHostUrlChange: (value: string) => void;
+  onOpenworkTokenChange: (value: string) => void;
+  onSelectStartup: (mode: StartupPreference) => void;
+  onRememberStartupToggle: () => void;
   onStartHost: () => void;
   onCreateWorkspace: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickWorkspaceFolder: () => Promise<string | null>;
+  onImportWorkspaceConfig: () => void;
+  importingWorkspaceConfig: boolean;
   onAttachHost: () => void;
   onConnectClient: () => void;
-  onBackToMode: () => void;
+  onBackToWelcome: () => void;
   onSetAuthorizedDir: (value: string) => void;
   onAddAuthorizedDir: () => void;
   onAddAuthorizedDirFromPicker: () => void;
@@ -61,6 +65,7 @@ export type OnboardingViewProps = {
 export default function OnboardingView(props: OnboardingViewProps) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
+  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
 
   const engineDoctorAvailable = () =>
     props.engineDoctorFound === true && props.engineDoctorSupportsServe === true;
@@ -96,10 +101,12 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
             <div class="text-center">
               <h2 class="text-xl font-medium mb-2">
-                {props.mode === "host" ? translate("onboarding.starting_host") : translate("onboarding.searching_host")}
+                {props.startupPreference === "local"
+                  ? translate("onboarding.starting_host")
+                  : translate("onboarding.searching_host")}
               </h2>
               <p class="text-gray-10 text-sm">
-                {props.mode === "host"
+                {props.startupPreference === "local"
                   ? translate("onboarding.getting_ready")
                   : translate("onboarding.verifying")}
               </p>
@@ -109,7 +116,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={props.onboardingStep === "host"}>
+      <Match when={props.onboardingStep === "local"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
@@ -175,6 +182,24 @@ export default function OnboardingView(props: OnboardingViewProps) {
               <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
                 <div class="flex items-center justify-between gap-4">
                   <div class="min-w-0">
+                    <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">Import</div>
+                    <div class="mt-1 text-sm text-gray-12">Use an existing workspace config.</div>
+                    <div class="text-xs text-gray-10">Imports `.opencode` and `opencode.json` only.</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 px-3 shrink-0"
+                    onClick={props.onImportWorkspaceConfig}
+                    disabled={props.importingWorkspaceConfig || props.busy}
+                  >
+                    Import config
+                  </Button>
+                </div>
+              </div>
+
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
+                <div class="flex items-center justify-between gap-4">
+                  <div class="min-w-0">
                     <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">{translate("onboarding.access_label")}</div>
                     <div class="mt-1 text-sm text-gray-12">
                       {translate("onboarding.folders_allowed")
@@ -197,7 +222,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               {translate("onboarding.start")}
             </Button>
 
-            <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
+            <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy} class="w-full">
               {translate("onboarding.back")}
             </Button>
 
@@ -397,7 +422,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
         </div>
       </Match>
 
-      <Match when={props.onboardingStep === "client"}>
+      <Match when={props.onboardingStep === "server"}>
         <div class="min-h-screen flex flex-col items-center justify-center bg-gray-1 text-gray-12 p-6 relative">
           <div class="absolute top-0 left-0 w-full h-96 bg-gradient-to-b from-gray-2 to-transparent opacity-20 pointer-events-none" />
 
@@ -413,25 +438,61 @@ export default function OnboardingView(props: OnboardingViewProps) {
             </div>
 
             <div class="space-y-4">
-              <TextInput
-                label={translate("dashboard.remote_base_url_label")}
-                placeholder={translate("dashboard.remote_base_url_placeholder")}
-                value={props.baseUrl}
-                onInput={(e) => props.onBaseUrlChange(e.currentTarget.value)}
-              />
-              <TextInput
-                label={translate("dashboard.remote_directory_label")}
-                placeholder={translate("dashboard.remote_directory_placeholder")}
-                value={props.clientDirectory}
-                onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
-                hint={translate("dashboard.remote_directory_hint")}
-              />
+              <div class="rounded-2xl border border-gray-6 bg-gray-1/50 px-4 py-3">
+                <div class="text-xs font-semibold text-gray-10 uppercase tracking-wider">
+                  {translate("onboarding.remote_workspace_title")}
+                </div>
+                <div class="mt-1 text-sm text-gray-12">{translate("onboarding.remote_workspace_description")}</div>
+              </div>
 
-              <Button onClick={props.onConnectClient} disabled={props.busy || !props.baseUrl.trim()} class="w-full py-3 text-base">
+              <div class="space-y-4">
+                <TextInput
+                  label={translate("dashboard.openwork_host_label")}
+                  placeholder={translate("dashboard.openwork_host_placeholder")}
+                  value={props.openworkHostUrl}
+                  onInput={(e) => props.onOpenworkHostUrlChange(e.currentTarget.value)}
+                  hint={translate("dashboard.openwork_host_hint")}
+                />
+                <label class="block">
+                  <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.openwork_host_token_label")}</div>
+                  <div class="flex items-center gap-2">
+                    <input
+                      type={openworkTokenVisible() ? "text" : "password"}
+                      value={props.openworkToken}
+                      onInput={(e) => props.onOpenworkTokenChange(e.currentTarget.value)}
+                      placeholder={translate("dashboard.openwork_host_token_placeholder")}
+                      disabled={props.busy}
+                      class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+                    />
+                    <Button
+                      variant="outline"
+                      class="text-xs h-9 px-3 shrink-0"
+                      onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                      disabled={props.busy}
+                    >
+                      {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
+                    </Button>
+                  </div>
+                  <div class="mt-1 text-xs text-gray-10">{translate("dashboard.openwork_host_token_hint")}</div>
+                </label>
+                <TextInput
+                  label={translate("dashboard.remote_directory_label")}
+                  placeholder={translate("dashboard.remote_directory_placeholder")}
+                  value={props.clientDirectory}
+                  onInput={(e) => props.onClientDirectoryChange(e.currentTarget.value)}
+                  hint={translate("dashboard.remote_directory_hint")}
+                />
+              </div>
+
+              <Button
+                onClick={props.onConnectClient}
+                disabled={props.busy || !props.openworkHostUrl.trim()}
+                class="w-full py-3 text-base"
+              >
                 {translate("onboarding.remote_workspace_action")}
               </Button>
 
-              <Button variant="ghost" onClick={props.onBackToMode} disabled={props.busy} class="w-full">
+              <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy} class="w-full">
                 {translate("onboarding.back")}
               </Button>
 
@@ -462,7 +523,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
             <div class="space-y-4">
               <button
-                onClick={() => props.onModeSelect("host")}
+                onClick={() => props.onSelectStartup("local")}
                 class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-indigo-6/10 hover:-translate-y-0.5 flex items-start gap-6"
               >
                 <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-7/20 to-purple-7/20 flex items-center justify-center border border-indigo-7/20 group-hover:border-indigo-7/40 transition-colors">
@@ -500,7 +561,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </Show>
 
               <button
-                onClick={() => props.onModeSelect("client")}
+                onClick={() => props.onSelectStartup("server")}
                 class="group w-full relative bg-gray-2 hover:bg-gray-4 border border-gray-6 hover:border-gray-7 p-6 md:p-8 rounded-3xl text-left transition-all duration-300 hover:shadow-2xl hover:shadow-gray-12/10 hover:-translate-y-0.5 flex items-start gap-6"
               >
                 <div class="shrink-0 w-14 h-14 rounded-2xl bg-gradient-to-br from-gray-7/20 to-gray-5/10 flex items-center justify-center border border-gray-6 group-hover:border-gray-7 transition-colors">
@@ -518,17 +579,17 @@ export default function OnboardingView(props: OnboardingViewProps) {
 
               <div class="flex items-center gap-2 px-2 py-1">
                 <button
-                  onClick={props.onRememberModeToggle}
+                  onClick={props.onRememberStartupToggle}
                   class="flex items-center gap-2 text-xs text-gray-10 hover:text-gray-11 transition-colors group"
                 >
                   <div
                     class={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${
-                      props.rememberModeChoice
+                      props.rememberStartupChoice
                         ? "bg-indigo-7 border-indigo-7 text-gray-12"
                         : "border-gray-7 bg-transparent group-hover:border-gray-7"
                     }`}
                   >
-                    <Show when={props.rememberModeChoice}>
+                    <Show when={props.rememberStartupChoice}>
                       <CheckCircle2 size={10} />
                     </Show>
                   </div>

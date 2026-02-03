@@ -6,11 +6,21 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "updater:default",
     "process:default",
     "opener:allow-reveal-item-in-dir",
     "opener:allow-open-path",
     "opener:allow-open-url",
-    "opener:allow-default-urls"
+    "opener:allow-default-urls",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "http://*" },
+        { "url": "https://*" },
+        { "url": "http://*:*/*" },
+        { "url": "https://*:*/*" }
+      ]
+    }
   ]
 }

@@ -9,7 +9,12 @@ import TextInput from "./text-input";
 export default function CreateRemoteWorkspaceModal(props: {
   open: boolean;
   onClose: () => void;
-  onConfirm: (input: { baseUrl: string; directory?: string | null; displayName?: string | null }) => void;
+  onConfirm: (input: {
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    directory?: string | null;
+    displayName?: string | null;
+  }) => void;
   submitting?: boolean;
   inline?: boolean;
   showClose?: boolean;
@@ -17,9 +22,12 @@ export default function CreateRemoteWorkspaceModal(props: {
   subtitle?: string;
   confirmLabel?: string;
 }) {
+  let inputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
-  const [baseUrl, setBaseUrl] = createSignal("");
+  const [openworkHostUrl, setOpenworkHostUrl] = createSignal("");
+  const [openworkToken, setOpenworkToken] = createSignal("");
+  const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
   const [directory, setDirectory] = createSignal("");
   const [displayName, setDisplayName] = createSignal("");
 
@@ -30,11 +38,22 @@ export default function CreateRemoteWorkspaceModal(props: {
   const isInline = () => props.inline ?? false;
   const submitting = () => props.submitting ?? false;
 
-  const canSubmit = createMemo(() => baseUrl().trim().length > 0 && !submitting());
+  const canSubmit = createMemo(() => {
+    if (submitting()) return false;
+    return openworkHostUrl().trim().length > 0;
+  });
+
+  createEffect(() => {
+    if (props.open) {
+      requestAnimationFrame(() => inputRef?.focus());
+    }
+  });
 
   createEffect(() => {
     if (!props.open) return;
-    setBaseUrl("");
+    setOpenworkHostUrl("");
+    setOpenworkToken("");
+    setOpenworkTokenVisible(false);
     setDirectory("");
     setDisplayName("");
   });
@@ -70,12 +89,38 @@ export default function CreateRemoteWorkspaceModal(props: {
 
         <div class="space-y-4">
           <TextInput
-            label={translate("dashboard.remote_base_url_label")}
-            placeholder={translate("dashboard.remote_base_url_placeholder")}
-            value={baseUrl()}
-            onInput={(event) => setBaseUrl(event.currentTarget.value)}
+            ref={inputRef}
+            label={translate("dashboard.openwork_host_label")}
+            placeholder={translate("dashboard.openwork_host_placeholder")}
+            value={openworkHostUrl()}
+            onInput={(event) => setOpenworkHostUrl(event.currentTarget.value)}
+            hint={translate("dashboard.openwork_host_hint")}
             disabled={submitting()}
           />
+
+          <label class="block">
+            <div class="mb-1 text-xs font-medium text-gray-11">{translate("dashboard.openwork_host_token_label")}</div>
+            <div class="flex items-center gap-2">
+              <input
+                type={openworkTokenVisible() ? "text" : "password"}
+                value={openworkToken()}
+                onInput={(event) => setOpenworkToken(event.currentTarget.value)}
+                placeholder={translate("dashboard.openwork_host_token_placeholder")}
+                disabled={submitting()}
+                class="w-full rounded-xl bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
+              />
+              <Button
+                variant="outline"
+                class="text-xs h-9 px-3 shrink-0"
+                onClick={() => setOpenworkTokenVisible((prev) => !prev)}
+                disabled={submitting()}
+              >
+                {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
+              </Button>
+            </div>
+            <div class="mt-1 text-xs text-gray-10">{translate("dashboard.openwork_host_token_hint")}</div>
+          </label>
+
           <TextInput
             label={translate("dashboard.remote_directory_label")}
             placeholder={translate("dashboard.remote_directory_placeholder")}
@@ -103,13 +148,14 @@ export default function CreateRemoteWorkspaceModal(props: {
         <Button
           onClick={() =>
             props.onConfirm({
-              baseUrl: baseUrl().trim(),
+              openworkHostUrl: openworkHostUrl().trim(),
+              openworkToken: openworkToken().trim(),
               directory: directory().trim() ? directory().trim() : null,
               displayName: displayName().trim() ? displayName().trim() : null,
             })
           }
           disabled={!canSubmit()}
-          title={!baseUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
+          title={!openworkHostUrl().trim() ? translate("dashboard.remote_base_url_required") : undefined}
         >
           {confirmLabel()}
         </Button>

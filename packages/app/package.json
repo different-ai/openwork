@@ -1,7 +1,7 @@
 {
   "name": "@different-ai/openwork-ui",
   "private": true,
-  "version": "0.3.5",
+  "version": "0.11.7",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -25,12 +25,14 @@
     "bump:set": "node scripts/bump-version.mjs --set"
   },
   "dependencies": {
-    "@opencode-ai/sdk": "^1.1.19",
+    "@opencode-ai/sdk": "^1.1.31",
     "@radix-ui/colors": "^3.0.0",
     "@solid-primitives/event-bus": "^1.1.2",
     "@solid-primitives/storage": "^4.3.3",
+    "@solidjs/router": "^0.15.4",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "~2.6.0",
+    "@tauri-apps/plugin-http": "~2.5.6",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-process": "~2.3.1",
     "@tauri-apps/plugin-updater": "~2.9.0",

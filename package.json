@@ -20,10 +20,12 @@
     "test:session-switch": "pnpm --filter @different-ai/openwork-ui test:session-switch",
     "test:fs-engine": "pnpm --filter @different-ai/openwork-ui test:fs-engine",
     "test:e2e": "pnpm --filter @different-ai/openwork-ui test:e2e",
+    "test:openwrk": "pnpm --filter openwrk test:router",
     "bump:patch": "pnpm --filter @different-ai/openwork-ui bump:patch",
     "bump:minor": "pnpm --filter @different-ai/openwork-ui bump:minor",
     "bump:major": "pnpm --filter @different-ai/openwork-ui bump:major",
     "bump:set": "pnpm --filter @different-ai/openwork-ui bump:set",
+    "release:review": "node scripts/release/review.mjs",
     "tauri": "pnpm --filter @different-ai/openwork exec tauri"
   },
   "pnpm": {
@@ -32,7 +34,10 @@
       "better-sqlite3",
       "esbuild",
       "protobufjs"
-    ]
+    ],
+    "patchedDependencies": {
+      "@solidjs/router@0.15.4": "patches/@solidjs__router@0.15.4.patch"
+    }
   },
   "packageManager": "pnpm@10.27.0"
 }

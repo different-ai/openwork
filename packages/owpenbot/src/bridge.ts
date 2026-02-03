@@ -2,22 +2,32 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import type { Logger } from "pino";
 
-import type { Config, ChannelName } from "./config.js";
+import type { Config, ChannelName, OwpenbotConfigFile } from "./config.js";
+import { normalizeWhatsAppId, readConfigFile, writeConfigFile } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
-import { resolvePairingCode } from "./pairing.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createTelegramAdapter } from "./telegram.js";
 import { createWhatsAppAdapter } from "./whatsapp.js";
 
-type Adapter = {
+   type Adapter = {
   name: ChannelName;
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
   sendText(peerId: string, text: string): Promise<void>;
+  sendFile?: (peerId: string, filePath: string, caption?: string) => Promise<void>;
+  sendTyping?: (peerId: string) => Promise<void>;
+};
+
+type OutboundKind = "reply" | "system" | "tool";
+
+export type BridgeReporter = {
+  onStatus?: (message: string) => void;
+  onInbound?: (message: { channel: ChannelName; peerId: string; text: string; fromMe?: boolean }) => void;
+  onOutbound?: (message: { channel: ChannelName; peerId: string; text: string; kind: OutboundKind }) => void;
 };
 
 type InboundMessage = {
@@ -25,6 +35,12 @@ type InboundMessage = {
   peerId: string;
   text: string;
   raw: unknown;
+  fromMe?: boolean;
+};
+
+type ModelRef = {
+  providerID: string;
+  modelID: string;
 };
 
 type RunState = {
@@ -33,6 +49,8 @@ type RunState = {
   peerId: string;
   toolUpdatesEnabled: boolean;
   seenToolStates: Map<string, string>;
+  thinkingLabel?: string;
+  thinkingActive?: boolean;
 };
 
 const TOOL_LABELS: Record<string, string> = {
@@ -48,30 +66,147 @@ const TOOL_LABELS: Record<string, string> = {
   webfetch: "webfetch",
 };
 
-export async function startBridge(config: Config, logger: Logger) {
+const CHANNEL_LABELS: Record<ChannelName, string> = {
+  whatsapp: "WhatsApp",
+  telegram: "Telegram",
+};
+
+const TYPING_INTERVAL_MS = 6000;
+
+// Model presets for quick switching
+const MODEL_PRESETS: Record<string, ModelRef> = {
+  opus: { providerID: "anthropic", modelID: "claude-opus-4-5-20251101" },
+  codex: { providerID: "openai", modelID: "gpt-5.2-codex" },
+};
+
+// Per-user model overrides (channel:peerId -> ModelRef)
+const userModelOverrides = new Map<string, ModelRef>();
+
+function getUserModelKey(channel: ChannelName, peerId: string): string {
+  return `${channel}:${peerId}`;
+}
+
+function getUserModel(channel: ChannelName, peerId: string, defaultModel?: ModelRef): ModelRef | undefined {
+  const key = getUserModelKey(channel, peerId);
+  return userModelOverrides.get(key) ?? defaultModel;
+}
+
+function setUserModel(channel: ChannelName, peerId: string, model: ModelRef | undefined): void {
+  const key = getUserModelKey(channel, peerId);
+  if (model) {
+    userModelOverrides.set(key, model);
+  } else {
+    userModelOverrides.delete(key);
+  }
+}
+
+export async function startBridge(config: Config, logger: Logger, reporter?: BridgeReporter) {
+  const reportStatus = reporter?.onStatus;
   const client = createClient(config);
   const store = new BridgeStore(config.dbPath);
   store.seedAllowlist("telegram", config.allowlist.telegram);
-  store.seedAllowlist("whatsapp", config.allowlist.whatsapp);
+  store.seedAllowlist(
+    "whatsapp",
+    [...config.whatsappAllowFrom].filter((entry) => entry !== "*"),
+  );
+  store.prunePairingRequests();
 
-  const pairingCode = resolvePairingCode(store, config.pairingCode);
-  logger.info({ pairingCode }, "pairing code ready");
+  logger.debug(
+    {
+      configPath: config.configPath,
+      opencodeUrl: config.opencodeUrl,
+      opencodeDirectory: config.opencodeDirectory,
+      telegramEnabled: config.telegramEnabled,
+      telegramTokenPresent: Boolean(config.telegramToken),
+      whatsappEnabled: config.whatsappEnabled,
+      groupsEnabled: config.groupsEnabled,
+      permissionMode: config.permissionMode,
+      toolUpdatesEnabled: config.toolUpdatesEnabled,
+    },
+    "bridge config",
+  );
 
   const adapters = new Map<ChannelName, Adapter>();
   if (config.telegramEnabled && config.telegramToken) {
+    logger.debug("telegram adapter enabled");
     adapters.set("telegram", createTelegramAdapter(config, logger, handleInbound));
   } else {
     logger.info("telegram adapter disabled");
+    reportStatus?.("Telegram adapter disabled.");
   }
 
   if (config.whatsappEnabled) {
-    adapters.set("whatsapp", createWhatsAppAdapter(config, logger, handleInbound, { printQr: true }));
+    logger.debug("whatsapp adapter enabled");
+    adapters.set(
+      "whatsapp",
+      createWhatsAppAdapter(config, logger, handleInbound, { printQr: true, onStatus: reportStatus }),
+    );
   } else {
     logger.info("whatsapp adapter disabled");
+    reportStatus?.("WhatsApp adapter disabled.");
   }
 
   const sessionQueue = new Map<string, Promise<void>>();
   const activeRuns = new Map<string, RunState>();
+  const sessionModels = new Map<string, ModelRef>();
+  const typingLoops = new Map<string, NodeJS.Timeout>();
+
+  const formatPeer = (channel: ChannelName, peerId: string) =>
+    channel === "whatsapp" ? normalizeWhatsAppId(peerId) : peerId;
+
+  const formatModelLabel = (model?: ModelRef) =>
+    model ? `${model.providerID}/${model.modelID}` : null;
+
+  const extractModelRef = (info: unknown): ModelRef | null => {
+    if (!info || typeof info !== "object") return null;
+    const record = info as { role?: unknown; model?: unknown };
+    if (record.role !== "user") return null;
+    if (!record.model || typeof record.model !== "object") return null;
+    const model = record.model as { providerID?: unknown; modelID?: unknown };
+    if (typeof model.providerID !== "string" || typeof model.modelID !== "string") return null;
+    return { providerID: model.providerID, modelID: model.modelID };
+  };
+
+  const reportThinking = (run: RunState) => {
+    if (!reportStatus) return;
+    const modelLabel = formatModelLabel(sessionModels.get(run.sessionID));
+    const nextLabel = modelLabel ? `Thinking (${modelLabel})` : "Thinking...";
+    if (run.thinkingLabel === nextLabel && run.thinkingActive) return;
+    run.thinkingLabel = nextLabel;
+    run.thinkingActive = true;
+    reportStatus(`[${CHANNEL_LABELS[run.channel]}] ${formatPeer(run.channel, run.peerId)} ${nextLabel}`);
+  };
+
+  const reportDone = (run: RunState) => {
+    if (!reportStatus || !run.thinkingActive) return;
+    const modelLabel = formatModelLabel(sessionModels.get(run.sessionID));
+    const suffix = modelLabel ? ` (${modelLabel})` : "";
+    reportStatus(`[${CHANNEL_LABELS[run.channel]}] ${formatPeer(run.channel, run.peerId)} Done${suffix}`);
+    run.thinkingActive = false;
+  };
+
+  const startTyping = (run: RunState) => {
+    const adapter = adapters.get(run.channel);
+    if (!adapter?.sendTyping) return;
+    if (typingLoops.has(run.sessionID)) return;
+    const sendTyping = async () => {
+      try {
+        await adapter.sendTyping?.(run.peerId);
+      } catch (error) {
+        logger.warn({ error, channel: run.channel }, "typing update failed");
+      }
+    };
+    void sendTyping();
+    const timer = setInterval(sendTyping, TYPING_INTERVAL_MS);
+    typingLoops.set(run.sessionID, timer);
+  };
+
+  const stopTyping = (sessionID: string) => {
+    const timer = typingLoops.get(sessionID);
+    if (!timer) return;
+    clearInterval(timer);
+    typingLoops.delete(sessionID);
+  };
 
   let opencodeHealthy = false;
   let opencodeVersion: string | undefined;
@@ -90,6 +225,9 @@ export async function startBridge(config: Config, logger: Logger) {
   await refreshHealth();
   const healthTimer = setInterval(refreshHealth, 30_000);
 
+  // Mutable runtime state for groups (persisted to config file)
+  let groupsEnabled = config.groupsEnabled;
+
   let stopHealthServer: (() => void) | null = null;
   if (config.healthPort) {
     stopHealthServer = startHealthServer(
@@ -105,8 +243,75 @@ export async function startBridge(config: Config, logger: Logger) {
           telegram: adapters.has("telegram"),
           whatsapp: adapters.has("whatsapp"),
         },
+        config: {
+          groupsEnabled,
+        },
       }),
       logger,
+      {
+        getGroupsEnabled: () => groupsEnabled,
+        setGroupsEnabled: async (enabled: boolean) => {
+          groupsEnabled = enabled;
+          // Also update config so adapters see the change
+          (config as any).groupsEnabled = enabled;
+          
+          // Persist to config file
+          const { config: current } = readConfigFile(config.configPath);
+          const next: OwpenbotConfigFile = {
+            ...current,
+            groupsEnabled: enabled,
+          };
+          next.version = next.version ?? 1;
+          writeConfigFile(config.configPath, next);
+          config.configFile = next;
+          
+          logger.info({ groupsEnabled: enabled }, "groups config updated");
+          return { groupsEnabled: enabled };
+        },
+        setTelegramToken: async (token: string) => {
+          const trimmed = token.trim();
+          if (!trimmed) {
+            throw new Error("Telegram token is required");
+          }
+
+          const { config: current } = readConfigFile(config.configPath);
+          const next: OwpenbotConfigFile = {
+            ...current,
+            channels: {
+              ...current.channels,
+              telegram: {
+                ...current.channels?.telegram,
+                token: trimmed,
+                enabled: true,
+              },
+            },
+          };
+          next.version = next.version ?? 1;
+          writeConfigFile(config.configPath, next);
+          config.configFile = next;
+          config.telegramToken = trimmed;
+          config.telegramEnabled = true;
+
+          const existing = adapters.get("telegram");
+          if (existing) {
+            try {
+              await existing.stop();
+            } catch (error) {
+              logger.warn({ error }, "failed to stop existing telegram adapter");
+            }
+            adapters.delete("telegram");
+          }
+
+          const adapter = createTelegramAdapter(config, logger, handleInbound);
+          adapters.set("telegram", adapter);
+          await adapter.start();
+
+          return {
+            configured: true,
+            enabled: true,
+          };
+        },
+      },
     );
   }
 
@@ -116,6 +321,47 @@ export async function startBridge(config: Config, logger: Logger) {
     for await (const raw of subscription.stream as AsyncIterable<unknown>) {
       const event = normalizeEvent(raw as any);
       if (!event) continue;
+
+      if (event.type === "message.updated") {
+        if (event.properties && typeof event.properties === "object") {
+          const record = event.properties as Record<string, unknown>;
+          const info = record.info as Record<string, unknown> | undefined;
+          const sessionID = typeof info?.sessionID === "string" ? (info.sessionID as string) : null;
+          const model = extractModelRef(info);
+          if (sessionID && model) {
+            sessionModels.set(sessionID, model);
+            const run = activeRuns.get(sessionID);
+            if (run) reportThinking(run);
+          }
+        }
+      }
+
+      if (event.type === "session.status") {
+        if (event.properties && typeof event.properties === "object") {
+          const record = event.properties as Record<string, unknown>;
+          const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+          const status = record.status as { type?: unknown } | undefined;
+          if (sessionID && (status?.type === "busy" || status?.type === "retry")) {
+            const run = activeRuns.get(sessionID);
+            if (run) {
+              reportThinking(run);
+              startTyping(run);
+            }
+          }
+        }
+      }
+
+      if (event.type === "session.idle") {
+        if (event.properties && typeof event.properties === "object") {
+          const record = event.properties as Record<string, unknown>;
+          const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
+          if (sessionID) {
+            stopTyping(sessionID);
+            const run = activeRuns.get(sessionID);
+            if (run) reportDone(run);
+          }
+        }
+      }
 
       if (event.type === "message.part.updated") {
         const part = (event.properties as { part?: any })?.part;
@@ -140,7 +386,7 @@ export async function startBridge(config: Config, logger: Logger) {
           if (output) message += `\n${output}`;
         }
 
-        await sendText(run.channel, run.peerId, message);
+        await sendText(run.channel, run.peerId, message, { kind: "tool" });
       }
 
       if (event.type === "permission.asked") {
@@ -155,7 +401,9 @@ export async function startBridge(config: Config, logger: Logger) {
         if (response === "reject") {
           const run = activeRuns.get(permission.sessionID);
           if (run) {
-            await sendText(run.channel, run.peerId, "Permission denied. Update configuration to allow tools.");
+            await sendText(run.channel, run.peerId, "Permission denied. Update configuration to allow tools.", {
+              kind: "system",
+            });
           }
         }
       }
@@ -164,9 +412,29 @@ export async function startBridge(config: Config, logger: Logger) {
     logger.error({ error }, "event stream closed");
   });
 
-  async function sendText(channel: ChannelName, peerId: string, text: string) {
+  async function sendText(
+    channel: ChannelName,
+    peerId: string,
+    text: string,
+    options: { kind?: OutboundKind; display?: boolean } = {},
+  ) {
     const adapter = adapters.get(channel);
     if (!adapter) return;
+    const kind = options.kind ?? "system";
+    logger.debug({ channel, peerId, kind, length: text.length }, "sendText requested");
+    if (options.display !== false) {
+      reporter?.onOutbound?.({ channel, peerId, text, kind });
+    }
+
+    // CHECK IF IT'S A FILE COMMAND
+    if (text.startsWith("FILE:")) {
+      const filePath = text.substring(5).trim();
+      if (adapter.sendFile) {
+        await adapter.sendFile(peerId, filePath);
+        return; // Stop here, don't send text
+      }
+    }
+
     const chunks = chunkText(text, adapter.maxTextLength);
     for (const chunk of chunks) {
       logger.info({ channel, peerId, length: chunk.length }, "sending message");
@@ -178,36 +446,102 @@ export async function startBridge(config: Config, logger: Logger) {
     const adapter = adapters.get(message.channel);
     if (!adapter) return;
     let inbound = message;
+    logger.debug(
+      {
+        channel: inbound.channel,
+        peerId: inbound.peerId,
+        fromMe: inbound.fromMe,
+        length: inbound.text.length,
+        preview: truncateText(inbound.text.trim(), 120),
+      },
+      "inbound received",
+    );
     logger.info(
       { channel: inbound.channel, peerId: inbound.peerId, length: inbound.text.length },
       "received message",
     );
+    const peerKey = inbound.channel === "whatsapp" ? normalizeWhatsAppId(inbound.peerId) : inbound.peerId;
+    if (inbound.channel === "whatsapp") {
+      if (config.whatsappDmPolicy === "disabled") {
+        return;
+      }
 
-    const allowed = store.isAllowed(inbound.channel, inbound.peerId);
-    if (!allowed) {
-      const trimmed = inbound.text.trim();
-      if (trimmed.includes(pairingCode)) {
-        store.allowPeer(inbound.channel, inbound.peerId);
-        const remaining = trimmed.replace(pairingCode, "").trim();
-        if (remaining) {
-          await sendText(inbound.channel, inbound.peerId, "Paired. Processing your message.");
-        } else {
-          await sendText(inbound.channel, inbound.peerId, "Paired. Send your message again.");
+      const allowAll = config.whatsappDmPolicy === "open" || config.whatsappAllowFrom.has("*");
+      const isSelf = Boolean(inbound.fromMe && config.whatsappSelfChatMode);
+      const allowed = allowAll || isSelf || store.isAllowed("whatsapp", peerKey);
+      logger.debug(
+        { allowAll, isSelf, allowed, dmPolicy: config.whatsappDmPolicy, peerKey },
+        "whatsapp allowlist check",
+      );
+      if (!allowed) {
+        if (config.whatsappDmPolicy === "allowlist") {
+          await sendText(
+            inbound.channel,
+            inbound.peerId,
+            "Access denied. Ask the owner to allowlist your number.",
+            { kind: "system" },
+          );
           return;
         }
-        inbound = { ...inbound, text: remaining };
-      } else {
+
+        store.prunePairingRequests();
+        const active = store.getPairingRequest("whatsapp", peerKey);
+        const pending = store.listPairingRequests("whatsapp");
+        if (!active && pending.length >= 3) {
+          await sendText(
+            inbound.channel,
+            inbound.peerId,
+            "Pairing queue full. Ask the owner to approve pending requests.",
+            { kind: "system" },
+          );
+          return;
+        }
+
+        const code = active?.code ?? String(Math.floor(100000 + Math.random() * 900000));
+        if (!active) {
+          store.createPairingRequest("whatsapp", peerKey, code, 60 * 60_000);
+        }
         await sendText(
           inbound.channel,
           inbound.peerId,
-          `Pairing required. Reply with code: ${pairingCode}`,
+          `Pairing required. Ask the owner to approve code: ${code}`,
+          { kind: "system" },
         );
+        return;
+      }
+    } else if (config.allowlist[inbound.channel].size > 0) {
+      if (!store.isAllowed(inbound.channel, peerKey)) {
+        logger.debug({ channel: inbound.channel, peerKey }, "telegram allowlist denied");
+        await sendText(inbound.channel, inbound.peerId, "Access denied.", { kind: "system" });
         return;
       }
     }
 
-    const session = store.getSession(inbound.channel, inbound.peerId);
-    const sessionID = session?.session_id ?? (await createSession(inbound));
+    // Handle bot commands
+    const trimmedText = inbound.text.trim();
+    if (trimmedText.startsWith("/")) {
+      const commandHandled = await handleCommand(inbound.channel, inbound.peerId, trimmedText);
+      if (commandHandled) return;
+    }
+
+    reporter?.onInbound?.({
+      channel: inbound.channel,
+      peerId: inbound.peerId,
+      text: inbound.text,
+      fromMe: inbound.fromMe,
+    });
+
+    const session = store.getSession(inbound.channel, peerKey);
+    const sessionID = session?.session_id ?? (await createSession({ ...inbound, peerId: peerKey }));
+    logger.debug(
+      {
+        sessionID,
+        channel: inbound.channel,
+        peerId: inbound.peerId,
+        reused: Boolean(session?.session_id),
+      },
+      "session resolved",
+    );
 
     enqueue(sessionID, async () => {
       const runState: RunState = {
@@ -218,12 +552,28 @@ export async function startBridge(config: Config, logger: Logger) {
         seenToolStates: new Map(),
       };
       activeRuns.set(sessionID, runState);
+      reportThinking(runState);
+      startTyping(runState);
       try {
+        const effectiveModel = getUserModel(inbound.channel, peerKey, config.model);
+        logger.debug({ sessionID, length: inbound.text.length, model: effectiveModel }, "prompt start");
         const response = await client.session.prompt({
           sessionID,
           parts: [{ type: "text", text: inbound.text }],
+          ...(effectiveModel ? { model: effectiveModel } : {}),
         });
         const parts = (response as { parts?: Array<{ type?: string; text?: string; ignored?: boolean }> }).parts ?? [];
+        const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
+        logger.debug(
+          {
+            sessionID,
+            partCount: parts.length,
+            textCount: textParts.length,
+            partTypes: parts.map((p) => p.type),
+            ignoredCount: parts.filter((p) => p.ignored).length,
+          },
+          "prompt response",
+        );
         const reply = parts
           .filter((part) => part.type === "text" && !part.ignored)
           .map((part) => part.text ?? "")
@@ -231,17 +581,101 @@ export async function startBridge(config: Config, logger: Logger) {
           .trim();
 
         if (reply) {
-          await sendText(inbound.channel, inbound.peerId, reply);
+          logger.debug({ sessionID, replyLength: reply.length }, "reply built");
+          await sendText(inbound.channel, inbound.peerId, reply, { kind: "reply" });
         } else {
-          await sendText(inbound.channel, inbound.peerId, "No response generated. Try again.");
+          logger.debug({ sessionID }, "reply empty");
+          await sendText(inbound.channel, inbound.peerId, "No response generated. Try again.", {
+            kind: "system",
+          });
         }
       } catch (error) {
-        logger.error({ error }, "prompt failed");
-        await sendText(inbound.channel, inbound.peerId, "Error: failed to reach OpenCode.");
+        // Log full error details for debugging
+        const errorDetails = {
+          message: error instanceof Error ? error.message : String(error),
+          name: error instanceof Error ? error.name : undefined,
+          stack: error instanceof Error ? error.stack?.split("\n").slice(0, 3).join("\n") : undefined,
+          cause: error instanceof Error ? (error as any).cause : undefined,
+          status: (error as any)?.status ?? (error as any)?.statusCode ?? undefined,
+        };
+        logger.error({ error: errorDetails, sessionID }, "prompt failed");
+        
+        // Extract meaningful error details
+        let errorMessage = "Error: failed to reach OpenCode.";
+        if (error instanceof Error) {
+          const msg = error.message || "";
+          // Check for common error patterns
+          if (msg.includes("401") || msg.includes("Unauthorized")) {
+            errorMessage = "Error: OpenCode authentication failed (401). Check credentials.";
+          } else if (msg.includes("403") || msg.includes("Forbidden")) {
+            errorMessage = "Error: OpenCode access forbidden (403).";
+          } else if (msg.includes("404") || msg.includes("Not Found")) {
+            errorMessage = "Error: OpenCode endpoint not found (404).";
+          } else if (msg.includes("429") || msg.includes("rate limit")) {
+            errorMessage = "Error: Rate limited. Please wait and try again.";
+          } else if (msg.includes("500") || msg.includes("Internal Server")) {
+            errorMessage = "Error: OpenCode server error (500).";
+          } else if (msg.includes("model") || msg.includes("provider")) {
+            errorMessage = `Error: Model/provider issue - ${msg.slice(0, 100)}`;
+          } else if (msg.includes("ECONNREFUSED") || msg.includes("connection")) {
+            errorMessage = "Error: Cannot connect to OpenCode. Is it running?";
+          } else if (msg.trim()) {
+            // Include the actual error message (truncated)
+            errorMessage = `Error: ${msg.slice(0, 150)}`;
+          }
+        }
+        
+        await sendText(inbound.channel, inbound.peerId, errorMessage, {
+          kind: "system",
+        });
       } finally {
+        stopTyping(sessionID);
+        reportDone(runState);
         activeRuns.delete(sessionID);
       }
     });
+  }
+
+  async function handleCommand(channel: ChannelName, peerId: string, text: string): Promise<boolean> {
+    const parts = text.slice(1).split(/\s+/);
+    const command = parts[0]?.toLowerCase();
+    const args = parts.slice(1);
+
+    // Model switching commands
+    if (command && MODEL_PRESETS[command]) {
+      const model = MODEL_PRESETS[command];
+      setUserModel(channel, peerId, model);
+      await sendText(channel, peerId, `Model switched to ${model.providerID}/${model.modelID}`, { kind: "system" });
+      logger.info({ channel, peerId, model }, "model switched via command");
+      return true;
+    }
+
+    // /model command - show current model
+    if (command === "model") {
+      const current = getUserModel(channel, peerId, config.model);
+      const modelStr = current ? `${current.providerID}/${current.modelID}` : "default";
+      await sendText(channel, peerId, `Current model: ${modelStr}`, { kind: "system" });
+      return true;
+    }
+
+    // /reset command - clear model override and session
+    if (command === "reset") {
+      setUserModel(channel, peerId, undefined);
+      store.deleteSession(channel, peerId);
+      await sendText(channel, peerId, "Session and model reset. Send a message to start fresh.", { kind: "system" });
+      logger.info({ channel, peerId }, "session and model reset");
+      return true;
+    }
+
+    // /help command
+    if (command === "help") {
+      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/model - show current\n/reset - start fresh\n/help - this`;
+      await sendText(channel, peerId, helpText, { kind: "system" });
+      return true;
+    }
+
+    // Unknown command - don't handle, let it pass through as a message
+    return false;
   }
 
   async function createSession(message: InboundMessage): Promise<string> {
@@ -254,6 +688,10 @@ export async function startBridge(config: Config, logger: Logger) {
     if (!sessionID) throw new Error("Failed to create session");
     store.upsertSession(message.channel, message.peerId, sessionID);
     logger.info({ sessionID, channel: message.channel, peerId: message.peerId }, "session created");
+    reportStatus?.(
+      `${CHANNEL_LABELS[message.channel]} session created for ${formatPeer(message.channel, message.peerId)} (ID: ${sessionID}).`,
+    );
+    await sendText(message.channel, message.peerId, "🧭 Session started.", { kind: "system" });
     return sessionID;
   }
 
@@ -274,15 +712,21 @@ export async function startBridge(config: Config, logger: Logger) {
 
   for (const adapter of adapters.values()) {
     await adapter.start();
+    reportStatus?.(`${adapter.name === "whatsapp" ? "WhatsApp" : "Telegram"} adapter started.`);
   }
 
   logger.info({ channels: Array.from(adapters.keys()) }, "bridge started");
+  reportStatus?.(`Bridge running. Logs: ${config.logFile}`);
 
   return {
     async stop() {
       eventAbort.abort();
       clearInterval(healthTimer);
       if (stopHealthServer) stopHealthServer();
+      for (const timer of typingLoops.values()) {
+        clearInterval(timer);
+      }
+      typingLoops.clear();
       for (const adapter of adapters.values()) {
         await adapter.stop();
       }

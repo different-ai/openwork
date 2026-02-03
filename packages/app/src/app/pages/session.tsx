@@ -1,48 +1,62 @@
-import { For, Show, createEffect, createMemo, createSignal, onMount } from "solid-js";
-import type { Agent, Part, Provider } from "@opencode-ai/sdk/v2/client";
+import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
+  ComposerDraft,
+  CommandRegistryItem,
+  CommandTriggerContext,
   MessageGroup,
   MessageWithParts,
+  McpServerEntry,
+  McpStatusMap,
   PendingPermission,
+  ProviderListItem,
+  SettingsTab,
+  SkillCard,
   TodoItem,
   View,
+  WorkspaceCommand,
   WorkspaceDisplay,
 } from "../types";
 
-import {
-  ArrowRight,
-  HardDrive,
-  Shield,
-  Zap,
-} from "lucide-solid";
+import { ArrowRight, ChevronDown, HardDrive, Shield, Zap } from "lucide-solid";
 
 import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
 import WorkspaceChip from "../components/workspace-chip";
 import ProviderAuthModal from "../components/provider-auth-modal";
-import { isTauriRuntime, isWindowsPlatform } from "../utils";
+import StatusBar from "../components/status-bar";
+import type { OpenworkServerStatus } from "../lib/openwork-server";
+import { join } from "@tauri-apps/api/path";
+import browserSetupCommandTemplate from "../data/commands/browser-setup.md?raw";
+import { opencodeCommandWrite } from "../lib/tauri";
+import { isTauriRuntime, parseTemplateFrontmatter } from "../utils";
 
 import MessageList from "../components/session/message-list";
-import Composer, { type CommandItem } from "../components/session/composer";
+import Composer from "../components/session/composer";
 import SessionSidebar, { type SidebarSectionState } from "../components/session/sidebar";
-import Minimap from "../components/session/minimap";
+import ContextPanel from "../components/session/context-panel";
 import FlyoutItem from "../components/flyout-item";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
-  setView: (view: View) => void;
+  setView: (view: View, sessionId?: string) => void;
   setTab: (tab: DashboardTab) => void;
+  setSettingsTab: (tab: SettingsTab) => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
+  activeWorkspaceRoot: string;
   setWorkspaceSearch: (value: string) => void;
   setWorkspacePickerOpen: (open: boolean) => void;
+  clientConnected: boolean;
+  openworkServerStatus: OpenworkServerStatus;
+  stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
   createSessionAndOpen: () => void;
-  sendPromptAsync: () => Promise<void>;
+  sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   newTaskDisabled: boolean;
-  sessions: Array<{ id: string; title: string; slug?: string | null }>;
+  sessions: Array<{ id: string; title: string; slug?: string | null; workspaceLabel?: string | null }>;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
   todos: TodoItem[];
@@ -62,12 +76,19 @@ export type SessionViewProps = {
   authorizedDirs: string[];
   activePlugins: string[];
   activePluginStatus: string | null;
+  mcpServers: McpServerEntry[];
+  mcpStatuses: McpStatusMap;
+  mcpStatus: string | null;
+  skills: SkillCard[];
+  skillsStatus: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
-  sendPrompt: () => Promise<void>;
   selectedSessionModelLabel: string;
   openSessionModelPicker: () => void;
+  modelVariantLabel: string;
+  modelVariant: string | null;
+  setModelVariant: (value: string) => void;
   activePermission: PendingPermission | null;
   showTryNotionPrompt: boolean;
   onTryNotionPrompt: () => void;
@@ -80,30 +101,166 @@ export type SessionViewProps = {
   renameSession: (sessionId: string, title: string) => Promise<void>;
   openConnect: () => void;
   startProviderAuth: (providerId?: string) => Promise<string>;
+  submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  providers: Provider[];
+  providers: ProviderListItem[];
   providerConnectedIds: string[];
   listAgents: () => Promise<Agent[]>;
+  searchFiles: (query: string) => Promise<string[]>;
+  selectedSessionAgent: string | null;
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  commands: WorkspaceCommand[];
+  runCommand: (command: WorkspaceCommand, details?: string) => Promise<void>;
+  openCommandRunModal: (command: WorkspaceCommand) => void;
+  commandRegistryItems: () => CommandRegistryItem[];
+  registerCommand: (command: CommandRegistryItem) => () => void;
+  deleteSession: (sessionId: string) => Promise<void>;
 };
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  let agentPickerRef: HTMLDivElement | undefined;
 
-  const [artifactToast, setArtifactToast] = createSignal<string | null>(null);
   const [commandToast, setCommandToast] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+  const [deleteBusy, setDeleteBusy] = createSignal(false);
+  const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
+  const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
+  const [agentPickerReady, setAgentPickerReady] = createSignal(false);
+  const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
+  const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
+  const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
+  const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
+  const [unreadCount, setUnreadCount] = createSignal(0);
+
+  const COMMAND_ARGS_RE = /\$(ARGUMENTS|\d+)/i;
+
+  const commandNeedsDetails = (command: { template: string }) => COMMAND_ARGS_RE.test(command.template);
+
+  const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
+
+  const isNearBottom = (el: HTMLElement, threshold = 80) => {
+    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+    return distance <= threshold;
+  };
+
+  const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    messagesEndEl?.scrollIntoView({ behavior, block: "end" });
+  };
+
+  const isAbsolutePath = (value: string) =>
+    /^(?:[a-zA-Z]:[\\/]|\\\\|\/|~\/)/.test(value.trim());
+
+  const handleWorkingFileClick = async (file: string) => {
+    const trimmed = file.trim();
+    if (!trimmed) return;
+
+    if (props.activeWorkspaceDisplay.workspaceType === "remote") {
+      setCommandToast("File open is unavailable for remote workspaces.");
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setCommandToast("File open is available in the desktop app.");
+      return;
+    }
+
+    try {
+      const { openPath } = await import("@tauri-apps/plugin-opener");
+      const root = props.activeWorkspaceRoot.trim();
+      if (!isAbsolutePath(trimmed) && !root) {
+        setCommandToast("Pick a workspace to open files.");
+        return;
+      }
+      const target = !isAbsolutePath(trimmed) && root ? await join(root, trimmed) : trimmed;
+      await openPath(target);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to open file";
+      setCommandToast(message);
+    }
+  };
+
+  const buildBrowserSetupCommand = () => {
+    const parsed = parseTemplateFrontmatter(browserSetupCommandTemplate);
+    const name = parsed?.data.name?.trim() || "browser-setup";
+    const description =
+      parsed?.data.description?.trim() || "Guide user through Chrome browser automation setup";
+    const template = parsed?.body?.trim() || browserSetupCommandTemplate.trim();
+
+    return { name, description, template };
+  };
+
+  const ensureBrowserSetupCommand = async (): Promise<WorkspaceCommand | null> => {
+    const existing = props.commands.find((item) => item.name === "browser-setup");
+    if (existing) return existing;
+
+    if (props.activeWorkspaceDisplay.workspaceType === "remote") {
+      setCommandToast("Browser setup command is only available in local workspaces.");
+      return null;
+    }
+
+    if (!isTauriRuntime()) {
+      setCommandToast("Browser setup is available in the desktop app.");
+      return null;
+    }
+
+    const root = props.activeWorkspaceDisplay.path?.trim() ?? "";
+    if (!root) {
+      setCommandToast("Pick a workspace folder to install the command.");
+      return null;
+    }
+
+    try {
+      const draft = buildBrowserSetupCommand();
+      await opencodeCommandWrite({
+        scope: "workspace",
+        projectDir: root,
+        command: draft,
+      });
+
+      return {
+        name: draft.name,
+        description: draft.description,
+        template: draft.template,
+        scope: "workspace",
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to install browser setup command";
+      setCommandToast(message);
+      return null;
+    }
+  };
+  const loadAgentOptions = async (force = false) => {
+    if (agentPickerBusy()) return agentOptions();
+    if (agentPickerReady() && !force) return agentOptions();
+    setAgentPickerBusy(true);
+    setAgentPickerError(null);
+    try {
+      const agents = await props.listAgents();
+      const sorted = agents.slice().sort((a, b) => a.name.localeCompare(b.name));
+      setAgentOptions(sorted);
+      setAgentPickerReady(true);
+      return sorted;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load agents";
+      setAgentPickerError(message);
+      setAgentOptions([]);
+      return [];
+    } finally {
+      setAgentPickerBusy(false);
+    }
+  };
 
   type Flyout = {
     id: string;
@@ -114,20 +271,281 @@ export default function SessionView(props: SessionViewProps) {
   };
   const [flyouts, setFlyouts] = createSignal<Flyout[]>([]);
   const [prevTodoCount, setPrevTodoCount] = createSignal(0);
-  const [prevArtifactCount, setPrevArtifactCount] = createSignal(0);
   const [prevFileCount, setPrevFileCount] = createSignal(0);
   const [isInitialLoad, setIsInitialLoad] = createSignal(true);
-  
-  const pendingArtifactRafIds = new Set<number>();
+  const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
+  const [runHasBegun, setRunHasBegun] = createSignal(false);
+  const [runTick, setRunTick] = createSignal(Date.now());
+  const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
+    assistantId: null,
+    partCount: 0,
+  });
+  const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
+
+  const lastAssistantSnapshot = createMemo(() => {
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role === "assistant") {
+        const id = typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+        return { id, partCount: msg.parts.length };
+      }
+    }
+    return { id: null, partCount: 0 };
+  });
+
+  const captureRunBaseline = () => {
+    const snapshot = lastAssistantSnapshot();
+    setRunBaseline({ assistantId: snapshot.id, partCount: snapshot.partCount });
+  };
+
+  const startRun = () => {
+    if (runStartedAt()) return;
+    setRunStartedAt(Date.now());
+    setRunHasBegun(false);
+    captureRunBaseline();
+  };
+
+  const responseStarted = createMemo(() => {
+    if (!runStartedAt()) return false;
+    const baseline = runBaseline();
+    const snapshot = lastAssistantSnapshot();
+    if (!snapshot.id && !baseline.assistantId) return false;
+    if (snapshot.id && snapshot.id !== baseline.assistantId) return true;
+    return snapshot.id === baseline.assistantId && snapshot.partCount > baseline.partCount;
+  });
+
+  const runPhase = createMemo(() => {
+    if (props.error) return "error";
+    const status = props.sessionStatus;
+    const started = runStartedAt() !== null;
+    if (status === "idle") {
+      if (!started) return "idle";
+      return responseStarted() ? "responding" : "sending";
+    }
+    if (status === "retry") return responseStarted() ? "responding" : "retrying";
+    if (responseStarted()) return "responding";
+    return "thinking";
+  });
+
+  const showRunIndicator = createMemo(() => runPhase() !== "idle");
+
+  const latestRunPart = createMemo<Part | null>(() => {
+    if (!showRunIndicator()) return null;
+    const baseline = runBaseline();
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role !== "assistant") continue;
+      const messageId =
+        typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+      if (!messageId) continue;
+      if (baseline.assistantId && messageId === baseline.assistantId && msg.parts.length <= baseline.partCount) {
+        continue;
+      }
+      if (!msg.parts.length) continue;
+      return msg.parts[msg.parts.length - 1] ?? null;
+    }
+    return null;
+  });
+
+  const computeStatusFromPart = (part: Part | null) => {
+    if (!part) return null;
+    if (part.type === "tool") {
+      const record = part as any;
+      const tool = typeof record.tool === "string" ? record.tool : "";
+      switch (tool) {
+        case "task":
+          return "Delegating";
+        case "todowrite":
+        case "todoread":
+          return "Planning";
+        case "read":
+          return "Gathering context";
+        case "list":
+        case "grep":
+        case "glob":
+          return "Searching codebase";
+        case "webfetch":
+          return "Searching the web";
+        case "edit":
+        case "write":
+          return "Making edits";
+        case "bash":
+          return "Running commands";
+        default:
+          return "Working";
+      }
+    }
+    if (part.type === "reasoning") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const match = text.trimStart().match(/^\*\*(.+?)\*\*/);
+      if (match) return `Thinking about ${match[1].trim()}`;
+      return "Thinking";
+    }
+    if (part.type === "text") {
+      return "Gathering thoughts";
+    }
+    return null;
+  };
+
+  const truncateDetail = (value: string, max = 240) => {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.length <= max) return trimmed;
+    return `${trimmed.slice(0, max)}...`;
+  };
+
+  const thinkingStatus = createMemo(() => {
+    const status = computeStatusFromPart(latestRunPart());
+    if (status) return status;
+    if (runPhase() === "thinking") return "Thinking";
+    return null;
+  });
+
+  const thinkingDetail = createMemo<null | { title: string; detail?: string }>(() => {
+    const part = latestRunPart();
+    if (!part) return null;
+    if (part.type === "tool") {
+      const record = part as any;
+      const state = record.state ?? {};
+      const title =
+        typeof state.title === "string" && state.title.trim() ? state.title.trim() : String(record.tool ?? "Tool");
+      const output = typeof state.output === "string" ? truncateDetail(state.output) : null;
+      const error = typeof state.error === "string" ? truncateDetail(state.error) : null;
+      return { title, detail: output ?? error ?? undefined };
+    }
+    if (part.type === "reasoning") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const detail = truncateDetail(text);
+      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
+    }
+    if (part.type === "text") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const detail = truncateDetail(text);
+      return detail ? { title: "Draft", detail } : { title: "Draft" };
+    }
+    return null;
+  });
+
+  const runLabel = createMemo(() => {
+    switch (runPhase()) {
+      case "sending":
+        return "Sending";
+      case "retrying":
+        return "Retrying";
+      case "responding":
+        return "Responding";
+      case "thinking":
+        return "Thinking";
+      case "error":
+        return "Run failed";
+      default:
+        return "";
+    }
+  });
+
+  const runElapsedMs = createMemo(() => {
+    const start = runStartedAt();
+    if (!start) return 0;
+    return Math.max(0, runTick() - start);
+  });
+
+  const runElapsedLabel = createMemo(() => `${Math.round(runElapsedMs()).toLocaleString()}ms`);
 
   onMount(() => {
     setTimeout(() => setIsInitialLoad(false), 2000);
   });
 
+  onMount(() => {
+    const container = chatContainerEl;
+    if (!container) return;
+    const update = () => setAutoScrollEnabled(isNearBottom(container));
+    update();
+    container.addEventListener("scroll", update, { passive: true });
+    onCleanup(() => container.removeEventListener("scroll", update));
+  });
+
   createEffect(() => {
-    props.messages.length;
-    props.todos.length;
-    messagesEndEl?.scrollIntoView({ behavior: "smooth" });
+    const status = props.sessionStatus;
+    if (status === "running" || status === "retry") {
+      startRun();
+      setRunHasBegun(true);
+    }
+  });
+
+  createEffect(() => {
+    if (responseStarted()) {
+      setRunHasBegun(true);
+    }
+  });
+
+  createEffect(() => {
+    if (!runStartedAt()) return;
+    if (props.sessionStatus === "idle" && runHasBegun() && !props.error) {
+      setRunStartedAt(null);
+      setRunHasBegun(false);
+      setRunBaseline({ assistantId: null, partCount: 0 });
+    }
+  });
+
+  createEffect(() => {
+    if (!showRunIndicator()) return;
+    setRunTick(Date.now());
+    const id = window.setInterval(() => setRunTick(Date.now()), 50);
+    onCleanup(() => window.clearInterval(id));
+  });
+
+  createEffect(() => {
+    if (!thinkingStatus()) {
+      setThinkingExpanded(false);
+    }
+  });
+
+  createEffect(
+    on(
+      () => [
+        props.messages.length,
+        props.todos.length,
+        props.messages.reduce((acc, m) => acc + m.parts.length, 0),
+      ],
+      (current, previous) => {
+        if (!previous) return;
+        const [mLen, tLen, pCount] = current;
+        const [prevM, prevT, prevP] = previous;
+        if (mLen > prevM || tLen > prevT || pCount > prevP) {
+          const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
+          if (shouldScroll) {
+            scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
+          }
+          if (scrollOnNextUpdate()) {
+            setScrollOnNextUpdate(false);
+          }
+        }
+      },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => props.messages.length,
+      (current, previous) => {
+        if (previous == null) return;
+        if (current < previous) {
+          setUnreadCount(0);
+          return;
+        }
+        if (current > previous && !autoScrollEnabled()) {
+          setUnreadCount((count) => count + (current - previous));
+        }
+      },
+    ),
+  );
+
+  createEffect(() => {
+    if (autoScrollEnabled()) {
+      setUnreadCount(0);
+    }
   });
 
   const triggerFlyout = (
@@ -172,31 +590,6 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    const artifacts = props.artifacts;
-    const count = artifacts.length;
-    const prev = prevArtifactCount();
-    if (count > prev && prev > 0) {
-      const last = artifacts[artifacts.length - 1];
-      const scheduleAttempt = (attempts: number) => {
-        const rafId = requestAnimationFrame(() => {
-          pendingArtifactRafIds.delete(rafId);
-          const card = document.querySelector(`[data-artifact-id="${last.id}"]`);
-          if (card) {
-            triggerFlyout(card, "sidebar-artifacts", last.name, "file");
-            return;
-          }
-          if (attempts > 0) {
-            scheduleAttempt(attempts - 1);
-          }
-        });
-        pendingArtifactRafIds.add(rafId);
-      };
-      scheduleAttempt(3);
-    }
-    setPrevArtifactCount(count);
-  });
-  
-  createEffect(() => {
      const files = props.workingFiles;
      const count = files.length;
      const prev = prevFileCount();
@@ -208,65 +601,30 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
-    if (!artifactToast()) return;
-    const id = window.setTimeout(() => setArtifactToast(null), 3000);
-    return () => window.clearTimeout(id);
-  });
-
-  createEffect(() => {
     if (!commandToast()) return;
     const id = window.setTimeout(() => setCommandToast(null), 2400);
     return () => window.clearTimeout(id);
   });
-
-  const artifactActionToast = () => (isWindowsPlatform() ? "Opened in default app." : "Revealed in file manager.");
-
-  const resolveArtifactPath = (artifact: ArtifactItem) => {
-    const rawPath = artifact.path?.trim();
-    if (!rawPath) return null;
-    if (/^(?:[a-zA-Z]:[\\/]|~[\\/]|\/)/.test(rawPath)) {
-      return rawPath;
-    }
-
-    const root = props.activeWorkspaceDisplay.path?.trim();
-    if (!root) return rawPath;
-
-    const separator = root.includes("\\") ? "\\" : "/";
-    const trimmedRoot = root.replace(/[\\/]+$/, "");
-    const trimmedPath = rawPath.replace(/^[\\/]+/, "");
-    return `${trimmedRoot}${separator}${trimmedPath}`;
-  };
-
-  const handleOpenArtifact = async (artifact: ArtifactItem) => {
-    const resolvedPath = resolveArtifactPath(artifact);
-    if (!resolvedPath) {
-      setArtifactToast("Artifact path missing.");
-      return;
-    }
-
-    if (!isTauriRuntime()) {
-      setArtifactToast("Open is only available in the desktop app.");
-      return;
-    }
-
-    try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      if (isWindowsPlatform()) {
-        await openPath(resolvedPath);
-      } else {
-        await revealItemInDir(resolvedPath);
-      }
-      setArtifactToast(artifactActionToast());
-    } catch (error) {
-      setArtifactToast(error instanceof Error ? error.message : "Could not open artifact.");
-    }
-  };
 
   const selectedSessionTitle = createMemo(() => {
     const id = props.selectedSessionId;
     if (!id) return "";
     return props.sessions.find((session) => session.id === id)?.title ?? "";
   });
+
+  const workspaceLabel = createMemo(() => {
+    const name = props.activeWorkspaceDisplay.name.trim();
+    if (name) return name;
+    return "Workspace";
+  });
+
+  const pickFallbackSessionId = (targetId: string) => {
+    const list = props.sessions.map((session) => session.id);
+    if (list.length <= 1) return null;
+    const index = list.indexOf(targetId);
+    if (index === -1) return list[0] ?? null;
+    return list[index + 1] ?? list[index - 1] ?? null;
+  };
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -306,6 +664,38 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const handleDeleteSession = async (sessionId: string) => {
+    if (deleteBusy()) return;
+    const targetId = sessionId?.trim();
+    if (!targetId) {
+      setCommandToast("No session selected");
+      return;
+    }
+    const targetTitle = props.sessions.find((session) => session.id === targetId)?.title ?? "this session";
+    const confirmed = window.confirm(`Delete session "${targetTitle}"?`);
+    if (!confirmed) return;
+    const fallbackId = pickFallbackSessionId(targetId);
+    setDeleteBusy(true);
+    try {
+      await props.deleteSession(targetId);
+      setCommandToast("Session deleted");
+      if (props.selectedSessionId !== targetId) return;
+      if (fallbackId) {
+        await Promise.resolve(props.selectSession(fallbackId));
+        props.setView("session", fallbackId);
+        props.setTab("sessions");
+        return;
+      }
+      props.setView("dashboard");
+      props.setTab("sessions");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setCommandToast(message);
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   const clearPrompt = () => props.setPrompt("");
 
   const extractCommandArgs = (raw: string) => {
@@ -332,6 +722,70 @@ export default function SessionView(props: SessionViewProps) {
     return items.length > 4 ? `${preview}, ...` : preview;
   };
 
+  const MODEL_VARIANT_OPTIONS = ["none", "low", "medium", "high", "xhigh"];
+
+  const normalizeVariantInput = (value: string) => {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === "balance" || trimmed === "balanced") return "none";
+    return MODEL_VARIANT_OPTIONS.includes(trimmed) ? trimmed : null;
+  };
+
+  const openAgentPicker = () => {
+    setAgentPickerOpen((current) => !current);
+    if (!agentPickerReady()) {
+      void loadAgentOptions();
+    }
+  };
+
+  const applySessionAgent = (agent: string | null) => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    props.setSessionAgent(sessionId, agent);
+  };
+
+  const cycleAgent = async (direction: "next" | "prev") => {
+    const sessionId = requireSessionId();
+    if (!sessionId) return;
+    try {
+      const agents = await loadAgentOptions(true);
+      if (!agents.length) {
+        setCommandToast("No agents available");
+        return;
+      }
+      const names = agents.map((agent) => agent.name);
+      const current = props.selectedSessionAgent ?? "";
+      const currentIndex = current ? names.findIndex((name) => name === current) : -1;
+      let nextIndex = 0;
+      if (currentIndex === -1) {
+        nextIndex = direction === "next" ? 0 : names.length - 1;
+      } else if (direction === "next") {
+        nextIndex = (currentIndex + 1) % names.length;
+      } else {
+        nextIndex = (currentIndex - 1 + names.length) % names.length;
+      }
+      const nextAgent = names[nextIndex] ?? null;
+      if (!nextAgent) {
+        setCommandToast("No agents available");
+        return;
+      }
+      props.setSessionAgent(sessionId, nextAgent);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent selection failed";
+      setCommandToast(message);
+    }
+  };
+
+  createEffect(() => {
+    if (!agentPickerOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!agentPickerRef) return;
+      if (agentPickerRef.contains(event.target as Node)) return;
+      setAgentPickerOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
   const handleProviderAuthSelect = async (providerId: string) => {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
@@ -347,180 +801,385 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const commandList = createMemo(() => [
-    {
-      id: "models",
-      description: "Choose a model",
-      run: () => {
-        props.openSessionModelPicker();
-        clearPrompt();
-      },
-    },
-    {
-      id: "connect",
-      description: "Connect a provider",
-      run: async () => {
-        try {
-          await props.openProviderAuthModal();
-          setCommandToast("Select a provider to connect");
-          clearPrompt();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Connect failed";
-          setCommandToast(message);
-        }
-      },
-    },
-    {
-      id: "new",
-      description: "Start a new task",
-      run: () => {
-        props.createSessionAndOpen();
-        clearPrompt();
-      },
-    },
-    {
-      id: "agent",
-      description: "Choose an agent",
-      run: async () => {
-        const sessionId = requireSessionId();
-        if (!sessionId) return;
+  const handleProviderAuthApiKey = async (providerId: string, apiKey: string) => {
+    if (providerAuthActionBusy()) return;
+    setProviderAuthActionBusy(true);
+    try {
+      const message = await props.submitProviderApiKey(providerId, apiKey);
+      setCommandToast(message || "API key saved");
+      props.closeProviderAuthModal();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save API key";
+      setCommandToast(message);
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
 
-        try {
+  const runOpenCodeCommand = (command: WorkspaceCommand, context?: CommandTriggerContext) => {
+    const details = context?.source === "slash" ? extractCommandArgs(props.prompt) : "";
+    const shouldClear = context?.source === "slash";
+
+    if (details) {
+      void props.runCommand(command, details);
+      if (shouldClear) clearPrompt();
+      return;
+    }
+
+    if (commandNeedsDetails(command)) {
+      props.openCommandRunModal(command);
+      if (shouldClear) clearPrompt();
+      return;
+    }
+
+    void props.runCommand(command);
+    if (shouldClear) clearPrompt();
+  };
+
+  const buildHelpPreview = () => {
+    const commands = slashCommands().map((command) => `/${command.slash}`);
+    return formatListHint(commands);
+  };
+  const registerSessionCommands = () => {
+    const commands: CommandRegistryItem[] = [
+      {
+        id: "session.models",
+        title: "Choose a model",
+        category: "Session",
+        description: "Choose a model",
+        slash: "models",
+        scope: "session",
+        onSelect: () => {
+          props.openSessionModelPicker();
+          clearPrompt();
+        },
+      },
+      {
+        id: "session.connect",
+        title: "Connect a provider",
+        category: "Session",
+        description: "Connect a provider",
+        slash: "connect",
+        scope: "session",
+        onSelect: async () => {
+          try {
+            await props.openProviderAuthModal();
+            setCommandToast("Select a provider to connect");
+            clearPrompt();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Connect failed";
+            setCommandToast(message);
+          }
+        },
+      },
+      {
+        id: "session.variant",
+        title: "Change model variant",
+        category: "Session",
+        description: "Adjust the model variant",
+        slash: "variant",
+        scope: "session",
+        onSelect: () => {
           const rawArg = extractCommandArgs(props.prompt);
-          if (/^(none|clear|default)$/i.test(rawArg)) {
-            props.setSessionAgent(sessionId, null);
-            setCommandToast("Agent cleared");
-            clearPrompt();
+          if (!rawArg) {
+            setCommandToast(`Use /variant ${MODEL_VARIANT_OPTIONS.join("/")}`);
             return;
           }
-
-          const agents = await props.listAgents();
-          if (!agents.length) {
-            setCommandToast("No agents available");
-            clearPrompt();
+          const normalized = normalizeVariantInput(rawArg);
+          if (!normalized) {
+            setCommandToast(`Variant must be: ${MODEL_VARIANT_OPTIONS.join(", ")}`);
             return;
           }
-
-          const agentNames = agents.map((agent) => agent.name);
-          let candidate = rawArg;
-          if (!candidate) {
-            const hint = formatListHint(agentNames);
-            const promptLabel = hint ? `Agent name (e.g. ${hint})` : "Agent name";
-            const prompted = window.prompt(promptLabel, agentNames[0] ?? "");
-            if (prompted == null) return;
-            candidate = prompted.trim();
-          }
-
-          if (!candidate) {
-            setCommandToast("Agent name is required");
-            clearPrompt();
-            return;
-          }
-
-          const match = agents.find(
-            (agent) => agent.name.toLowerCase() === candidate.toLowerCase(),
-          );
-          if (!match) {
-            setCommandToast(`Unknown agent. Available: ${formatListHint(agentNames)}`);
-            clearPrompt();
-            return;
-          }
-
-          props.setSessionAgent(sessionId, match.name);
-          setCommandToast(`Agent set to ${match.name}`);
+          props.setModelVariant(normalized);
+          setCommandToast(`Variant set to ${normalized}`);
           clearPrompt();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Agent selection failed";
-          setCommandToast(message);
-        }
+        },
       },
-    },
-    {
-      id: "export",
-      description: "Export session JSON",
-      run: async () => {
-        const sessionId = requireSessionId();
-        if (!sessionId) return;
-
-        try {
-          const fileName = await props.saveSession(sessionId);
-          setCommandToast(`Exported ${fileName}`);
+      {
+        id: "session.new",
+        title: "Start a new task",
+        category: "Session",
+        description: "Start a new task",
+        slash: "new",
+        scope: "session",
+        onSelect: () => {
+          props.createSessionAndOpen();
           clearPrompt();
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "Export failed";
-          setCommandToast(message);
-        }
+        },
       },
-    },
-    {
-      id: "rename",
-      description: "Rename this session",
-      run: () => {
-        openRenameModal();
-        clearPrompt();
+      {
+        id: "session.agent",
+        title: "Choose an agent",
+        category: "Session",
+        description: "Choose an agent",
+        slash: "agent",
+        scope: "session",
+        onSelect: async () => {
+          const sessionId = requireSessionId();
+          if (!sessionId) return;
+
+          try {
+            const rawArg = extractCommandArgs(props.prompt);
+            if (/^(next|prev|previous)$/i.test(rawArg)) {
+              await cycleAgent(/^prev/i.test(rawArg) ? "prev" : "next");
+              clearPrompt();
+              return;
+            }
+            if (/^(none|clear|default)$/i.test(rawArg)) {
+              props.setSessionAgent(sessionId, null);
+              setCommandToast("Agent cleared");
+              clearPrompt();
+              return;
+            }
+
+            const agents = await props.listAgents();
+            if (!agents.length) {
+              setCommandToast("No agents available");
+              clearPrompt();
+              return;
+            }
+
+            const agentNames = agents.map((agent) => agent.name);
+            let candidate = rawArg;
+            if (!candidate) {
+              const hint = formatListHint(agentNames);
+              const promptLabel = hint ? `Agent name (e.g. ${hint})` : "Agent name";
+              const prompted = window.prompt(promptLabel, agentNames[0] ?? "");
+              if (prompted == null) return;
+              candidate = prompted.trim();
+            }
+
+            if (!candidate) {
+              setCommandToast("Agent name is required");
+              clearPrompt();
+              return;
+            }
+
+            const match = agents.find(
+              (agent) => agent.name.toLowerCase() === candidate.toLowerCase(),
+            );
+            if (!match) {
+              setCommandToast(`Unknown agent. Available: ${formatListHint(agentNames)}`);
+              clearPrompt();
+              return;
+            }
+
+              props.setSessionAgent(sessionId, match.name);
+            clearPrompt();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Agent selection failed";
+            setCommandToast(message);
+          }
+        },
       },
-    },
-    {
-      id: "help",
-      description: "Show available commands",
-      run: () => {
-        setCommandToast("Commands: /models, /connect, /new, /agent, /export, /rename, /help");
-        clearPrompt();
+      {
+        id: "session.agent.next",
+        title: "Next agent",
+        category: "Session",
+        description: "Cycle to the next agent",
+        slash: "agent-next",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("next");
+          clearPrompt();
+        },
       },
-    },
-  ]);
+      {
+        id: "session.agent.prev",
+        title: "Previous agent",
+        category: "Session",
+        description: "Cycle to the previous agent",
+        slash: "agent-prev",
+        scope: "session",
+        onSelect: async () => {
+          await cycleAgent("prev");
+          clearPrompt();
+        },
+      },
+      {
+        id: "session.export",
+        title: "Export session JSON",
+        category: "Session",
+        description: "Export session JSON",
+        slash: "export",
+        scope: "session",
+        onSelect: async () => {
+          const sessionId = requireSessionId();
+          if (!sessionId) return;
+
+          try {
+            const fileName = await props.saveSession(sessionId);
+            setCommandToast(`Exported ${fileName}`);
+            clearPrompt();
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Export failed";
+            setCommandToast(message);
+          }
+        },
+      },
+      {
+        id: "session.rename",
+        title: "Rename this session",
+        category: "Session",
+        description: "Rename this session",
+        slash: "rename",
+        scope: "session",
+        onSelect: () => {
+          openRenameModal();
+          clearPrompt();
+        },
+      },
+      {
+        id: "session.help",
+        title: "Show available commands",
+        category: "Session",
+        description: "Show available commands",
+        slash: "help",
+        scope: "session",
+        onSelect: () => {
+          const preview = buildHelpPreview();
+          setCommandToast(preview ? `Commands: ${preview}` : "No commands available");
+          clearPrompt();
+        },
+      },
+    ];
+
+    const cleanups = commands.map((command) => props.registerCommand(command));
+    onCleanup(() => cleanups.forEach((cleanup) => cleanup()));
+  };
+
+  createEffect(() => {
+    registerSessionCommands();
+  });
+
+  createEffect(() => {
+    const cleanups = props.commands.map((command) =>
+      props.registerCommand({
+        id: `command.${command.name}`,
+        title: `/${command.name}`,
+        category: "Commands",
+        description: command.description || "Run a saved command",
+        slash: command.name,
+        scope: "session",
+        onSelect: (context) => runOpenCodeCommand(command, context),
+      }),
+    );
+    onCleanup(() => cleanups.forEach((cleanup) => cleanup()));
+  });
+
+  const slashCommands = createMemo(() =>
+    props
+      .commandRegistryItems()
+      .filter((command) => command.slash)
+      .sort((a, b) => (a.slash ?? "").localeCompare(b.slash ?? "")),
+  );
+
+  const slashCommandIndex = createMemo(() => {
+    const map = new Map<string, CommandRegistryItem>();
+    for (const command of slashCommands()) {
+      if (command.slash) map.set(command.slash, command);
+    }
+    return map;
+  });
+
+  const commandNeedsArgs = createMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const command of props.commands) {
+      map.set(command.name, commandNeedsDetails(command));
+    }
+    return map;
+  });
 
   const commandMatches = createMemo(() => {
     const value = props.prompt;
     if (!value.startsWith("/")) return [];
     const token = value.slice(1).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
-    const list = commandList();
-    if (!token) return list;
-    return list.filter((command) => command.id.startsWith(token));
+    const list = slashCommands();
+    const matches = token
+      ? list.filter((command) => command.slash?.toLowerCase().startsWith(token))
+      : list;
+    return matches.map((command) => ({
+      id: command.slash!,
+      description: command.description || "Run a command",
+      needsArgs: commandNeedsArgs().get(command.slash ?? "") ?? false,
+    }));
   });
 
   const handleRunCommand = (commandId: string) => {
-     const command = commandList().find(c => c.id === commandId);
-     if (command) {
-       command.run();
-     }
+    const command = slashCommandIndex().get(commandId);
+    if (command) {
+      command.onSelect({ source: "slash" });
+    }
   };
 
-  const handleSendPrompt = () => {
-    props.sendPromptAsync().catch(() => undefined);
+  const handleInsertCommand = (commandId: string) => {
+    props.setPrompt(`/${commandId} `);
+    window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
+  };
+
+  const handleSendPrompt = (draft: ComposerDraft) => {
+    const trimmed = draft.text.trim();
+    if (draft.mode === "prompt" && trimmed.startsWith("/")) {
+      const active = commandMatches()[0];
+      if (active) {
+        const args = extractCommandArgs(trimmed);
+        if (active.needsArgs && !args) {
+          handleInsertCommand(active.id);
+        } else {
+          handleRunCommand(active.id);
+        }
+      }
+      return;
+    }
+    setScrollOnNextUpdate(true);
+    scrollToLatest("auto");
+    startRun();
+    props.sendPromptAsync(draft).catch(() => undefined);
+  };
+
+  const handleDraftChange = (draft: ComposerDraft) => {
+    props.setPrompt(draft.text);
+  };
+
+  const openSettings = (tab: SettingsTab = "general") => {
+    props.setSettingsTab(tab);
+    props.setTab("settings");
+    props.setView("dashboard");
+  };
+
+  const openMcp = () => {
+    props.setTab("mcp");
+    props.setView("dashboard");
+  };
+
+  const openProviderAuth = () => {
+    void props.openProviderAuthModal().catch((error) => {
+      const message = error instanceof Error ? error.message : "Connect failed";
+      setCommandToast(message);
+    });
+  };
+
+  const jumpToLatest = () => {
+    setScrollOnNextUpdate(true);
+    scrollToLatest("smooth");
+    setUnreadCount(0);
   };
 
   return (
-    <Show
-      when={props.selectedSessionId}
-      fallback={
-        <div class="min-h-screen flex items-center justify-center bg-gray-1 text-gray-12 p-6">
-          <div class="text-center space-y-4">
-            <div class="text-lg font-medium">No session selected</div>
-            <Button
-              onClick={() => {
-                props.setView("dashboard");
-                props.setTab("sessions");
-              }}
-            >
-              Back to dashboard
-            </Button>
-          </div>
-        </div>
-      }
-    >
-      <div class="h-screen flex flex-col bg-gray-1 text-gray-12 relative">
+    <div class="h-screen flex flex-col bg-gray-1 text-gray-12 relative pb-16 md:pb-12">
         <header class="h-16 border-b border-gray-6 flex items-center justify-between px-6 bg-gray-1/80 backdrop-blur-md z-10 sticky top-0">
           <div class="flex items-center gap-3">
             <Button
               variant="ghost"
-              class="!p-2 rounded-full"
+              class="!p-2 rounded-full md:!px-3 md:!py-2 md:rounded-xl"
               onClick={() => {
-                props.setView("dashboard");
                 props.setTab("sessions");
+                props.setView("dashboard");
               }}
+              title="Back to dashboard"
             >
               <ArrowRight class="rotate-180 w-5 h-5" />
+              <span class="hidden md:inline text-xs">Back</span>
             </Button>
              <WorkspaceChip
                workspace={props.activeWorkspaceDisplay}
@@ -549,94 +1208,256 @@ export default function SessionView(props: SessionViewProps) {
 
         <div class="flex-1 flex overflow-hidden">
           <aside class="hidden lg:flex w-72 border-r border-gray-6 bg-gray-1 flex-col">
-             <SessionSidebar
-               todos={props.todos}
-               artifacts={props.artifacts}
-               activePlugins={props.activePlugins}
-               activePluginStatus={props.activePluginStatus}
-               authorizedDirs={props.authorizedDirs}
-               workingFiles={props.workingFiles}
-               expandedSections={props.expandedSidebarSections}
-               onToggleSection={(section) => {
-                 props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
-               }}
-               onOpenArtifact={handleOpenArtifact}
-               sessions={props.sessions}
-               selectedSessionId={props.selectedSessionId}
-               onSelectSession={async (id) => {
-                 await props.selectSession(id);
-                 props.setView("session");
-                 props.setTab("sessions");
-               }}
-               sessionStatusById={props.sessionStatusById}
-               onCreateSession={props.createSessionAndOpen}
-               newTaskDisabled={props.newTaskDisabled}
-             />
+              <SessionSidebar
+                todos={props.todos}
+                expandedSections={props.expandedSidebarSections}
+                onToggleSection={(section) => {
+                  props.setExpandedSidebarSections((curr) => ({...curr, [section]: !curr[section]}));
+                }}
+                workspaceName={workspaceLabel()}
+                sessions={props.sessions}
+                selectedSessionId={props.selectedSessionId}
+                 onSelectSession={async (id) => {
+                   await props.selectSession(id);
+                   props.setView("session", id);
+                   props.setTab("sessions");
+                 }}
+                sessionStatusById={props.sessionStatusById}
+                onCreateSession={props.createSessionAndOpen}
+                onDeleteSession={handleDeleteSession}
+                newTaskDisabled={props.newTaskDisabled}
+              />
           </aside>
 
           <div
-            class="flex-1 overflow-y-auto pt-6 md:pt-10 scroll-smooth relative no-scrollbar"
+            class="flex-1 overflow-y-auto pt-6 md:pt-10 scroll-smooth relative"
             ref={(el) => (chatContainerEl = el)}
           >
-            <style>
-              {`
-                .no-scrollbar::-webkit-scrollbar {
-                  display: none;
-                }
-                .no-scrollbar {
-                  -ms-overflow-style: none;
-                  scrollbar-width: none;
-                }
-              `}
-            </style>
-            
             <Show when={props.messages.length === 0}>
-              <div class="text-center py-20 space-y-4">
+              <div class="text-center py-16 px-6 space-y-6">
                 <div class="w-16 h-16 bg-gray-2 rounded-3xl mx-auto flex items-center justify-center border border-gray-6">
                   <Zap class="text-gray-7" />
                 </div>
-                <h3 class="text-xl font-medium">Ready to work</h3>
-                <p class="text-gray-10 text-sm max-w-xs mx-auto">
-                  Describe a task. I'll show progress and ask for permissions when needed.
-                </p>
+                <div class="space-y-2">
+                  <h3 class="text-xl font-medium">What do you want to do?</h3>
+                  <p class="text-gray-10 text-sm max-w-sm mx-auto">
+                    Pick a starting point or just type below.
+                  </p>
+                </div>
+                <div class="flex justify-center">
+                  <button
+                    type="button"
+                    class="px-4 py-2.5 rounded-xl border border-gray-6 bg-gray-2 text-sm text-gray-12 hover:bg-gray-3 hover:border-gray-7 transition-all"
+                    onClick={() => {
+                      void (async () => {
+                        const command = await ensureBrowserSetupCommand();
+                        if (command) {
+                          runOpenCodeCommand(command);
+                        }
+                      })();
+                    }}
+                  >
+                    Automate your browser
+                  </button>
+                </div>
               </div>
             </Show>
 
             <MessageList 
               messages={props.messages}
-              artifacts={props.artifacts}
               developerMode={props.developerMode}
               showThinking={props.showThinking}
               expandedStepIds={props.expandedStepIds}
               setExpandedStepIds={props.setExpandedStepIds}
-              onOpenArtifact={handleOpenArtifact}
+              footer={
+                showRunIndicator() ? (
+                  <div class="flex justify-start pl-2">
+                    <div class="w-full max-w-[68ch] space-y-2">
+                      <Show when={thinkingStatus()}>
+                        <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 text-xs text-gray-11">
+                          <button
+                            type="button"
+                            class="w-full flex items-center justify-between gap-3 text-left"
+                            onClick={() => setThinkingExpanded((prev) => !prev)}
+                            aria-expanded={thinkingExpanded()}
+                          >
+                            <div class="flex items-center gap-2 min-w-0">
+                              <span class="text-[10px] uppercase tracking-wide text-gray-9">Thinking</span>
+                              <span class="truncate text-gray-12">{thinkingStatus()}</span>
+                            </div>
+                            <ChevronDown
+                              size={12}
+                              class={`text-gray-8 transition-transform ${thinkingExpanded() ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                          <Show when={thinkingExpanded() && thinkingDetail()}>
+                            {(detail) => (
+                              <div class="mt-2 text-xs text-gray-11">
+                                <div class="text-gray-12">{detail().title}</div>
+                                <Show when={detail().detail}>
+                                  <div class="mt-1 whitespace-pre-wrap text-gray-10">{detail().detail}</div>
+                                </Show>
+                              </div>
+                            )}
+                          </Show>
+                        </div>
+                      </Show>
+                      <div
+                        class={`w-full flex items-center justify-between gap-3 text-xs ${
+                          runPhase() === "error" ? "text-red-11" : "text-gray-9"
+                        }`}
+                        role="status"
+                        aria-live="polite"
+                      >
+                        <div class="flex items-center gap-2 min-w-0">
+                          <Show
+                            when={runPhase() === "responding"}
+                            fallback={
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full ${
+                                  runPhase() === "error" ? "bg-red-9/80" : "bg-gray-8/80"
+                                }`}
+                              />
+                            }
+                          >
+                            <span class="flex items-center gap-1">
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/80" : "bg-gray-8/80"
+                                }`}
+                              />
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/60" : "bg-gray-8/60"
+                                }`}
+                                style={{ "animation-delay": "120ms" }}
+                              />
+                              <span
+                                class={`h-1.5 w-1.5 rounded-full animate-pulse ${
+                                  runPhase() === "error" ? "bg-red-9/40" : "bg-gray-8/40"
+                                }`}
+                                style={{ "animation-delay": "240ms" }}
+                              />
+                            </span>
+                          </Show>
+                          <span class="truncate">{runLabel()}</span>
+                        </div>
+                        <Show when={props.developerMode}>
+                          <span class="shrink-0 text-[10px] text-gray-8">{runElapsedLabel()}</span>
+                        </Show>
+                      </div>
+                    </div>
+                  </div>
+                ) : undefined
+              }
             />
+
+            <Show when={!autoScrollEnabled() && props.messages.length > 0}>
+              <div class="sticky bottom-24 z-20 flex justify-center pointer-events-none px-4">
+                <button
+                  type="button"
+                  class="pointer-events-auto rounded-full border border-gray-6 bg-gray-1/90 px-4 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/5 backdrop-blur-md hover:bg-gray-2 transition-colors"
+                  onClick={() => scrollToLatest("smooth")}
+                >
+                  Jump to latest
+                </button>
+              </div>
+            </Show>
 
             <div ref={(el) => (messagesEndEl = el)} />
           </div>
-          
-          <Minimap containerRef={() => chatContainerEl} messages={props.messages} />
 
-          <Show when={artifactToast()}>
-            <div class="fixed bottom-24 right-8 z-30 rounded-xl bg-gray-2 border border-gray-6 px-4 py-2 text-xs text-gray-11 shadow-lg">
-              {artifactToast()}
-            </div>
-          </Show>
+          <aside class="hidden lg:flex w-72 border-l border-gray-6 bg-gray-1 flex-col">
+            <ContextPanel
+              activePlugins={props.activePlugins}
+              activePluginStatus={props.activePluginStatus}
+              mcpServers={props.mcpServers}
+              mcpStatuses={props.mcpStatuses}
+              mcpStatus={props.mcpStatus}
+              skills={props.skills}
+              skillsStatus={props.skillsStatus}
+              authorizedDirs={props.authorizedDirs}
+              workingFiles={props.workingFiles}
+              workspaceRoot={props.activeWorkspaceRoot}
+              expandedSections={props.expandedSidebarSections}
+              onToggleSection={(section) =>
+                props.setExpandedSidebarSections((curr) => ({
+                  ...curr,
+                  [section]: !curr[section],
+                }))
+              }
+              onFileClick={handleWorkingFileClick}
+            />
+          </aside>
         </div>
 
-        <Composer 
-           prompt={props.prompt}
-           setPrompt={props.setPrompt}
-           busy={props.busy}
-           onSend={handleSendPrompt}
-           commandMatches={commandMatches()}
-           onRunCommand={handleRunCommand}
-           selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-           onModelClick={props.openSessionModelPicker}
-           showNotionBanner={props.showTryNotionPrompt}
-           onNotionBannerClick={props.onTryNotionPrompt}
-           toast={commandToast()}
+        <Composer
+          prompt={props.prompt}
+          busy={props.busy}
+          onSend={handleSendPrompt}
+          onDraftChange={handleDraftChange}
+          commandMatches={commandMatches()}
+          onRunCommand={handleRunCommand}
+          onInsertCommand={handleInsertCommand}
+          selectedModelLabel={props.selectedSessionModelLabel || "Model"}
+          onModelClick={props.openSessionModelPicker}
+          modelVariantLabel={props.modelVariantLabel}
+          modelVariant={props.modelVariant}
+          onModelVariantChange={props.setModelVariant}
+          agentLabel={agentLabel()}
+          selectedAgent={props.selectedSessionAgent}
+          agentPickerOpen={agentPickerOpen()}
+          agentPickerBusy={agentPickerBusy()}
+          agentPickerError={agentPickerError()}
+          agentOptions={agentOptions()}
+          onToggleAgentPicker={openAgentPicker}
+          onSelectAgent={(agent) => {
+            applySessionAgent(agent);
+            setAgentPickerOpen(false);
+          }}
+          setAgentPickerRef={(el) => {
+            agentPickerRef = el;
+          }}
+          showNotionBanner={props.showTryNotionPrompt}
+          onNotionBannerClick={props.onTryNotionPrompt}
+          toast={commandToast()}
+          onToast={(message) => setCommandToast(message)}
+          listAgents={props.listAgents}
+          recentFiles={props.workingFiles}
+          searchFiles={props.searchFiles}
+          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         />
+
+        <Show when={unreadCount() > 0}>
+          <div class="fixed bottom-24 right-6 z-40">
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              class="flex items-center gap-2 rounded-full border border-gray-6 bg-gray-2/90 px-3 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/10 transition-all hover:text-gray-12 hover:border-gray-7"
+              aria-label="Jump to latest message"
+            >
+              <span>New messages</span>
+              <span class="rounded-full bg-gray-12/10 px-2 py-0.5 text-[10px] font-semibold text-gray-12">
+                {unreadCount()}
+              </span>
+              <ChevronDown size={12} class="text-gray-9" />
+            </button>
+          </div>
+        </Show>
+
+        <div class="fixed bottom-0 left-0 right-0">
+          <StatusBar
+            clientConnected={props.clientConnected}
+            openworkServerStatus={props.openworkServerStatus}
+            developerMode={props.developerMode}
+            onOpenSettings={() => openSettings("general")}
+            onOpenMessaging={() => openSettings("messaging")}
+            onOpenProviders={openProviderAuth}
+            onOpenMcp={openMcp}
+            providerConnectedIds={props.providerConnectedIds}
+            mcpStatuses={props.mcpStatuses}
+          />
+        </div>
 
         <ProviderAuthModal
           open={props.providerAuthModalOpen}
@@ -647,6 +1468,7 @@ export default function SessionView(props: SessionViewProps) {
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}
           onSelect={handleProviderAuthSelect}
+          onSubmitApiKey={handleProviderAuthApiKey}
           onClose={props.closeProviderAuthModal}
         />
 
@@ -736,7 +1558,6 @@ export default function SessionView(props: SessionViewProps) {
         <For each={flyouts()}>
           {(item) => <FlyoutItem item={item} />}
         </For>
-      </div>
-    </Show>
+    </div>
   );
 }

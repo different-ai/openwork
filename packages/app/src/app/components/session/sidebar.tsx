@@ -1,44 +1,30 @@
-import { For, Show, createMemo } from "solid-js";
-import { Check, ChevronDown, Circle, File, FileText, Folder, Plus } from "lucide-solid";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { Check, ChevronDown, Plus } from "lucide-solid";
 
-import type { ArtifactItem, TodoItem } from "../../types";
+import type { TodoItem } from "../../types";
 
 export type SidebarSectionState = {
   progress: boolean;
   artifacts: boolean;
   context: boolean;
+  plugins: boolean;
+  mcp: boolean;
+  skills: boolean;
+  authorizedFolders: boolean;
 };
 
 export type SidebarProps = {
   todos: TodoItem[];
-  artifacts: ArtifactItem[];
-  activePlugins: string[];
-  activePluginStatus: string | null;
-  authorizedDirs: string[];
-  workingFiles: string[];
   expandedSections: SidebarSectionState;
   onToggleSection: (section: keyof SidebarSectionState) => void;
-  onOpenArtifact: (artifact: ArtifactItem) => void;
+  workspaceName: string;
   sessions: Array<{ id: string; title: string; slug?: string | null }>;
   selectedSessionId: string | null;
   onSelectSession: (id: string) => void;
   sessionStatusById: Record<string, string>;
   onCreateSession: () => void;
+  onDeleteSession: (id: string) => void;
   newTaskDisabled: boolean;
-};
-
-const humanizePlugin = (name: string) => {
-  const cleaned = name
-    .replace(/^@[^/]+\//, "")
-    .replace(/[-_]+/g, " ")
-    .replace(/\b(opencode|plugin)\b/gi, "")
-    .trim();
-  return cleaned
-    .split(" ")
-    .filter(Boolean)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ")
-    .trim();
 };
 
 export default function SessionSidebar(props: SidebarProps) {
@@ -50,6 +36,47 @@ export default function SessionSidebar(props: SidebarProps) {
     if (!total) return [] as boolean[];
     const completed = activeTodos.filter((todo) => todo.status === "completed").length;
     return Array.from({ length: total }, (_, idx) => idx < completed);
+  });
+
+  const [contextMenu, setContextMenu] = createSignal<null | {
+    sessionId: string;
+    x: number;
+    y: number;
+  }>(null);
+
+  const closeContextMenu = () => setContextMenu(null);
+
+  const openContextMenu = (event: MouseEvent, sessionId: string) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ sessionId, x: event.clientX, y: event.clientY });
+  };
+
+  const contextMenuStyle = createMemo(() => {
+    const menu = contextMenu();
+    if (!menu) return undefined;
+    const width = 188;
+    const height = 96;
+    if (typeof window === "undefined") {
+      return { left: `${menu.x}px`, top: `${menu.y}px` };
+    }
+    const maxX = Math.max(12, window.innerWidth - width - 12);
+    const maxY = Math.max(12, window.innerHeight - height - 12);
+    return {
+      left: `${Math.min(menu.x, maxX)}px`,
+      top: `${Math.min(menu.y, maxY)}px`,
+    };
+  });
+
+  createEffect(() => {
+    if (!contextMenu()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeContextMenu();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown));
   });
 
   return (
@@ -67,52 +94,62 @@ export default function SessionSidebar(props: SidebarProps) {
 
       <div class="flex-1 overflow-y-auto px-4 py-4 space-y-6">
         <div>
-          <div class="text-[10px] text-gray-9 uppercase tracking-widest font-semibold mb-3 px-2">Recents</div>
+          <div class="text-xs text-gray-10 font-semibold mb-3 px-2 truncate">{props.workspaceName}</div>
           <div class="space-y-1">
-            <For each={props.sessions.slice(0, 8)}>
-              {(session) => (
-                <button
-                  class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-                    session.id === props.selectedSessionId
-                      ? "bg-gray-3 text-gray-12 font-medium"
-                      : "text-gray-11 hover:text-gray-12 hover:bg-gray-2"
-                  }`}
-                  onClick={() => props.onSelectSession(session.id)}
-                >
-                  <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
-                    <span class="truncate">{session.title}</span>
-                    <Show
-                      when={
-                        props.sessionStatusById[session.id] &&
-                        props.sessionStatusById[session.id] !== "idle"
-                      }
-                    >
-                      <span
-                        class={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
-                          props.sessionStatusById[session.id] === "running"
-                            ? "border-amber-7/50 text-amber-11 bg-amber-2/50"
-                            : "border-gray-7/50 text-gray-10 bg-gray-2/50"
-                        }`}
-                      >
-                        <div
-                          class={`w-1 h-1 rounded-full ${
+            <Show
+              when={props.sessions.length > 0}
+              fallback={
+                <div class="px-3 py-2 rounded-lg border border-dashed border-gray-6 text-xs text-gray-9">
+                  No sessions yet. Start a task to see your work here.
+                </div>
+              }
+            >
+              <For each={props.sessions.slice(0, 8)}>
+                {(session) => (
+                  <button
+                    class={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                      session.id === props.selectedSessionId
+                        ? "bg-gray-3 text-gray-12 font-medium"
+                        : "text-gray-11 hover:text-gray-12 hover:bg-gray-2"
+                    }`}
+                    onClick={() => props.onSelectSession(session.id)}
+                    onContextMenu={(event) => openContextMenu(event, session.id)}
+                  >
+                      <div class="flex items-center justify-between gap-2 w-full overflow-hidden">
+                        <div class="truncate">{session.title}</div>
+                        <Show
+                          when={
+                            props.sessionStatusById[session.id] &&
+                            props.sessionStatusById[session.id] !== "idle"
+                          }
+                        >
+                        <span
+                          class={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${
                             props.sessionStatusById[session.id] === "running"
-                              ? "bg-amber-9 animate-pulse"
-                              : "bg-gray-9"
+                              ? "border-amber-7/50 text-amber-11 bg-amber-2/50"
+                              : "border-gray-7/50 text-gray-10 bg-gray-2/50"
                           }`}
-                        />
-                      </span>
-                    </Show>
-                  </div>
-                </button>
-              )}
-            </For>
+                        >
+                          <div
+                            class={`w-1 h-1 rounded-full ${
+                              props.sessionStatusById[session.id] === "running"
+                                ? "bg-amber-9 animate-pulse"
+                                : "bg-gray-9"
+                            }`}
+                          />
+                        </span>
+                      </Show>
+                    </div>
+                  </button>
+                )}
+              </For>
+            </Show>
           </div>
         </div>
 
         <div class="space-y-4">
           <Show when={realTodos().length > 0}>
-            <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
+            <div class="rounded-2xl border border-gray-6 bg-gray-2/30" id="sidebar-progress">
               <button
                 class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
                 onClick={() => props.onToggleSection("progress")}
@@ -148,131 +185,49 @@ export default function SessionSidebar(props: SidebarProps) {
               </Show>
             </div>
           </Show>
-
-          <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
-            <button
-              class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
-              onClick={() => props.onToggleSection("artifacts")}
-            >
-              <span>Artifacts</span>
-              <ChevronDown
-                size={16}
-                class={`transition-transform text-gray-10 ${
-                  props.expandedSections.artifacts ? "rotate-180" : ""
-                }`.trim()}
-              />
-            </button>
-            <Show when={props.expandedSections.artifacts}>
-              <div class="px-4 pb-4 pt-1 space-y-3">
-                <Show
-                  when={props.artifacts.length}
-                  fallback={<div class="text-xs text-gray-9 pl-1">No artifacts yet.</div>}
-                >
-                  <For each={props.artifacts}>
-                    {(artifact) => (
-                      <button
-                        class="flex items-center gap-3 text-sm text-gray-11 hover:text-gray-12 w-full text-left group"
-                        onClick={() => props.onOpenArtifact(artifact)}
-                      >
-                        <div class="h-8 w-8 rounded-lg bg-gray-3 group-hover:bg-gray-4 flex items-center justify-center transition-colors shrink-0">
-                          <FileText size={16} class="text-gray-10 group-hover:text-gray-11" />
-                        </div>
-                        <div class="min-w-0">
-                          <div class="truncate">{artifact.name}</div>
-                        </div>
-                      </button>
-                    )}
-                  </For>
-                </Show>
-              </div>
-            </Show>
-          </div>
-
-          <div class="rounded-2xl border border-gray-6 bg-gray-2/30">
-            <button
-              class="w-full px-4 py-3 flex items-center justify-between text-sm text-gray-12 font-medium"
-              onClick={() => props.onToggleSection("context")}
-            >
-              <span>Context</span>
-              <ChevronDown
-                size={16}
-                class={`transition-transform text-gray-10 ${
-                  props.expandedSections.context ? "rotate-180" : ""
-                }`.trim()}
-              />
-            </button>
-            <Show when={props.expandedSections.context}>
-              <div class="px-4 pb-4 pt-1 space-y-5">
-                <Show when={props.activePlugins.length || props.activePluginStatus}>
-                  <div>
-                    <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                      <span>Active plugins</span>
-                    </div>
-                    <div class="space-y-2">
-                      <Show
-                        when={props.activePlugins.length}
-                        fallback={
-                          <div class="text-xs text-gray-9">
-                            {props.activePluginStatus ?? "No plugins loaded."}
-                          </div>
-                        }
-                      >
-                        <For each={props.activePlugins}>
-                          {(plugin) => (
-                            <div class="flex items-center gap-2 text-xs text-gray-11">
-                              <Circle size={6} class="text-green-9 fill-green-9" />
-                              <span class="truncate">{humanizePlugin(plugin) || plugin}</span>
-                            </div>
-                          )}
-                        </For>
-                      </Show>
-                    </div>
-                  </div>
-                </Show>
-
-                <div>
-                  <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                    <span>Authorized folders</span>
-                  </div>
-                  <div class="space-y-2">
-                    <For each={props.authorizedDirs.slice(0, 3)}>
-                      {(folder) => (
-                        <div class="flex items-center gap-2 text-xs text-gray-11">
-                          <Folder size={12} class="text-gray-9" />
-                          <span class="truncate" title={folder}>
-                            {folder.split(/[/\\]/).pop()}
-                          </span>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </div>
-
-                <div>
-                   <div class="flex items-center justify-between text-[11px] uppercase tracking-wider text-gray-9 font-semibold mb-2">
-                    <span>Working files</span>
-                  </div>
-                  <div class="space-y-2">
-                    <Show
-                      when={props.workingFiles.length}
-                      fallback={<div class="text-xs text-gray-9">None yet.</div>}
-                    >
-                      <For each={props.workingFiles}>
-                        {(file) => (
-                          <div class="flex items-center gap-2 text-xs text-gray-11">
-                            <File size={12} class="text-gray-9" />
-                            <span class="truncate">{file}</span>
-                          </div>
-                        )}
-                      </For>
-                    </Show>
-                  </div>
-                </div>
-              </div>
-            </Show>
-          </div>
         </div>
       </div>
+
+      <Show when={contextMenu()}>
+        {(menu) => (
+          <div
+            class="fixed inset-0 z-50"
+            onClick={closeContextMenu}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              closeContextMenu();
+            }}
+          >
+            <div
+              class="fixed w-44 rounded-xl border border-gray-6 bg-gray-1 shadow-2xl shadow-gray-12/10 p-1"
+              style={contextMenuStyle()}
+              role="menu"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                class="w-full text-left px-3 py-2 text-sm rounded-lg text-gray-12 hover:bg-gray-2 transition-colors"
+                role="menuitem"
+                onClick={() => {
+                  props.onCreateSession();
+                  closeContextMenu();
+                }}
+              >
+                New task
+              </button>
+              <button
+                class="w-full text-left px-3 py-2 text-sm rounded-lg text-red-11 hover:bg-red-1/40 transition-colors"
+                role="menuitem"
+                onClick={() => {
+                  props.onDeleteSession(menu().sessionId);
+                  closeContextMenu();
+                }}
+              >
+                Delete session
+              </button>
+            </div>
+          </div>
+        )}
+      </Show>
     </div>
   );
 }

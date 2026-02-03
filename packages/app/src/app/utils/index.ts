@@ -1,5 +1,14 @@
-import type { Part, Provider, Session } from "@opencode-ai/sdk/v2/client";
-import type { ArtifactItem, MessageGroup, MessageInfo, MessageWithParts, ModelRef, OpencodeEvent, PlaceholderAssistantMessage } from "../types";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
+import type {
+  ArtifactItem,
+  MessageGroup,
+  MessageInfo,
+  MessageWithParts,
+  ModelRef,
+  OpencodeEvent,
+  PlaceholderAssistantMessage,
+  ProviderListItem,
+} from "../types";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -23,6 +32,7 @@ const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
+  openrouter: "OpenRouter",
 };
 
 const humanizeModelLabel = (value: string) => {
@@ -47,7 +57,7 @@ const humanizeModelLabel = (value: string) => {
     .join(" ");
 };
 
-export function formatModelLabel(model: ModelRef, providers: Provider[] = []) {
+export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] = []) {
   const provider = providers.find((p) => p.id === model.providerID);
   const modelInfo = provider?.models?.[model.modelID];
 
@@ -75,23 +85,22 @@ export function isWindowsPlatform() {
   return /windows/i.test(platform) || /windows/i.test(ua);
 }
 
-export function readModePreference(): "host" | "client" | null {
+const STARTUP_PREF_KEY = "openwork.startupPref";
+const LEGACY_PREF_KEY = "openwork.modePref";
+const LEGACY_PREF_KEY_ALT = "openwork_mode_pref";
+
+export function readStartupPreference(): "local" | "server" | null {
   if (typeof window === "undefined") return null;
 
   try {
     const pref =
-      window.localStorage.getItem("openwork.modePref") ??
-      window.localStorage.getItem("openwork_mode_pref");
+      window.localStorage.getItem(STARTUP_PREF_KEY) ??
+      window.localStorage.getItem(LEGACY_PREF_KEY) ??
+      window.localStorage.getItem(LEGACY_PREF_KEY_ALT);
 
-    if (pref === "host" || pref === "client") {
-      // Migrate legacy key if needed.
-      try {
-        window.localStorage.setItem("openwork.modePref", pref);
-      } catch {
-        // ignore
-      }
-      return pref;
-    }
+    if (pref === "local" || pref === "server") return pref;
+    if (pref === "host") return "local";
+    if (pref === "client") return "server";
   } catch {
     // ignore
   }
@@ -99,24 +108,25 @@ export function readModePreference(): "host" | "client" | null {
   return null;
 }
 
-export function writeModePreference(nextMode: "host" | "client") {
+export function writeStartupPreference(nextPref: "local" | "server") {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.setItem("openwork.modePref", nextMode);
-    // Keep legacy key for now.
-    window.localStorage.setItem("openwork_mode_pref", nextMode);
+    window.localStorage.setItem(STARTUP_PREF_KEY, nextPref);
+    window.localStorage.removeItem(LEGACY_PREF_KEY);
+    window.localStorage.removeItem(LEGACY_PREF_KEY_ALT);
   } catch {
     // ignore
   }
 }
 
-export function clearModePreference() {
+export function clearStartupPreference() {
   if (typeof window === "undefined") return;
 
   try {
-    window.localStorage.removeItem("openwork.modePref");
-    window.localStorage.removeItem("openwork_mode_pref");
+    window.localStorage.removeItem(STARTUP_PREF_KEY);
+    window.localStorage.removeItem(LEGACY_PREF_KEY);
+    window.localStorage.removeItem(LEGACY_PREF_KEY_ALT);
   } catch {
     // ignore
   }
@@ -227,11 +237,11 @@ export function formatRelativeTime(timestampMs: number) {
   return new Date(timestampMs).toLocaleDateString();
 }
 
-export function templatePathFromWorkspaceRoot(workspaceRoot: string, templateId: string) {
+export function commandPathFromWorkspaceRoot(workspaceRoot: string, commandName: string) {
   const root = workspaceRoot.trim().replace(/\/+$/, "");
-  const id = templateId.trim();
-  if (!root || !id) return null;
-  return `${root}/.openwork/templates/${id}/template.yml`;
+  const name = commandName.trim().replace(/^\/+/, "");
+  if (!root || !name) return null;
+  return `${root}/.opencode/commands/${name}.md`;
 }
 
 export function safeParseJson<T>(raw: string): T | null {
@@ -417,20 +427,37 @@ export function isStepPart(part: Part) {
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const steps: Part[] = [];
+  let textBuffer = "";
+
+  const flushText = () => {
+    if (!textBuffer) return;
+    groups.push({ kind: "text", part: { type: "text", text: textBuffer } as Part });
+    textBuffer = "";
+  };
 
   parts.forEach((part) => {
     if (part.type === "text") {
+      textBuffer += (part as { text?: string }).text ?? "";
+      return;
+    }
+
+    if (part.type === "agent") {
+      const name = (part as { name?: string }).name ?? "";
+      textBuffer += name ? `@${name}` : "@agent";
+      return;
+    }
+
+    if (part.type === "file") {
+      flushText();
       groups.push({ kind: "text", part });
       return;
     }
 
-    if (isStepPart(part)) {
-      steps.push(part);
-      return;
-    }
-
+    flushText();
     steps.push(part);
   });
+
+  flushText();
 
   if (steps.length) {
     groups.push({ kind: "steps", id: `steps-${messageId}`, parts: steps });
@@ -439,13 +466,24 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string } {
+export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const state = record.state ?? {};
     const title = state.title ? String(state.title) : toolName;
     const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
+    
+    // Detect skill trigger
+    if (toolName === "skill") {
+      const skillName = state.metadata?.name || title.replace(/^Loaded skill:\s*/i, "");
+      if (output) {
+        const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
+        return { title, isSkill: true, skillName, detail: short };
+      }
+      return { title, isSkill: true, skillName };
+    }
+    
     if (output) {
       const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
       return { title, detail: short };
@@ -473,44 +511,68 @@ export function summarizeStep(part: Part): { title: string; detail?: string } {
 }
 
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
-  const results: ArtifactItem[] = [];
-  const seen = new Set<string>();
-  const filePattern = /([\w./\-]+\.(?:pdf|docx|doc|txt|md|csv|json|js|ts|tsx|xlsx|pptx|png|jpg|jpeg))/gi;
+  const results = new Map<string, ArtifactItem>();
 
   list.forEach((message) => {
-    const messageId = String((message.info as any).id ?? "");
+    const messageId = String((message.info as any)?.id ?? "");
+
     message.parts.forEach((part) => {
       if (part.type !== "tool") return;
       const record = part as any;
       const state = record.state ?? {};
+      const matches = new Set<string>();
 
-      const candidates: string[] = [];
-      if (typeof state.title === "string") candidates.push(state.title);
-      if (typeof state.output === "string") candidates.push(state.output);
-      if (typeof state.path === "string") candidates.push(state.path);
-      if (typeof state.file === "string") candidates.push(state.file);
-      if (Array.isArray(state.files)) {
-        state.files.filter((f: unknown) => typeof f === "string").forEach((f: string) => candidates.push(f));
+      const explicit = [
+        state.path,
+        state.file,
+        ...(Array.isArray(state.files) ? state.files : []),
+      ];
+
+      explicit.forEach((f) => {
+        if (typeof f === "string") {
+          const trimmed = f.trim();
+          if (
+            trimmed.length > 0 &&
+            trimmed.length <= 500 &&
+            trimmed.includes(".") &&
+            !/^\.{2,}$/.test(trimmed)
+          ) {
+            matches.add(trimmed);
+          }
+        }
+      });
+
+      const text = [state.title, state.output]
+        .filter((v): v is string => typeof v === "string")
+        .join(" ");
+
+      if (text) {
+        const pathPattern =
+          /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
+
+        Array.from(text.matchAll(pathPattern))
+          .map((m) => m[1])
+          .filter((f) => f && f.length <= 500)
+          .forEach((f) => matches.add(f));
       }
 
-      const combined = candidates.join(" ");
-      if (!combined) return;
-
-      const matches = Array.from(combined.matchAll(filePattern)).map((m) => m[1]);
-      if (!matches.length) return;
+      if (matches.size === 0) return;
 
       matches.forEach((match) => {
-        const name = match.split("/").pop() ?? match;
-        const idBase = record.id ?? name;
-        const id = messageId ? `artifact-${messageId}-${idBase}` : `artifact-${idBase}`;
-        if (seen.has(id)) return;
-        seen.add(id);
+        const normalizedPath = match.trim().replace(/[\\/]+/g, "/");
+        if (!normalizedPath) return;
 
-        results.push({
+        const key = normalizedPath.toLowerCase();
+        const name = normalizedPath.split("/").pop() ?? normalizedPath;
+        const id = `artifact-${encodeURIComponent(normalizedPath)}`;
+
+        // Delete and re-add to move to end (most recent)
+        if (results.has(key)) results.delete(key);
+        results.set(key, {
           id,
           name,
-          path: match,
-          kind: "file",
+          path: normalizedPath,
+          kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
         });
@@ -518,7 +580,7 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
     });
   });
 
-  return results;
+  return Array.from(results.values());
 }
 
 export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
@@ -527,10 +589,11 @@ export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
 
   for (const item of items) {
     const rawKey = item.path ?? item.name;
-    const normalized = rawKey.trim().replace(/[\\/]+/g, "/").toLowerCase();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    results.push(item.name);
+    const normalizedPath = rawKey.trim().replace(/[\\/]+/g, "/");
+    const normalizedKey = normalizedPath.toLowerCase();
+    if (!normalizedPath || seen.has(normalizedKey)) continue;
+    seen.add(normalizedKey);
+    results.push(normalizedPath);
     if (results.length >= 5) break;
   }
 

@@ -4,7 +4,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, Mode, PluginScope, ReloadReason, SkillCard } from "../types";
+import type { Client, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
@@ -23,19 +23,28 @@ import {
   writeOpencodeConfig,
   type OpencodeConfigFile,
 } from "../lib/tauri";
+import type {
+  OpenworkServerCapabilities,
+  OpenworkServerClient,
+  OpenworkServerStatus,
+} from "../lib/openwork-server";
 
 export type ExtensionsStore = ReturnType<typeof createExtensionsStore>;
 
 export function createExtensionsStore(options: {
   client: () => Client | null;
-  mode: () => Mode | null;
   projectDir: () => string;
   activeWorkspaceRoot: () => string;
+  workspaceType: () => "local" | "remote";
+  openworkServerClient: () => OpenworkServerClient | null;
+  openworkServerStatus: () => OpenworkServerStatus;
+  openworkServerCapabilities: () => OpenworkServerCapabilities | null;
+  openworkServerWorkspaceId: () => string | null;
   setBusy: (value: boolean) => void;
   setBusyLabel: (value: string | null) => void;
   setBusyStartedAt: (value: number | null) => void;
   setError: (value: string | null) => void;
-  markReloadRequired: (reason: ReloadReason) => void;
+  markReloadRequired: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onNotionSkillInstalled?: () => void;
 }) {
   // Translation helper that uses current language from i18n
@@ -48,6 +57,7 @@ export function createExtensionsStore(options: {
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
   const [pluginConfig, setPluginConfig] = createSignal<OpencodeConfigFile | null>(null);
+  const [pluginConfigPath, setPluginConfigPath] = createSignal<string | null>(null);
   const [pluginList, setPluginList] = createSignal<string[]>([]);
   const [pluginInput, setPluginInput] = createSignal("");
   const [pluginStatus, setPluginStatus] = createSignal<string | null>(null);
@@ -73,15 +83,74 @@ export function createExtensionsStore(options: {
 
   async function refreshSkills(optionsOverride?: { force?: boolean }) {
     const root = options.activeWorkspaceRoot().trim();
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.read;
+
     if (!root) {
       setSkills([]);
       setSkillsStatus(translate("skills.pick_workspace_first"));
       return;
     }
 
-    // Host/Tauri mode: read directly from `.opencode/skill(s)` so the UI still works
-    // even if the OpenCode engine is stopped or unreachable.
-    if (options.mode() === "host" && isTauriRuntime()) {
+    // Prefer OpenWork server when available
+    if (canUseOpenworkServer) {
+      if (root !== skillsRoot) {
+        skillsLoaded = false;
+      }
+
+      if (!optionsOverride?.force && skillsLoaded) {
+        return;
+      }
+
+      if (refreshSkillsInFlight) {
+        return;
+      }
+
+      refreshSkillsInFlight = true;
+      refreshSkillsAborted = false;
+
+      try {
+        setSkillsStatus(null);
+        const response = await openworkClient.listSkills(openworkWorkspaceId, {
+          includeGlobal: isLocalWorkspace,
+        });
+        if (refreshSkillsAborted) return;
+        const next: SkillCard[] = Array.isArray(response.items)
+          ? response.items.map((entry) => ({
+              name: entry.name,
+              description: entry.description,
+              path: entry.path,
+              trigger: entry.trigger,
+            }))
+          : [];
+        setSkills(next);
+        if (!next.length) {
+          setSkillsStatus(translate("skills.no_skills_found"));
+        }
+        skillsLoaded = true;
+        skillsRoot = root;
+      } catch (e) {
+        if (refreshSkillsAborted) return;
+        setSkills([]);
+        setSkillsStatus(e instanceof Error ? e.message : translate("skills.failed_to_load"));
+      } finally {
+        refreshSkillsInFlight = false;
+      }
+
+      return;
+    }
+
+    // Host/Tauri mode fallback: read directly from `.opencode/skills` or `.claude/skills`
+    // so the UI still works even if the OpenCode engine is stopped or unreachable.
+    if (isLocalWorkspace && isTauriRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -107,6 +176,7 @@ export function createExtensionsStore(options: {
               name: entry.name,
               description: entry.description,
               path: entry.path,
+              trigger: entry.trigger,
             }))
           : [];
 
@@ -130,7 +200,7 @@ export function createExtensionsStore(options: {
     const c = options.client();
     if (!c) {
       setSkills([]);
-      setSkillsStatus(translate("skills.connect_host_to_load"));
+      setSkillsStatus("OpenWork server unavailable. Connect to load skills.");
       return;
     }
 
@@ -198,13 +268,16 @@ export function createExtensionsStore(options: {
   }
 
   async function refreshPlugins(scopeOverride?: PluginScope) {
-    if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
-      setPluginList([]);
-      setSidebarPluginStatus(translate("skills.plugins_host_only"));
-      setSidebarPluginList([]);
-      return;
-    }
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.plugins?.read;
 
     // Skip if already in flight
     if (refreshPluginsInFlight) {
@@ -216,6 +289,67 @@ export function createExtensionsStore(options: {
 
     const scope = scopeOverride ?? pluginScope();
     const targetDir = options.projectDir().trim();
+
+    if (scope !== "project" && !isLocalWorkspace) {
+      setPluginStatus("Global plugins are only available for local workspaces.");
+      setPluginList([]);
+      setSidebarPluginStatus("Global plugins require a local workspace.");
+      setSidebarPluginList([]);
+      refreshPluginsInFlight = false;
+      return;
+    }
+
+    if (scope === "project" && canUseOpenworkServer) {
+      setPluginConfig(null);
+      setPluginConfigPath(`opencode.json (${isRemoteWorkspace ? "remote" : "openwork"} server)`);
+
+      try {
+        setPluginStatus(null);
+        setSidebarPluginStatus(null);
+
+        if (refreshPluginsAborted) return;
+
+        const result = await openworkClient.listPlugins(openworkWorkspaceId, { includeGlobal: false });
+        if (refreshPluginsAborted) return;
+
+        const configItems = result.items.filter((item) => item.source === "config" && item.scope === "project");
+        const list = configItems.map((item) => item.spec);
+        setPluginList(list);
+        setSidebarPluginList(list);
+
+        if (!list.length) {
+          setPluginStatus("No plugins configured yet.");
+        }
+      } catch (e) {
+        if (refreshPluginsAborted) return;
+        setPluginList([]);
+        setSidebarPluginStatus("Failed to load plugins.");
+        setSidebarPluginList([]);
+        setPluginStatus(e instanceof Error ? e.message : "Failed to load plugins.");
+      } finally {
+        refreshPluginsInFlight = false;
+      }
+
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setPluginStatus(translate("skills.plugin_management_host_only"));
+      setPluginList([]);
+      setSidebarPluginStatus(translate("skills.plugins_host_only"));
+      setSidebarPluginList([]);
+      refreshPluginsInFlight = false;
+      return;
+    }
+
+    if (!isLocalWorkspace && !canUseOpenworkServer) {
+      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
+      setPluginList([]);
+      setSidebarPluginStatus("Connect an OpenWork server to load plugins.");
+      setSidebarPluginList([]);
+      refreshPluginsInFlight = false;
+      return;
+    }
 
     if (scope === "project" && !targetDir) {
       setPluginStatus(translate("skills.pick_project_for_plugins"));
@@ -237,6 +371,7 @@ export function createExtensionsStore(options: {
       if (refreshPluginsAborted) return;
 
       setPluginConfig(config);
+      setPluginConfigPath(config.path ?? null);
 
       if (!config.exists) {
         setPluginList([]);
@@ -258,6 +393,7 @@ export function createExtensionsStore(options: {
     } catch (e) {
       if (refreshPluginsAborted) return;
       setPluginConfig(null);
+      setPluginConfigPath(null);
       setPluginList([]);
       setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_load_opencode"));
       setSidebarPluginStatus(translate("skills.failed_load_active"));
@@ -268,18 +404,54 @@ export function createExtensionsStore(options: {
   }
 
   async function addPlugin(pluginNameOverride?: string) {
-    if (!isTauriRuntime()) {
-      setPluginStatus(translate("skills.plugin_management_host_only"));
-      return;
-    }
-
     const pluginName = (pluginNameOverride ?? pluginInput()).trim();
     const isManualInput = pluginNameOverride == null;
+    const triggerName = stripPluginVersion(pluginName);
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.plugins?.write;
 
     if (!pluginName) {
       if (isManualInput) {
         setPluginStatus(translate("skills.enter_plugin_name"));
       }
+      return;
+    }
+
+    if (pluginScope() !== "project" && !isLocalWorkspace) {
+      setPluginStatus("Global plugins are only available for local workspaces.");
+      return;
+    }
+
+    if (pluginScope() === "project" && canUseOpenworkServer) {
+      try {
+        setPluginStatus(null);
+        await openworkClient.addPlugin(openworkWorkspaceId, pluginName);
+        if (isManualInput) {
+          setPluginInput("");
+        }
+        await refreshPlugins("project");
+      } catch (e) {
+        setPluginStatus(e instanceof Error ? e.message : "Failed to add plugin.");
+      }
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setPluginStatus(translate("skills.plugin_management_host_only"));
+      return;
+    }
+
+    if (!isLocalWorkspace && !canUseOpenworkServer) {
+      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
       return;
     }
 
@@ -302,7 +474,7 @@ export function createExtensionsStore(options: {
           plugin: [pluginName],
         };
         await writeOpencodeConfig(scope, targetDir, `${JSON.stringify(payload, null, 2)}\n`);
-        options.markReloadRequired("plugins");
+        options.markReloadRequired("plugins", { type: "plugin", name: triggerName, action: "added" });
         if (isManualInput) {
           setPluginInput("");
         }
@@ -325,7 +497,7 @@ export function createExtensionsStore(options: {
       const updated = applyEdits(raw, edits);
 
       await writeOpencodeConfig(scope, targetDir, updated);
-      options.markReloadRequired("plugins");
+      options.markReloadRequired("plugins", { type: "plugin", name: triggerName, action: "added" });
       if (isManualInput) {
         setPluginInput("");
       }
@@ -336,8 +508,15 @@ export function createExtensionsStore(options: {
   }
 
   async function importLocalSkill() {
-    if (options.mode() !== "host" || !isTauriRuntime()) {
-      options.setError(translate("skills.import_host_only"));
+    const isLocalWorkspace = options.workspaceType() === "local";
+
+    if (!isTauriRuntime()) {
+      options.setError(translate("skills.desktop_required"));
+      return;
+    }
+
+    if (!isLocalWorkspace) {
+      options.setError("Local workspaces are required to import skills.");
       return;
     }
 
@@ -359,12 +538,17 @@ export function createExtensionsStore(options: {
         return;
       }
 
+      const inferredName = sourceDir.split(/[\\/]/).filter(Boolean).pop();
       const result = await importSkill(targetDir, sourceDir, { overwrite: false });
       if (!result.ok) {
         setSkillsStatus(result.stderr || result.stdout || translate("skills.import_failed").replace("{status}", String(result.status)));
       } else {
         setSkillsStatus(result.stdout || translate("skills.imported"));
-        options.markReloadRequired("skills");
+        options.markReloadRequired("skills", {
+          type: "skill",
+          name: inferredName,
+          action: "added",
+        });
       }
 
       await refreshSkills({ force: true });
@@ -377,13 +561,52 @@ export function createExtensionsStore(options: {
   }
 
   async function installSkillCreator() {
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.skills?.write;
+
+    // Use OpenWork server when available
+    if (canUseOpenworkServer) {
+      options.setBusy(true);
+      options.setError(null);
+      setSkillsStatus(translate("skills.installing_skill_creator"));
+
+      try {
+        await openworkClient.upsertSkill(openworkWorkspaceId, {
+          name: "skill-creator",
+          content: skillCreatorTemplate,
+        });
+        setSkillsStatus(translate("skills.skill_creator_installed"));
+        await refreshSkills({ force: true });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+        options.setError(addOpencodeCacheHint(message));
+      } finally {
+        options.setBusy(false);
+      }
+      return;
+    }
+
+    // Remote workspace without server
+    if (isRemoteWorkspace) {
+      setSkillsStatus("OpenWork server unavailable. Connect to install skills.");
+      return;
+    }
+
     if (!isTauriRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return;
     }
 
-    if (options.mode() !== "host") {
-      options.setError(translate("skills.host_only_error"));
+    if (!isLocalWorkspace) {
+      options.setError("Local workspaces are required to install skills.");
       return;
     }
 
@@ -406,7 +629,7 @@ export function createExtensionsStore(options: {
         setSkillsStatus(result.stderr || result.stdout || translate("skills.install_failed"));
       } else {
         setSkillsStatus(result.stdout || translate("skills.skill_creator_installed"));
-        options.markReloadRequired("skills");
+        options.markReloadRequired("skills", { type: "skill", name: "skill-creator", action: "added" });
       }
 
       await refreshSkills({ force: true });
@@ -432,8 +655,9 @@ export function createExtensionsStore(options: {
 
     try {
       const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      const plural = await join(root, ".opencode", "skills");
-      const singular = await join(root, ".opencode", "skill");
+      const opencodeSkills = await join(root, ".opencode", "skills");
+      const claudeSkills = await join(root, ".claude", "skills");
+      const legacySkills = await join(root, ".opencode", "skill");
 
       const tryOpen = async (target: string) => {
         try {
@@ -445,9 +669,10 @@ export function createExtensionsStore(options: {
       };
 
       // Prefer opening the folder. `revealItemInDir` expects a file path on macOS.
-      if (await tryOpen(plural)) return;
-      if (await tryOpen(singular)) return;
-      await revealItemInDir(singular);
+      if (await tryOpen(opencodeSkills)) return;
+      if (await tryOpen(claudeSkills)) return;
+      if (await tryOpen(legacySkills)) return;
+      await revealItemInDir(opencodeSkills);
     } catch (e) {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.reveal_failed"));
     }
@@ -459,8 +684,8 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (options.mode() !== "host") {
-      options.setError(translate("skills.host_only_error"));
+    if (options.workspaceType() !== "local") {
+      options.setError("Local workspaces are required to uninstall skills.");
       return;
     }
 
@@ -485,7 +710,7 @@ export function createExtensionsStore(options: {
         setSkillsStatus(result.stderr || result.stdout || translate("skills.uninstall_failed"));
       } else {
         setSkillsStatus(result.stdout || translate("skills.uninstalled"));
-        options.markReloadRequired("skills");
+        options.markReloadRequired("skills", { type: "skill", name: trimmed, action: "removed" });
       }
 
       await refreshSkills({ force: true });
@@ -508,6 +733,7 @@ export function createExtensionsStore(options: {
     pluginScope,
     setPluginScope,
     pluginConfig,
+    pluginConfigPath,
     pluginList,
     pluginInput,
     setPluginInput,

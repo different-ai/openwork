@@ -82,6 +82,7 @@ jobs:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_NAME: ${{ needs.prepare-release.outputs.release_name }}
       RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
+      MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
 
     strategy:
       fail-fast: false
@@ -120,6 +121,11 @@ jobs:
         with:
           version: 10.27.0
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: "1.3.6"
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -146,7 +152,7 @@ jobs:
       - name: Download OpenCode sidecar
         shell: bash
         env:
-          OPENCODE_VERSION: 1.1.25
+          OPENCODE_VERSION: 1.1.36
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -222,7 +228,7 @@ jobs:
           chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
 
       - name: Write notary API key
-        if: matrix.os_type == 'macos'
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
         run: |
@@ -234,7 +240,8 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload
+      - name: Build + upload (notarized)
+        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         uses: tauri-apps/tauri-action@v0.5.17
         env:
           CI: true
@@ -263,4 +270,31 @@ jobs:
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
-          includeUpdaterJson: true
+          uploadUpdaterJson: true
+
+      - name: Build + upload
+        if: matrix.os_type != 'macos' || env.MACOS_NOTARIZE != 'true'
+        uses: tauri-apps/tauri-action@v0.5.17
+        env:
+          CI: true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # Tauri updater signing
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+          # macOS signing
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+        with:
+          tagName: ${{ env.RELEASE_TAG }}
+          releaseName: ${{ env.RELEASE_NAME }}
+          releaseBody: ${{ env.RELEASE_BODY }}
+          prerelease: true
+          releaseDraft: false
+          projectPath: packages/desktop
+          tauriScript: pnpm exec tauri -vvv
+          args: ${{ matrix.args }}
+          retryAttempts: 3
+          uploadUpdaterJson: true

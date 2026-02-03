@@ -1,12 +1,21 @@
 import { createEffect, createMemo, createSignal, type Accessor } from "solid-js";
 
-import type { Provider, Session } from "@opencode-ai/sdk/v2/client";
+import type { Session } from "@opencode-ai/sdk/v2/client";
+import type { ProviderListItem } from "./types";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
-import type { Client, Mode, PluginScope, ReloadReason, ResetOpenworkMode, UpdateHandle } from "./types";
+import type {
+  Client,
+  PluginScope,
+  ReloadReason,
+  ReloadTrigger,
+  ResetOpenworkMode,
+  UpdateHandle,
+} from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
+import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
 import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
@@ -22,12 +31,14 @@ export type NotionState = {
 
 export function createSystemState(options: {
   client: Accessor<Client | null>;
-  mode: Accessor<Mode | null>;
   sessions: Accessor<Session[]>;
   sessionStatusById: Accessor<Record<string, string>>;
   refreshPlugins: (scopeOverride?: PluginScope) => Promise<void>;
   refreshSkills: (options?: { force?: boolean }) => Promise<void>;
-  setProviders: (value: Provider[]) => void;
+  refreshMcpServers?: () => Promise<void>;
+  reloadWorkspaceEngine?: () => Promise<boolean>;
+  canReloadWorkspaceEngine?: () => boolean;
+  setProviders: (value: ProviderListItem[]) => void;
   setProviderDefaults: (value: Record<string, string>) => void;
   setProviderConnectedIds: (value: string[]) => void;
   setError: (value: string | null) => void;
@@ -36,6 +47,8 @@ export function createSystemState(options: {
   const [reloadRequired, setReloadRequired] = createSignal(false);
   const [reloadReasons, setReloadReasons] = createSignal<ReloadReason[]>([]);
   const [reloadLastTriggeredAt, setReloadLastTriggeredAt] = createSignal<number | null>(null);
+  const [reloadLastFinishedAt, setReloadLastFinishedAt] = createSignal<number | null>(null);
+  const [reloadTrigger, setReloadTrigger] = createSignal<ReloadTrigger | null>(null);
   const [reloadBusy, setReloadBusy] = createSignal(false);
   const [reloadError, setReloadError] = createSignal<string | null>(null);
 
@@ -127,16 +140,24 @@ export function createSystemState(options: {
     }
   }
 
-  function markReloadRequired(reason: ReloadReason) {
+  function markReloadRequired(reason: ReloadReason, trigger?: ReloadTrigger) {
     setReloadRequired(true);
     setReloadLastTriggeredAt(Date.now());
     setReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
+    if (trigger) {
+      setReloadTrigger(trigger);
+    } else {
+      setReloadTrigger({
+        type: reason === "plugins" ? "plugin" : reason === "skills" ? "skill" : reason,
+      });
+    }
   }
 
   function clearReloadRequired() {
     setReloadRequired(false);
     setReloadReasons([]);
     setReloadError(null);
+    setReloadTrigger(null);
   }
 
   const reloadCopy = createMemo(() => {
@@ -162,6 +183,13 @@ export function createSystemState(options: {
       };
     }
 
+    if (reasons.length === 1 && reasons[0] === "config") {
+      return {
+        title: "Reload required",
+        body: "OpenCode reads opencode.json at startup. Reload the engine to apply configuration changes.",
+      };
+    }
+
     if (reasons.length === 1 && reasons[0] === "mcp") {
       return {
         title: "Reload required",
@@ -171,16 +199,17 @@ export function createSystemState(options: {
 
     return {
       title: "Reload required",
-      body: "OpenWork detected plugin/skill/MCP changes. Reload the engine to apply them.",
+      body: "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.",
     };
   });
 
   const canReloadEngine = createMemo(() => {
     if (!reloadRequired()) return false;
-    if (!options.client()) return false;
     if (reloadBusy()) return false;
-    if (anyActiveRuns()) return false;
-    if (options.mode() !== "host") return false;
+    const override = options.canReloadWorkspaceEngine?.();
+    if (override === true) return true;
+    if (override === false) return false;
+    if (!options.client()) return false;
     return true;
   });
 
@@ -190,35 +219,50 @@ export function createSystemState(options: {
   });
 
   async function reloadEngineInstance() {
-    const c = options.client();
-    if (!c) return;
+    const initialClient = options.client();
+    if (!initialClient) return;
 
-    if (options.mode() !== "host") {
-      setReloadError("Reload is only available in Host mode.");
+    const override = options.canReloadWorkspaceEngine?.();
+    if (override === false) {
+      setReloadError("Reload is unavailable for this workspace.");
       return;
     }
 
-    if (anyActiveRuns()) {
-      setReloadError("A run is in progress. Stop it before reloading the engine.");
-      return;
-    }
+    // if (anyActiveRuns()) {
+    //   setReloadError("Waiting for active tasks to complete before reloading.");
+    //   return;
+    // }
 
     setReloadBusy(true);
     setReloadError(null);
 
     try {
-      unwrap(await c.instance.dispose());
-      await waitForHealthy(c, { timeoutMs: 12_000 });
+      if (options.reloadWorkspaceEngine) {
+        const ok = await options.reloadWorkspaceEngine();
+        if (ok === false) {
+          setReloadError("Failed to reload the engine.");
+          return;
+        }
+      } else {
+        unwrap(await initialClient.instance.dispose());
+      }
+
+      const nextClient = options.client();
+      if (!nextClient) {
+        throw new Error("OpenCode client unavailable after reload.");
+      }
+
+      await waitForHealthy(nextClient, { timeoutMs: 12_000 });
 
       try {
-        const providerList = unwrap(await c.provider.list());
-        options.setProviders(providerList.all as unknown as Provider[]);
+        const providerList = unwrap(await nextClient.provider.list());
+        options.setProviders(providerList.all);
         options.setProviderDefaults(providerList.default);
         options.setProviderConnectedIds(providerList.connected);
       } catch {
         try {
-          const cfg = unwrap(await c.config.providers());
-          options.setProviders(cfg.providers);
+          const cfg = unwrap(await nextClient.config.providers());
+          options.setProviders(mapConfigProvidersToList(cfg.providers));
           options.setProviderDefaults(cfg.default);
           options.setProviderConnectedIds([]);
         } catch {
@@ -230,22 +274,32 @@ export function createSystemState(options: {
 
       await options.refreshPlugins("project").catch(() => undefined);
       await options.refreshSkills({ force: true }).catch(() => undefined);
+      await options.refreshMcpServers?.().catch(() => undefined);
 
       if (options.notion) {
         let nextStatus = options.notion.status();
         if (nextStatus === "connecting") {
           nextStatus = "connected";
           options.notion.setStatus(nextStatus);
+          options.notion.setStatusDetail("Workspace connected");
         }
 
         if (nextStatus === "connected") {
-          options.notion.setStatusDetail(options.notion.statusDetail() ?? "Workspace connected");
+          const detail = options.notion.statusDetail();
+          if (!detail || detail.toLowerCase().includes("reload")) {
+            options.notion.setStatusDetail("Workspace connected");
+          }
         }
 
         try {
           window.localStorage.setItem("openwork.notionStatus", nextStatus);
-          if (nextStatus === "connected" && options.notion.statusDetail()) {
-            window.localStorage.setItem("openwork.notionStatusDetail", options.notion.statusDetail() || "");
+          if (nextStatus === "connected") {
+            const detail = options.notion.statusDetail();
+            if (detail) {
+              window.localStorage.setItem("openwork.notionStatusDetail", detail);
+            } else {
+              window.localStorage.removeItem("openwork.notionStatusDetail");
+            }
           }
         } catch {
           // ignore
@@ -260,7 +314,12 @@ export function createSystemState(options: {
       setReloadError(e instanceof Error ? e.message : safeStringify(e));
     } finally {
       setReloadBusy(false);
+      setReloadLastFinishedAt(Date.now());
     }
+  }
+
+  async function reloadWorkspaceEngine() {
+    await reloadEngineInstance();
   }
 
   async function repairOpencodeCache() {
@@ -424,6 +483,9 @@ export function createSystemState(options: {
     reloadRequired,
     reloadReasons,
     reloadLastTriggeredAt,
+    reloadLastFinishedAt,
+    setReloadLastFinishedAt,
+    reloadTrigger,
     reloadBusy,
     reloadError,
     reloadCopy,
@@ -431,6 +493,7 @@ export function createSystemState(options: {
     markReloadRequired,
     clearReloadRequired,
     reloadEngineInstance,
+    reloadWorkspaceEngine,
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use tauri::Manager;
 
 use crate::types::{WorkspaceInfo, WorkspaceState, WorkspaceType, WORKSPACE_STATE_VERSION};
-use crate::utils::now_ms;
 
 pub fn stable_workspace_id(path: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -66,9 +65,13 @@ pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo,
         path: starter_dir.to_string_lossy().to_string(),
         preset: "starter".to_string(),
         workspace_type: WorkspaceType::Local,
+        remote_type: None,
         base_url: None,
         directory: None,
         display_name: None,
+        openwork_host_url: None,
+        openwork_workspace_id: None,
+        openwork_workspace_name: None,
     })
 }
 
@@ -83,10 +86,13 @@ pub fn stable_workspace_id_for_remote(base_url: &str, directory: Option<&str>) -
     stable_workspace_id(&key)
 }
 
-pub fn default_template_created_at(input: u64) -> u64 {
-    if input > 0 {
-        input
-    } else {
-        now_ms()
+pub fn stable_workspace_id_for_openwork(host_url: &str, workspace_id: Option<&str>) -> String {
+    let mut key = format!("openwork::{host_url}");
+    if let Some(id) = workspace_id {
+        if !id.trim().is_empty() {
+            key.push_str("::");
+            key.push_str(id.trim());
+        }
     }
+    stable_workspace_id(&key)
 }

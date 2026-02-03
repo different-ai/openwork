@@ -11,6 +11,8 @@ import type {
   OpencodeEvent,
   PendingPermission,
   PlaceholderAssistantMessage,
+  ReloadReason,
+  ReloadTrigger,
   TodoItem,
 } from "../types";
 import {
@@ -19,6 +21,7 @@ import {
   normalizeDirectoryPath,
   normalizeEvent,
   normalizeSessionStatus,
+  safeStringify,
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 
@@ -110,6 +113,7 @@ export function createSessionStore(options: {
   developerMode: () => boolean;
   setError: (message: string | null) => void;
   setSseConnected: (connected: boolean) => void;
+  markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
@@ -121,6 +125,119 @@ export function createSessionStore(options: {
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const reloadDetectionSet = new Set<string>();
+
+  const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
+  const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
+  const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
+  const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
+  const mutatingTools = new Set(["write", "edit", "apply_patch"]);
+
+  const extractSearchText = (value: unknown) => {
+    if (!value) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number") return String(value);
+    return safeStringify(value);
+  };
+
+  const detectReloadReason = (value: unknown): ReloadReason | null => {
+    const text = extractSearchText(value);
+    if (!text) return null;
+    if (skillPathPattern.test(text)) return "skills";
+    if (opencodeConfigPattern.test(text)) return "config";
+    if (opencodePathPattern.test(text)) return "config";
+    return null;
+  };
+
+  const detectReloadTriggerFromText = (text: string): ReloadTrigger | null => {
+    if (skillPathPattern.test(text)) {
+      const match = text.match(skillNamePattern);
+      return {
+        type: "skill",
+        name: match?.[1],
+        action: "updated",
+        path: match?.[0],
+      };
+    }
+    if (opencodeConfigPattern.test(text) || opencodePathPattern.test(text)) {
+      return {
+        type: "config",
+        action: "updated",
+      };
+    }
+    return null;
+  };
+
+  const detectReloadReasonDeep = (value: unknown): ReloadReason | null => {
+    if (!value) return null;
+    if (typeof value === "string" || typeof value === "number") {
+      return detectReloadReason(value);
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const reason = detectReloadReasonDeep(entry);
+        if (reason) return reason;
+      }
+      return null;
+    }
+    if (typeof value === "object") {
+      for (const entry of Object.values(value as Record<string, unknown>)) {
+        const reason = detectReloadReasonDeep(entry);
+        if (reason) return reason;
+      }
+    }
+    return null;
+  };
+
+  const detectReloadTriggerDeep = (value: unknown): ReloadTrigger | null => {
+    if (!value) return null;
+    if (typeof value === "string" || typeof value === "number") {
+      return detectReloadTriggerFromText(String(value));
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const trigger = detectReloadTriggerDeep(entry);
+        if (trigger) return trigger;
+      }
+      return null;
+    }
+    if (typeof value === "object") {
+      for (const entry of Object.values(value as Record<string, unknown>)) {
+        const trigger = detectReloadTriggerDeep(entry);
+        if (trigger) return trigger;
+      }
+    }
+    return null;
+  };
+
+  const detectReloadFromPart = (part: Part): { reason: ReloadReason; trigger?: ReloadTrigger } | null => {
+    if (part.type !== "tool") return null;
+    const record = part as Record<string, unknown>;
+    const toolName = typeof record.tool === "string" ? record.tool : "";
+    if (!mutatingTools.has(toolName)) return null;
+    const state = (record.state ?? {}) as Record<string, unknown>;
+    const reason =
+      detectReloadReasonDeep(state.input) ||
+      detectReloadReasonDeep(state.patch) ||
+      detectReloadReasonDeep(state.diff);
+    if (!reason) return null;
+    const trigger =
+      detectReloadTriggerDeep(state.input) ||
+      detectReloadTriggerDeep(state.patch) ||
+      detectReloadTriggerDeep(state.diff);
+    return { reason, trigger: trigger ?? undefined };
+  };
+
+  const maybeMarkReloadRequired = (part: Part) => {
+    if (!options.markReloadRequired) return;
+    if (!part?.id || !part.messageID) return;
+    const key = `${part.messageID}:${part.id}`;
+    if (reloadDetectionSet.has(key)) return;
+    const detection = detectReloadFromPart(part);
+    if (!detection) return;
+    reloadDetectionSet.add(key);
+    options.markReloadRequired(detection.reason, detection.trigger);
+  };
 
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
@@ -405,6 +522,47 @@ export function createSessionStore(options: {
       }
     }
 
+    if (event.type === "session.error") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const errorObj = record.error as Record<string, unknown> | undefined;
+        if (errorObj) {
+          // Handle different error types from OpenCode
+          const errorName = typeof errorObj.name === "string" ? errorObj.name : "Unknown";
+          let message = "An error occurred";
+
+          if (errorName === "ProviderAuthError") {
+            // Provider auth error - likely 401/403 from the API
+            const providerID = typeof errorObj.providerID === "string" ? errorObj.providerID : "provider";
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || `Authentication failed for ${providerID}. Please reconnect or check your API key.`;
+          } else if (errorName === "APIError") {
+            // API error - includes status code
+            const statusCode = typeof errorObj.statusCode === "number" ? errorObj.statusCode : undefined;
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            if (statusCode === 401 || statusCode === 403) {
+              message = errorMessage || "Authentication failed. Please check your API key or reconnect the provider.";
+            } else if (statusCode === 429) {
+              message = errorMessage || "Rate limit exceeded. Please wait and try again.";
+            } else {
+              message = errorMessage || `API error${statusCode ? ` (${statusCode})` : ""}`;
+            }
+          } else if (errorName === "MessageAbortedError") {
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || "Request was cancelled";
+          } else if (errorName === "MessageOutputLengthError") {
+            message = "Output length limit exceeded";
+          } else {
+            // Unknown or other error
+            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
+            message = errorMessage || "An unexpected error occurred";
+          }
+
+          options.setError(addOpencodeCacheHint(message));
+        }
+      }
+    }
+
     if (event.type === "message.updated") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
@@ -472,6 +630,7 @@ export function createSessionStore(options: {
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          maybeMarkReloadRequired(part);
         }
       }
     }
@@ -510,8 +669,9 @@ export function createSessionStore(options: {
     const c = options.client();
     if (!c) return;
 
-    const controller = new AbortController();
     let cancelled = false;
+    let reconnectAttempt = 0;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
 
     let queue: Array<OpencodeEvent | undefined> = [];
     const coalesced = new Map<string, number>();
@@ -563,10 +723,13 @@ export function createSessionStore(options: {
       timer = setTimeout(flush, Math.max(0, 16 - elapsed));
     };
 
-    (async () => {
+    const connectSse = async (controller: AbortController) => {
       try {
         const sub = await c.event.subscribe(undefined, { signal: controller.signal });
         let yielded = Date.now();
+
+        // Reset reconnect counter on successful connection
+        reconnectAttempt = 0;
 
         for await (const raw of sub.stream) {
           if (cancelled) break;
@@ -590,18 +753,46 @@ export function createSessionStore(options: {
           yielded = Date.now();
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
+
+        // Stream ended normally - attempt reconnect unless cancelled
+        if (!cancelled) {
+          options.setSseConnected(false);
+          scheduleReconnect(controller);
+        }
       } catch (e) {
         if (cancelled) return;
 
         const message = e instanceof Error ? e.message : String(e);
         if (message.toLowerCase().includes("abort")) return;
-        options.setError(message);
+
+        // Mark SSE as disconnected and schedule reconnect
+        options.setSseConnected(false);
+        scheduleReconnect(controller);
       }
-    })();
+    };
+
+    const scheduleReconnect = (oldController: AbortController) => {
+      if (cancelled) return;
+      oldController.abort();
+
+      // Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
+      reconnectAttempt++;
+      const delay = Math.min(1000 * Math.pow(2, reconnectAttempt - 1), 30000);
+
+      reconnectTimer = setTimeout(() => {
+        if (cancelled) return;
+        const newController = new AbortController();
+        void connectSse(newController);
+      }, delay);
+    };
+
+    const controller = new AbortController();
+    void connectSse(controller);
 
     onCleanup(() => {
       cancelled = true;
       controller.abort();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
       flush();
     });
   });
