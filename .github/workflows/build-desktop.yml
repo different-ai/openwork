@@ -98,4 +98,4 @@ jobs:
         run: cargo test --manifest-path packages/desktop/src-tauri/Cargo.toml --locked
 
       - name: Build desktop app
-        run: pnpm --filter @different-ai/openwork exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb
+        run: pnpm --filter @different-ai/openwork exec tauri build --config src-tauri/tauri.conf.ci.json --target x86_64-unknown-linux-gnu --bundles deb,appimage

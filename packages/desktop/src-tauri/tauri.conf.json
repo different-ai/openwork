@@ -39,7 +39,13 @@
       "sidecars/openwork-server",
       "sidecars/owpenbot",
       "sidecars/openwrk"
-    ]
+    ],
+    "linux": {
+      "targets": [
+        "deb",
+        "appimage"
+      ]
+    }
   },
   "plugins": {
     "updater": {
