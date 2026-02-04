@@ -23,7 +23,7 @@ import type {
 
 import type { WorkspaceInfo } from "../lib/tauri";
 
-import { ArrowRight, ChevronDown, HardDrive, Shield, Zap } from "lucide-solid";
+import { ArrowRight, ChevronDown, HardDrive, Shield, Sparkles, Zap } from "lucide-solid";
 
 import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
@@ -408,6 +408,8 @@ export default function SessionView(props: SessionViewProps) {
       const record = part as any;
       const tool = typeof record.tool === "string" ? record.tool : "";
       switch (tool) {
+        case "skill":
+          return "Using skill";
         case "task":
           return "Delegating";
         case "todowrite":
@@ -479,6 +481,18 @@ export default function SessionView(props: SessionViewProps) {
       return detail ? { title: "Draft", detail } : { title: "Draft" };
     }
     return null;
+  });
+
+  const activeSkill = createMemo<string | null>(() => {
+    const part = latestRunPart();
+    if (!part || part.type !== "tool") return null;
+    const record = part as any;
+    const tool = typeof record.tool === "string" ? record.tool : "";
+    if (tool !== "skill") return null;
+    const state = record.state ?? {};
+    const title = typeof state.title === "string" ? state.title : "";
+    const skillName = state.metadata?.name || title.replace(/^Loaded skill:\s*/i, "").trim();
+    return skillName || "skill";
   });
 
   const runLabel = createMemo(() => {
@@ -1398,7 +1412,10 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="flex justify-start pl-2">
                   <div class="w-full max-w-[68ch] space-y-2">
                     <Show when={thinkingStatus()}>
-                      <div class="rounded-xl border border-gray-6/70 bg-gray-2/40 px-3 py-2 text-xs text-gray-11">
+                      <div class={`rounded-xl border px-3 py-2 text-xs text-gray-11 ${activeSkill()
+                          ? "border-purple-6/70 bg-purple-2/40"
+                          : "border-gray-6/70 bg-gray-2/40"
+                        }`}>
                         <button
                           type="button"
                           class="w-full flex items-center justify-between gap-3 text-left"
@@ -1406,7 +1423,15 @@ export default function SessionView(props: SessionViewProps) {
                           aria-expanded={thinkingExpanded()}
                         >
                           <div class="flex items-center gap-2 min-w-0">
-                            <span class="text-[10px] uppercase tracking-wide text-gray-9">Thinking</span>
+                            <Show
+                              when={activeSkill()}
+                              fallback={<span class="text-[10px] uppercase tracking-wide text-gray-9">Thinking</span>}
+                            >
+                              <Sparkles size={12} class="text-purple-10 shrink-0" />
+                              <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 shrink-0">
+                                {activeSkill()}
+                              </span>
+                            </Show>
                             <span class="truncate text-gray-12">{thinkingStatus()}</span>
                           </div>
                           <ChevronDown
