@@ -1185,10 +1185,28 @@ export default function SessionView(props: SessionViewProps) {
     if (!value.startsWith("/")) return [];
     const token = value.slice(1).trim().split(/\s+/)[0]?.toLowerCase() ?? "";
     const list = slashCommands();
-    const matches = token
-      ? list.filter((command) => command.slash?.toLowerCase().startsWith(token))
-      : list;
-    return matches.map((command) => ({
+    if (!token) {
+      return list.map((command) => ({
+        id: command.slash!,
+        description: command.description || "Run a command",
+        needsArgs: commandNeedsArgs().get(command.slash ?? "") ?? false,
+      }));
+    }
+
+    const matches = list
+      .map((command, index) => {
+        const slash = command.slash?.toLowerCase() ?? "";
+        if (slash === token) return { command, index, tier: 0 };
+        if (slash.startsWith(token)) return { command, index, tier: 1 };
+        if (slash.includes(token)) return { command, index, tier: 2 };
+        return null;
+      })
+      .filter((entry): entry is { command: CommandRegistryItem; index: number; tier: number } =>
+        Boolean(entry),
+      )
+      .sort((a, b) => (a.tier - b.tier) || (a.index - b.index));
+
+    return matches.map(({ command }) => ({
       id: command.slash!,
       description: command.description || "Run a command",
       needsArgs: commandNeedsArgs().get(command.slash ?? "") ?? false,
