@@ -10,6 +10,7 @@ import type {
   ModelRef,
   OpencodeEvent,
   PendingPermission,
+  PendingQuestion,
   PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
@@ -39,6 +40,7 @@ type StoreState = {
   parts: Record<string, Part[]>;
   todos: Record<string, TodoItem[]>;
   pendingPermissions: PendingPermission[];
+  pendingQuestions: PendingQuestion[];
   events: OpencodeEvent[];
 };
 
@@ -122,6 +124,7 @@ export function createSessionStore(options: {
     parts: {},
     todos: {},
     pendingPermissions: [],
+    pendingQuestions: [],
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
@@ -262,6 +265,7 @@ export function createSessionStore(options: {
   const sessions = () => store.sessions;
   const sessionStatusById = () => store.sessionStatus;
   const pendingPermissions = () => store.pendingPermissions;
+  const pendingQuestions = () => store.pendingQuestions;
   const events = () => store.events;
 
   const selectedSession = createMemo(() => {
@@ -319,6 +323,16 @@ export function createSessionStore(options: {
     const byId = new Map(store.pendingPermissions.map((perm) => [perm.id, perm] as const));
     const next = list.map((perm) => ({ ...perm, receivedAt: byId.get(perm.id)?.receivedAt ?? now }));
     setStore("pendingPermissions", next);
+  }
+
+  async function refreshPendingQuestions() {
+    const c = options.client();
+    if (!c) return;
+    const list = unwrap(await c.question.list());
+    const now = Date.now();
+    const byId = new Map(store.pendingQuestions.map((q) => [q.id, q] as const));
+    const next = list.map((q) => ({ ...q, receivedAt: byId.get(q.id)?.receivedAt ?? now }));
+    setStore("pendingQuestions", next);
   }
 
   function setMessagesForSession(sessionID: string, list: MessageWithParts[]) {
@@ -438,6 +452,40 @@ export function createSessionStore(options: {
     }
   }
 
+  async function respondQuestion(requestID: string, answers: string[][]) {
+    const c = options.client();
+    if (!c || questionReplyBusy()) return;
+
+    setQuestionReplyBusy(true);
+    options.setError(null);
+
+    try {
+      unwrap(await c.question.reply({ requestID, answers }));
+      await refreshPendingQuestions();
+    } catch (e) {
+      addError(e);
+    } finally {
+      setQuestionReplyBusy(false);
+    }
+  }
+
+  async function rejectQuestion(requestID: string) {
+    const c = options.client();
+    if (!c || questionReplyBusy()) return;
+
+    setQuestionReplyBusy(true);
+    options.setError(null);
+
+    try {
+      unwrap(await c.question.reject({ requestID }));
+      await refreshPendingQuestions();
+    } catch (e) {
+      addError(e);
+    } finally {
+      setQuestionReplyBusy(false);
+    }
+  }
+
   const setSessions = (next: Session[]) => {
     setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
   };
@@ -462,6 +510,10 @@ export function createSessionStore(options: {
     setStore("pendingPermissions", next);
   };
 
+  const setPendingQuestions = (next: PendingQuestion[]) => {
+    setStore("pendingQuestions", next);
+  };
+
   const activePermission = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
@@ -469,6 +521,16 @@ export function createSessionStore(options: {
     }
     return store.pendingPermissions[0] ?? null;
   });
+
+  const activeQuestion = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (id) {
+      return store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
+    }
+    return store.pendingQuestions[0] ?? null;
+  });
+
+  const [questionReplyBusy, setQuestionReplyBusy] = createSignal(false);
 
   const applyEvent = async (event: OpencodeEvent) => {
     if (event.type === "server.connected") {
@@ -663,6 +725,18 @@ export function createSessionStore(options: {
         // ignore
       }
     }
+
+    if (
+      event.type === "question.asked" ||
+      event.type === "question.replied" ||
+      event.type === "question.rejected"
+    ) {
+      try {
+        await refreshPendingQuestions();
+      } catch {
+        // ignore
+      }
+    }
   };
 
   createEffect(() => {
@@ -806,17 +880,24 @@ export function createSessionStore(options: {
     todos,
     pendingPermissions,
     permissionReplyBusy,
+    pendingQuestions,
+    activeQuestion,
+    questionReplyBusy,
     events,
     activePermission,
     loadSessions,
     refreshPendingPermissions,
+    refreshPendingQuestions,
     selectSession,
     renameSession,
     respondPermission,
+    respondQuestion,
+    rejectQuestion,
     setSessions,
     setSessionStatusById,
     setMessages,
     setTodos,
     setPendingPermissions,
+    setPendingQuestions,
   };
 }

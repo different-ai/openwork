@@ -2,6 +2,7 @@ import type {
   Message,
   Part,
   PermissionRequest as ApiPermissionRequest,
+  QuestionRequest,
   ProviderListResponse,
   Session,
 } from "@opencode-ai/sdk/v2/client";
@@ -229,6 +230,10 @@ export type ReloadTrigger = {
 };
 
 export type PendingPermission = ApiPermissionRequest & {
+  receivedAt: number;
+};
+
+export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
 };
 
