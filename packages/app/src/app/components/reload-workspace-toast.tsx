@@ -59,6 +59,18 @@ export default function ReloadWorkspaceToast(props: ReloadWorkspaceToastProps) {
         : "Config changed. Reload to apply.";
     }
 
+    if (type === "agent") {
+      return trimmedName
+        ? `Agent '${trimmedName}' ${verb}. Reload to use it.`
+        : "Agents changed. Reload to apply.";
+    }
+
+    if (type === "command") {
+      return trimmedName
+        ? `Command '${trimmedName}' ${verb}. Reload to use it.`
+        : "Commands changed. Reload to apply.";
+    }
+
     return "Config changed. Reload to apply.";
   };
 

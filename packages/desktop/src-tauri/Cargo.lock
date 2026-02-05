@@ -2726,7 +2726,7 @@ dependencies = [
 
 [[package]]
 name = "openwork"
-version = "0.11.10"
+version = "0.11.13"
 dependencies = [
  "base64 0.22.1",
  "gethostname",

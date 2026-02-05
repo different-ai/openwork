@@ -53,6 +53,7 @@ import QuestionModal from "../components/question-modal";
 export type SessionViewProps = {
   selectedSessionId: string | null;
   setView: (view: View, sessionId?: string) => void;
+  tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
   activeWorkspaceDisplay: WorkspaceDisplay;

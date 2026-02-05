@@ -110,7 +110,7 @@ export type OpenworkAuditEntry = {
 };
 
 export type OpenworkReloadTrigger = {
-  type: "skill" | "plugin" | "config" | "mcp";
+  type: "skill" | "plugin" | "config" | "mcp" | "agent" | "command";
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;
@@ -120,7 +120,7 @@ export type OpenworkReloadEvent = {
   id: string;
   seq: number;
   workspaceId: string;
-  reason: "plugins" | "skills" | "mcp" | "config";
+  reason: "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
   trigger?: OpenworkReloadTrigger;
   timestamp: number;
 };

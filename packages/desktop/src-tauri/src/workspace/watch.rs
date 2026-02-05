@@ -24,15 +24,39 @@ fn normalize_path(path: &Path) -> String {
 fn reason_for_path(path: &Path) -> Option<&'static str> {
     let normalized = normalize_path(path);
     let lower = normalized.to_lowercase();
+
+    // Ignore OpenWork metadata files — they don't affect the OpenCode engine.
+    if lower.ends_with("/openwork.json") {
+        return None;
+    }
+
+    // Specific .opencode subdirectories map to distinct reasons.
     if lower.contains("/.opencode/skills/") || lower.ends_with("/.opencode/skills") {
         return Some("skills");
     }
-    if lower.contains("/.opencode/") || lower.ends_with("/.opencode") {
-        return Some("config");
+    if lower.contains("/.opencode/agents/") || lower.contains("/.opencode/agent/") {
+        return Some("agents");
     }
+    if lower.contains("/.opencode/commands/") || lower.contains("/.opencode/command/") {
+        return Some("commands");
+    }
+    if lower.contains("/.opencode/plugins/") {
+        return Some("plugins");
+    }
+
+    // opencode.json / opencode.jsonc at the workspace root or inside .opencode/
     if lower.ends_with("/opencode.json") || lower.ends_with("/opencode.jsonc") {
         return Some("config");
     }
+
+    // AGENTS.md at the workspace root triggers agent reload.
+    if lower.ends_with("/agents.md") && !lower.contains("/.opencode/") {
+        return Some("agents");
+    }
+
+    // Any other file inside .opencode/ that isn't already matched above
+    // (e.g. .opencode/opencode.db, .opencode/opencode.json handled above).
+    // We intentionally do NOT emit for unknown .opencode files to be conservative.
     None
 }
 
@@ -109,6 +133,10 @@ pub fn update_workspace_watch(
             if lower.ends_with(".ds_store")
                 || lower.ends_with("desktop.ini")
                 || lower.ends_with(".localized")
+                || lower.ends_with(".db")
+                || lower.ends_with(".db-journal")
+                || lower.ends_with(".db-wal")
+                || lower.ends_with(".db-shm")
             {
                 continue;
             }

@@ -267,6 +267,10 @@ export type WorkspaceOpenworkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
+  reload?: {
+    auto?: boolean;
+    resume?: boolean;
+  } | null;
 };
 
 export async function workspaceOpenworkRead(input: {

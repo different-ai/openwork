@@ -14,12 +14,25 @@ Read INFRASTRUCTURE.md
 
 * **Purpose-first UI**: prioritize clarity, safety, and approachability for non-technical users.
 * **Parity with OpenCode**: anything the UI can do must map cleanly to OpenCode tools.
-* **Prefer OpenCode primitives**: represent concepts using OpenCode’s native surfaces first (folders/projects, `.opencode`, `opencode.json`, skills, plugins) before introducing new abstractions.
+* **Prefer OpenCode primitives**: represent concepts using OpenCode's native surfaces first (folders/projects, `.opencode`, `opencode.json`, skills, plugins) before introducing new abstractions.
 * **Self-referential**: maintain a gitignored mirror of OpenCode at `vendor/opencode` for inspection.
 * **Self-building**: prefer prompts, skills, and composable primitives over bespoke logic.
 * **Open source**: keep the repo portable; no secrets committed.
 * **Slick and fluid**: 60fps animations, micro-interactions, premium feel.
 * **Mobile-native**: touch targets, gestures, and layouts optimized for small screens.
+
+## Living Systems
+
+OpenWork aims to be a **living system**: agents, skills, commands, and config are hot-reloadable while sessions are running. This enables agents to create new skills or update their own configuration and have changes take effect immediately, without tearing down active sessions.
+
+Design principles for hot reload:
+
+* **Conservative triggers**: only reload when a file that OpenCode reads at startup actually changes inside `.opencode/` or `opencode.json`. Ignore metadata files like `openwork.json`, `.DS_Store`, etc.
+* **Workspace-scoped**: reload state is keyed per workspace. Switching workspaces never leaks reload signals from one workspace to another.
+* **Session-aware**: when sessions are actively running, queue reload signals. Promote to visible reload (toast or auto-reload) only after all active sessions finish. This avoids interrupting in-flight tool calls.
+* **Auto-reload setting**: each workspace can opt into automatic reload via `.opencode/openwork.json` (`reload.auto`). When enabled, the engine reloads automatically once queued signals are ready and no sessions are active.
+* **Session continuity**: before reload, capture running session IDs, agents, and models. After reload, optionally relaunch those sessions so the user experiences seamless continuity.
+* **Per-workspace isolation**: the desktop file watcher only watches the active workspace root and its `.opencode/` directory. The server reload event store is already keyed by `workspaceId`.
 
 ## Technology Stack
 

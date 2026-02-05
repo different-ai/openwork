@@ -107,6 +107,7 @@ const removePartInfo = (list: Part[], partID: string) => list.filter((part) => p
 
 export function createSessionStore(options: {
   client: () => Client | null;
+  activeWorkspaceRoot: () => string;
   selectedSessionId: () => string | null;
   setSelectedSessionId: (id: string | null) => void;
   sessionModelState: () => SessionModelState;
@@ -132,8 +133,13 @@ export function createSessionStore(options: {
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
+  const commandPathPattern = /[\\/]\.opencode[\\/](command|commands)[\\/]/i;
+  const commandNamePattern = /[\\/]\.opencode[\\/](?:command|commands)[\\/]+([^\\/]+)/i;
+  const agentPathPattern = /[\\/]\.opencode[\\/](agent|agents)[\\/]/i;
+  const agentNamePattern = /[\\/]\.opencode[\\/](?:agent|agents)[\\/]+([^\\/]+)/i;
   const opencodeConfigPattern = /(?:^|[\\/])opencode\.jsonc?\b/i;
   const opencodePathPattern = /(?:^|[\\/])\.opencode[\\/]/i;
+  const openworkConfigPattern = /[\\/]\.opencode[\\/]openwork\.json\b/i;
   const mutatingTools = new Set(["write", "edit", "apply_patch"]);
 
   const extractSearchText = (value: unknown) => {
@@ -146,13 +152,19 @@ export function createSessionStore(options: {
   const detectReloadReason = (value: unknown): ReloadReason | null => {
     const text = extractSearchText(value);
     if (!text) return null;
+    if (openworkConfigPattern.test(text)) return null;
     if (skillPathPattern.test(text)) return "skills";
+    if (commandPathPattern.test(text)) return "commands";
+    if (agentPathPattern.test(text)) return "agents";
     if (opencodeConfigPattern.test(text)) return "config";
     if (opencodePathPattern.test(text)) return "config";
     return null;
   };
 
   const detectReloadTriggerFromText = (text: string): ReloadTrigger | null => {
+    if (openworkConfigPattern.test(text)) {
+      return null;
+    }
     if (skillPathPattern.test(text)) {
       const match = text.match(skillNamePattern);
       return {
@@ -162,6 +174,29 @@ export function createSessionStore(options: {
         path: match?.[0],
       };
     }
+
+    if (commandPathPattern.test(text)) {
+      const match = text.match(commandNamePattern);
+      const raw = match?.[1];
+      const name = raw ? raw.replace(/\.md$/i, "") : undefined;
+      return {
+        type: "command",
+        name,
+        action: "updated",
+        path: match?.[0],
+      };
+    }
+
+    if (agentPathPattern.test(text)) {
+      const match = text.match(agentNamePattern);
+      return {
+        type: "agent",
+        name: match?.[1],
+        action: "updated",
+        path: match?.[0],
+      };
+    }
+
     if (opencodeConfigPattern.test(text) || opencodePathPattern.test(text)) {
       return {
         type: "config",
@@ -234,6 +269,16 @@ export function createSessionStore(options: {
   const maybeMarkReloadRequired = (part: Part) => {
     if (!options.markReloadRequired) return;
     if (!part?.id || !part.messageID) return;
+
+    const root = normalizeDirectoryPath(options.activeWorkspaceRoot());
+    if (root) {
+      const session = store.sessions.find((candidate) => candidate.id === part.sessionID) ?? null;
+      const sessionRoot = normalizeDirectoryPath(session?.directory ?? "");
+      if (!sessionRoot || sessionRoot !== root) {
+        return;
+      }
+    }
+
     const key = `${part.messageID}:${part.id}`;
     if (reloadDetectionSet.has(key)) return;
     const detection = detectReloadFromPart(part);

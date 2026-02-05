@@ -277,7 +277,7 @@ export default function Composer(props: ComposerProps) {
   const mentionGroups = createMemo<MentionGroup[]>(() => {
     if (!mentionOpen()) return [];
     const query = mentionQuery().trim().toLowerCase();
-    const agents = agentOptions().map((agent: Agent) => ({
+    const agents: MentionOption[] = agentOptions().map((agent: Agent) => ({
       id: `agent:${agent.name}`,
       kind: "agent" as const,
       label: agent.name,
@@ -285,7 +285,7 @@ export default function Composer(props: ComposerProps) {
       display: agent.name,
     }));
     const seen = new Set<string>();
-    const recentFiles = props.recentFiles
+    const recentFiles: MentionOption[] = props.recentFiles
       .filter((file: string) => {
         if (!file) return false;
         if (seen.has(file)) return false;
@@ -300,7 +300,7 @@ export default function Composer(props: ComposerProps) {
         display: file,
         recent: true,
       }));
-    const searchFiles = searchResults()
+    const searchFiles: MentionOption[] = searchResults()
       .filter((file: string) => file && !seen.has(file))
       .map((file: string) => ({
         id: `file:${file}`,

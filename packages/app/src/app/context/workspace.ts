@@ -1745,6 +1745,28 @@ export function createWorkspaceStore(options: {
       version: existing?.version ?? 1,
       workspace: existing?.workspace ?? null,
       authorizedRoots: nextRoots,
+      reload: existing?.reload ?? null,
+    };
+
+    await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
+    setWorkspaceConfig(cfg);
+  }
+
+  async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
+    if (!isTauriRuntime()) return;
+    if (activeWorkspaceInfo()?.workspaceType === "remote") return;
+    const root = activeWorkspacePath().trim();
+    if (!root) return;
+
+    const existing = workspaceConfig();
+    const cfg: WorkspaceOpenworkConfig = {
+      version: existing?.version ?? 1,
+      workspace: existing?.workspace ?? null,
+      authorizedRoots: Array.isArray(existing?.authorizedRoots) ? existing!.authorizedRoots : authorizedDirs(),
+      reload: {
+        auto: Boolean(next.auto),
+        resume: Boolean(next.resume),
+      },
     };
 
     await workspaceOpenworkWrite({ workspacePath: root, config: cfg });
@@ -2054,6 +2076,7 @@ export function createWorkspaceStore(options: {
     addAuthorizedDirFromPicker,
     removeAuthorizedDir,
     removeAuthorizedDirAtIndex,
+    persistReloadSettings,
     setEngineInstallLogs,
   };
 }

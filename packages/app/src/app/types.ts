@@ -143,6 +143,10 @@ export type WorkspaceOpenworkConfig = {
     preset?: string | null;
   } | null;
   authorizedRoots: string[];
+  reload?: {
+    auto?: boolean;
+    resume?: boolean;
+  } | null;
 };
 
 export type SkillCard = {
@@ -198,7 +202,7 @@ export type McpStatus =
 
 export type McpStatusMap = Record<string, McpStatus>;
 
-export type ReloadReason = "plugins" | "skills" | "mcp" | "config";
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
 export type OpencodeConnectStatus = {
   at: number;
@@ -210,7 +214,7 @@ export type OpencodeConnectStatus = {
 };
 
 export type ReloadTrigger = {
-  type: "skill" | "plugin" | "config" | "mcp";
+  type: "skill" | "plugin" | "config" | "mcp" | "agent" | "command";
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;

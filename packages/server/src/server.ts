@@ -808,6 +808,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       summary: `Upserted command ${name}`,
       timestamp: Date.now(),
     });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName(name),
+      action: "updated",
+      path,
+    });
     const items = await listCommands(workspace.path, "workspace");
     return jsonResponse({ items });
   });
@@ -831,6 +838,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
       target: join(workspace.path, ".opencode", "commands"),
       summary: `Deleted command ${name}`,
       timestamp: Date.now(),
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName(name),
+      action: "removed",
+      path: join(workspace.path, ".opencode", "commands", `${sanitizeCommandName(name)}.md`),
     });
     return jsonResponse({ ok: true });
   });

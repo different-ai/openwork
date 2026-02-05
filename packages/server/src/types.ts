@@ -62,10 +62,10 @@ export interface Capabilities {
   config: { read: boolean; write: boolean };
 }
 
-export type ReloadReason = "plugins" | "skills" | "mcp" | "config";
+export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
 export type ReloadTrigger = {
-  type: "skill" | "plugin" | "config" | "mcp";
+  type: "skill" | "plugin" | "config" | "mcp" | "agent" | "command";
   name?: string;
   action?: "added" | "removed" | "updated";
   path?: string;

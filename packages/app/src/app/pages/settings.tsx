@@ -109,6 +109,11 @@ export type SettingsViewProps = {
   downloadUpdate: () => void;
   installUpdateAndRestart: () => void;
   anyActiveRuns: boolean;
+  workspaceAutoReloadAvailable: boolean;
+  workspaceAutoReloadEnabled: boolean;
+  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
+  workspaceAutoReloadResumeEnabled: boolean;
+  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   onResetStartupPreference: () => void;
   openResetModal: (mode: "onboarding" | "all") => void;
   resetModalBusy: boolean;
@@ -1986,6 +1991,44 @@ export default function SettingsView(props: SettingsViewProps) {
                   >
                     <RefreshCcw size={14} class={props.reloadBusy ? "animate-spin" : ""} />
                     {reloadButtonLabel()}
+                  </Button>
+                </div>
+
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0 space-y-1">
+                    <div class="text-sm text-gray-12">Auto reload (local)</div>
+                    <div class="text-xs text-gray-7">
+                      Reload automatically after agents/skills/commands/config change (only when idle).
+                    </div>
+                    <Show when={!props.workspaceAutoReloadAvailable}>
+                      <div class="text-[11px] text-gray-9">Available for local workspaces in the desktop app.</div>
+                    </Show>
+                  </div>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={() => props.setWorkspaceAutoReloadEnabled(!props.workspaceAutoReloadEnabled)}
+                    disabled={props.busy || !props.workspaceAutoReloadAvailable}
+                  >
+                    {props.workspaceAutoReloadEnabled ? "On" : "Off"}
+                  </Button>
+                </div>
+
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0 space-y-1">
+                    <div class="text-sm text-gray-12">Resume sessions after auto reload</div>
+                    <div class="text-xs text-gray-7">
+                      If a reload was queued while tasks were running, send a resume message afterward.
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={() => props.setWorkspaceAutoReloadResumeEnabled(!props.workspaceAutoReloadResumeEnabled)}
+                    disabled={props.busy || !props.workspaceAutoReloadAvailable || !props.workspaceAutoReloadEnabled}
+                    title={props.workspaceAutoReloadEnabled ? "" : "Enable auto reload first"}
+                  >
+                    {props.workspaceAutoReloadResumeEnabled ? "On" : "Off"}
                   </Button>
                 </div>
               </div>

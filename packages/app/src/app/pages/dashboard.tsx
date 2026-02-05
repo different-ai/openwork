@@ -90,6 +90,11 @@ export type DashboardViewProps = {
   reloadWorkspaceEngine: () => Promise<void>;
   reloadBusy: boolean;
   reloadError: string | null;
+  workspaceAutoReloadAvailable: boolean;
+  workspaceAutoReloadEnabled: boolean;
+  setWorkspaceAutoReloadEnabled: (value: boolean) => void | Promise<void>;
+  workspaceAutoReloadResumeEnabled: boolean;
+  setWorkspaceAutoReloadResumeEnabled: (value: boolean) => void | Promise<void>;
   activeWorkspaceDisplay: WorkspaceInfo;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string;
@@ -765,6 +770,11 @@ export default function DashboardView(props: DashboardViewProps) {
                   reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                   reloadBusy={props.reloadBusy}
                   reloadError={props.reloadError}
+                  workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
+                  workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
+                  setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
+                  workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
+                  setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}

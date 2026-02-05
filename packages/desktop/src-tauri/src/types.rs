@@ -7,6 +7,8 @@ pub struct WorkspaceOpenworkConfig {
     pub workspace: Option<WorkspaceOpenworkWorkspace>,
     #[serde(default, alias = "authorizedRoots")]
     pub authorized_roots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reload: Option<WorkspaceOpenworkReload>,
 }
 
 impl Default for WorkspaceOpenworkConfig {
@@ -15,8 +17,16 @@ impl Default for WorkspaceOpenworkConfig {
             version: 1,
             workspace: None,
             authorized_roots: Vec::new(),
+            reload: None,
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceOpenworkReload {
+    pub auto: Option<bool>,
+    pub resume: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -46,6 +56,7 @@ impl WorkspaceOpenworkConfig {
                 preset: Some(preset.to_string()),
             }),
             authorized_roots: vec![workspace_path.to_string()],
+            reload: None,
         }
     }
 }

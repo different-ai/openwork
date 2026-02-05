@@ -260,7 +260,7 @@ const SkillCard = (props: {
         aria-label={props.type === "add" ? "Install skill" : "Edit skill"}
         class="rounded-lg p-2 text-gray-8 transition-colors hover:bg-gray-2 hover:text-gray-12"
       >
-        <Show when={props.type === "add"} fallback={<Edit2 size={14} />}>
+        <Show when={props.type === "add"} fallback={<Pencil size={14} />}>
           <Plus size={16} />
         </Show>
       </button>

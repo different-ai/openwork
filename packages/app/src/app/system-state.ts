@@ -148,7 +148,16 @@ export function createSystemState(options: {
       setReloadTrigger(trigger);
     } else {
       setReloadTrigger({
-        type: reason === "plugins" ? "plugin" : reason === "skills" ? "skill" : reason,
+        type:
+          reason === "plugins"
+            ? "plugin"
+            : reason === "skills"
+              ? "skill"
+              : reason === "agents"
+                ? "agent"
+                : reason === "commands"
+                  ? "command"
+                  : reason,
       });
     }
   }
@@ -180,6 +189,20 @@ export function createSystemState(options: {
       return {
         title: "Reload required",
         body: "OpenCode can cache skill discovery/state. Reload the engine to make newly installed skills available.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "agents") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads agents at startup. Reload the engine to make updated agents available.",
+      };
+    }
+
+    if (reasons.length === 1 && reasons[0] === "commands") {
+      return {
+        title: "Reload required",
+        body: "OpenCode loads commands at startup. Reload the engine to make updated commands available.",
       };
     }
 

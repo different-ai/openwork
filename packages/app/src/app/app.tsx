@@ -598,6 +598,7 @@ export default function App() {
 
   const sessionStore = createSessionStore({
     client,
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
     selectedSessionId,
     setSelectedSessionId,
     sessionModelState: () => ({
@@ -1706,6 +1707,7 @@ export default function App() {
   const [openworkReloadUnsupported, setOpenworkReloadUnsupported] = createSignal(false);
 
   const resolveOpenworkReloadTarget = () => {
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") return null;
     if (openworkServerStatus() !== "connected") return null;
     const client = openworkServerClient();
     if (!client) return null;
@@ -1816,11 +1818,111 @@ export default function App() {
     anyActiveRuns,
   } = systemState;
 
+  const [pendingReloadReasons, setPendingReloadReasons] = createSignal<ReloadReason[]>([]);
+  const [pendingReloadTrigger, setPendingReloadTrigger] = createSignal<ReloadTrigger | null>(null);
+  const [pendingReloadResume, setPendingReloadResume] = createSignal<
+    Array<{ sessionID: string; model: ModelRef; agent: string | null }>
+  >([]);
+  const [autoReloadInFlight, setAutoReloadInFlight] = createSignal(false);
+
+  const workspaceAutoReloadAvailable = createMemo(() =>
+    isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local",
+  );
+
+  const workspaceAutoReloadEnabled = createMemo(() => {
+    if (!workspaceAutoReloadAvailable()) return false;
+    const cfg = workspaceStore.workspaceConfig();
+    return Boolean(cfg?.reload?.auto);
+  });
+
+  const workspaceAutoReloadResumeEnabled = createMemo(() => {
+    if (!workspaceAutoReloadAvailable()) return false;
+    const cfg = workspaceStore.workspaceConfig();
+    return Boolean(cfg?.reload?.resume);
+  });
+
+  const setWorkspaceAutoReloadEnabled = async (next: boolean) => {
+    if (!workspaceAutoReloadAvailable()) return;
+    const cfg = workspaceStore.workspaceConfig();
+    const resume = Boolean(cfg?.reload?.resume);
+    await workspaceStore.persistReloadSettings({ auto: next, resume: next ? resume : false });
+  };
+
+  const setWorkspaceAutoReloadResumeEnabled = async (next: boolean) => {
+    if (!workspaceAutoReloadAvailable()) return;
+    const cfg = workspaceStore.workspaceConfig();
+    const auto = Boolean(cfg?.reload?.auto);
+    await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
+  };
+
+  const resumeSessionsAfterReload = async (entries: Array<{ sessionID: string; model: ModelRef; agent: string | null }>) => {
+    if (!entries.length) return;
+    const c = client();
+    if (!c) return;
+    const reasons = reloadReasons();
+    const label = reasons.length ? reasons.join(", ") : "config";
+    const text = `Hot reload applied (${label}). Continue where you left off.`;
+    for (const entry of entries) {
+      try {
+        await c.session.promptAsync({
+          sessionID: entry.sessionID,
+          model: entry.model,
+          agent: entry.agent ?? undefined,
+          variant: modelVariant() ?? undefined,
+          parts: [{ type: "text", text }],
+        });
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  const reloadWorkspaceEngineAndResume = async () => {
+    const snapshot = pendingReloadResume();
+    await reloadWorkspaceEngine();
+
+    // If reload failed, keep the snapshot for a later retry.
+    if (reloadRequired() || reloadError()) return;
+
+    if (workspaceAutoReloadResumeEnabled() && snapshot.length) {
+      await resumeSessionsAfterReload(snapshot);
+    }
+    setPendingReloadResume([]);
+  };
+
   const markReloadRequired = (
     reason: ReloadReason,
     options?: { force?: boolean; trigger?: ReloadTrigger },
   ) => {
     if (booting() || reloadBusy()) return;
+
+    if (!options?.force && anyActiveRuns()) {
+      setPendingReloadReasons((current) => (current.includes(reason) ? current : [...current, reason]));
+      if (options?.trigger) {
+        setPendingReloadTrigger(options.trigger);
+      }
+
+      const statuses = sessionStatusById();
+      const running = sessions().filter(
+        (s) => statuses[s.id] === "running" || statuses[s.id] === "retry",
+      );
+      if (running.length) {
+        setPendingReloadResume((current) => {
+          const existing = new Set(current.map((entry) => entry.sessionID));
+          const next = current.slice();
+          for (const s of running) {
+            if (!s?.id || existing.has(s.id)) continue;
+            const model = sessionModelOverrideById()[s.id] ?? sessionModelById()[s.id] ?? defaultModel();
+            const agent = sessionAgentById()[s.id] ?? null;
+            existing.add(s.id);
+            next.push({ sessionID: s.id, model, agent });
+          }
+          return next;
+        });
+      }
+      return;
+    }
+
     if (!options?.force) {
       const existingReasons = reloadReasons();
       if (reloadRequired() && existingReasons.includes(reason)) return;
@@ -1846,9 +1948,62 @@ export default function App() {
     markReloadRequiredRaw(reason, options?.trigger);
   };
 
+  createEffect(() => {
+    if (anyActiveRuns()) return;
+    if (reloadBusy()) return;
+    if (booting()) return;
+
+    const pending = pendingReloadReasons();
+    if (!pending.length) return;
+
+    // Promote queued reload signals only after active sessions finish.
+    const trigger = pendingReloadTrigger();
+    for (let i = 0; i < pending.length; i += 1) {
+      markReloadRequiredRaw(pending[i], i === 0 ? trigger ?? undefined : undefined);
+    }
+    setPendingReloadReasons([]);
+    setPendingReloadTrigger(null);
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!workspaceAutoReloadEnabled()) return;
+    if (anyActiveRuns()) return;
+    if (!reloadRequired()) return;
+    if (!canReloadEngine()) return;
+    if (reloadBusy() || autoReloadInFlight()) return;
+
+    const lastTriggeredAt = reloadLastTriggeredAt();
+    if (lastTriggeredAt && Date.now() - lastTriggeredAt < 600) return;
+
+    const timer = window.setTimeout(() => {
+      if (autoReloadInFlight()) return;
+      setAutoReloadInFlight(true);
+      void reloadWorkspaceEngineAndResume().finally(() => setAutoReloadInFlight(false));
+    }, 450);
+
+    onCleanup(() => {
+      window.clearTimeout(timer);
+    });
+  });
+
   const openworkReloadKey = createMemo(
-    () => `${openworkServerWorkspaceId() ?? ""}|${openworkServerUrl().trim()}`,
+    () => `${workspaceStore.activeWorkspaceDisplay().workspaceType}|${openworkServerWorkspaceId() ?? ""}|${openworkServerUrl().trim()}`,
   );
+
+  const reloadScopeKey = createMemo(() => {
+    const workspaceId = workspaceStore.activeWorkspaceId() ?? "";
+    return `${workspaceId}|${openworkReloadKey()}`;
+  });
+
+  createEffect(() => {
+    // Prevent reload toasts / queued reloads from bleeding across workspaces.
+    reloadScopeKey();
+    clearReloadRequired();
+    setPendingReloadReasons([]);
+    setPendingReloadTrigger(null);
+    setPendingReloadResume([]);
+  });
 
   createEffect(() => {
     openworkReloadKey();
@@ -1860,9 +2015,10 @@ export default function App() {
     if (typeof window === "undefined") return;
     if (!documentVisible()) return;
     if (openworkReloadUnsupported()) return;
-    const client = openworkServerClient();
-    const workspaceId = openworkServerWorkspaceId();
-    if (!client || openworkServerStatus() !== "connected" || !workspaceId) return;
+    const target = resolveOpenworkReloadTarget();
+    if (!target || openworkServerStatus() !== "connected") return;
+    const client = target.client;
+    const workspaceId = target.workspaceId;
 
     let active = true;
     let busy = false;
@@ -1946,6 +2102,26 @@ export default function App() {
       };
     }
 
+    if (reason === "agents") {
+      const match = normalized.match(/\/\.opencode\/(?:agent|agents)\/([^/]+)/i);
+      return {
+        type: "agent",
+        name: match?.[1],
+        action: "updated",
+        path: rawPath,
+      };
+    }
+
+    if (reason === "commands") {
+      const match = normalized.match(/\/\.opencode\/(?:command|commands)\/([^/]+)/i);
+      return {
+        type: "command",
+        name: match?.[1]?.replace(/\.md$/i, ""),
+        action: "updated",
+        path: rawPath,
+      };
+    }
+
     return {
       type: "config",
       name: fileName,
@@ -2010,7 +2186,9 @@ export default function App() {
           rawReason === "plugins" ||
             rawReason === "skills" ||
             rawReason === "config" ||
-            rawReason === "mcp"
+            rawReason === "mcp" ||
+            rawReason === "agents" ||
+            rawReason === "commands"
             ? rawReason
             : "config";
 
@@ -2038,7 +2216,7 @@ export default function App() {
         const trigger =
           extractReloadTriggerFromPath(reason, event.payload?.path) ??
           {
-            type: reason === "plugins" ? "plugin" : reason === "skills" ? "skill" : reason,
+            type: reason === "plugins" ? "plugin" : reason === "skills" ? "skill" : reason === "agents" ? "agent" : reason === "commands" ? "command" : reason,
             action: "updated",
           };
 
@@ -2756,7 +2934,7 @@ export default function App() {
         }
         mcpEntryConfig["command"] = entry.command;
       }
-      if (canUseOpenworkServer) {
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.addMcp(openworkWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
@@ -3675,9 +3853,14 @@ export default function App() {
       resetOpenworkServerSettings,
       testOpenworkServerConnection,
       canReloadWorkspace: canReloadWorkspace(),
-      reloadWorkspaceEngine,
+      reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
       reloadBusy: reloadBusy(),
       reloadError: reloadError(),
+      workspaceAutoReloadAvailable: workspaceAutoReloadAvailable(),
+      workspaceAutoReloadEnabled: workspaceAutoReloadEnabled(),
+      setWorkspaceAutoReloadEnabled,
+      workspaceAutoReloadResumeEnabled: workspaceAutoReloadResumeEnabled(),
+      setWorkspaceAutoReloadResumeEnabled,
       activeWorkspaceDisplay: activeWorkspaceDisplay(),
       workspaces: workspaceStore.workspaces(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
@@ -3796,7 +3979,7 @@ export default function App() {
       refreshMcpServers,
       showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
       mcpReloadBlocked: anyActiveRuns(),
-      reloadMcpEngine: () => reloadWorkspaceEngine(),
+      reloadMcpEngine: () => reloadWorkspaceEngineAndResume(),
       language: currentLocale(),
       setLanguage: setLocale,
     };
@@ -3826,6 +4009,7 @@ export default function App() {
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     setView,
+    tab: tab(),
     setTab,
     setSettingsTab,
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
@@ -4094,7 +4278,7 @@ export default function App() {
           setMcpAuthEntry(null);
           await refreshMcpServers();
         }}
-        onReloadEngine={() => reloadWorkspaceEngine()}
+        onReloadEngine={() => reloadWorkspaceEngineAndResume()}
       />
 
       <ReloadWorkspaceToast
@@ -4110,7 +4294,7 @@ export default function App() {
         busy={reloadBusy()}
         canReload={canReloadEngine()}
         hasActiveRuns={anyActiveRuns()}
-        onReload={() => reloadWorkspaceEngine()}
+        onReload={() => reloadWorkspaceEngineAndResume()}
         onDismiss={() => setReloadToastDismissedAt(Date.now())}
       />
 
