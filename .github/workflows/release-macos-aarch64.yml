@@ -569,7 +569,7 @@ jobs:
   publish-npm:
     name: Publish npm packages
     needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_npm == 'true'
+    if: needs.resolve-release.outputs.publish_npm == 'true' && secrets.NPM_TOKEN != ''
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -724,7 +724,13 @@ jobs:
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev
 
+      - name: Skip AUR publish (missing key)
+        if: secrets.AUR_SSH_PRIVATE_KEY == ''
+        run: |
+          echo "AUR_SSH_PRIVATE_KEY not set; skipping publish to AUR."
+
       - name: Publish to AUR
+        if: secrets.AUR_SSH_PRIVATE_KEY != ''
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}

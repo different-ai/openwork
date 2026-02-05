@@ -52,3 +52,11 @@ Required repo config:
 
 - GitHub Actions secret: `AUR_SSH_PRIVATE_KEY` (SSH key with push access to the AUR package repo)
 - Optional repo variable: `AUR_REPO` (defaults to `openwork`)
+
+## npm publishing
+
+If you want `Release App` to publish `openwrk`, `openwork-server`, and `owpenwork` to npm, configure:
+
+- GitHub Actions secret: `NPM_TOKEN` (npm automation token)
+
+If `NPM_TOKEN` is not set, the npm publish job is skipped.
