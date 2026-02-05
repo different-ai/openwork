@@ -569,7 +569,7 @@ jobs:
   publish-npm:
     name: Publish npm packages
     needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_npm == 'true' && secrets.NPM_TOKEN != ''
+    if: needs.resolve-release.outputs.publish_npm == 'true'
     runs-on: ubuntu-latest
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
@@ -656,27 +656,38 @@ jobs:
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
 
       - name: Ensure npm auth
-        if: steps.npm-versions.outputs.publish_any == 'true'
+        id: npm-auth
+        shell: bash
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          PUBLISH_ANY: ${{ steps.npm-versions.outputs.publish_any }}
         run: |
           set -euo pipefail
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN is required to publish packages." >&2
-            exit 1
+
+          if [ "${PUBLISH_ANY}" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+
+          if [ -z "${NPM_TOKEN:-}" ]; then
+            echo "NPM_TOKEN not set; skipping npm publish."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
 
       - name: Publish openwork-server
-        if: steps.npm-versions.outputs.publish_server == 'true'
+        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter openwork-server publish --access public --no-git-checks
 
       - name: Publish owpenwork
-        if: steps.npm-versions.outputs.publish_owpenbot == 'true'
+        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_owpenbot == 'true'
         run: pnpm --filter owpenwork publish --access public --no-git-checks
 
       - name: Publish openwrk
-        if: steps.npm-versions.outputs.publish_openwrk == 'true'
+        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_openwrk == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           OPENWRK_VERSION: ${{ steps.package-versions.outputs.openwrk }}
@@ -724,15 +735,15 @@ jobs:
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev
 
-      - name: Skip AUR publish (missing key)
-        if: secrets.AUR_SSH_PRIVATE_KEY == ''
-        run: |
-          echo "AUR_SSH_PRIVATE_KEY not set; skipping publish to AUR."
-
       - name: Publish to AUR
-        if: secrets.AUR_SSH_PRIVATE_KEY != ''
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
           AUR_SKIP_UPDATE: "1"
-        run: scripts/aur/publish-aur.sh "$RELEASE_TAG"
+        run: |
+          set -euo pipefail
+          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
+            echo "AUR_SSH_PRIVATE_KEY not set; skipping publish to AUR."
+            exit 0
+          fi
+          scripts/aur/publish-aur.sh "$RELEASE_TAG"
