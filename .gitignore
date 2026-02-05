@@ -6,6 +6,9 @@ dist/
 packages/*/dist/
 tmp/
 
+# Local git worktrees
+_worktrees/
+
 # Tauri/Rust
 packages/desktop/src-tauri/target/
 packages/desktop/src-tauri/sidecars/

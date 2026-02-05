@@ -689,23 +689,44 @@ jobs:
           fi
           pnpm --filter openwrk publish --access public --no-git-checks
 
-  aur-pr:
-    name: Open AUR update PR
+  aur-publish:
+    name: Publish AUR
     needs: [resolve-release, publish-tauri]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     env:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
-      - name: Checkout
+      - name: Checkout dev
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: dev
           fetch-depth: 0
 
-      - name: Open AUR update PR
+      - name: Update AUR packaging files
+        run: scripts/aur/update-aur.sh "$RELEASE_TAG"
+
+      - name: Commit packaging update to dev
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! git status --porcelain -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO | grep -q .; then
+            echo "AUR packaging already up to date in dev."
+            exit 0
+          fi
+
+          version="${RELEASE_TAG#v}"
+          git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
+          git -c user.name="OpenWork Release Bot" \
+              -c user.email="release-bot@users.noreply.github.com" \
+              commit -m "chore(aur): update PKGBUILD for ${version}"
+          git push origin HEAD:dev
+
+      - name: Publish to AUR
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/aur/open-pr.sh "$RELEASE_TAG"
+          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
+          AUR_SKIP_UPDATE: "1"
+        run: scripts/aur/publish-aur.sh "$RELEASE_TAG"
