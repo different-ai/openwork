@@ -105,7 +105,7 @@ export type DashboardViewProps = {
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
-  exportWorkspaceConfig: () => void;
+  exportWorkspaceConfig: (workspaceId?: string) => void;
   exportWorkspaceBusy: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   selectedSessionId: string | null;
@@ -526,6 +526,15 @@ export default function DashboardView(props: DashboardViewProps) {
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
       return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
     }
+    return null;
+  });
+
+  const exportDisabledReason = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return "Export is available for local workspaces in the desktop app.";
+    if (ws.workspaceType === "remote") return "Export is only supported for local workspaces.";
+    if (!isTauriRuntime()) return "Export is available in the desktop app.";
+    if (props.exportWorkspaceBusy) return "Export is already running.";
     return null;
   });
 
@@ -1099,7 +1108,16 @@ export default function DashboardView(props: DashboardViewProps) {
           workspaceDetail={shareWorkspaceDetail()}
           fields={shareFields()}
           note={shareNote()}
-          exportDisabledReason={"Export is available for local workspaces in the desktop app."}
+          onExportConfig={
+            exportDisabledReason()
+              ? undefined
+              : () => {
+                const id = shareWorkspaceId();
+                if (!id) return;
+                props.exportWorkspaceConfig(id);
+              }
+          }
+          exportDisabledReason={exportDisabledReason()}
           onOpenBots={() => openSettings("messaging")}
         />
 

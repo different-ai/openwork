@@ -1293,19 +1293,24 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function exportWorkspaceConfig() {
+  async function exportWorkspaceConfig(workspaceId?: string) {
     if (exportingWorkspaceConfig()) return;
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
 
-    const active = activeWorkspaceInfo();
-    if (!active) {
+    const targetId = workspaceId?.trim() || activeWorkspaceInfo()?.id || "";
+    if (!targetId) {
       options.setError("Select a workspace to export");
       return;
     }
-    if (active.workspaceType === "remote") {
+    const target = workspaces().find((ws) => ws.id === targetId) ?? null;
+    if (!target) {
+      options.setError("Unknown workspace");
+      return;
+    }
+    if (target.workspaceType === "remote") {
       options.setError("Export is only supported for local workspaces");
       return;
     }
@@ -1314,7 +1319,7 @@ export function createWorkspaceStore(options: {
     options.setError(null);
 
     try {
-      const nameBase = (active.displayName || active.name || "workspace")
+      const nameBase = (target.displayName || target.name || "workspace")
         .toLowerCase()
         .replace(/[^a-z0-9-_]+/g, "-")
         .replace(/^-+|-+$/g, "")
@@ -1335,7 +1340,7 @@ export function createWorkspaceStore(options: {
       }
 
       await workspaceExportConfig({
-        workspaceId: active.id,
+        workspaceId: target.id,
         outputPath,
       });
     } catch (e) {

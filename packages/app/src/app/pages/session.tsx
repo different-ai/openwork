@@ -20,7 +20,7 @@ import type {
   WorkspaceSessionGroup,
 } from "../types";
 
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, OpenworkServerInfo, WorkspaceInfo } from "../lib/tauri";
 
 import {
   Box,
@@ -42,8 +42,9 @@ import {
 import Button from "../components/button";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal from "../components/provider-auth-modal";
+import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
-import type { OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
 
@@ -73,8 +74,13 @@ export type SessionViewProps = {
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
+  exportWorkspaceConfig: (workspaceId?: string) => void;
+  exportWorkspaceBusy: boolean;
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
+  openworkServerSettings: OpenworkServerSettings;
+  openworkServerHostInfo: OpenworkServerInfo | null;
+  engineInfo: EngineInfo | null;
   stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
@@ -222,6 +228,7 @@ export default function SessionView(props: SessionViewProps) {
   };
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(null);
   let workspaceMenuRef: HTMLDivElement | undefined;
+  const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
 
@@ -786,6 +793,116 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
+  const shareWorkspace = createMemo(() => {
+    const id = shareWorkspaceId();
+    if (!id) return null;
+    return props.workspaces.find((ws) => ws.id === id) ?? null;
+  });
+
+  const shareWorkspaceName = createMemo(() => {
+    const ws = shareWorkspace();
+    return ws ? workspaceLabel(ws) : "";
+  });
+
+  const shareWorkspaceDetail = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return "";
+    if (ws.workspaceType === "remote") {
+      if (ws.remoteType === "openwork") {
+        return ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      }
+      return ws.baseUrl?.trim() || "";
+    }
+    return ws.path?.trim() || "";
+  });
+
+  const shareFields = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) {
+      return [] as Array<{
+        label: string;
+        value: string;
+        secret?: boolean;
+        placeholder?: string;
+        hint?: string;
+      }>;
+    }
+
+    if (ws.workspaceType !== "remote") {
+      const url =
+        props.openworkServerHostInfo?.connectUrl?.trim() ||
+        props.openworkServerHostInfo?.lanUrl?.trim() ||
+        props.openworkServerHostInfo?.mdnsUrl?.trim() ||
+        props.openworkServerHostInfo?.baseUrl?.trim() ||
+        "";
+      const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
+      return [
+        {
+          label: "OpenWork server URL",
+          value: url,
+          placeholder: isTauriRuntime() ? "Starting server..." : "Desktop app required",
+        },
+        {
+          label: "Access token",
+          value: token,
+          secret: true,
+          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          hint: "Use on phones or laptops connecting to this host.",
+        },
+      ];
+    }
+
+    if (ws.remoteType === "openwork") {
+      const url = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const token = props.openworkServerSettings.token?.trim() || "";
+      return [
+        {
+          label: "OpenWork host URL",
+          value: url,
+        },
+        {
+          label: "Access token",
+          value: token,
+          secret: true,
+          placeholder: token ? undefined : "Set token in Settings",
+          hint: "This is the token used for your current server connection.",
+        },
+      ];
+    }
+
+    const baseUrl = ws.baseUrl?.trim() || ws.path?.trim() || "";
+    const directory = ws.directory?.trim() || "";
+    return [
+      {
+        label: "OpenCode base URL",
+        value: baseUrl,
+      },
+      {
+        label: "Directory",
+        value: directory,
+        placeholder: "(auto)",
+      },
+    ];
+  });
+
+  const shareNote = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return null;
+    if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
+      return "Engine runtime is set to Direct. Switching local workspaces can restart the host and disconnect clients. The token may change after a restart.";
+    }
+    return null;
+  });
+
+  const exportDisabledReason = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return "Export is available for local workspaces in the desktop app.";
+    if (ws.workspaceType === "remote") return "Export is only supported for local workspaces.";
+    if (!isTauriRuntime()) return "Export is available in the desktop app.";
+    if (props.exportWorkspaceBusy) return "Export is already running.";
+    return null;
+  });
+
   const handleSendPrompt = (draft: ComposerDraft) => {
     setScrollOnNextUpdate(true);
     scrollToLatest("auto");
@@ -982,6 +1099,16 @@ export default function SessionView(props: SessionViewProps) {
                             }}
                           >
                             Edit name
+                          </button>
+                          <button
+                            type="button"
+                            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                            onClick={() => {
+                              setShareWorkspaceId(workspace().id);
+                              setWorkspaceMenuId(null);
+                            }}
+                          >
+                            Share...
                           </button>
                           <Show when={workspace().workspaceType === "remote"}>
                             <button
@@ -1540,6 +1667,26 @@ export default function SessionView(props: SessionViewProps) {
         onClose={closeRenameModal}
         onSave={submitRename}
         onTitleChange={setRenameTitle}
+      />
+
+      <ShareWorkspaceModal
+        open={Boolean(shareWorkspaceId())}
+        onClose={() => setShareWorkspaceId(null)}
+        workspaceName={shareWorkspaceName()}
+        workspaceDetail={shareWorkspaceDetail()}
+        fields={shareFields()}
+        note={shareNote()}
+        onExportConfig={
+          exportDisabledReason()
+            ? undefined
+            : () => {
+              const id = shareWorkspaceId();
+              if (!id) return;
+              props.exportWorkspaceConfig(id);
+            }
+        }
+        exportDisabledReason={exportDisabledReason()}
+        onOpenBots={() => openSettings("messaging")}
       />
 
       <Show when={props.activePermission}>
