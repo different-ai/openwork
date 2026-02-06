@@ -208,6 +208,7 @@ pub fn workspace_create(
         directory: None,
         display_name: None,
         openwork_host_url: None,
+        openwork_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
     });
@@ -232,6 +233,7 @@ pub fn workspace_create_remote(
     display_name: Option<String>,
     remote_type: Option<RemoteType>,
     openwork_host_url: Option<String>,
+    openwork_token: Option<String>,
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
     watch_state: State<WorkspaceWatchState>,
@@ -254,6 +256,10 @@ pub fn workspace_create_remote(
         .filter(|value| !value.is_empty());
 
     let openwork_host_url = openwork_host_url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    let openwork_token = openwork_token
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
@@ -303,6 +309,7 @@ pub fn workspace_create_remote(
         directory,
         display_name,
         openwork_host_url,
+        openwork_token,
         openwork_workspace_id,
         openwork_workspace_name,
     });
@@ -327,6 +334,7 @@ pub fn workspace_update_remote(
     display_name: Option<String>,
     remote_type: Option<RemoteType>,
     openwork_host_url: Option<String>,
+    openwork_token: Option<String>,
     openwork_workspace_id: Option<String>,
     openwork_workspace_name: Option<String>,
 ) -> Result<WorkspaceList, String> {
@@ -385,6 +393,12 @@ pub fn workspace_update_remote(
             return Err("openworkHostUrl must start with http:// or https://".to_string());
         }
         entry.openwork_host_url = Some(next_host_url);
+    }
+
+    if openwork_token.is_some() {
+        entry.openwork_token = openwork_token
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
     }
 
     if openwork_workspace_id.is_some() {
@@ -853,6 +867,7 @@ pub fn workspace_import_config(
         directory: None,
         display_name: None,
         openwork_host_url: None,
+        openwork_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
     });

@@ -359,7 +359,7 @@ export function createWorkspaceStore(options: {
         return false;
       }
 
-      const token = options.openworkServerSettings().token ?? undefined;
+      const token = workspace.openworkToken?.trim() || options.openworkServerSettings().token || undefined;
       try {
         const resolved = await resolveOpenworkHost({ hostUrl, token });
         if (resolved.kind !== "openwork") {
@@ -494,11 +494,19 @@ export function createWorkspaceStore(options: {
             return false;
           }
 
+          const workspaceToken = next.openworkToken?.trim() ?? "";
+          const fallbackToken = options.openworkServerSettings().token ?? "";
+          const token = workspaceToken || fallbackToken;
+
           const currentSettings = options.openworkServerSettings();
-          if (currentSettings.urlOverride?.trim() !== hostUrl) {
+          if (
+            currentSettings.urlOverride?.trim() !== hostUrl ||
+            (token && currentSettings.token?.trim() !== token)
+          ) {
             options.updateOpenworkServerSettings({
               ...currentSettings,
               urlOverride: hostUrl,
+              token: token || currentSettings.token,
             });
           }
 
@@ -510,7 +518,7 @@ export function createWorkspaceStore(options: {
           try {
             const resolved = await resolveOpenworkHost({
               hostUrl,
-              token: options.openworkServerSettings().token ?? undefined,
+              token,
             });
             if (resolved.kind === "openwork") {
               resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -564,6 +572,7 @@ export function createWorkspaceStore(options: {
                 baseUrl: resolvedBaseUrl,
                 directory: resolvedDirectory || null,
                 openworkHostUrl: hostUrl,
+                openworkToken: token ? token : null,
                 openworkWorkspaceId: workspaceInfo?.id ?? next.openworkWorkspaceId ?? null,
                 openworkWorkspaceName: workspaceInfo?.name ?? next.openworkWorkspaceName ?? null,
               });
@@ -1049,6 +1058,7 @@ export function createWorkspaceStore(options: {
           displayName,
           remoteType,
           openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
+          openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
         });
@@ -1067,6 +1077,7 @@ export function createWorkspaceStore(options: {
           directory: finalDirectory || null,
           displayName,
           openworkHostUrl: remoteType === "openwork" ? resolvedHostUrl : null,
+          openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
         };
@@ -1124,7 +1135,11 @@ export function createWorkspaceStore(options: {
       normalizeOpenworkServerUrl(
         input.openworkHostUrl ?? workspace.openworkHostUrl ?? workspace.baseUrl ?? "",
       ) ?? "";
-    const token = input.openworkToken?.trim() ?? options.openworkServerSettings().token ?? "";
+    const token =
+      input.openworkToken?.trim() ??
+      workspace.openworkToken?.trim() ??
+      options.openworkServerSettings().token ??
+      "";
     const directory = input.directory?.trim() ?? "";
     const displayName = input.displayName?.trim() || null;
 
@@ -1204,6 +1219,7 @@ export function createWorkspaceStore(options: {
           directory: finalDirectory ? finalDirectory : null,
           displayName,
           openworkHostUrl: resolvedHostUrl,
+          openworkToken: token ? token : null,
           openworkWorkspaceId: openworkWorkspace?.id ?? workspace.openworkWorkspaceId ?? null,
           openworkWorkspaceName: openworkWorkspace?.name ?? workspace.openworkWorkspaceName ?? null,
         });
@@ -1223,6 +1239,7 @@ export function createWorkspaceStore(options: {
                 directory: finalDirectory ? finalDirectory : null,
                 displayName,
                 openworkHostUrl: resolvedHostUrl,
+                openworkToken: token ? token : null,
                 openworkWorkspaceId: openworkWorkspace?.id ?? item.openworkWorkspaceId ?? null,
                 openworkWorkspaceName: openworkWorkspace?.name ?? item.openworkWorkspaceName ?? null,
               }

@@ -70,6 +70,7 @@ pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo,
         directory: None,
         display_name: None,
         openwork_host_url: None,
+        openwork_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
     })

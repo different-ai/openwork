@@ -854,7 +854,10 @@ export default function SessionView(props: SessionViewProps) {
 
     if (ws.remoteType === "openwork") {
       const url = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
-      const token = props.openworkServerSettings.token?.trim() || "";
+      const token =
+        ws.openworkToken?.trim() ||
+        props.openworkServerSettings.token?.trim() ||
+        "";
       return [
         {
           label: "OpenWork host URL",
@@ -865,7 +868,7 @@ export default function SessionView(props: SessionViewProps) {
           value: token,
           secret: true,
           placeholder: token ? undefined : "Set token in Settings",
-          hint: "This is the token used for your current server connection.",
+          hint: "This token grants access to the workspace on that host.",
         },
       ];
     }
