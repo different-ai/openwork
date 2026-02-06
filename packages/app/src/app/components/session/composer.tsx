@@ -52,6 +52,9 @@ type ComposerProps = {
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const IMAGE_COMPRESS_MAX_PX = 2048;
+const IMAGE_COMPRESS_QUALITY = 0.82;
+const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
 
@@ -67,6 +70,59 @@ const fileToDataUrl = (file: File) =>
     };
     reader.readAsDataURL(file);
   });
+
+/**
+ * Compress an image file to JPEG using OffscreenCanvas (off main thread when possible).
+ * Falls back to regular canvas if OffscreenCanvas is unavailable.
+ * Returns a new File with compressed data, or the original if compression isn't beneficial.
+ */
+const compressImageFile = async (file: File): Promise<File> => {
+  // Skip GIFs (animated) and already-small images
+  if (file.type === "image/gif" || file.size <= IMAGE_COMPRESS_TARGET_BYTES) {
+    return file;
+  }
+
+  const bitmap = await createImageBitmap(file);
+  const { width, height } = bitmap;
+
+  // Calculate scaled dimensions
+  const maxDim = Math.max(width, height);
+  const scale = maxDim > IMAGE_COMPRESS_MAX_PX ? IMAGE_COMPRESS_MAX_PX / maxDim : 1;
+  const targetW = Math.round(width * scale);
+  const targetH = Math.round(height * scale);
+
+  let blob: Blob | null = null;
+
+  if (typeof OffscreenCanvas !== "undefined") {
+    const offscreen = new OffscreenCanvas(targetW, targetH);
+    const ctx = offscreen.getContext("2d");
+    if (ctx) {
+      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+      blob = await offscreen.convertToBlob({ type: "image/jpeg", quality: IMAGE_COMPRESS_QUALITY });
+    }
+  }
+
+  if (!blob) {
+    const canvas = document.createElement("canvas");
+    canvas.width = targetW;
+    canvas.height = targetH;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
+    blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", IMAGE_COMPRESS_QUALITY),
+    );
+  }
+
+  bitmap.close();
+
+  if (!blob || blob.size >= file.size) {
+    return file; // Compression didn't help
+  }
+
+  const ext = file.name.replace(/\.[^.]+$/, "");
+  return new File([blob], `${ext || "image"}.jpg`, { type: "image/jpeg" });
+};
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
@@ -677,13 +733,21 @@ export default function Composer(props: ComposerProps) {
         continue;
       }
       try {
-        const dataUrl = await fileToDataUrl(file);
+        // Compress images before encoding to data URL
+        const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
+        const dataUrl = await fileToDataUrl(processed);
+        // Pre-check: data URL will be embedded in JSON body; reject if too large
+        const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead
+        if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
+          props.onToast(`${file.name} is too large after encoding. Try a smaller image.`);
+          continue;
+        }
         next.push({
-          id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-          name: file.name,
-          mimeType: file.type || "application/octet-stream",
-          size: file.size,
-          kind: isImageMime(file.type) ? "image" : "file",
+          id: `${processed.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
+          name: processed.name,
+          mimeType: processed.type || "application/octet-stream",
+          size: processed.size,
+          kind: isImageMime(processed.type) ? "image" : "file",
           dataUrl,
         });
       } catch (error) {
