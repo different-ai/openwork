@@ -197,6 +197,23 @@ export function startServer(config: ServerConfig) {
         }
       }
 
+      // Allow clients to use a mounted base URL (e.g. http://host:8787/w/<id>) while
+      // still calling the existing /workspace/:id/* API surface.
+      // Example: baseUrl + "/workspace/<id>/plugins" => "/w/<id>/workspace/<id>/plugins".
+      // We strip the mount prefix and route-match on the rest path.
+      //
+      // Important: when using a mounted base URL, enforce that the nested /workspace/:id
+      // matches the mount workspace id to preserve the "single-workspace" mental model.
+      if (mount && mount.restPath.startsWith("/workspace/")) {
+        const match = mount.restPath.match(/^\/workspace\/([^/]+)/);
+        const nestedId = match?.[1] ? decodeURIComponent(match[1]) : null;
+        if (nestedId && nestedId !== mount.workspaceId) {
+          errorMessage = "not_found";
+          return finalize(jsonResponse({ code: "not_found", message: "Not found" }, 404));
+        }
+        url.pathname = mount.restPath;
+      }
+
       if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
@@ -506,8 +523,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
   });
 
   addRoute(routes, "GET", "/workspaces", "client", async () => {
-    const active = config.workspaces[0];
-    const items = active ? [serializeWorkspace(active)] : [];
+    const active = config.workspaces[0] ?? null;
+    const items = config.workspaces.map(serializeWorkspace);
     return jsonResponse({ items, activeId: active?.id ?? null });
   });
 
