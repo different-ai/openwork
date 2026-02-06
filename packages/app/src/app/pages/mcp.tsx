@@ -9,18 +9,13 @@ import Button from "../components/button";
 import {
   CheckCircle2,
   CircleAlert,
-  ChevronDown,
-  ChevronRight,
-  Copy,
   ExternalLink,
   FolderOpen,
   Loader2,
   PlugZap,
-  RefreshCcw,
-  Server,
+  Plus,
   Settings,
 } from "lucide-solid";
-import TextInput from "../components/text-input";
 import { currentLocale, t, type Language } from "../../i18n";
 
 export type McpViewProps = {
@@ -76,7 +71,6 @@ const statusLabel = (status: "connected" | "needs_auth" | "needs_client_registra
 export default function McpView(props: McpViewProps) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
-  const [showDangerousContent, setShowDangerousContent] = createSignal(true);
 
   const [configScope, setConfigScope] = createSignal<"project" | "global">("project");
   const [projectConfig, setProjectConfig] = createSignal<OpencodeConfigFile | null>(null);
@@ -179,330 +173,386 @@ export default function McpView(props: McpViewProps) {
 
   const canConnect = () => !props.busy;
 
+  let editConfigRef: HTMLDivElement | undefined;
+  const scrollToEditConfig = () => {
+    editConfigRef?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <section class="space-y-10">
-        <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 md:p-8 space-y-4">
-          <div class="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h2 class="text-2xl font-bold text-dls-text">{translate("mcp.title")}</h2>
-              <p class="text-sm text-dls-secondary mt-1">
-                {translate("mcp.description")}
-              </p>
-            </div>
-            <div class="text-xs text-dls-secondary text-right">
-              <div>{props.mcpServers.length} {translate("mcp.configured")}</div>
-              <Show when={props.mcpLastUpdatedAt}>
-                <div>{translate("mcp.updated")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}</div>
-              </Show>
-            </div>
+      <div class="space-y-2">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div class="space-y-2">
+            <h2 class="text-3xl font-bold text-dls-text">{translate("mcp.title")}</h2>
+            <p class="text-sm text-dls-secondary">
+              {translate("mcp.description")} {" "}
+              <a
+                href="https://opencode.ai/docs/mcp-servers/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1.5 text-dls-secondary hover:text-dls-text underline decoration-dls-border underline-offset-4 transition-colors"
+              >
+                <ExternalLink size={12} />
+                {translate("mcp.docs_link")}
+              </a>
+            </p>
           </div>
-          <Show when={props.mcpStatus}>
-            <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
-              {props.mcpStatus}
+          <div class="text-xs text-dls-secondary text-right">
+            <div>
+              {props.mcpServers.length} {translate("mcp.configured")}
             </div>
-          </Show>
-        </div>
-
-        <div class="grid gap-8 lg:grid-cols-[1.5fr_1fr] animate-in fade-in slide-in-from-top-11 duration-300">
-          <div class="space-y-6">
-
-            <Show when={props.showMcpReloadBanner}>
-              <div class="bg-dls-hover border border-dls-border rounded-xl px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                  <div class="text-sm font-semibold text-dls-text">{translate("mcp.reload_banner_title")}</div>
-                  <div class="text-xs text-dls-secondary">
-                    {props.reloadBlocked
-                      ? translate("mcp.reload_banner_description_blocked")
-                      : translate("mcp.reload_banner_description")}
-                  </div>
-                </div>
-                <Button
-                  variant="secondary"
-                  onClick={() => props.reloadMcpEngine()}
-                  disabled={props.reloadBlocked}
-                  title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
-                >
-                  {translate("mcp.reload_engine")}
-                </Button>
+            <Show when={props.mcpLastUpdatedAt}>
+              <div>
+                {translate("mcp.updated")} {formatRelativeTime(props.mcpLastUpdatedAt ?? Date.now())}
               </div>
             </Show>
+          </div>
+        </div>
 
-            <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 space-y-4">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-semibold text-dls-text">{translate("mcp.quick_connect_title")}</div>
-                <div class="text-[11px] text-dls-secondary">{translate("mcp.oauth_only_label")}</div>
+        <Show when={props.mcpStatus}>
+          <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
+            {props.mcpStatus}
+          </div>
+        </Show>
+      </div>
+
+      <div class="grid gap-8 lg:grid-cols-[1.5fr_1fr] animate-in fade-in slide-in-from-top-11 duration-300">
+        <div class="space-y-8">
+          <Show when={props.showMcpReloadBanner}>
+            <div class="bg-dls-hover border border-dls-border rounded-xl px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div class="text-sm font-semibold text-dls-text">{translate("mcp.reload_banner_title")}</div>
+                <div class="text-xs text-dls-secondary">
+                  {props.reloadBlocked
+                    ? translate("mcp.reload_banner_description_blocked")
+                    : translate("mcp.reload_banner_description")}
+                </div>
               </div>
-              <div class="grid gap-3">
-                <For each={quickConnectList()}>
-                  {(entry) => (
-                    <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-3">
-                      <div class="flex items-start justify-between gap-4">
-                        <div>
-                          <div class="text-sm font-semibold text-dls-text">{entry.name}</div>
-                          <div class="text-xs text-dls-secondary mt-1">{entry.description}</div>
-                          <div class="text-xs text-dls-secondary font-mono mt-1">
-                            {entry.type === "local" ? entry.command?.join(" ") : entry.url}
-                          </div>
-                        </div>
-                        <div class="flex flex-col items-end gap-2">
-                          <Show
-                            when={!isQuickConnectConnected(entry.name)}
-                            fallback={
-                              <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-3 border border-green-6">
-                                <CheckCircle2 size={16} class="text-green-11" />
-                                <span class="text-sm text-green-11">{translate("mcp.connected_status")}</span>
-                              </div>
-                            }
-                          >
-                            <Button
-                              variant="secondary"
-                              onClick={() => props.connectMcp(entry)}
-                              disabled={!canConnect() || props.mcpConnectingName === entry.name}
-                            >
-                              {props.mcpConnectingName === entry.name ? (
-                                <>
-                                  <Loader2 size={16} class="animate-spin" />
-                                  {translate("mcp.connecting")}
-                                </>
-                              ) : (
-                                <>
-                                  <PlugZap size={16} />
-                                  {translate("mcp.connect")}
-                                </>
-                              )}
-                            </Button>
-                          </Show>
-                          <Show when={quickConnectStatus(entry.name)}>
-                            {(status) => (
-                              <Show when={status().status !== "connected"}>
-                                <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status().status)}`}>
-                                  {statusLabel(status().status, currentLocale())}
-                                </div>
-                              </Show>
-                            )}
-                          </Show>
-                        </div>
-                      </div>
-                      <div class="text-[11px] text-dls-secondary">{translate("mcp.no_env_vars")}</div>
-                    </div>
-                  )}
-                </For>
+              <Button
+                variant="secondary"
+                onClick={() => props.reloadMcpEngine()}
+                disabled={props.reloadBlocked}
+                title={props.reloadBlocked ? translate("mcp.reload_banner_blocked_hint") : undefined}
+              >
+                {translate("mcp.reload_engine")}
+              </Button>
+            </div>
+          </Show>
+
+          <div class="space-y-4">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+              <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
+                {translate("mcp.connected_title")}
+              </h3>
+              <div class="flex items-center gap-3">
+                <div class="text-[11px] text-dls-secondary">{translate("mcp.from_opencode_json")}</div>
+                <button
+                  type="button"
+                  onClick={scrollToEditConfig}
+                  class="flex items-center gap-1.5 text-xs font-medium text-dls-secondary hover:text-dls-text transition-colors"
+                >
+                  <Plus size={14} />
+                  {translate("mcp.add_mcp")}
+                </button>
               </div>
             </div>
 
-            <div class="bg-dls-surface border border-dls-border rounded-2xl p-5 space-y-4">
-              <div class="flex items-center justify-between">
-                <div class="text-sm font-medium text-dls-text">{translate("mcp.connected_title")}</div>
-                <div class="text-[11px] text-dls-secondary">{translate("mcp.from_opencode_json")}</div>
+            <Show
+              when={props.mcpServers.length}
+              fallback={
+                <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
+                  {translate("mcp.no_servers_yet")}
+                </div>
+              }
+            >
+              <div class="grid gap-3">
+                <For each={props.mcpServers}>
+                  {(entry) => {
+                    const resolved = props.mcpStatuses[entry.name];
+                    const status =
+                      entry.config.enabled === false
+                        ? "disabled"
+                        : resolved?.status
+                          ? resolved.status
+                          : "disconnected";
+                    return (
+                      <button
+                        type="button"
+                        class={`text-left rounded-xl border px-4 py-3 transition-colors ${
+                          props.selectedMcp === entry.name
+                            ? "border-dls-border bg-dls-active"
+                            : "border-dls-border bg-dls-surface hover:bg-dls-hover"
+                        }`}
+                        onClick={() => props.setSelectedMcp(entry.name)}
+                      >
+                        <div class="flex items-center justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-sm font-semibold text-dls-text truncate">{entry.name}</div>
+                            <div class="text-xs text-dls-secondary font-mono truncate">
+                              {entry.config.type === "remote"
+                                ? entry.config.url
+                                : entry.config.command?.join(" ")}
+                            </div>
+                          </div>
+                          <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
+                            {statusLabel(status, currentLocale())}
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  }}
+                </For>
               </div>
-              <Show
-                when={props.mcpServers.length}
-                fallback={
-                  <div class="rounded-xl border border-dls-border bg-dls-hover p-4 text-sm text-dls-secondary">
-                    {translate("mcp.no_servers_yet")}
-                  </div>
-                }
+            </Show>
+          </div>
+
+          <div class="space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">
+                {translate("mcp.quick_connect_title")}
+              </h3>
+              <div class="text-[11px] text-dls-secondary">{translate("mcp.oauth_only_label")}</div>
+            </div>
+
+            <div class="grid gap-3">
+              <For each={quickConnectList()}>
+                {(entry) => {
+                  const connectionHint =
+                    entry.type === "local" ? entry.command?.join(" ") : entry.url;
+
+                  return (
+                    <div class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between gap-4 hover:bg-dls-hover transition-colors">
+                      <div class="flex items-start gap-4 min-w-0">
+                        <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-hover shrink-0">
+                          <PlugZap size={18} class="text-dls-secondary" />
+                        </div>
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <h4 class="text-sm font-semibold text-dls-text">{entry.name}</h4>
+                            <Show when={quickConnectStatus(entry.name)}>
+                              {(status) => (
+                                <Show when={status().status !== "connected"}>
+                                  <span
+                                    class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status().status)}`}
+                                  >
+                                    {statusLabel(status().status, currentLocale())}
+                                  </span>
+                                </Show>
+                              )}
+                            </Show>
+                          </div>
+                          <p class="text-xs text-dls-secondary mt-1 line-clamp-2">{entry.description}</p>
+                          <Show when={connectionHint}>
+                            <div class="text-xs text-dls-secondary font-mono mt-1 truncate">
+                              {connectionHint}
+                            </div>
+                          </Show>
+                          <div class="text-[11px] text-dls-secondary mt-2">{translate("mcp.no_env_vars")}</div>
+                        </div>
+                      </div>
+
+                      <div class="flex flex-col items-end gap-2 shrink-0">
+                        <Show
+                          when={!isQuickConnectConnected(entry.name)}
+                          fallback={
+                            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-3 border border-green-6">
+                              <CheckCircle2 size={16} class="text-green-11" />
+                              <span class="text-sm text-green-11">{translate("mcp.connected_status")}</span>
+                            </div>
+                          }
+                        >
+                          <Button
+                            variant="secondary"
+                            onClick={() => props.connectMcp(entry)}
+                            disabled={!canConnect() || props.mcpConnectingName === entry.name}
+                          >
+                            {props.mcpConnectingName === entry.name ? (
+                              <>
+                                <Loader2 size={16} class="animate-spin" />
+                                {translate("mcp.connecting")}
+                              </>
+                            ) : (
+                              <>
+                                <PlugZap size={16} />
+                                {translate("mcp.connect")}
+                              </>
+                            )}
+                          </Button>
+                        </Show>
+                      </div>
+                    </div>
+                  );
+                }}
+              </For>
+            </div>
+          </div>
+
+          <div
+            class="bg-dls-surface border border-dls-border rounded-2xl p-5 space-y-4"
+            ref={(el) => (editConfigRef = el)}
+          >
+            <div class="flex items-start justify-between gap-4">
+              <div class="space-y-1">
+                <div class="text-sm font-medium text-dls-text">{translate("mcp.edit_config_title")}</div>
+                <div class="text-xs text-dls-secondary">{translate("mcp.edit_config_description")}</div>
+              </div>
+              <a
+                href="https://opencode.ai/docs/mcp-servers/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1.5 text-xs text-dls-secondary hover:text-dls-text underline decoration-dls-border underline-offset-4 transition-colors"
               >
-                <div class="grid gap-3">
-                  <For each={props.mcpServers}>
-                    {(entry) => {
-                      const resolved = props.mcpStatuses[entry.name];
+                <ExternalLink size={12} />
+                {translate("mcp.docs_link")}
+              </a>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button
+                class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  configScope() === "project"
+                    ? "bg-dls-active text-dls-text border-dls-border"
+                    : "text-dls-secondary border-dls-border hover:text-dls-text hover:bg-dls-hover"
+                }`}
+                onClick={() => setConfigScope("project")}
+              >
+                {translate("mcp.scope_project")}
+              </button>
+              <button
+                class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                  configScope() === "global"
+                    ? "bg-dls-active text-dls-text border-dls-border"
+                    : "text-dls-secondary border-dls-border hover:text-dls-text hover:bg-dls-hover"
+                }`}
+                onClick={() => setConfigScope("global")}
+              >
+                {translate("mcp.scope_global")}
+              </button>
+            </div>
+
+            <div class="flex flex-col gap-1 text-xs text-dls-secondary">
+              <div>{translate("mcp.config_label")}</div>
+              <div class="text-dls-secondary font-mono truncate">
+                {activeConfig()?.path ?? translate("mcp.config_not_loaded")}
+              </div>
+            </div>
+
+            <div class="flex items-center justify-between gap-3">
+              <Button variant="secondary" onClick={revealConfig} disabled={!canRevealConfig()}>
+                <Show
+                  when={revealBusy()}
+                  fallback={
+                    <>
+                      <FolderOpen size={16} />
+                      {revealLabel()}
+                    </>
+                  }
+                >
+                  <Loader2 size={16} class="animate-spin" />
+                  {translate("mcp.opening_label")}
+                </Show>
+              </Button>
+              <Show when={activeConfig() && activeConfig()!.exists === false}>
+                <div class="text-[11px] text-dls-secondary">{translate("mcp.file_not_found")}</div>
+              </Show>
+            </div>
+
+            <Show when={configError()}>
+              <div class="text-xs text-red-11">{configError()}</div>
+            </Show>
+          </div>
+        </div>
+
+        <div class="bg-dls-surface border border-dls-border rounded-2xl p-5 space-y-4 lg:sticky lg:top-6 self-start">
+          <div class="flex items-center justify-between">
+            <div class="text-sm font-medium text-dls-text">{translate("mcp.details_title")}</div>
+            <div class="text-xs text-dls-secondary">
+              {selectedEntry()?.name ?? translate("mcp.select_server_hint").split(" ").slice(0, 3).join(" ")}
+            </div>
+          </div>
+
+          <Show
+            when={selectedEntry()}
+            fallback={
+              <div class="rounded-xl border border-dls-border bg-dls-hover p-4 text-sm text-dls-secondary">
+                {translate("mcp.select_server_hint")}
+              </div>
+            }
+          >
+            {(entry) => (
+              <div class="space-y-4">
+                <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
+                  <div class="flex items-center gap-2 text-sm text-dls-text">
+                    <Settings size={16} />
+                    {entry().name}
+                  </div>
+                  <div class="text-xs text-dls-secondary font-mono break-all">
+                    {entry().config.type === "remote"
+                      ? entry().config.url
+                      : entry().config.command?.join(" ")}
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {(() => {
+                      const resolved = props.mcpStatuses[entry().name];
                       const status =
-                        entry.config.enabled === false
+                        entry().config.enabled === false
                           ? "disabled"
                           : resolved?.status
                             ? resolved.status
                             : "disconnected";
                       return (
-                        <button
-                          type="button"
-                          class={`text-left rounded-2xl border px-4 py-3 transition-colors ${
-                            props.selectedMcp === entry.name
-                              ? "border-dls-border bg-dls-active"
-                              : "border-dls-border bg-dls-hover hover:bg-dls-active"
-                          }`}
-                          onClick={() => props.setSelectedMcp(entry.name)}
+                        <span
+                          class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}
                         >
-                          <div class="flex items-center justify-between gap-3">
-                            <div>
-                              <div class="text-sm font-medium text-dls-text">{entry.name}</div>
-                              <div class="text-xs text-dls-secondary font-mono">
-                                {entry.config.type === "remote" ? entry.config.url : entry.config.command?.join(" ")}
-                              </div>
-                            </div>
-                            <div class={`text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
-                              {statusLabel(status, currentLocale())}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    }}
-                  </For>
-                </div>
-              </Show>
-            </div>
-
-            <div class="bg-dls-surface border border-dls-border rounded-2xl p-5 space-y-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="space-y-1">
-                  <div class="text-sm font-medium text-dls-text">{translate("mcp.edit_config_title")}</div>
-                  <div class="text-xs text-dls-secondary">
-                    {translate("mcp.edit_config_description")}
-                  </div>
-                </div>
-                <a
-                  href="https://opencode.ai/docs/mcp-servers/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="inline-flex items-center gap-1.5 text-xs text-dls-secondary hover:text-dls-text underline decoration-dls-border underline-offset-4 transition-colors"
-                >
-                  <ExternalLink size={12} />
-                  {translate("mcp.docs_link")}
-                </a>
-              </div>
-
-              <div class="flex items-center gap-2">
-                <button
-                  class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    configScope() === "project"
-                      ? "bg-dls-active text-dls-text border-dls-border"
-                      : "text-dls-secondary border-dls-border hover:text-dls-text hover:bg-dls-hover"
-                  }`}
-                  onClick={() => setConfigScope("project")}
-                >
-                  {translate("mcp.scope_project")}
-                </button>
-                <button
-                  class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
-                    configScope() === "global"
-                      ? "bg-dls-active text-dls-text border-dls-border"
-                      : "text-dls-secondary border-dls-border hover:text-dls-text hover:bg-dls-hover"
-                  }`}
-                  onClick={() => setConfigScope("global")}
-                >
-                  {translate("mcp.scope_global")}
-                </button>
-              </div>
-
-              <div class="flex flex-col gap-1 text-xs text-dls-secondary">
-                <div>{translate("mcp.config_label")}</div>
-                <div class="text-dls-secondary font-mono truncate">
-                  {activeConfig()?.path ?? translate("mcp.config_not_loaded")}
-                </div>
-              </div>
-
-              <div class="flex items-center justify-between gap-3">
-                <Button
-                  variant="secondary"
-                  onClick={revealConfig}
-                  disabled={!canRevealConfig()}
-                >
-                  <Show
-                    when={revealBusy()}
-                    fallback={
-                      <>
-                        <FolderOpen size={16} />
-                        {revealLabel()}
-                      </>
-                    }
-                  >
-                    <Loader2 size={16} class="animate-spin" />
-                    {translate("mcp.opening_label")}
-                  </Show>
-                </Button>
-                <Show when={activeConfig() && activeConfig()!.exists === false}>
-                  <div class="text-[11px] text-dls-secondary">{translate("mcp.file_not_found")}</div>
-                </Show>
-              </div>
-
-              <Show when={configError()}>
-                <div class="text-xs text-red-11">{configError()}</div>
-              </Show>
-            </div>
-          </div>
-
-          <div class="bg-dls-surface border border-dls-border rounded-2xl p-5 space-y-4 lg:sticky lg:top-6 self-start">
-            <div class="flex items-center justify-between">
-              <div class="text-sm font-medium text-dls-text">{translate("mcp.details_title")}</div>
-              <div class="text-xs text-dls-secondary">{selectedEntry()?.name ?? translate("mcp.select_server_hint").split(" ").slice(0, 3).join(" ")}</div>
-            </div>
-
-            <Show
-              when={selectedEntry()}
-              fallback={
-                <div class="rounded-xl border border-dls-border bg-dls-hover p-4 text-sm text-dls-secondary">
-                  {translate("mcp.select_server_hint")}
-                </div>
-              }
-            >
-              {(entry) => (
-                <div class="space-y-4">
-                  <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                    <div class="flex items-center gap-2 text-sm text-dls-text">
-                      <Settings size={16} />
-                      {entry().name}
-                    </div>
-                    <div class="text-xs text-dls-secondary font-mono break-all">
-                      {entry().config.type === "remote" ? entry().config.url : entry().config.command?.join(" ")}
-                    </div>
-                    <div class="flex items-center gap-2">
-                      {(() => {
-                        const resolved = props.mcpStatuses[entry().name];
-                        const status =
-                          entry().config.enabled === false
-                            ? "disabled"
-                            : resolved?.status
-                              ? resolved.status
-                              : "disconnected";
-                        return (
-                          <span class={`inline-flex items-center gap-2 text-[11px] px-2 py-1 rounded-full border ${statusBadge(status)}`}>
-                            {statusLabel(status, currentLocale())}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                    <div class="text-xs text-dls-secondary uppercase tracking-wider">{translate("mcp.capabilities_label")}</div>
-                    <div class="flex flex-wrap gap-2">
-                      <span class="text-[10px] uppercase tracking-wide bg-dls-active text-dls-secondary px-2 py-0.5 rounded-full">
-                        {translate("mcp.tools_enabled_label")}
-                      </span>
-                      <span class="text-[10px] uppercase tracking-wide bg-dls-active text-dls-secondary px-2 py-0.5 rounded-full">
-                        {translate("mcp.oauth_ready_label")}
-                      </span>
-                    </div>
-                    <div class="text-xs text-dls-secondary">
-                      {translate("mcp.usage_hint_text")}
-                    </div>
-                  </div>
-
-                  <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                    <div class="text-xs text-dls-secondary uppercase tracking-wider">{translate("mcp.next_steps_label")}</div>
-                    <div class="flex items-center gap-2 text-xs text-dls-secondary">
-                      <CheckCircle2 size={14} />
-                      {translate("mcp.reload_step")}
-                    </div>
-                    <div class="flex items-center gap-2 text-xs text-dls-secondary">
-                      <CircleAlert size={14} />
-                      {translate("mcp.auth_step")}
-                    </div>
-                    {(() => {
-                      const status = props.mcpStatuses[entry().name];
-                      if (!status || status.status !== "failed") return null;
-                      return (
-                        <div class="text-xs text-red-11">
-                          {"error" in status ? status.error : translate("mcp.connection_failed")}
-                        </div>
+                          {statusLabel(status, currentLocale())}
+                        </span>
                       );
                     })()}
                   </div>
                 </div>
-              )}
-            </Show>
-          </div>
+
+                <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
+                  <div class="text-xs text-dls-secondary uppercase tracking-wider">
+                    {translate("mcp.capabilities_label")}
+                  </div>
+                  <div class="flex flex-wrap gap-2">
+                    <span class="text-[10px] uppercase tracking-wide bg-dls-active text-dls-secondary px-2 py-0.5 rounded-full">
+                      {translate("mcp.tools_enabled_label")}
+                    </span>
+                    <span class="text-[10px] uppercase tracking-wide bg-dls-active text-dls-secondary px-2 py-0.5 rounded-full">
+                      {translate("mcp.oauth_ready_label")}
+                    </span>
+                  </div>
+                  <div class="text-xs text-dls-secondary">{translate("mcp.usage_hint_text")}</div>
+                </div>
+
+                <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
+                  <div class="text-xs text-dls-secondary uppercase tracking-wider">
+                    {translate("mcp.next_steps_label")}
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-dls-secondary">
+                    <CheckCircle2 size={14} />
+                    {translate("mcp.reload_step")}
+                  </div>
+                  <div class="flex items-center gap-2 text-xs text-dls-secondary">
+                    <CircleAlert size={14} />
+                    {translate("mcp.auth_step")}
+                  </div>
+                  {(() => {
+                    const status = props.mcpStatuses[entry().name];
+                    if (!status || status.status !== "failed") return null;
+                    return (
+                      <div class="text-xs text-red-11">
+                        {"error" in status ? status.error : translate("mcp.connection_failed")}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+          </Show>
         </div>
+      </div>
     </section>
   );
 }
