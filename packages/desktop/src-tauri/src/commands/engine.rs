@@ -209,7 +209,7 @@ pub fn engine_start(
         }
     }
 
-    let runtime = runtime.unwrap_or(EngineRuntime::Direct);
+    let runtime = runtime.unwrap_or(EngineRuntime::Openwrk);
     let mut workspace_paths = workspace_paths.unwrap_or_default();
     workspace_paths.retain(|path| !path.trim().is_empty());
     workspace_paths.retain(|path| path.trim() != project_dir);
