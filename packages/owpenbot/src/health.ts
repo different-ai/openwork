@@ -33,11 +33,25 @@ export type GroupsConfigResult = {
   groupsEnabled: boolean;
 };
 
+export type BindingItem = {
+  channel: string;
+  peerId: string;
+  directory: string;
+  updatedAt?: number;
+};
+
+export type BindingsListResult = {
+  items: BindingItem[];
+};
+
 export type HealthHandlers = {
   setTelegramToken?: (token: string) => Promise<TelegramTokenResult>;
   setSlackTokens?: (tokens: { botToken: string; appToken: string }) => Promise<SlackTokensResult>;
   setGroupsEnabled?: (enabled: boolean) => Promise<GroupsConfigResult>;
   getGroupsEnabled?: () => boolean;
+  listBindings?: () => Promise<BindingsListResult>;
+  setBinding?: (input: { channel: string; peerId: string; directory: string }) => Promise<void>;
+  clearBinding?: (input: { channel: string; peerId: string }) => Promise<void>;
 };
 
 export function startHealthServer(
@@ -201,6 +215,82 @@ export function startHealthServer(
           const result = await handlers.setGroupsEnabled(enabled);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      if (pathname === "/bindings" && req.method === "GET") {
+        if (!handlers.listBindings) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+
+        try {
+          const result = await handlers.listBindings();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      if (pathname === "/bindings" && req.method === "POST") {
+        if (!handlers.setBinding && !handlers.clearBinding) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const channel = typeof payload.channel === "string" ? payload.channel.trim() : "";
+          const peerId = typeof payload.peerId === "string" ? payload.peerId.trim() : "";
+          const directory = typeof payload.directory === "string" ? payload.directory.trim() : "";
+
+          if (!channel || !peerId) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "channel and peerId are required" }));
+            return;
+          }
+
+          if (!directory) {
+            if (!handlers.clearBinding) {
+              res.writeHead(404, { "Content-Type": "application/json" });
+              res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+              return;
+            }
+            await handlers.clearBinding({ channel, peerId });
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: true }));
+            return;
+          }
+
+          if (!handlers.setBinding) {
+            res.writeHead(404, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+            return;
+          }
+          await handlers.setBinding({ channel, peerId, directory });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
           return;
         } catch (error) {
           res.writeHead(500, { "Content-Type": "application/json" });

@@ -6,7 +6,7 @@ import type { Config } from "./config.js";
 
 type Client = ReturnType<typeof createOpencodeClient>;
 
-export function createClient(config: Config): Client {
+export function createClient(config: Config, directory?: string): Client {
   const headers: Record<string, string> = {};
   if (config.opencodeUsername && config.opencodePassword) {
     const token = Buffer.from(`${config.opencodeUsername}:${config.opencodePassword}`).toString("base64");
@@ -15,7 +15,7 @@ export function createClient(config: Config): Client {
 
   return createOpencodeClient({
     baseUrl: config.opencodeUrl,
-    directory: config.opencodeDirectory,
+    directory: directory ?? config.opencodeDirectory,
     headers: Object.keys(headers).length ? headers : undefined,
     responseStyle: "data",
     throwOnError: true,

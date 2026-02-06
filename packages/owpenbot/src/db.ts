@@ -9,6 +9,15 @@ type SessionRow = {
   channel: ChannelName;
   peer_id: string;
   session_id: string;
+  directory?: string | null;
+  created_at: number;
+  updated_at: number;
+};
+
+type BindingRow = {
+  channel: ChannelName;
+  peer_id: string;
+  directory: string;
   created_at: number;
   updated_at: number;
 };
@@ -49,6 +58,14 @@ export class BridgeStore {
         created_at INTEGER NOT NULL,
         PRIMARY KEY (channel, peer_id)
       );
+      CREATE TABLE IF NOT EXISTS bindings (
+        channel TEXT NOT NULL,
+        peer_id TEXT NOT NULL,
+        directory TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (channel, peer_id)
+      );
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -62,6 +79,18 @@ export class BridgeStore {
         PRIMARY KEY (channel, peer_id)
       );
     `);
+
+    this.migrate();
+  }
+
+  private migrate() {
+    const columns = this.db
+      .prepare("PRAGMA table_info(sessions)")
+      .all() as Array<{ name?: string }>;
+    const hasDirectory = columns.some((column) => column.name === "directory");
+    if (!hasDirectory) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN directory TEXT");
+    }
   }
 
   private ensureDir() {
@@ -71,26 +100,63 @@ export class BridgeStore {
 
   getSession(channel: ChannelName, peerId: string): SessionRow | null {
     const stmt = this.db.prepare(
-      "SELECT channel, peer_id, session_id, created_at, updated_at FROM sessions WHERE channel = ? AND peer_id = ?",
+      "SELECT channel, peer_id, session_id, directory, created_at, updated_at FROM sessions WHERE channel = ? AND peer_id = ?",
     );
     const row = stmt.get(channel, peerId) as SessionRow | null;
     return row ?? null;
   }
 
-  upsertSession(channel: ChannelName, peerId: string, sessionId: string) {
+  upsertSession(channel: ChannelName, peerId: string, sessionId: string, directory?: string | null) {
     const now = Date.now();
     const stmt = this.db.prepare(
-      `INSERT INTO sessions (channel, peer_id, session_id, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at`,
+      `INSERT INTO sessions (channel, peer_id, session_id, directory, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, updated_at = excluded.updated_at`,
     );
-    stmt.run(channel, peerId, sessionId, now, now);
+    stmt.run(channel, peerId, sessionId, directory ?? null, now, now);
   }
 
   deleteSession(channel: ChannelName, peerId: string): boolean {
     const stmt = this.db.prepare("DELETE FROM sessions WHERE channel = ? AND peer_id = ?");
     const result = stmt.run(channel, peerId);
     return result.changes > 0;
+  }
+
+  getBinding(channel: ChannelName, peerId: string): BindingRow | null {
+    const stmt = this.db.prepare(
+      "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? AND peer_id = ?",
+    );
+    const row = stmt.get(channel, peerId) as BindingRow | null;
+    return row ?? null;
+  }
+
+  upsertBinding(channel: ChannelName, peerId: string, directory: string) {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      `INSERT INTO bindings (channel, peer_id, directory, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(channel, peer_id) DO UPDATE SET directory = excluded.directory, updated_at = excluded.updated_at`,
+    );
+    stmt.run(channel, peerId, directory, now, now);
+  }
+
+  deleteBinding(channel: ChannelName, peerId: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM bindings WHERE channel = ? AND peer_id = ?");
+    const result = stmt.run(channel, peerId);
+    return result.changes > 0;
+  }
+
+  listBindings(channel?: ChannelName): BindingRow[] {
+    if (channel) {
+      const stmt = this.db.prepare(
+        "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? ORDER BY updated_at DESC",
+      );
+      return stmt.all(channel) as BindingRow[];
+    }
+    const stmt = this.db.prepare(
+      "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings ORDER BY updated_at DESC",
+    );
+    return stmt.all() as BindingRow[];
   }
 
   isAllowed(channel: ChannelName, peerId: string): boolean {

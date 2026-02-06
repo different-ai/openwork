@@ -46,7 +46,7 @@ function run(cmd, args, options = {}) {
 }
 
 async function runHelp() {
-  const result = await run("node", [cliPath, "--help"], { timeoutMs: 3000 });
+  const result = await run("bun", [cliPath, "--help"], { timeoutMs: 3000 });
   if (result.code !== 0) {
     throw new Error(`Help failed: ${result.stderr}`);
   }
@@ -55,7 +55,7 @@ async function runHelp() {
   }
 }
 
-async function runSetupNonInteractive() {
+async function runConfigCommands() {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "owpenbot-"));
   const env = {
     ...process.env,
@@ -64,46 +64,37 @@ async function runSetupNonInteractive() {
     OWPENBOT_CONFIG_PATH: path.join(tempDir, "owpenbot.json"),
     OPENCODE_DIRECTORY: tempDir,
   };
-  const result = await run("node", [cliPath, "--non-interactive"], {
-    env,
-    timeoutMs: 5000,
-  });
-  if (result.code !== 0) {
-    throw new Error(`Setup failed: ${result.stderr}`);
-  }
-  const cfg = await fs.readFile(path.join(tempDir, "owpenbot.json"), "utf-8");
-  if (!cfg.includes("whatsapp")) {
-    throw new Error("Config missing whatsapp section");
-  }
-}
 
-async function runSetupInteractive() {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "owpenbot-"));
-  const env = {
-    ...process.env,
-    OWPENBOT_DATA_DIR: tempDir,
-    OWPENBOT_DB_PATH: path.join(tempDir, "owpenbot.db"),
-    OWPENBOT_CONFIG_PATH: path.join(tempDir, "owpenbot.json"),
-    OPENCODE_DIRECTORY: tempDir,
-    OWPENWORK_TEST_SELECTIONS: "config",
-    OWPENWORK_TEST_SETUP: "personal",
-    OWPENWORK_FORCE_TUI: "1",
-  };
-  const result = await run("node", ["--no-warnings", cliPath], {
+  const setResult = await run("bun", [cliPath, "config", "set", "channels.whatsapp.dmPolicy", "\"disabled\""], {
     env,
     timeoutMs: 5000,
   });
-  const output = `${result.stdout}${result.stderr}`;
-  if (!output.includes("Owpenwork Setup")) {
-    throw new Error("Interactive setup prompt not detected");
+  if (setResult.code !== 0) {
+    throw new Error(`Config set failed: ${setResult.stderr}`);
   }
-  const cfg = await fs.readFile(path.join(tempDir, "owpenbot.json"), "utf-8");
-  if (!cfg.includes("+15551234567")) {
-    throw new Error("Interactive config missing allowlist number");
+
+  const getResult = await run("bun", [cliPath, "config", "get", "channels.whatsapp.dmPolicy"], {
+    env,
+    timeoutMs: 5000,
+  });
+  if (getResult.code !== 0) {
+    throw new Error(`Config get failed: ${getResult.stderr}`);
+  }
+  if (!(`${getResult.stdout}${getResult.stderr}`.includes("disabled"))) {
+    throw new Error("Config get output missing expected value");
+  }
+
+  const statusResult = await run("bun", [cliPath, "status", "--json"], { env, timeoutMs: 5000 });
+  if (statusResult.code !== 0) {
+    throw new Error(`Status failed: ${statusResult.stderr}`);
+  }
+
+  const pairingResult = await run("bun", [cliPath, "pairing", "list", "--json"], { env, timeoutMs: 5000 });
+  if (pairingResult.code !== 0) {
+    throw new Error(`Pairing list failed: ${pairingResult.stderr}`);
   }
 }
 
 await runHelp();
-await runSetupNonInteractive();
-await runSetupInteractive();
+await runConfigCommands();
 console.log("CLI smoke tests passed");
