@@ -27,6 +27,8 @@ export type SidebarSessionItem = {
 export type WorkspaceSessionGroup = {
   workspace: WorkspaceInfo;
   sessions: SidebarSessionItem[];
+  status: "idle" | "loading" | "ready" | "error";
+  error?: string | null;
 };
 
 export type PlaceholderAssistantMessage = {

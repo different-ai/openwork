@@ -1856,26 +1856,28 @@ export default function SettingsView(props: SettingsViewProps) {
                   </div>
                 </div>
 
-                <div class="space-y-3">
-                  <div class="text-xs text-gray-10">Engine runtime</div>
-                  <div class="grid grid-cols-2 gap-2">
-                    <Button
-                      variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
-                      onClick={() => props.setEngineRuntime("direct")}
-                      disabled={props.busy}
-                    >
-                      Direct (OpenCode)
-                    </Button>
-                    <Button
-                      variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
-                      onClick={() => props.setEngineRuntime("openwrk")}
-                      disabled={props.busy}
-                    >
-                      Openwrk orchestrator
-                    </Button>
+                <Show when={props.developerMode}>
+                  <div class="space-y-3">
+                    <div class="text-xs text-gray-10">Engine runtime</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <Button
+                        variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
+                        onClick={() => props.setEngineRuntime("direct")}
+                        disabled={props.busy}
+                      >
+                        Direct (OpenCode)
+                      </Button>
+                      <Button
+                        variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
+                        onClick={() => props.setEngineRuntime("openwrk")}
+                        disabled={props.busy}
+                      >
+                        Openwrk orchestrator
+                      </Button>
+                    </div>
+                    <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
                   </div>
-                  <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
-                </div>
+                </Show>
               </div>
             </Show>
 

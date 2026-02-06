@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 import fuzzysort from "fuzzysort";
-import { ArrowUp, AtSign, ChevronDown, File, Paperclip, Terminal, X, Zap } from "lucide-solid";
+import { ArrowUp, AtSign, ChevronDown, File as FileIcon, Paperclip, Terminal, X, Zap } from "lucide-solid";
 
 import type { ComposerAttachment, ComposerDraft, ComposerPart, PromptMode, SlashCommandOption } from "../../types";
 
@@ -1074,7 +1074,7 @@ export default function Composer(props: ComposerProps) {
                               when={option.kind === "agent"}
                               fallback={
                                 <>
-                                  <File size={14} class="text-dls-secondary" />
+                                  <FileIcon size={14} class="text-dls-secondary" />
                                   <div class="flex items-center min-w-0 text-xs">
                                     {(() => {
                                       const value = option.value;
@@ -1176,7 +1176,7 @@ export default function Composer(props: ComposerProps) {
                     <div class="flex items-center gap-2 rounded-2xl border border-dls-border bg-dls-hover px-3 py-2 text-xs text-dls-secondary">
                       <Show
                         when={attachment.kind === "image"}
-                        fallback={<File size={14} class="text-dls-secondary" />}
+                        fallback={<FileIcon size={14} class="text-dls-secondary" />}
                       >
                         <div class="h-10 w-10 rounded-xl bg-dls-surface overflow-hidden border border-dls-border">
                           <img src={attachment.dataUrl} alt={attachment.name} class="h-full w-full object-cover" />

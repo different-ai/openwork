@@ -38,7 +38,7 @@ import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
 import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
-import { createClient, unwrap, waitForHealthy } from "./lib/opencode";
+import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import {
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
@@ -230,7 +230,7 @@ export default function App() {
     isTauriRuntime() ? "sidecar" : "path"
   );
 
-  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("direct");
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwrk");
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -670,30 +670,10 @@ export default function App() {
         return a.id.localeCompare(b.id);
       });
 
-  const [sidebarSessions, setSidebarSessions] = createSignal<Session[]>([]);
-  const refreshSidebarSessions = async () => {
-    const c = client();
-    if (!c) {
-      setSidebarSessions([]);
-      return;
-    }
-    const list = unwrap(await c.session.list());
-    setSidebarSessions(sortSessionsByActivity(list));
-  };
-
-  createEffect(() => {
-    if (!client()) {
-      setSidebarSessions([]);
-      return;
-    }
-    refreshSidebarSessions().catch(() => undefined);
-  });
-
   const [sessionsLoaded, setSessionsLoaded] = createSignal(false);
   const loadSessionsWithReady = async (scopeRoot?: string) => {
     await loadSessions(scopeRoot);
     setSessionsLoaded(true);
-    await refreshSidebarSessions().catch(() => undefined);
   };
 
   createEffect(() => {
@@ -927,9 +907,9 @@ export default function App() {
     if (!trimmed) {
       throw new Error("Session name is required");
     }
-
+    
     await renameSession(sessionID, trimmed);
-    await refreshSidebarSessions().catch(() => undefined);
+    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
   }
 
   async function deleteSessionById(sessionID: string) {
@@ -944,7 +924,7 @@ export default function App() {
     const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
     await loadSessions(root || undefined).catch(() => undefined);
-    await refreshSidebarSessions().catch(() => undefined);
+    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
 
     const nextStatus = { ...sessionStatusById() };
     if (nextStatus[trimmed]) {
@@ -1444,33 +1424,195 @@ export default function App() {
     engineRuntime,
   });
 
+  type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
+  const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
+    Record<string, Session[]>
+  >({});
+  const [sidebarSessionStatusByWorkspaceId, setSidebarSessionStatusByWorkspaceId] = createSignal<
+    Record<string, SidebarWorkspaceSessionsStatus>
+  >({});
+  const [sidebarSessionErrorByWorkspaceId, setSidebarSessionErrorByWorkspaceId] = createSignal<
+    Record<string, string | null>
+  >({});
+
+  const pruneSidebarSessionState = (workspaceIds: Set<string>) => {
+    setSidebarSessionsByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, Session[]> = {};
+      for (const [id, list] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = list;
+      }
+      return changed ? next : prev;
+    });
+    setSidebarSessionStatusByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, SidebarWorkspaceSessionsStatus> = {};
+      for (const [id, status] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = status;
+      }
+      return changed ? next : prev;
+    });
+    setSidebarSessionErrorByWorkspaceId((prev) => {
+      let changed = false;
+      const next: Record<string, string | null> = {};
+      for (const [id, error] of Object.entries(prev)) {
+        if (!workspaceIds.has(id)) {
+          changed = true;
+          continue;
+        }
+        next[id] = error;
+      }
+      return changed ? next : prev;
+    });
+  };
+
+  const resolveSidebarClientConfig = (workspaceId: string) => {
+    const workspace = workspaceStore.workspaces().find((entry) => entry.id === workspaceId) ?? null;
+    if (!workspace) return null;
+
+    if (workspace.workspaceType === "local") {
+      const info = workspaceStore.engine();
+      const baseUrl = info?.baseUrl?.trim() ?? "";
+      const directory = workspace.path?.trim() ?? "";
+      const username = info?.opencodeUsername?.trim() ?? "";
+      const password = info?.opencodePassword?.trim() ?? "";
+      const auth: OpencodeAuth | undefined = username && password ? { username, password } : undefined;
+      return {
+        baseUrl,
+        directory,
+        auth,
+      };
+    }
+
+    const baseUrl = workspace.baseUrl?.trim() ?? "";
+    const directory = workspace.directory?.trim() ?? "";
+    if (workspace.remoteType === "openwork") {
+      const token = workspace.openworkToken?.trim() || openworkServerSettings().token?.trim() || "";
+      const auth: OpencodeAuth | undefined = token ? { token, mode: "openwork" } : undefined;
+      return {
+        baseUrl,
+        directory,
+        auth,
+      };
+    }
+    return {
+      baseUrl,
+      directory,
+      auth: undefined as OpencodeAuth | undefined,
+    };
+  };
+
+  const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
+  const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const config = resolveSidebarClientConfig(id);
+    if (!config) return;
+
+    // For local workspaces, avoid thrashing UI with errors if the engine is offline.
+    if (!config.baseUrl) {
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "idle" }));
+      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+      return;
+    }
+
+    sidebarRefreshSeqByWorkspaceId[id] = (sidebarRefreshSeqByWorkspaceId[id] ?? 0) + 1;
+    const seq = sidebarRefreshSeqByWorkspaceId[id];
+
+    setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "loading" }));
+    setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+
+    try {
+      let directory = config.directory;
+      let c = createClient(config.baseUrl, directory || undefined, config.auth);
+
+      if (!directory) {
+        try {
+          const pathInfo = unwrap(await c.path.get());
+          const discovered = normalizeDirectoryPath(pathInfo.directory ?? "");
+          if (discovered) {
+            directory = discovered;
+            c = createClient(config.baseUrl, directory, config.auth);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      const list = unwrap(await c.session.list());
+      if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+      setSidebarSessionsByWorkspaceId((prev) => ({ ...prev, [id]: sortSessionsByActivity(list) }));
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
+    } catch (error) {
+      if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
+      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));
+    }
+  };
+
+  const refreshAllSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
+    const list = workspaceStore.workspaces();
+    if (!list.length) return;
+    const prioritize = (prioritizeWorkspaceId ?? "").trim();
+    const ordered = prioritize
+      ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
+      : list;
+    for (const ws of ordered) {
+      await refreshSidebarWorkspaceSessions(ws.id);
+    }
+  };
+
+  let lastSidebarRefreshKey = "";
+  createEffect(() => {
+    const engineInfo = workspaceStore.engine();
+    const engineBaseUrl = engineInfo?.baseUrl?.trim() ?? "";
+    const engineUser = engineInfo?.opencodeUsername?.trim() ?? "";
+    const enginePass = engineInfo?.opencodePassword?.trim() ?? "";
+    const tokenFallback = openworkServerSettings().token?.trim() ?? "";
+    const workspaceKey = workspaceStore
+      .workspaces()
+      .map((ws) => {
+        const root = ws.workspaceType === "local" ? ws.path?.trim() ?? "" : ws.directory?.trim() ?? "";
+        const base = ws.workspaceType === "local" ? "" : ws.baseUrl?.trim() ?? "";
+        const remoteType = ws.workspaceType === "remote" ? (ws.remoteType ?? "") : "";
+        const token = ws.remoteType === "openwork" ? (ws.openworkToken?.trim() ?? "") : "";
+        return [ws.id, ws.workspaceType, remoteType, root, base, token].join("|");
+      })
+      .join(";");
+
+    const key = [engineBaseUrl, engineUser, enginePass, tokenFallback, workspaceKey].join("::");
+    if (key === lastSidebarRefreshKey) return;
+    lastSidebarRefreshKey = key;
+
+    pruneSidebarSessionState(new Set(workspaceStore.workspaces().map((ws) => ws.id)));
+    void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+  });
+
+  createEffect(() => {
+    const id = workspaceStore.activeWorkspaceId().trim();
+    if (!id) return;
+    const status = sidebarSessionStatusByWorkspaceId()[id];
+    if (status === "ready" || status === "loading") return;
+    refreshSidebarWorkspaceSessions(id).catch(() => undefined);
+  });
+
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
     const workspaces = workspaceStore.workspaces();
-    const sessionList = sidebarSessions();
-    const workspaceByRoot = new Map<string, string>();
-    const sessionsByWorkspaceId = new Map<string, Session[]>();
-
-    for (const workspace of workspaces) {
-      const root = normalizeDirectoryPath(
-        workspace.workspaceType === "remote" ? workspace.directory ?? "" : workspace.path
-      );
-      if (root) {
-        workspaceByRoot.set(root, workspace.id);
-      }
-      sessionsByWorkspaceId.set(workspace.id, []);
-    }
-
-    for (const session of sessionList) {
-      const root = normalizeDirectoryPath(session.directory ?? "");
-      if (!root) continue;
-      const workspaceId = workspaceByRoot.get(root);
-      if (!workspaceId) continue;
-      const bucket = sessionsByWorkspaceId.get(workspaceId);
-      if (bucket) bucket.push(session);
-    }
-
+    const sessionsById = sidebarSessionsByWorkspaceId();
+    const statusById = sidebarSessionStatusByWorkspaceId();
+    const errorById = sidebarSessionErrorByWorkspaceId();
     return workspaces.map((workspace) => {
-      const groupSessions = sortSessionsByActivity(sessionsByWorkspaceId.get(workspace.id) ?? []);
+      const groupSessions = sessionsById[workspace.id] ?? [];
       return {
         workspace,
         sessions: groupSessions.map((session) => ({
@@ -1480,6 +1622,8 @@ export default function App() {
           time: session.time,
           directory: session.directory,
         })),
+        status: statusById[workspace.id] ?? "idle",
+        error: errorById[workspace.id] ?? null,
       };
     });
   });
@@ -1562,7 +1706,7 @@ export default function App() {
           if (cancelled) return;
           const items = Array.isArray(response.items) ? response.items : [];
           const match = items.find((entry) => normalizeDirectoryPath(entry.path) === root);
-          setOpenworkServerWorkspaceId(response.activeId ?? match?.id ?? null);
+          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
         } catch {
           if (!cancelled) setOpenworkServerWorkspaceId(null);
         }

@@ -228,14 +228,36 @@ export function createWorkspaceStore(options: {
     });
   });
 
-  const resolveOpenworkHost = async (input: { hostUrl: string; token?: string | null; workspaceId?: string | null }) => {
-    const normalizedHostUrl = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
+  const resolveOpenworkHost = async (input: {
+    hostUrl: string;
+    token?: string | null;
+    workspaceId?: string | null;
+    directoryHint?: string | null;
+  }) => {
+    let normalizedHostUrl = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
     if (!normalizedHostUrl) {
       return { kind: "fallback" as const };
     }
 
-    const workspaceBaseUrl =
-      buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, input.workspaceId) ?? normalizedHostUrl;
+    let inferredWorkspaceId: string | null = null;
+    try {
+      const url = new URL(normalizedHostUrl);
+      const segments = url.pathname.split("/").filter(Boolean);
+      const last = segments[segments.length - 1] ?? "";
+      const prev = segments[segments.length - 2] ?? "";
+      const alreadyMounted = prev === "w" && Boolean(last);
+      if (alreadyMounted) {
+        inferredWorkspaceId = decodeURIComponent(last);
+        const baseSegments = segments.slice(0, -2);
+        url.pathname = `/${baseSegments.join("/")}`;
+        normalizedHostUrl = url.toString().replace(/\/+$/, "");
+      }
+    } catch {
+      // ignore
+    }
+
+    const requestedWorkspaceId = (input.workspaceId?.trim() || inferredWorkspaceId || "").trim();
+    const workspaceBaseUrl = buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, requestedWorkspaceId) ?? normalizedHostUrl;
 
     const client = createOpenworkServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
 
@@ -262,8 +284,29 @@ export function createWorkspaceStore(options: {
 
     const response = await client.listWorkspaces();
     const items = Array.isArray(response.items) ? response.items : [];
-    const workspace = items[0] as OpenworkWorkspaceInfo | undefined;
-    if (!workspace) {
+    const hint = normalizeDirectoryPath(input.directoryHint ?? "");
+    const selectByHint = (entry: OpenworkWorkspaceInfo) => {
+      if (!hint) return false;
+      const entryPath = normalizeDirectoryPath(
+        (entry.opencode?.directory as string | undefined) ?? (entry.path as string | undefined) ?? "",
+      );
+      return Boolean(entryPath && entryPath === hint);
+    };
+    const selectById = (entry: OpenworkWorkspaceInfo) => Boolean(requestedWorkspaceId && entry?.id === requestedWorkspaceId);
+
+    const workspaceById = requestedWorkspaceId
+      ? (items.find((item) => item?.id && selectById(item as any)) as OpenworkWorkspaceInfo | undefined)
+      : undefined;
+    if (requestedWorkspaceId && !workspaceById) {
+      throw new Error("OpenWork workspace not found on that host.");
+    }
+
+    const workspaceByHint = hint
+      ? (items.find((item) => item?.id && selectByHint(item as any)) as OpenworkWorkspaceInfo | undefined)
+      : undefined;
+
+    const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as OpenworkWorkspaceInfo | undefined;
+    if (!workspace?.id) {
       throw new Error("OpenWork server did not return a workspace.");
     }
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
@@ -271,7 +314,9 @@ export function createWorkspaceStore(options: {
       throw new Error("OpenWork server did not provide an OpenCode URL.");
     }
 
-    const opencodeBaseUrl = `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`;
+    const workspaceScopedBaseUrl =
+      buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, workspace.id) ?? workspaceBaseUrl;
+    const opencodeBaseUrl = `${workspaceScopedBaseUrl.replace(/\/+$/, "")}/opencode`;
     const opencodeAuth: OpencodeAuth | undefined = trimmedToken
       ? { token: trimmedToken, mode: "openwork" }
       : undefined;
@@ -286,7 +331,7 @@ export function createWorkspaceStore(options: {
     };
   };
 
-  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "direct";
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwrk";
 
   const resolveWorkspacePaths = () => {
     const active = activeWorkspacePath().trim();
@@ -511,6 +556,7 @@ export function createWorkspaceStore(options: {
               hostUrl,
               token,
               workspaceId: next.openworkWorkspaceId ?? null,
+              directoryHint: next.directory ?? null,
             });
             if (resolved.kind === "openwork") {
               resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -1003,6 +1049,7 @@ export function createWorkspaceStore(options: {
       const resolved = await resolveOpenworkHost({
         hostUrl,
         token,
+        directoryHint: directory || null,
       });
       if (resolved.kind !== "openwork") {
         options.setError("OpenWork server unavailable. Check the URL and token.");
@@ -1163,6 +1210,7 @@ export function createWorkspaceStore(options: {
         hostUrl,
         token,
         workspaceId: workspace.openworkWorkspaceId ?? null,
+        directoryHint: directory || null,
       });
       if (resolved.kind !== "openwork") {
         options.setError("OpenWork server unavailable. Check the URL and token.");

@@ -14,8 +14,8 @@ import type {
   View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, isTauriRuntime } from "../utils";
-import { buildOpenworkWorkspaceBaseUrl } from "../lib/openwork-server";
+import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
   OpenworkServerCapabilities,
@@ -37,6 +37,8 @@ import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import {
   Box,
+  ChevronDown,
+  ChevronRight,
   History,
   Loader2,
   MoreHorizontal,
@@ -284,19 +286,71 @@ export default function DashboardView(props: DashboardViewProps) {
     }, 0);
   };
 
+  const createTaskInWorkspace = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    expandWorkspace(id);
+    if (id === props.activeWorkspaceId) {
+      props.createSessionAndOpen();
+      return;
+    }
+    void (async () => {
+      await Promise.resolve(props.activateWorkspace(id));
+      props.createSessionAndOpen();
+    })();
+  };
+
   // Track last refreshed tab to avoid duplicate calls
   const [lastRefreshedTab, setLastRefreshedTab] = createSignal<string | null>(null);
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const MAX_SESSIONS_PREVIEW = 3;
+  const COLLAPSED_SESSIONS_PREVIEW = 1;
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<Set<string>>(
+    new Set()
+  );
+  const isWorkspaceExpanded = (workspaceId: string) =>
+    expandedWorkspaceIds().has(workspaceId);
+  const expandWorkspace = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setExpandedWorkspaceIds((prev) => {
+      if (prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+  };
+  const toggleWorkspaceExpanded = (workspaceId: string) => {
+    const id = workspaceId.trim();
+    if (!id) return;
+    setExpandedWorkspaceIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  createEffect(() => {
+    expandWorkspace(props.activeWorkspaceId);
+  });
   const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = createSignal<
     Record<string, number>
   >({});
-  const previewCount = (workspaceId: string) =>
-    previewCountByWorkspaceId()[workspaceId] ?? MAX_SESSIONS_PREVIEW;
+  const previewCount = (workspaceId: string) => {
+    const base = previewCountByWorkspaceId()[workspaceId] ?? MAX_SESSIONS_PREVIEW;
+    return isWorkspaceExpanded(workspaceId)
+      ? base
+      : Math.min(COLLAPSED_SESSIONS_PREVIEW, base);
+  };
   const previewSessions = (workspaceId: string, sessions: WorkspaceSessionGroup["sessions"]) =>
     sessions.slice(0, previewCount(workspaceId));
   const showMoreSessions = (workspaceId: string, total: number) => {
+    expandWorkspace(workspaceId);
     setPreviewCountByWorkspaceId((current) => {
       const next = { ...current };
       const existing = next[workspaceId] ?? MAX_SESSIONS_PREVIEW;
@@ -464,6 +518,41 @@ export default function DashboardView(props: DashboardViewProps) {
     return ws.path?.trim() || "";
   });
 
+  const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    const ws = shareWorkspace();
+    const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+    const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+    const workspacePath = ws?.workspaceType === "local" ? ws.path?.trim() ?? "" : "";
+
+    if (!ws || ws.workspaceType !== "local" || !workspacePath || !baseUrl || !token) {
+      setShareLocalOpenworkWorkspaceId(null);
+      return;
+    }
+
+    let cancelled = false;
+    setShareLocalOpenworkWorkspaceId(null);
+
+    void (async () => {
+      try {
+        const client = createOpenworkServerClient({ baseUrl, token });
+        const response = await client.listWorkspaces();
+        if (cancelled) return;
+        const items = Array.isArray(response.items) ? response.items : [];
+        const targetPath = normalizeDirectoryPath(workspacePath);
+        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+        setShareLocalOpenworkWorkspaceId(match?.id ?? null);
+      } catch {
+        if (!cancelled) setShareLocalOpenworkWorkspaceId(null);
+      }
+    })();
+
+    onCleanup(() => {
+      cancelled = true;
+    });
+  });
+
   const shareFields = createMemo(() => {
     const ws = shareWorkspace();
     if (!ws) {
@@ -477,25 +566,36 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.workspaceType !== "remote") {
-      const url =
+      const hostUrl =
         props.openworkServerHostInfo?.connectUrl?.trim() ||
         props.openworkServerHostInfo?.lanUrl?.trim() ||
         props.openworkServerHostInfo?.mdnsUrl?.trim() ||
         props.openworkServerHostInfo?.baseUrl?.trim() ||
         "";
+      const mountedUrl = shareLocalOpenworkWorkspaceId()
+        ? buildOpenworkWorkspaceBaseUrl(hostUrl, shareLocalOpenworkWorkspaceId())
+        : null;
+      const url = mountedUrl || hostUrl;
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
-          label: "OpenWork server URL",
+          label: "OpenWork workspace URL",
           value: url,
-          placeholder: isTauriRuntime() ? "Starting server..." : "Desktop app required",
+          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          hint: mountedUrl
+            ? "Use on phones or laptops connecting to this workspace."
+            : hostUrl
+              ? "Workspace URL is resolving; host URL shown as fallback."
+              : undefined,
         },
         {
           label: "Access token",
           value: token,
           secret: true,
           placeholder: isTauriRuntime() ? "-" : "Desktop app required",
-          hint: "Use on phones or laptops connecting to this host.",
+          hint: mountedUrl
+            ? "Use on phones or laptops connecting to this workspace."
+            : "Use on phones or laptops connecting to this host.",
         },
       ];
     }
@@ -641,19 +741,55 @@ export default function DashboardView(props: DashboardViewProps) {
                         role="button"
                         tabIndex={0}
                         class="w-full flex items-center justify-between h-10 px-3 rounded-lg text-left transition-colors text-dls-text hover:bg-dls-hover"
-                        onClick={() => props.activateWorkspace(workspace().id)}
+                        onClick={() => {
+                          expandWorkspace(workspace().id);
+                          props.activateWorkspace(workspace().id);
+                        }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
                           event.preventDefault();
+                          expandWorkspace(workspace().id);
                           props.activateWorkspace(workspace().id);
                         }}
                       >
+                        <button
+                          type="button"
+                          class="mr-2 -ml-1 p-1 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+                          aria-label={isWorkspaceExpanded(workspace().id) ? "Collapse" : "Expand"}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            toggleWorkspaceExpanded(workspace().id);
+                          }}
+                        >
+                          <Show
+                            when={isWorkspaceExpanded(workspace().id)}
+                            fallback={<ChevronRight size={14} />}
+                          >
+                            <ChevronDown size={14} />
+                          </Show>
+                        </button>
                         <div class="min-w-0 flex-1">
                           <div class="text-sm font-medium truncate">{workspaceLabel(workspace())}</div>
                           <div class="text-[11px] text-dls-secondary">
                             {workspaceKindLabel(workspace())}
                           </div>
                         </div>
+                        <Show when={group.status === "loading"}>
+                          <Loader2 size={14} class="animate-spin text-dls-secondary mr-1" />
+                        </Show>
+                        <Show when={group.status === "error"}>
+                          <span
+                            class="text-[10px] px-2 py-0.5 rounded-full border border-red-7/50 text-red-11 bg-red-3/30"
+                            title={group.error ?? "Failed to load tasks"}
+                          >
+                            Error
+                          </span>
+                        </Show>
+                        <Show when={group.status === "ready" && group.sessions.length > 0}>
+                          <span class="text-[10px] px-2 py-0.5 rounded-full border border-dls-border text-dls-secondary bg-dls-hover">
+                            {group.sessions.length}
+                          </span>
+                        </Show>
                         <Show when={isConnecting()}>
                           <Loader2 size={14} class="animate-spin text-dls-secondary" />
                         </Show>
@@ -664,7 +800,7 @@ export default function DashboardView(props: DashboardViewProps) {
                           class="p-1 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-active"
                           onClick={(event) => {
                             event.stopPropagation();
-                            props.createSessionAndOpen();
+                            createTaskInWorkspace(workspace().id);
                           }}
                           disabled={props.newTaskDisabled}
                           aria-label="New task"
@@ -739,56 +875,114 @@ export default function DashboardView(props: DashboardViewProps) {
 
                     <div class="mt-0.5 space-y-0.5 border-l border-dls-border ml-2">
                       <Show
-                        when={group.sessions.length > 0}
+                        when={isWorkspaceExpanded(workspace().id)}
                         fallback={
-                          <button
-                            type="button"
-                            class="group/empty w-full px-3 py-2 text-xs text-dls-secondary ml-2 text-left rounded-lg hover:bg-dls-hover hover:text-dls-text transition-colors"
-                            onClick={() => props.createSessionAndOpen()}
-                            disabled={props.newTaskDisabled}
-                          >
-                            <span class="group-hover/empty:hidden">No tasks yet.</span>
-                            <span class="hidden group-hover/empty:inline font-medium">+ New task</span>
-                          </button>
+                          <Show when={group.sessions.length > 0}>
+                            <For each={previewSessions(workspace().id, group.sessions)}>
+                              {(session) => {
+                                const isSelected = () => props.selectedSessionId === session.id;
+                                return (
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    class={`group flex items-center justify-between h-8 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
+                                      isSelected()
+                                        ? "bg-dls-active text-dls-text"
+                                        : "hover:bg-dls-hover"
+                                    }`}
+                                    onClick={() => openSessionFromList(workspace().id, session.id)}
+                                    onKeyDown={(event) => {
+                                      if (event.key !== "Enter" && event.key !== " ") return;
+                                      event.preventDefault();
+                                      openSessionFromList(workspace().id, session.id);
+                                    }}
+                                  >
+                                    <span class="text-sm text-dls-text truncate mr-2 font-medium">
+                                      {session.title}
+                                    </span>
+                                    <span class="text-xs text-dls-secondary whitespace-nowrap">
+                                      {formatRelativeTime(session.time?.updated ?? Date.now())}
+                                    </span>
+                                  </div>
+                                );
+                              }}
+                            </For>
+                          </Show>
                         }
                       >
-                        <For each={previewSessions(workspace().id, group.sessions)}>
-                          {(session) => {
-                            const isSelected = () => props.selectedSessionId === session.id;
-                            return (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                class={`group flex items-center justify-between h-8 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
-                                  isSelected()
-                                    ? "bg-dls-active text-dls-text"
-                                    : "hover:bg-dls-hover"
-                                }`}
-                                onClick={() => openSessionFromList(workspace().id, session.id)}
-                                onKeyDown={(event) => {
-                                  if (event.key !== "Enter" && event.key !== " ") return;
-                                  event.preventDefault();
-                                  openSessionFromList(workspace().id, session.id);
+                        <Show
+                          when={group.status === "loading" && group.sessions.length === 0}
+                          fallback={
+                            <Show
+                              when={group.sessions.length > 0}
+                              fallback={
+                                <Show when={group.status === "error"}>
+                                  <div
+                                    class="w-full px-3 py-2 text-xs text-red-11 ml-2 text-left rounded-lg bg-red-3/20 border border-red-7/40"
+                                    title={group.error ?? "Failed to load tasks"}
+                                  >
+                                    Failed to load tasks
+                                  </div>
+                                </Show>
+                              }
+                            >
+                              <For each={previewSessions(workspace().id, group.sessions)}>
+                                {(session) => {
+                                  const isSelected = () => props.selectedSessionId === session.id;
+                                  return (
+                                    <div
+                                      role="button"
+                                      tabIndex={0}
+                                      class={`group flex items-center justify-between h-8 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
+                                        isSelected()
+                                          ? "bg-dls-active text-dls-text"
+                                          : "hover:bg-dls-hover"
+                                      }`}
+                                      onClick={() => openSessionFromList(workspace().id, session.id)}
+                                      onKeyDown={(event) => {
+                                        if (event.key !== "Enter" && event.key !== " ") return;
+                                        event.preventDefault();
+                                        openSessionFromList(workspace().id, session.id);
+                                      }}
+                                    >
+                                      <span class="text-sm text-dls-text truncate mr-2 font-medium">
+                                        {session.title}
+                                      </span>
+                                      <span class="text-xs text-dls-secondary whitespace-nowrap">
+                                        {formatRelativeTime(session.time?.updated ?? Date.now())}
+                                      </span>
+                                    </div>
+                                  );
                                 }}
-                              >
-                                <span class="text-sm text-dls-text truncate mr-2 font-medium">
-                                  {session.title}
-                                </span>
-                                <span class="text-xs text-dls-secondary whitespace-nowrap">
-                                  {formatRelativeTime(session.time?.updated ?? Date.now())}
-                                </span>
-                              </div>
-                            );
-                          }}
-                        </For>
-                        <Show when={group.sessions.length > previewCount(workspace().id)}>
-                          <button
-                            type="button"
-                            class="ml-2 w-[calc(100%-0.5rem)] px-3 py-2 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover rounded-lg transition-colors text-left"
-                            onClick={() => showMoreSessions(workspace().id, group.sessions.length)}
-                          >
-                            {showMoreLabel(workspace().id, group.sessions.length)}
-                          </button>
+                              </For>
+
+                              <Show when={group.sessions.length === 0 && group.status === "ready"}>
+                                <button
+                                  type="button"
+                                  class="group/empty w-full px-3 py-2 text-xs text-dls-secondary ml-2 text-left rounded-lg hover:bg-dls-hover hover:text-dls-text transition-colors"
+                                  onClick={() => createTaskInWorkspace(workspace().id)}
+                                  disabled={props.newTaskDisabled}
+                                >
+                                  <span class="group-hover/empty:hidden">No tasks yet.</span>
+                                  <span class="hidden group-hover/empty:inline font-medium">+ New task</span>
+                                </button>
+                              </Show>
+
+                              <Show when={group.sessions.length > previewCount(workspace().id)}>
+                                <button
+                                  type="button"
+                                  class="ml-2 w-[calc(100%-0.5rem)] px-3 py-2 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover rounded-lg transition-colors text-left"
+                                  onClick={() => showMoreSessions(workspace().id, group.sessions.length)}
+                                >
+                                  {showMoreLabel(workspace().id, group.sessions.length)}
+                                </button>
+                              </Show>
+                            </Show>
+                          }
+                        >
+                          <div class="w-full px-3 py-2 text-xs text-dls-secondary ml-2 text-left rounded-lg">
+                            Loading tasks...
+                          </div>
                         </Show>
                       </Show>
                     </div>
