@@ -1807,6 +1807,8 @@ export default function App() {
     repairOpencodeCache,
     updateAutoCheck,
     setUpdateAutoCheck,
+    updateAutoDownload,
+    setUpdateAutoDownload,
     updateStatus,
     setUpdateStatus,
     pendingUpdate,
@@ -3274,6 +3276,17 @@ export default function App() {
           setUpdateAutoCheck(storedUpdateAutoCheck === "1");
         }
 
+        const storedUpdateAutoDownload = window.localStorage.getItem(
+          "openwork.updateAutoDownload"
+        );
+        if (storedUpdateAutoDownload === "0" || storedUpdateAutoDownload === "1") {
+          const enabled = storedUpdateAutoDownload === "1";
+          setUpdateAutoDownload(enabled);
+          if (enabled) {
+            setUpdateAutoCheck(true);
+          }
+        }
+
         const storedUpdateCheckedAt = window.localStorage.getItem(
           "openwork.updateLastCheckedAt"
         );
@@ -3603,6 +3616,18 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem(
+        "openwork.updateAutoDownload",
+        updateAutoDownload() ? "1" : "0"
+      );
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
         THINKING_PREF_KEY,
         JSON.stringify(showThinking())
       );
@@ -3655,6 +3680,17 @@ export default function App() {
         // ignore
       }
     }
+  });
+
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (!updateAutoDownload()) return;
+
+    const state = updateStatus();
+    if (state.state !== "available") return;
+    if (!pendingUpdate()) return;
+
+    downloadUpdate().catch(() => undefined);
   });
 
   const headerStatus = createMemo(() => {
@@ -3942,6 +3978,15 @@ export default function App() {
       editModelVariant: handleEditModelVariant,
       updateAutoCheck: updateAutoCheck(),
       toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
+      updateAutoDownload: updateAutoDownload(),
+      toggleUpdateAutoDownload: () =>
+        setUpdateAutoDownload((v) => {
+          const next = !v;
+          if (next) {
+            setUpdateAutoCheck(true);
+          }
+          return next;
+        }),
       updateStatus: updateStatus(),
       updateEnv: updateEnv(),
       appVersion: appVersion(),
@@ -4041,6 +4086,10 @@ export default function App() {
     stopHost,
     headerStatus: headerStatus(),
     busyHint: busyHint(),
+    updateStatus: updateStatus(),
+    updateEnv: updateEnv(),
+    anyActiveRuns: anyActiveRuns(),
+    installUpdateAndRestart,
     selectedSessionModelLabel: selectedSessionModelLabel(),
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: formatModelVariantLabel(modelVariant()),

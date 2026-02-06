@@ -93,6 +93,8 @@ export type SettingsViewProps = {
   setThemeMode: (value: "light" | "dark" | "system") => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
+  updateAutoDownload: boolean;
+  toggleUpdateAutoDownload: () => void;
   updateStatus: {
     state: string;
     lastCheckedAt?: number | null;
@@ -1486,6 +1488,23 @@ export default function SettingsView(props: SettingsViewProps) {
                             onClick={props.toggleUpdateAutoCheck}
                           >
                             {props.updateAutoCheck ? "On" : "Off"}
+                          </button>
+                        </div>
+
+                        <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
+                          <div class="space-y-0.5">
+                            <div class="text-sm text-gray-12">Auto-update</div>
+                            <div class="text-xs text-gray-7">Download updates automatically (prompts to restart)</div>
+                          </div>
+                          <button
+                            class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
+                              props.updateAutoDownload
+                                ? "bg-gray-12/10 text-gray-12 border-gray-6/20"
+                                : "text-gray-10 border-gray-6 hover:text-gray-12"
+                            }`}
+                            onClick={props.toggleUpdateAutoDownload}
+                          >
+                            {props.updateAutoDownload ? "On" : "Off"}
                           </button>
                         </div>
 

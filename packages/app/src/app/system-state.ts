@@ -59,6 +59,8 @@ export function createSystemState(options: {
   const {
     updateAutoCheck,
     setUpdateAutoCheck,
+    updateAutoDownload,
+    setUpdateAutoDownload,
     updateStatus,
     setUpdateStatus,
     pendingUpdate,
@@ -433,9 +435,10 @@ export function createSystemState(options: {
     const pending = pendingUpdate();
     if (!pending) return;
 
-    options.setError(null);
-
     const state = updateStatus();
+    if (state.state === "downloading" || state.state === "ready") return;
+
+    options.setError(null);
     const lastCheckedAt = state.state === "available" ? state.lastCheckedAt : Date.now();
 
     setUpdateStatus({
@@ -522,6 +525,8 @@ export function createSystemState(options: {
     repairOpencodeCache,
     updateAutoCheck,
     setUpdateAutoCheck,
+    updateAutoDownload,
+    setUpdateAutoDownload,
     updateStatus,
     setUpdateStatus,
     pendingUpdate,

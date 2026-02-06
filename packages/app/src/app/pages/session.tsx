@@ -78,6 +78,19 @@ export type SessionViewProps = {
   stopHost: () => void;
   headerStatus: string;
   busyHint: string | null;
+  updateStatus: {
+    state: string;
+    lastCheckedAt?: number | null;
+    version?: string;
+    date?: string;
+    notes?: string;
+    totalBytes?: number | null;
+    downloadedBytes?: number;
+    message?: string;
+  } | null;
+  updateEnv: { supported?: boolean; reason?: string | null } | null;
+  anyActiveRuns: boolean;
+  installUpdateAndRestart: () => void;
   createSessionAndOpen: () => void;
   sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   newTaskDisabled: boolean;
@@ -805,6 +818,42 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const showUpdatePill = createMemo(() => {
+    if (!isTauriRuntime()) return false;
+    const state = props.updateStatus?.state;
+    return state === "available" || state === "downloading" || state === "ready";
+  });
+
+  const updatePillLabel = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "Update ready" : "Restart";
+    }
+    if (state === "downloading") return "Downloading";
+    return "Update";
+  });
+
+  const updatePillTitle = createMemo(() => {
+    const version = props.updateStatus?.version ? `v${props.updateStatus.version}` : "";
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns
+        ? `Update ready ${version}. Stop active runs to restart.`
+        : `Restart to apply update ${version}`;
+    }
+    if (state === "downloading") return `Downloading update ${version}`;
+    return `Update available ${version}`;
+  });
+
+  const handleUpdatePillClick = () => {
+    const state = props.updateStatus?.state;
+    if (state === "ready" && !props.anyActiveRuns) {
+      props.installUpdateAndRestart();
+      return;
+    }
+    openSettings("advanced");
+  };
+
   const openMcp = () => {
     props.setTab("mcp");
     props.setView("dashboard");
@@ -827,6 +876,34 @@ export default function SessionView(props: SessionViewProps) {
     <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
       <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
         <div class="flex-1 overflow-y-auto">
+          <Show when={showUpdatePill()}>
+            <button
+              type="button"
+              class="mb-3 w-full flex h-9 items-center gap-2 rounded-xl border border-dls-border bg-dls-hover px-3 text-xs text-dls-secondary shadow-sm transition-colors hover:bg-dls-active hover:text-dls-text"
+              onClick={handleUpdatePillClick}
+              title={updatePillTitle()}
+              aria-label={updatePillTitle()}
+            >
+              <Show
+                when={props.updateStatus?.state === "downloading"}
+                fallback={
+                  <span
+                    class={`w-2 h-2 rounded-full ${
+                      props.updateStatus?.state === "ready" ? "bg-green-9" : "bg-amber-9"
+                    }`}
+                  />
+                }
+              >
+                <Loader2 size={14} class="animate-spin text-dls-secondary" />
+              </Show>
+              <span class="text-[11px] font-medium text-dls-text">{updatePillLabel()}</span>
+              <Show when={props.updateStatus?.version}>
+                {(version) => (
+                  <span class="ml-auto text-[11px] text-dls-secondary font-mono">v{version()}</span>
+                )}
+              </Show>
+            </button>
+          </Show>
           <div class="flex items-center text-[11px] font-bold text-dls-secondary uppercase px-3 mb-3 pt-2 tracking-tight">
             <span>Tasks</span>
           </div>
@@ -1059,6 +1136,34 @@ export default function SessionView(props: SessionViewProps) {
       <main class="flex-1 flex flex-col relative pb-16 md:pb-12 bg-dls-surface">
         <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 sticky top-0">
           <div class="flex items-center gap-3">
+            <Show when={showUpdatePill()}>
+              <button
+                type="button"
+                class="md:hidden flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-xs text-dls-secondary shadow-sm transition-colors hover:bg-dls-active hover:text-dls-text"
+                onClick={handleUpdatePillClick}
+                title={updatePillTitle()}
+                aria-label={updatePillTitle()}
+              >
+                <Show
+                  when={props.updateStatus?.state === "downloading"}
+                  fallback={
+                    <span
+                      class={`w-2 h-2 rounded-full ${
+                        props.updateStatus?.state === "ready" ? "bg-green-9" : "bg-amber-9"
+                      }`}
+                    />
+                  }
+                >
+                  <Loader2 size={14} class="animate-spin text-dls-secondary" />
+                </Show>
+                <span class="text-[11px] font-medium text-dls-text">{updatePillLabel()}</span>
+                <Show when={props.updateStatus?.version}>
+                  {(version) => (
+                    <span class="hidden sm:inline text-[11px] text-dls-secondary font-mono">v{version()}</span>
+                  )}
+                </Show>
+              </button>
+            </Show>
             <h1 class="text-sm font-semibold text-dls-text">
               {selectedSessionTitle() || "New task"}
             </h1>
