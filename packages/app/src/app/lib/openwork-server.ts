@@ -146,6 +146,33 @@ export function normalizeOpenworkServerUrl(input: string) {
   return withProtocol.replace(/\/+$/, "");
 }
 
+export function buildOpenworkWorkspaceBaseUrl(hostUrl: string, workspaceId?: string | null) {
+  const normalized = normalizeOpenworkServerUrl(hostUrl) ?? "";
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] ?? "";
+    const prev = segments[segments.length - 2] ?? "";
+    const alreadyMounted = prev === "w" && Boolean(last);
+    if (alreadyMounted) {
+      return url.toString().replace(/\/+$/, "");
+    }
+
+    const id = (workspaceId ?? "").trim();
+    if (!id) return url.toString().replace(/\/+$/, "");
+
+    const basePath = url.pathname.replace(/\/+$/, "");
+    url.pathname = `${basePath}/w/${encodeURIComponent(id)}`;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    const id = (workspaceId ?? "").trim();
+    if (!id) return normalized;
+    return `${normalized.replace(/\/+$/, "")}/w/${encodeURIComponent(id)}`;
+  }
+}
+
 export function readOpenworkServerSettings(): OpenworkServerSettings {
   if (typeof window === "undefined") return {};
   try {

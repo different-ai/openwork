@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
+import { buildOpenworkWorkspaceBaseUrl } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
   OpenworkServerCapabilities,
@@ -444,7 +445,9 @@ export default function DashboardView(props: DashboardViewProps) {
     if (!ws) return "";
     if (ws.workspaceType === "remote") {
       if (ws.remoteType === "openwork") {
-        return ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const mounted = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId);
+        return mounted || hostUrl;
       }
       return ws.baseUrl?.trim() || "";
     }
@@ -488,14 +491,15 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (ws.remoteType === "openwork") {
-      const url = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const url = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId) || hostUrl;
       const token =
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
       return [
         {
-          label: "OpenWork host URL",
+          label: "OpenWork workspace URL",
           value: url,
         },
         {

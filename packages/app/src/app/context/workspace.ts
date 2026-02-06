@@ -21,6 +21,7 @@ import {
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 import {
+  buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
   normalizeOpenworkServerUrl,
   OpenworkServerError,
@@ -227,13 +228,16 @@ export function createWorkspaceStore(options: {
     });
   });
 
-  const resolveOpenworkHost = async (input: { hostUrl: string; token?: string | null }) => {
-    const normalized = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
-    if (!normalized) {
+  const resolveOpenworkHost = async (input: { hostUrl: string; token?: string | null; workspaceId?: string | null }) => {
+    const normalizedHostUrl = normalizeOpenworkServerUrl(input.hostUrl) ?? "";
+    if (!normalizedHostUrl) {
       return { kind: "fallback" as const };
     }
 
-    const client = createOpenworkServerClient({ baseUrl: normalized, token: input.token ?? undefined });
+    const workspaceBaseUrl =
+      buildOpenworkWorkspaceBaseUrl(normalizedHostUrl, input.workspaceId) ?? normalizedHostUrl;
+
+    const client = createOpenworkServerClient({ baseUrl: workspaceBaseUrl, token: input.token ?? undefined });
 
     const trimmedToken = input.token?.trim() ?? "";
 
@@ -262,36 +266,19 @@ export function createWorkspaceStore(options: {
     if (!workspace) {
       throw new Error("OpenWork server did not return a workspace.");
     }
-    let opencodeBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
-    if (!opencodeBaseUrl) {
+    const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
+    if (!opencodeUpstreamBaseUrl) {
       throw new Error("OpenWork server did not provide an OpenCode URL.");
     }
 
-    const opencodeUsername = workspace.opencode?.username?.trim() ?? "";
-    const opencodePassword = workspace.opencode?.password?.trim() ?? "";
-    let opencodeAuth: OpencodeAuth | undefined =
-      opencodeUsername && opencodePassword ? { username: opencodeUsername, password: opencodePassword } : undefined;
-
-    if (!isTauriRuntime()) {
-      opencodeBaseUrl = `${normalized.replace(/\/+$/, "")}/opencode`;
-      opencodeAuth = trimmedToken ? { token: trimmedToken, mode: "openwork" } : undefined;
-    }
-
-    try {
-      const hostUrl = new URL(normalized);
-      const opencodeUrl = new URL(opencodeBaseUrl);
-      if (hostUrl.hostname && opencodeUrl.hostname !== hostUrl.hostname) {
-        opencodeUrl.hostname = hostUrl.hostname;
-        opencodeUrl.protocol = hostUrl.protocol;
-        opencodeBaseUrl = opencodeUrl.toString();
-      }
-    } catch {
-      // ignore
-    }
+    const opencodeBaseUrl = `${workspaceBaseUrl.replace(/\/+$/, "")}/opencode`;
+    const opencodeAuth: OpencodeAuth | undefined = trimmedToken
+      ? { token: trimmedToken, mode: "openwork" }
+      : undefined;
 
     return {
       kind: "openwork" as const,
-      hostUrl: normalized,
+      hostUrl: normalizedHostUrl,
       workspace,
       opencodeBaseUrl,
       directory: workspace.opencode?.directory?.trim() ?? workspace.directory?.trim() ?? "",
@@ -361,7 +348,11 @@ export function createWorkspaceStore(options: {
 
       const token = workspace.openworkToken?.trim() || options.openworkServerSettings().token || undefined;
       try {
-        const resolved = await resolveOpenworkHost({ hostUrl, token });
+        const resolved = await resolveOpenworkHost({
+          hostUrl,
+          token,
+          workspaceId: workspace.openworkWorkspaceId ?? null,
+        });
         if (resolved.kind !== "openwork") {
           updateWorkspaceConnectionState(id, {
             status: "error",
@@ -519,6 +510,7 @@ export function createWorkspaceStore(options: {
             const resolved = await resolveOpenworkHost({
               hostUrl,
               token,
+              workspaceId: next.openworkWorkspaceId ?? null,
             });
             if (resolved.kind === "openwork") {
               resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -1008,7 +1000,10 @@ export function createWorkspaceStore(options: {
     });
 
     try {
-      const resolved = await resolveOpenworkHost({ hostUrl, token });
+      const resolved = await resolveOpenworkHost({
+        hostUrl,
+        token,
+      });
       if (resolved.kind !== "openwork") {
         options.setError("OpenWork server unavailable. Check the URL and token.");
         return false;
@@ -1164,7 +1159,11 @@ export function createWorkspaceStore(options: {
     });
 
     try {
-      const resolved = await resolveOpenworkHost({ hostUrl, token });
+      const resolved = await resolveOpenworkHost({
+        hostUrl,
+        token,
+        workspaceId: workspace.openworkWorkspaceId ?? null,
+      });
       if (resolved.kind !== "openwork") {
         options.setError("OpenWork server unavailable. Check the URL and token.");
         return false;

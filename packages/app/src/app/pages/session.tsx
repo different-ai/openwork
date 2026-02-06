@@ -44,6 +44,7 @@ import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
+import { buildOpenworkWorkspaceBaseUrl } from "../lib/openwork-server";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
@@ -809,7 +810,9 @@ export default function SessionView(props: SessionViewProps) {
     if (!ws) return "";
     if (ws.workspaceType === "remote") {
       if (ws.remoteType === "openwork") {
-        return ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+        const mounted = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId);
+        return mounted || hostUrl;
       }
       return ws.baseUrl?.trim() || "";
     }
@@ -853,14 +856,15 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     if (ws.remoteType === "openwork") {
-      const url = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const url = buildOpenworkWorkspaceBaseUrl(hostUrl, ws.openworkWorkspaceId) || hostUrl;
       const token =
         ws.openworkToken?.trim() ||
         props.openworkServerSettings.token?.trim() ||
         "";
       return [
         {
-          label: "OpenWork host URL",
+          label: "OpenWork workspace URL",
           value: url,
         },
         {

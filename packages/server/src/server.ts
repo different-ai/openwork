@@ -107,6 +107,20 @@ function logRequest(input: {
 
 type AuthMode = "none" | "client" | "host";
 
+function parseWorkspaceMount(pathname: string): { workspaceId: string; restPath: string } | null {
+  if (!pathname.startsWith("/w/")) return null;
+  const remainder = pathname.slice(3);
+  if (!remainder) return null;
+  const slash = remainder.indexOf("/");
+  if (slash === -1) {
+    return { workspaceId: decodeURIComponent(remainder), restPath: "/" };
+  }
+  const workspaceId = remainder.slice(0, slash);
+  const restPath = remainder.slice(slash) || "/";
+  if (!workspaceId.trim()) return null;
+  return { workspaceId: decodeURIComponent(workspaceId), restPath };
+}
+
 interface Route {
   method: string;
   regex: RegExp;
@@ -165,12 +179,30 @@ export function startServer(config: ServerConfig) {
         return finalize(new Response(null, { status: 204 }));
       }
 
+      const mount = parseWorkspaceMount(url.pathname);
+      if (mount && (mount.restPath === "/opencode" || mount.restPath.startsWith("/opencode/"))) {
+        authMode = "client";
+        try {
+          requireClient(request, config);
+          const workspace = await resolveWorkspace(config, mount.workspaceId);
+          proxyBaseUrl = workspace.baseUrl?.trim() || undefined;
+          const response = await proxyOpencodeRequest({ request, url, workspace, proxyPath: mount.restPath });
+          return finalize(response);
+        } catch (error) {
+          const apiError = error instanceof ApiError
+            ? error
+            : new ApiError(500, "internal_error", "Unexpected server error");
+          errorMessage = apiError.message;
+          return finalize(jsonResponse(formatError(apiError), apiError.status));
+        }
+      }
+
       if (url.pathname === "/opencode" || url.pathname.startsWith("/opencode/")) {
         authMode = "client";
         proxyBaseUrl = config.workspaces[0]?.baseUrl?.trim() || undefined;
         try {
           requireClient(request, config);
-          const response = await proxyOpencodeRequest({ request, url, config });
+          const response = await proxyOpencodeRequest({ request, url, workspace: config.workspaces[0] });
           return finalize(response);
         } catch (error) {
           const apiError = error instanceof ApiError
@@ -256,15 +288,17 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
 async function proxyOpencodeRequest(input: {
   request: Request;
   url: URL;
-  config: ServerConfig;
+  workspace?: WorkspaceInfo;
+  proxyPath?: string;
 }) {
-  const workspace = input.config.workspaces[0];
+  const workspace = input.workspace;
   const baseUrl = workspace?.baseUrl?.trim() ?? "";
   if (!baseUrl) {
     throw new ApiError(400, "opencode_unconfigured", "OpenCode base URL is missing for this workspace");
   }
 
-  const targetUrl = buildOpencodeProxyUrl(baseUrl, input.url.pathname, input.url.search);
+  const proxyPath = input.proxyPath ?? input.url.pathname;
+  const targetUrl = buildOpencodeProxyUrl(baseUrl, proxyPath, input.url.search);
   const headers = new Headers(input.request.headers);
   headers.delete("authorization");
   headers.delete("host");
@@ -402,6 +436,44 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
 
   addRoute(routes, "GET", "/health", "none", async () => {
     return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  addRoute(routes, "GET", "/w/:id/health", "none", async () => {
+    return jsonResponse({ ok: true, version: SERVER_VERSION, uptimeMs: Date.now() - config.startedAt });
+  });
+
+  addRoute(routes, "GET", "/w/:id/status", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse({
+      ok: true,
+      version: SERVER_VERSION,
+      uptimeMs: Date.now() - config.startedAt,
+      readOnly: config.readOnly,
+      approval: config.approval,
+      corsOrigins: config.corsOrigins,
+      workspaceCount: 1,
+      activeWorkspaceId: workspace.id,
+      workspace: serializeWorkspace(workspace),
+      authorizedRoots: config.authorizedRoots,
+      server: {
+        host: config.host,
+        port: config.port,
+        configPath: config.configPath ?? null,
+      },
+      tokenSource: {
+        client: config.tokenSource,
+        host: config.hostTokenSource,
+      },
+    });
+  });
+
+  addRoute(routes, "GET", "/w/:id/capabilities", "client", async () => {
+    return jsonResponse(buildCapabilities(config));
+  });
+
+  addRoute(routes, "GET", "/w/:id/workspaces", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    return jsonResponse({ items: [serializeWorkspace(workspace)], activeId: workspace.id });
   });
 
   addRoute(routes, "GET", "/status", "client", async () => {
