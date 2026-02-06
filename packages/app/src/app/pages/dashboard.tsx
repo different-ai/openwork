@@ -29,6 +29,7 @@ import Button from "../components/button";
 import McpView from "./mcp";
 import PluginsView from "./plugins";
 import ScheduledTasksView from "./scheduled";
+import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
 import StatusBar from "../components/status-bar";
@@ -41,6 +42,7 @@ import {
   MoreHorizontal,
   Plus,
   Settings,
+  SlidersHorizontal,
   Zap,
 } from "lucide-solid";
 
@@ -247,6 +249,8 @@ export default function DashboardView(props: DashboardViewProps) {
         return "Plugins";
       case "mcp":
         return "Apps";
+      case "config":
+        return "Config";
       case "settings":
         return "Settings";
       default:
@@ -431,6 +435,10 @@ export default function DashboardView(props: DashboardViewProps) {
     props.setTab("settings");
   };
 
+  const openConfig = () => {
+    props.setTab("config");
+  };
+
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
     if (!id) return null;
@@ -508,7 +516,7 @@ export default function DashboardView(props: DashboardViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Settings",
+          placeholder: token ? undefined : "Set token in Config",
           hint: "This token grants access to the workspace on that host.",
         },
       ];
@@ -978,6 +986,32 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
+            <Match when={props.tab === "config"}>
+              <ConfigView
+                busy={props.busy}
+                clientConnected={props.clientConnected}
+                anyActiveRuns={props.anyActiveRuns}
+                openworkServerStatus={props.openworkServerStatus}
+                openworkServerUrl={props.openworkServerUrl}
+                openworkServerSettings={props.openworkServerSettings}
+                openworkServerHostInfo={props.openworkServerHostInfo}
+                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                updateOpenworkServerSettings={props.updateOpenworkServerSettings}
+                resetOpenworkServerSettings={props.resetOpenworkServerSettings}
+                testOpenworkServerConnection={props.testOpenworkServerConnection}
+                canReloadWorkspace={props.canReloadWorkspace}
+                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadBusy={props.reloadBusy}
+                reloadError={props.reloadError}
+                workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
+                workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
+                setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
+                workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
+                setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
+                developerMode={props.developerMode}
+              />
+            </Match>
+
             <Match when={props.tab === "settings"}>
                 <SettingsView
                   startupPreference={props.startupPreference}
@@ -992,21 +1026,10 @@ export default function DashboardView(props: DashboardViewProps) {
                   openProviderAuthModal={props.openProviderAuthModal}
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
-                  openworkServerSettings={props.openworkServerSettings}
                   openworkServerHostInfo={props.openworkServerHostInfo}
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                  clientConnected={props.clientConnected}
-                  canReloadWorkspace={props.canReloadWorkspace}
-                  reloadWorkspaceEngine={props.reloadWorkspaceEngine}
-                  reloadBusy={props.reloadBusy}
-                  reloadError={props.reloadError}
-                  workspaceAutoReloadAvailable={props.workspaceAutoReloadAvailable}
-                  workspaceAutoReloadEnabled={props.workspaceAutoReloadEnabled}
-                  setWorkspaceAutoReloadEnabled={props.setWorkspaceAutoReloadEnabled}
-                  workspaceAutoReloadResumeEnabled={props.workspaceAutoReloadResumeEnabled}
-                  setWorkspaceAutoReloadResumeEnabled={props.setWorkspaceAutoReloadResumeEnabled}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
@@ -1015,9 +1038,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   openwrkStatus={props.openwrkStatus}
                   owpenbotInfo={props.owpenbotInfo}
                   engineDoctorVersion={props.engineDoctorVersion}
-                  updateOpenworkServerSettings={props.updateOpenworkServerSettings}
-                  resetOpenworkServerSettings={props.resetOpenworkServerSettings}
-                  testOpenworkServerConnection={props.testOpenworkServerConnection}
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}
                   stopHost={props.stopHost}
@@ -1131,23 +1151,23 @@ export default function DashboardView(props: DashboardViewProps) {
               }
           }
           exportDisabledReason={exportDisabledReason()}
-          onOpenBots={() => openSettings("messaging")}
+          onOpenBots={openConfig}
         />
 
         <div class="fixed bottom-0 left-0 right-0">
-          <StatusBar
-            clientConnected={props.clientConnected}
-            openworkServerStatus={props.openworkServerStatus}
-            developerMode={props.developerMode}
-            onOpenSettings={() => openSettings("general")}
-            onOpenMessaging={() => openSettings("messaging")}
-            onOpenProviders={() => props.openProviderAuthModal()}
-            onOpenMcp={() => props.setTab("mcp")}
-            providerConnectedIds={props.providerConnectedIds}
-            mcpStatuses={props.mcpStatuses}
-          />
+            <StatusBar
+              clientConnected={props.clientConnected}
+              openworkServerStatus={props.openworkServerStatus}
+              developerMode={props.developerMode}
+              onOpenSettings={() => openSettings("general")}
+              onOpenMessaging={openConfig}
+              onOpenProviders={() => props.openProviderAuthModal()}
+              onOpenMcp={() => props.setTab("mcp")}
+              providerConnectedIds={props.providerConnectedIds}
+              mcpStatuses={props.mcpStatuses}
+            />
           <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-3 gap-2">
+            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-4 gap-2">
               <button
                 class={`flex flex-col items-center gap-1 text-xs ${
                   props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1175,6 +1195,15 @@ export default function DashboardView(props: DashboardViewProps) {
                 <Box size={18} />
                 Apps
               </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("config")}
+              >
+                <SlidersHorizontal size={18} />
+                Config
+              </button>
             </div>
           </nav>
         </div>
@@ -1185,6 +1214,7 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("scheduled", "Automations", <History size={18} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Apps", <Box size={18} />)}
+          {navItem("config", "Config", <SlidersHorizontal size={18} />)}
         </div>
 
         <div class="flex-1" />

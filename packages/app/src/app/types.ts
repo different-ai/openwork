@@ -128,9 +128,10 @@ export type DashboardTab =
   | "skills"
   | "plugins"
   | "mcp"
+  | "config"
   | "settings";
 
-export type SettingsTab = "general" | "model" | "advanced" | "remote" | "messaging" | "debug";
+export type SettingsTab = "general" | "model" | "advanced" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";
 

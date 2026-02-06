@@ -36,6 +36,7 @@ import {
   Plus,
   Settings,
   Shield,
+  SlidersHorizontal,
   Zap,
 } from "lucide-solid";
 
@@ -871,7 +872,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Settings",
+          placeholder: token ? undefined : "Set token in Config",
           hint: "This token grants access to the workspace on that host.",
         },
       ];
@@ -940,6 +941,11 @@ export default function SessionView(props: SessionViewProps) {
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
     props.setTab("settings");
+    props.setView("dashboard");
+  };
+
+  const openConfig = () => {
+    props.setTab("config");
     props.setView("dashboard");
   };
 
@@ -1623,6 +1629,18 @@ export default function SessionView(props: SessionViewProps) {
             <Box size={18} />
             Apps
           </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              props.tab === "config"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={openConfig}
+          >
+            <SlidersHorizontal size={18} />
+            Config
+          </button>
         </div>
 
         <div class="flex-1" />
@@ -1645,7 +1663,7 @@ export default function SessionView(props: SessionViewProps) {
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
           onOpenSettings={() => openSettings("general")}
-          onOpenMessaging={() => openSettings("messaging")}
+          onOpenMessaging={openConfig}
           onOpenProviders={openProviderAuth}
           onOpenMcp={openMcp}
           providerConnectedIds={props.providerConnectedIds}
@@ -1693,7 +1711,7 @@ export default function SessionView(props: SessionViewProps) {
             }
         }
         exportDisabledReason={exportDisabledReason()}
-        onOpenBots={() => openSettings("messaging")}
+        onOpenBots={openConfig}
       />
 
       <Show when={props.activePermission}>

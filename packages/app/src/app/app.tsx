@@ -1817,8 +1817,7 @@ export default function App() {
       setEditRemoteWorkspaceOpen(true);
       return;
     }
-    setSettingsTab("remote");
-    setTab("settings");
+    setTab("config");
     setView("dashboard");
   };
 
@@ -4288,6 +4287,7 @@ export default function App() {
     "skills",
     "plugins",
     "mcp",
+    "config",
     "settings",
   ]);
 
