@@ -557,7 +557,8 @@ jobs:
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "openwrk v${version}" \
-            --notes "$notes"
+            --notes "$notes" \
+            --latest=false
 
       - name: Upload sidecar assets
         env:
