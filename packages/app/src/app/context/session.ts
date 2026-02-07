@@ -198,15 +198,16 @@ export function createSessionStore(options: {
   const openworkConfigPattern = /[\\/]\.opencode[\\/]openwork\.json\b/i;
   const mutatingTools = new Set(["write", "edit", "apply_patch"]);
 
+  const MAX_SEARCH_TEXT_LENGTH = 20_000;
+
   const extractSearchText = (value: unknown) => {
-    if (!value) return "";
-    if (typeof value === "string") return value;
-    if (typeof value === "number") return String(value);
-    return safeStringify(value);
+    if (value === null || value === undefined) return "";
+    if (typeof value === "string") return value.slice(0, MAX_SEARCH_TEXT_LENGTH);
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return safeStringify(value).slice(0, MAX_SEARCH_TEXT_LENGTH);
   };
 
-  const detectReloadReason = (value: unknown): ReloadReason | null => {
-    const text = extractSearchText(value);
+  const detectReloadReasonFromText = (text: string): ReloadReason | null => {
     if (!text) return null;
     if (openworkConfigPattern.test(text)) return null;
     if (skillPathPattern.test(text)) return "skills";
@@ -262,63 +263,27 @@ export function createSessionStore(options: {
     return null;
   };
 
-  const detectReloadReasonDeep = (value: unknown): ReloadReason | null => {
-    if (!value) return null;
-    if (typeof value === "string" || typeof value === "number") {
-      return detectReloadReason(value);
-    }
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        const reason = detectReloadReasonDeep(entry);
-        if (reason) return reason;
-      }
-      return null;
-    }
-    if (typeof value === "object") {
-      for (const entry of Object.values(value as Record<string, unknown>)) {
-        const reason = detectReloadReasonDeep(entry);
-        if (reason) return reason;
-      }
-    }
-    return null;
-  };
-
-  const detectReloadTriggerDeep = (value: unknown): ReloadTrigger | null => {
-    if (!value) return null;
-    if (typeof value === "string" || typeof value === "number") {
-      return detectReloadTriggerFromText(String(value));
-    }
-    if (Array.isArray(value)) {
-      for (const entry of value) {
-        const trigger = detectReloadTriggerDeep(entry);
-        if (trigger) return trigger;
-      }
-      return null;
-    }
-    if (typeof value === "object") {
-      for (const entry of Object.values(value as Record<string, unknown>)) {
-        const trigger = detectReloadTriggerDeep(entry);
-        if (trigger) return trigger;
-      }
-    }
-    return null;
-  };
-
   const detectReloadFromPart = (part: Part): { reason: ReloadReason; trigger?: ReloadTrigger } | null => {
     if (part.type !== "tool") return null;
     const record = part as Record<string, unknown>;
     const toolName = typeof record.tool === "string" ? record.tool : "";
     if (!mutatingTools.has(toolName)) return null;
     const state = (record.state ?? {}) as Record<string, unknown>;
+
+    const inputText = extractSearchText(state.input);
+    const patchText = extractSearchText(state.patch);
+    const diffText = extractSearchText(state.diff);
+
     const reason =
-      detectReloadReasonDeep(state.input) ||
-      detectReloadReasonDeep(state.patch) ||
-      detectReloadReasonDeep(state.diff);
+      detectReloadReasonFromText(inputText) ||
+      detectReloadReasonFromText(patchText) ||
+      detectReloadReasonFromText(diffText);
     if (!reason) return null;
+
     const trigger =
-      detectReloadTriggerDeep(state.input) ||
-      detectReloadTriggerDeep(state.patch) ||
-      detectReloadTriggerDeep(state.diff);
+      detectReloadTriggerFromText(inputText) ||
+      detectReloadTriggerFromText(patchText) ||
+      detectReloadTriggerFromText(diffText);
     return { reason, trigger: trigger ?? undefined };
   };
 
@@ -405,20 +370,9 @@ export function createSessionStore(options: {
         draft.messages = pruneRecordKeys(draft.messages, sessionIDs);
         draft.todos = pruneRecordKeys(draft.todos, sessionIDs);
 
-        for (const sessionID of sessionIDs) {
-          for (const info of draft.messages[sessionID] ?? []) {
-            keepMessageIDs.add(info.id);
-          }
-        }
-
-        for (const [messageID, parts] of Object.entries(draft.parts)) {
-          if (!Array.isArray(parts) || parts.length === 0) continue;
-          const belongsToKeptSession = parts.some((part) => {
-            const sessionID = typeof part?.sessionID === "string" ? part.sessionID : "";
-            return sessionID ? sessionIDs.has(sessionID) : false;
-          });
-          if (belongsToKeptSession) {
-            keepMessageIDs.add(messageID);
+        for (const messages of Object.values(draft.messages)) {
+          for (const info of messages ?? []) {
+            if (info?.id) keepMessageIDs.add(info.id);
           }
         }
 
