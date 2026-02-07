@@ -20,37 +20,6 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
     tags: ["automation", "jobs"],
     installMode: "simple",
   },
-  {
-    name: "opencode-browser",
-    packageName: "@different-ai/opencode-browser",
-    description: "Browser automation with a local extension + native host.",
-    tags: ["browser", "extension"],
-    aliases: ["opencode-browser"],
-    installMode: "guided",
-    steps: [
-      {
-        title: "Run the installer",
-        description: "Installs the extension + native host and prepares the local broker.",
-        command: "bunx @different-ai/opencode-browser@latest install",
-        note: "Use npx @different-ai/opencode-browser@latest install if you do not have bunx.",
-      },
-      {
-        title: "Load the extension",
-        description:
-          "Open chrome://extensions, enable Developer mode, click Load unpacked, and select the extension folder.",
-        url: "chrome://extensions",
-        path: "~/.opencode-browser/extension",
-      },
-      {
-        title: "Pin the extension",
-        description: "Pin OpenCode Browser Automation in your browser toolbar.",
-      },
-      {
-        title: "Add plugin to config",
-        description: "Click Add to write @different-ai/opencode-browser into opencode.json.",
-      },
-    ],
-  },
 ];
 
 export type McpDirectoryInfo = {
