@@ -109,6 +109,7 @@ export default function QuestionModal(props: QuestionModalProps) {
                 e.preventDefault();
                 setFocusedOptionIndex((prev) => (prev - 1 + optionsCount) % optionsCount);
             } else if (e.key === "Enter") {
+                if (e.isComposing || e.keyCode === 229) return;
                 e.preventDefault();
                 if (q.custom && document.activeElement?.tagName === "INPUT") {
                     handleNext();
@@ -195,6 +196,7 @@ export default function QuestionModal(props: QuestionModalProps) {
                                     placeholder="Type your answer here..."
                                     onKeyDown={(e) => {
                                         if (e.key === "Enter") {
+                                            if (e.isComposing || e.keyCode === 229) return;
                                             e.stopPropagation();
                                             handleNext();
                                         }

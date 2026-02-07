@@ -747,6 +747,7 @@ export default function DashboardView(props: DashboardViewProps) {
                         }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
+                          if (event.isComposing || event.keyCode === 229) return;
                           event.preventDefault();
                           expandWorkspace(workspace().id);
                           props.activateWorkspace(workspace().id);
@@ -889,6 +890,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                     onClick={() => openSessionFromList(workspace().id, session.id)}
                                     onKeyDown={(event) => {
                                       if (event.key !== "Enter" && event.key !== " ") return;
+                                      if (event.isComposing || event.keyCode === 229) return;
                                       event.preventDefault();
                                       openSessionFromList(workspace().id, session.id);
                                     }}
@@ -937,6 +939,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                       onClick={() => openSessionFromList(workspace().id, session.id)}
                                       onKeyDown={(event) => {
                                         if (event.key !== "Enter" && event.key !== " ") return;
+                                        if (event.isComposing || event.keyCode === 229) return;
                                         event.preventDefault();
                                         openSessionFromList(workspace().id, session.id);
                                       }}

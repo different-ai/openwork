@@ -1138,6 +1138,7 @@ export default function SessionView(props: SessionViewProps) {
                           }}
                           onKeyDown={(event) => {
                             if (event.key !== "Enter" && event.key !== " ") return;
+                            if (event.isComposing || event.keyCode === 229) return;
                             event.preventDefault();
                             expandWorkspace(workspace().id);
                             props.activateWorkspace(workspace().id);
@@ -1284,6 +1285,7 @@ export default function SessionView(props: SessionViewProps) {
                                     onClick={() => openSessionFromList(workspace().id, session.id)}
                                     onKeyDown={(event) => {
                                       if (event.key !== "Enter" && event.key !== " ") return;
+                                      if (event.isComposing || event.keyCode === 229) return;
                                       event.preventDefault();
                                       openSessionFromList(workspace().id, session.id);
                                     }}
@@ -1334,6 +1336,7 @@ export default function SessionView(props: SessionViewProps) {
                                       onClick={() => openSessionFromList(workspace().id, session.id)}
                                       onKeyDown={(event) => {
                                         if (event.key !== "Enter" && event.key !== " ") return;
+                                        if (event.isComposing || event.keyCode === 229) return;
                                         event.preventDefault();
                                         openSessionFromList(workspace().id, session.id);
                                       }}

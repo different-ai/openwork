@@ -331,6 +331,9 @@ export default function Composer(props: ComposerProps) {
   let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
+  // Track IME composition state so we can combine it with keyCode === 229 to
+  // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
+  let imeComposing = false;
   const [mentionIndex, setMentionIndex] = createSignal(0);
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
@@ -355,6 +358,20 @@ export default function Composer(props: ComposerProps) {
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
+
+    // Bind composition events directly via addEventListener because SolidJS
+    // does not delegate compositionstart/compositionend — the camelCase JSX
+    // form (onCompositionStart) may silently fail to attach.
+    if (editorRef) {
+      editorRef.addEventListener("compositionstart", () => {
+        imeComposing = true;
+      });
+      editorRef.addEventListener("compositionend", () => {
+        requestAnimationFrame(() => {
+          imeComposing = false;
+        });
+      });
+    }
   });
 
   const mentionGroups = createMemo<MentionGroup[]>(() => {
@@ -832,12 +849,17 @@ export default function Composer(props: ComposerProps) {
       emitDraftChange();
       return;
     }
-    if (event.key === "Enter" && event.isComposing) return;
+    // Block Enter while IME is composing. We check three signals:
+    // 1. event.isComposing — standard API (unreliable in some WebKit builds)
+    // 2. imeComposing — manual flag from compositionstart/end
+    // 3. event.keyCode === 229 — legacy but reliable IME indicator across all browsers
+    const imeActive = event.isComposing || imeComposing || event.keyCode === 229;
+    if (event.key === "Enter" && imeActive) return;
 
     if (mentionOpen()) {
       const options = mentionOptions();
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
         const active = options[mentionIndex()] ?? options[0];
         if (active) insertMention(active);
@@ -873,7 +895,7 @@ export default function Composer(props: ComposerProps) {
     if (slashOpen()) {
       const options = slashFiltered();
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
         const active = options[slashIndex()] ?? options[0];
         if (active) handleSlashSelect(active);

@@ -163,6 +163,7 @@ const ProjectFolder = (props: { name: string; children: any }) => {
         onClick={toggleExpanded}
         onKeyDown={(event) => {
           if (event.key !== "Enter" && event.key !== " ") return;
+          if (event.isComposing || event.keyCode === 229) return;
           event.preventDefault();
           toggleExpanded();
         }}
