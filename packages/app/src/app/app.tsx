@@ -65,6 +65,7 @@ import type {
   ResetOpenworkMode,
   SettingsTab,
   SkillCard,
+  SidebarSessionItem,
   TodoItem,
   View,
   WorkspaceSessionGroup,
@@ -1426,7 +1427,7 @@ export default function App() {
 
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
   const [sidebarSessionsByWorkspaceId, setSidebarSessionsByWorkspaceId] = createSignal<
-    Record<string, Session[]>
+    Record<string, SidebarSessionItem[]>
   >({});
   const [sidebarSessionStatusByWorkspaceId, setSidebarSessionStatusByWorkspaceId] = createSignal<
     Record<string, SidebarWorkspaceSessionsStatus>
@@ -1438,7 +1439,7 @@ export default function App() {
   const pruneSidebarSessionState = (workspaceIds: Set<string>) => {
     setSidebarSessionsByWorkspaceId((prev) => {
       let changed = false;
-      const next: Record<string, Session[]> = {};
+      const next: Record<string, SidebarSessionItem[]> = {};
       for (const [id, list] of Object.entries(prev)) {
         if (!workspaceIds.has(id)) {
           changed = true;
@@ -1560,9 +1561,18 @@ export default function App() {
         ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
         : list;
 
+      const sorted = sortSessionsByActivity(filtered);
+      const items: SidebarSessionItem[] = sorted.map((session) => ({
+        id: session.id,
+        title: session.title,
+        slug: session.slug,
+        time: session.time,
+        directory: session.directory,
+      }));
+
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
-        [id]: sortSessionsByActivity(filtered),
+        [id]: items,
       }));
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "ready" }));
     } catch (error) {
@@ -1582,6 +1592,8 @@ export default function App() {
       : list;
     for (const ws of ordered) {
       await refreshSidebarWorkspaceSessions(ws.id);
+      // Yield so long refresh passes don't block UI / timers.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     }
   };
 
@@ -1628,13 +1640,7 @@ export default function App() {
       const groupSessions = sessionsById[workspace.id] ?? [];
       return {
         workspace,
-        sessions: groupSessions.map((session) => ({
-          id: session.id,
-          title: session.title,
-          slug: session.slug,
-          time: session.time,
-          directory: session.directory,
-        })),
+        sessions: groupSessions,
         status: statusById[workspace.id] ?? "idle",
         error: errorById[workspace.id] ?? null,
       };

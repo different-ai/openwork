@@ -515,6 +515,12 @@ export function createWorkspaceStore(options: {
     setConnectingWorkspaceId(id);
     updateWorkspaceConnectionState(id, { status: "connecting", message: null });
 
+    // Allow the UI to paint the "switching" state before we kick off work that can
+    // trigger expensive reactive updates (e.g. sidebar session refreshes).
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    }
+
     try {
       if (isRemote) {
         options.setStartupPreference("server");
