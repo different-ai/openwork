@@ -826,13 +826,15 @@ export default function Composer(props: ComposerProps) {
       }
     }
 
+    // Skip Enter during IME composition (e.g. Japanese, Chinese, Korean input)
+    if (event.key === "Enter" && (event.isComposing || event.keyCode === 229)) return;
+
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       document.execCommand("insertLineBreak");
       emitDraftChange();
       return;
     }
-    if (event.key === "Enter" && event.isComposing) return;
 
     if (mentionOpen()) {
       const options = mentionOptions();

@@ -55,6 +55,7 @@ export default function RenameWorkspaceModal(props: RenameWorkspaceModalProps) {
                 class="bg-gray-3"
                 onKeyDown={(event) => {
                   if (event.key !== "Enter") return;
+                  if (event.isComposing || event.keyCode === 229) return;
                   event.preventDefault();
                   if (props.canSave) props.onSave();
                 }}

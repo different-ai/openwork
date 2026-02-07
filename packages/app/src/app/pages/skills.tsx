@@ -233,6 +233,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   onClick={() => void openSkill(skill)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
+                      if (e.isComposing || e.keyCode === 229) return;
                       e.preventDefault();
                       void openSkill(skill);
                     }
