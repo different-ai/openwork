@@ -22,11 +22,21 @@ export type HealthSnapshot = {
 export type TelegramTokenResult = {
   configured: boolean;
   enabled: boolean;
+  // Whether owpenbot applied the token to a running adapter.
+  // If false, the token is still persisted but may require a restart.
+  applied?: boolean;
+  // True when adapter start is still in flight (timeout).
+  starting?: boolean;
+  // Apply/start failure detail (best-effort, for UI/debugging).
+  error?: string;
 };
 
 export type SlackTokensResult = {
   configured: boolean;
   enabled: boolean;
+  applied?: boolean;
+  starting?: boolean;
+  error?: string;
 };
 
 export type GroupsConfigResult = {

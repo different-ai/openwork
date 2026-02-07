@@ -1,6 +1,6 @@
-import { readFile, writeFile, rm } from "node:fs/promises";
+import { readFile, writeFile, rm, rename } from "node:fs/promises";
 import { homedir, hostname } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger } from "./types.js";
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
@@ -631,7 +631,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     });
 
     const result = await updateOwpenbotTelegramToken(token, healthPort, requestHost);
-    logOwpenbotDebug("telegram-token:updated", { workspaceId: workspace.id });
+    logOwpenbotDebug("telegram-token:updated", {
+      workspaceId: workspace.id,
+      applied: typeof result.applied === "boolean" ? result.applied : null,
+      applyError: typeof result.applyError === "string" ? result.applyError : null,
+    });
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -674,7 +678,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService): Route[]
     });
 
     const result = await updateOwpenbotSlackTokens(botToken, appToken, healthPort, requestHost);
-    logOwpenbotDebug("slack-tokens:updated", { workspaceId: workspace.id });
+    logOwpenbotDebug("slack-tokens:updated", {
+      workspaceId: workspace.id,
+      applied: typeof result.applied === "boolean" ? result.applied : null,
+      applyError: typeof result.applyError === "string" ? result.applyError : null,
+    });
 
     await recordAudit(workspace.path, {
       id: shortId(),
@@ -1153,57 +1161,250 @@ function normalizeHealthPort(value: unknown): number | null {
   return port;
 }
 
+type OwpenbotConfigFile = Record<string, unknown> & {
+  version?: number;
+  channels?: Record<string, unknown> & {
+    telegram?: Record<string, unknown>;
+    slack?: Record<string, unknown>;
+  };
+};
+
+function ensurePlainObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+async function readOwpenbotConfigFile(configPath: string): Promise<OwpenbotConfigFile> {
+  if (!(await exists(configPath))) {
+    return { version: 1 };
+  }
+
+  let raw = "";
+  try {
+    raw = await readFile(configPath, "utf8");
+  } catch (error) {
+    throw new ApiError(500, "owpenbot_config_read_failed", "Failed to read owpenbot.json", {
+      path: configPath,
+      error: String(error),
+    });
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return ensurePlainObject(parsed) as OwpenbotConfigFile;
+  } catch (error) {
+    throw new ApiError(422, "invalid_json", "Failed to parse owpenbot.json", {
+      path: configPath,
+      error: String(error),
+    });
+  }
+}
+
+async function writeOwpenbotConfigFile(configPath: string, config: OwpenbotConfigFile): Promise<void> {
+  await ensureDir(dirname(configPath));
+  const next: OwpenbotConfigFile = {
+    ...config,
+    version: typeof config.version === "number" && Number.isFinite(config.version) ? config.version : 1,
+  };
+  const tmpPath = `${configPath}.tmp.${shortId()}`;
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await rename(tmpPath, configPath);
+  } finally {
+    // Best-effort cleanup if rename failed.
+    try {
+      await rm(tmpPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function persistOwpenbotTelegramToken(token: string): Promise<void> {
+  const configPath = resolveOwpenbotConfigPath();
+  const current = await readOwpenbotConfigFile(configPath);
+  const channels = ensurePlainObject(current.channels);
+  const telegram = ensurePlainObject(channels.telegram);
+  const next: OwpenbotConfigFile = {
+    ...current,
+    channels: {
+      ...channels,
+      telegram: {
+        ...telegram,
+        token,
+        enabled: true,
+      },
+    },
+  };
+  await writeOwpenbotConfigFile(configPath, next);
+}
+
+async function persistOwpenbotSlackTokens(botToken: string, appToken: string): Promise<void> {
+  const configPath = resolveOwpenbotConfigPath();
+  const current = await readOwpenbotConfigFile(configPath);
+  const channels = ensurePlainObject(current.channels);
+  const slack = ensurePlainObject(channels.slack);
+  const next: OwpenbotConfigFile = {
+    ...current,
+    channels: {
+      ...channels,
+      slack: {
+        ...slack,
+        botToken,
+        appToken,
+        enabled: true,
+      },
+    },
+  };
+  await writeOwpenbotConfigFile(configPath, next);
+}
+
+type OwpenbotApplyAttempt = {
+  applied: boolean;
+  port: number;
+  hosts: string[];
+  host?: string;
+  status?: number;
+  error?: string;
+  body?: unknown;
+};
+
+async function tryPostOwpenbotHealth(
+  pathname: string,
+  payload: unknown,
+  options: { port: number; requestHost?: string | null; timeoutMs: number },
+): Promise<OwpenbotApplyAttempt> {
+  const candidates = Array.from(
+    new Set(
+      ["127.0.0.1", options.requestHost].filter(
+        (host): host is string => Boolean(host && host.trim()),
+      ),
+    ),
+  );
+  const port = options.port;
+
+  let lastError: OwpenbotApplyAttempt | null = null;
+  for (const host of candidates) {
+    const url = `http://${host}:${port}${pathname}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+
+      const text = await response.text();
+      const parsed = parseJsonResponse(text);
+
+      if (response.ok) {
+        return {
+          applied: true,
+          port,
+          hosts: candidates,
+          host,
+          status: response.status,
+          body: parsed,
+        };
+      }
+
+      const detail =
+        typeof parsed === "object" && parsed && "error" in parsed
+          ? String((parsed as Record<string, unknown>).error)
+          : response.statusText || "Owpenbot request failed";
+      lastError = {
+        applied: false,
+        port,
+        hosts: candidates,
+        host,
+        status: response.status,
+        error: detail,
+        body: parsed,
+      };
+    } catch (error) {
+      clearTimeout(timer);
+      const message =
+        error instanceof Error && error.name === "AbortError"
+          ? `Timeout after ${options.timeoutMs}ms`
+          : String(error);
+      lastError = {
+        applied: false,
+        port,
+        hosts: candidates,
+        host,
+        error: message,
+      };
+    }
+  }
+
+  return (
+    lastError ?? {
+      applied: false,
+      port,
+      hosts: candidates,
+      error: "Owpenbot health server is unavailable",
+    }
+  );
+}
+
 async function updateOwpenbotTelegramToken(
   token: string,
   healthPortOverride?: number | null,
   requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
-  const port = healthPortOverride ?? resolveOwpenbotHealthPort();
-  const candidates = ["127.0.0.1", requestHost].filter(
-    (host): host is string => Boolean(host && host.trim()),
-  );
-  let response: Response | null = null;
-  let lastError: unknown = null;
+  // Always persist first so the token is saved even if owpenbot is offline.
+  await persistOwpenbotTelegramToken(token);
 
-  for (const host of candidates) {
-    const url = `http://${host}:${port}/config/telegram-token`;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      break;
-    } catch (error) {
-      lastError = error;
+  const port = healthPortOverride ?? resolveOwpenbotHealthPort();
+  const apply = await tryPostOwpenbotHealth(
+    "/config/telegram-token",
+    { token },
+    { port, requestHost, timeoutMs: 3_000 },
+  );
+
+  const response: Record<string, unknown> = {
+    ok: true,
+    persisted: true,
+    applied: apply.applied,
+    telegram: { configured: true, enabled: true },
+  };
+
+  // Prefer owpenbot's response payload when available.
+  if (apply.body && typeof apply.body === "object") {
+    const record = apply.body as Record<string, unknown>;
+    if (record.telegram && typeof record.telegram === "object") {
+      response.telegram = record.telegram;
     }
   }
 
-  if (!response) {
-    throw new ApiError(502, "owpenbot_unreachable", "Owpenbot health server is unavailable", {
-      error: lastError ? String(lastError) : "no response",
-      port,
-      hosts: candidates,
-    });
+  // If owpenbot reports apply status, reflect it at the top-level.
+  let telegramStarting = false;
+  if (response.telegram && typeof response.telegram === "object") {
+    const telegram = response.telegram as Record<string, unknown>;
+    if (typeof telegram.applied === "boolean") {
+      response.applied = telegram.applied;
+    }
+    if (typeof telegram.starting === "boolean") {
+      telegramStarting = telegram.starting;
+    }
+    if (!response.applyError && typeof telegram.error === "string" && telegram.error.trim()) {
+      response.applyError = telegram.error;
+    }
   }
 
-  const text = await response.text();
-  const parsed = parseJsonResponse(text);
-
-  if (!response.ok) {
-    const detail = typeof parsed === "object" && parsed && "error" in parsed
-      ? String((parsed as Record<string, unknown>).error)
-      : "Owpenbot request failed";
-    throw new ApiError(response.status, "owpenbot_request_failed", detail, {
-      status: response.status,
-      body: parsed,
-    });
+  if (!apply.applied) {
+    response.applyError = (typeof response.applyError === "string" && response.applyError.trim())
+      ? response.applyError
+      : apply.error ?? "Owpenbot did not apply the update";
+    if (typeof apply.status === "number") response.applyStatus = apply.status;
+  } else if (response.applied === false && !telegramStarting && !response.applyError) {
+    response.applyError = "Owpenbot did not apply the update";
   }
 
-  if (parsed && typeof parsed === "object") {
-    return parsed as Record<string, unknown>;
-  }
-  return { ok: true };
+  return response;
 }
 
 async function updateOwpenbotSlackTokens(
@@ -1212,53 +1413,53 @@ async function updateOwpenbotSlackTokens(
   healthPortOverride?: number | null,
   requestHost?: string | null,
 ): Promise<Record<string, unknown>> {
-  const port = healthPortOverride ?? resolveOwpenbotHealthPort();
-  const candidates = ["127.0.0.1", requestHost].filter(
-    (host): host is string => Boolean(host && host.trim()),
-  );
-  let response: Response | null = null;
-  let lastError: unknown = null;
+  await persistOwpenbotSlackTokens(botToken, appToken);
 
-  for (const host of candidates) {
-    const url = `http://${host}:${port}/config/slack-tokens`;
-    try {
-      response = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botToken, appToken }),
-      });
-      break;
-    } catch (error) {
-      lastError = error;
+  const port = healthPortOverride ?? resolveOwpenbotHealthPort();
+  const apply = await tryPostOwpenbotHealth(
+    "/config/slack-tokens",
+    { botToken, appToken },
+    { port, requestHost, timeoutMs: 3_000 },
+  );
+
+  const response: Record<string, unknown> = {
+    ok: true,
+    persisted: true,
+    applied: apply.applied,
+    slack: { configured: true, enabled: true },
+  };
+
+  if (apply.body && typeof apply.body === "object") {
+    const record = apply.body as Record<string, unknown>;
+    if (record.slack && typeof record.slack === "object") {
+      response.slack = record.slack;
     }
   }
 
-  if (!response) {
-    throw new ApiError(502, "owpenbot_unreachable", "Owpenbot health server is unavailable", {
-      error: lastError ? String(lastError) : "no response",
-      port,
-      hosts: candidates,
-    });
+  let slackStarting = false;
+  if (response.slack && typeof response.slack === "object") {
+    const slack = response.slack as Record<string, unknown>;
+    if (typeof slack.applied === "boolean") {
+      response.applied = slack.applied;
+    }
+    if (typeof slack.starting === "boolean") {
+      slackStarting = slack.starting;
+    }
+    if (!response.applyError && typeof slack.error === "string" && slack.error.trim()) {
+      response.applyError = slack.error;
+    }
   }
 
-  const text = await response.text();
-  const parsed = parseJsonResponse(text);
-
-  if (!response.ok) {
-    const detail =
-      typeof parsed === "object" && parsed && "error" in parsed
-        ? String((parsed as Record<string, unknown>).error)
-        : "Owpenbot request failed";
-    throw new ApiError(response.status, "owpenbot_request_failed", detail, {
-      status: response.status,
-      body: parsed,
-    });
+  if (!apply.applied) {
+    response.applyError = (typeof response.applyError === "string" && response.applyError.trim())
+      ? response.applyError
+      : apply.error ?? "Owpenbot did not apply the update";
+    if (typeof apply.status === "number") response.applyStatus = apply.status;
+  } else if (response.applied === false && !slackStarting && !response.applyError) {
+    response.applyError = "Owpenbot did not apply the update";
   }
 
-  if (parsed && typeof parsed === "object") {
-    return parsed as Record<string, unknown>;
-  }
-  return { ok: true };
+  return response;
 }
 
 async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {

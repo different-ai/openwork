@@ -13,7 +13,7 @@ import { createSlackAdapter } from "./slack.js";
 import { createTelegramAdapter } from "./telegram.js";
 import { createWhatsAppAdapter } from "./whatsapp.js";
 
-   type Adapter = {
+type Adapter = {
   name: ChannelName;
   maxTextLength: number;
   start(): Promise<void>;
@@ -22,6 +22,38 @@ import { createWhatsAppAdapter } from "./whatsapp.js";
   sendFile?: (peerId: string, filePath: string, caption?: string) => Promise<void>;
   sendTyping?: (peerId: string) => Promise<void>;
 };
+
+type AdapterStartResult =
+  | { status: "started" }
+  | { status: "timeout" }
+  | { status: "error"; error: unknown };
+
+async function startAdapterBounded(
+  adapter: Adapter,
+  options: { timeoutMs: number; onError?: (error: unknown) => void },
+): Promise<AdapterStartResult> {
+  const outcome = adapter
+    .start()
+    .then(() => ({ ok: true as const }))
+    .catch((error) => ({ ok: false as const, error }));
+
+  if (options.onError) {
+    void outcome.then((result) => {
+      if (!result.ok) {
+        options.onError?.(result.error);
+      }
+    });
+  }
+
+  const winner = await Promise.race([
+    outcome.then((result) => ({ kind: "outcome" as const, result })),
+    delay(options.timeoutMs).then(() => ({ kind: "timeout" as const })),
+  ]);
+
+  if (winner.kind === "timeout") return { status: "timeout" };
+  if (winner.result.ok) return { status: "started" };
+  return { status: "error", error: winner.result.error };
+}
 
 type OutboundKind = "reply" | "system" | "tool";
 
@@ -361,11 +393,38 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           const adapter = createTelegramAdapter(config, logger, handleInbound);
           adapters.set("telegram", adapter);
-          await adapter.start();
+
+          const startResult = await startAdapterBounded(adapter, {
+            timeoutMs: 2_500,
+            onError: (error) => {
+              logger.error({ error }, "telegram adapter start failed");
+              adapters.delete("telegram");
+            },
+          });
+
+          if (startResult.status === "timeout") {
+            logger.warn({ timeoutMs: 2_500 }, "telegram adapter start timed out");
+            return {
+              configured: true,
+              enabled: true,
+              applied: false,
+              starting: true,
+            };
+          }
+
+          if (startResult.status === "error") {
+            return {
+              configured: true,
+              enabled: true,
+              applied: false,
+              error: String(startResult.error),
+            };
+          }
 
           return {
             configured: true,
             enabled: true,
+            applied: true,
           };
         },
         setSlackTokens: async (tokens: { botToken: string; appToken: string }) => {
@@ -407,11 +466,38 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           const adapter = createSlackAdapter(config, logger, handleInbound);
           adapters.set("slack", adapter);
-          await adapter.start();
+
+          const startResult = await startAdapterBounded(adapter, {
+            timeoutMs: 2_500,
+            onError: (error) => {
+              logger.error({ error }, "slack adapter start failed");
+              adapters.delete("slack");
+            },
+          });
+
+          if (startResult.status === "timeout") {
+            logger.warn({ timeoutMs: 2_500 }, "slack adapter start timed out");
+            return {
+              configured: true,
+              enabled: true,
+              applied: false,
+              starting: true,
+            };
+          }
+
+          if (startResult.status === "error") {
+            return {
+              configured: true,
+              enabled: true,
+              applied: false,
+              error: String(startResult.error),
+            };
+          }
 
           return {
             configured: true,
             enabled: true,
+            applied: true,
           };
         },
         listBindings: async () => {
@@ -917,9 +1003,27 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     sessionQueue.set(key, next);
   }
 
-  for (const adapter of adapters.values()) {
-    await adapter.start();
-    reportStatus?.(`${CHANNEL_LABELS[adapter.name]} adapter started.`);
+  for (const [channel, adapter] of Array.from(adapters.entries())) {
+    const startResult = await startAdapterBounded(adapter, {
+      timeoutMs: 8_000,
+      onError: (error) => {
+        logger.error({ error, channel }, "adapter start failed");
+        adapters.delete(channel);
+      },
+    });
+
+    if (startResult.status === "timeout") {
+      logger.warn({ channel, timeoutMs: 8_000 }, "adapter start timed out");
+      reportStatus?.(`${CHANNEL_LABELS[channel]} adapter starting...`);
+      continue;
+    }
+
+    if (startResult.status === "error") {
+      reportStatus?.(`${CHANNEL_LABELS[channel]} adapter failed to start.`);
+      continue;
+    }
+
+    reportStatus?.(`${CHANNEL_LABELS[channel]} adapter started.`);
   }
 
   logger.info({ channels: Array.from(adapters.keys()) }, "bridge started");

@@ -387,8 +387,9 @@ export function OwpenbotSettings(props: {
         }
 
         setTelegramFeedback("checking", "Saving token on the host...");
+        let remoteResult: Awaited<ReturnType<typeof serverClient.setOwpenbotTelegramToken>> | null = null;
         try {
-          await serverClient.setOwpenbotTelegramToken(
+          remoteResult = await serverClient.setOwpenbotTelegramToken(
             workspaceId,
             token,
             latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
@@ -401,8 +402,65 @@ export function OwpenbotSettings(props: {
           return;
         }
 
-        setTelegramFeedback("success", "Telegram token saved.");
         setTelegramToken("");
+
+        // Keep UI in sync: refresh status after host mutation.
+        await refreshStatus();
+
+        const status = owpenbotStatus();
+        const applyError = remoteResult?.applyError || remoteResult?.telegram?.error || null;
+        const applied = remoteResult?.applied ?? remoteResult?.telegram?.applied;
+        const starting = Boolean(remoteResult?.telegram?.starting);
+
+        if (status) {
+          if (!status.telegram.configured) {
+            setTelegramFeedback(
+              "error",
+              "Token saved, but Telegram is still unconfigured.",
+              applyError || "Check the token and try again.",
+            );
+            return;
+          }
+          if (!status.running) {
+            setTelegramFeedback(
+              "warning",
+              "Token saved, but the messaging bridge is offline.",
+              applyError || "Restart owpenbot (or start OpenWork) to activate Telegram.",
+            );
+            return;
+          }
+          if (!status.telegram.enabled) {
+            setTelegramFeedback(
+              "warning",
+              "Token saved, but Telegram is disabled.",
+              applyError || "Enable the bot or review owpenbot settings.",
+            );
+            return;
+          }
+
+          if (applied === false || starting) {
+            setTelegramFeedback(
+              "warning",
+              "Token saved, but Telegram is still applying.",
+              applyError || "Give it a moment or restart owpenbot.",
+            );
+            return;
+          }
+
+          setTelegramFeedback("success", "Telegram connected.");
+          return;
+        }
+
+        if (applied === false || applyError || starting) {
+          setTelegramFeedback(
+            "warning",
+            "Telegram token saved.",
+            applyError || "Owpenbot will pick this up when it starts.",
+          );
+          return;
+        }
+
+        setTelegramFeedback("success", "Telegram token saved.");
         return;
       }
 
@@ -494,8 +552,9 @@ export function OwpenbotSettings(props: {
         }
 
         setSlackFeedback("checking", "Saving tokens on the host...");
+        let remoteResult: Awaited<ReturnType<typeof serverClient.setOwpenbotSlackTokens>> | null = null;
         try {
-          await serverClient.setOwpenbotSlackTokens(
+          remoteResult = await serverClient.setOwpenbotSlackTokens(
             workspaceId,
             botToken,
             appToken,
@@ -509,9 +568,65 @@ export function OwpenbotSettings(props: {
           return;
         }
 
-        setSlackFeedback("success", "Slack tokens saved.");
         setSlackBotToken("");
         setSlackAppToken("");
+
+        await refreshStatus();
+
+        const status = owpenbotStatus();
+        const applyError = remoteResult?.applyError || remoteResult?.slack?.error || null;
+        const applied = remoteResult?.applied ?? remoteResult?.slack?.applied;
+        const starting = Boolean(remoteResult?.slack?.starting);
+
+        if (status) {
+          if (!status.slack.configured) {
+            setSlackFeedback(
+              "error",
+              "Tokens saved, but Slack is still unconfigured.",
+              applyError || "Check the tokens and try again.",
+            );
+            return;
+          }
+          if (!status.running) {
+            setSlackFeedback(
+              "warning",
+              "Tokens saved, but the messaging bridge is offline.",
+              applyError || "Restart owpenbot (or start OpenWork) to activate Slack.",
+            );
+            return;
+          }
+          if (!status.slack.enabled) {
+            setSlackFeedback(
+              "warning",
+              "Tokens saved, but Slack is disabled.",
+              applyError || "Enable the bot or review owpenbot settings.",
+            );
+            return;
+          }
+
+          if (applied === false || starting) {
+            setSlackFeedback(
+              "warning",
+              "Tokens saved, but Slack is still applying.",
+              applyError || "Give it a moment or restart owpenbot.",
+            );
+            return;
+          }
+
+          setSlackFeedback("success", "Slack connected.");
+          return;
+        }
+
+        if (applied === false || applyError || starting) {
+          setSlackFeedback(
+            "warning",
+            "Slack tokens saved.",
+            applyError || "Owpenbot will pick this up when it starts.",
+          );
+          return;
+        }
+
+        setSlackFeedback("success", "Slack tokens saved.");
         return;
       }
 

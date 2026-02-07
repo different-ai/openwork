@@ -92,17 +92,31 @@ export type OpenworkMcpItem = {
 
 export type OpenworkOwpenbotTelegramResult = {
   ok: boolean;
+  persisted?: boolean;
+  applied?: boolean;
+  applyError?: string;
+  applyStatus?: number;
   telegram?: {
     configured: boolean;
     enabled: boolean;
+    applied?: boolean;
+    starting?: boolean;
+    error?: string;
   };
 };
 
 export type OpenworkOwpenbotSlackResult = {
   ok: boolean;
+  persisted?: boolean;
+  applied?: boolean;
+  applyError?: string;
+  applyStatus?: number;
   slack?: {
     configured: boolean;
     enabled: boolean;
+    applied?: boolean;
+    starting?: boolean;
+    error?: string;
   };
 };
 
