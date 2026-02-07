@@ -92,6 +92,7 @@ export function createWorkspaceStore(options: {
   setSelectedSessionId: (value: string | null) => void;
   setMessages: (value: any[]) => void;
   setTodos: (value: any[]) => void;
+  clearSessionCaches: () => void;
   setPendingPermissions: (value: any[]) => void;
   setSessionStatusById: (value: Record<string, string>) => void;
   defaultModel: () => any;
@@ -750,8 +751,7 @@ export function createWorkspaceStore(options: {
     // "local", and subsequent session/file actions behave inconsistently.
     if (!isRemote && options.client() && !wasLocalConnection) {
       options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
+      options.clearSessionCaches();
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
@@ -986,8 +986,7 @@ export function createWorkspaceStore(options: {
       }
 
       options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
+      options.clearSessionCaches();
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
 
@@ -1688,8 +1687,7 @@ export function createWorkspaceStore(options: {
       options.setClient(null);
       options.setConnectedVersion(null);
       options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
+      options.clearSessionCaches();
       options.setPendingPermissions([]);
       options.setSessionStatusById({});
       options.setSseConnected(false);

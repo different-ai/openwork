@@ -105,6 +105,21 @@ const upsertPartInfo = (list: Part[], next: Part) => {
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
+const pruneRecordKeys = <T>(record: Record<string, T>, keep: Set<string>) => {
+  let changed = false;
+  const next: Record<string, T> = {};
+
+  for (const [key, value] of Object.entries(record)) {
+    if (!keep.has(key)) {
+      changed = true;
+      continue;
+    }
+    next[key] = value;
+  }
+
+  return changed ? next : record;
+};
+
 export function createSessionStore(options: {
   client: () => Client | null;
   activeWorkspaceRoot: () => string;
@@ -118,6 +133,8 @@ export function createSessionStore(options: {
   setSseConnected: (connected: boolean) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
+  const MAX_RELOAD_DETECTION_KEYS = 5000;
+
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
     sessionStatus: {},
@@ -130,6 +147,45 @@ export function createSessionStore(options: {
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const reloadDetectionSet = new Set<string>();
+
+  const messageIDFromReloadKey = (key: string) => {
+    const separator = key.indexOf(":");
+    if (separator < 0) return "";
+    return key.slice(0, separator);
+  };
+
+  const trimReloadDetectionSet = () => {
+    if (reloadDetectionSet.size <= MAX_RELOAD_DETECTION_KEYS) return;
+    const targetSize = Math.floor(MAX_RELOAD_DETECTION_KEYS * 0.8);
+    const overflow = reloadDetectionSet.size - targetSize;
+    if (overflow <= 0) return;
+
+    const iterator = reloadDetectionSet.values();
+    for (let i = 0; i < overflow; i += 1) {
+      const next = iterator.next();
+      if (next.done) break;
+      reloadDetectionSet.delete(next.value);
+    }
+  };
+
+  const pruneReloadDetectionSetByMessageIDs = (keepMessageIDs: Set<string>) => {
+    if (reloadDetectionSet.size === 0) return;
+    for (const key of reloadDetectionSet) {
+      const messageID = messageIDFromReloadKey(key);
+      if (!messageID || keepMessageIDs.has(messageID)) continue;
+      reloadDetectionSet.delete(key);
+    }
+  };
+
+  const removeReloadDetectionKeysForMessageIDs = (removedMessageIDs: Set<string>) => {
+    if (reloadDetectionSet.size === 0 || removedMessageIDs.size === 0) return;
+    for (const key of reloadDetectionSet) {
+      const messageID = messageIDFromReloadKey(key);
+      if (messageID && removedMessageIDs.has(messageID)) {
+        reloadDetectionSet.delete(key);
+      }
+    }
+  };
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -279,11 +335,13 @@ export function createSessionStore(options: {
       }
     }
 
-    const key = `${part.messageID}:${part.id}`;
-    if (reloadDetectionSet.has(key)) return;
     const detection = detectReloadFromPart(part);
     if (!detection) return;
+
+    const key = `${part.messageID}:${part.id}`;
+    if (reloadDetectionSet.has(key)) return;
     reloadDetectionSet.add(key);
+    trimReloadDetectionSet();
     options.markReloadRequired(detection.reason, detection.trigger);
   };
 
@@ -338,6 +396,62 @@ export function createSessionStore(options: {
     return store.todos[id] ?? [];
   });
 
+  const pruneSessionCaches = (sessionIDs: Set<string>) => {
+    const keepMessageIDs = new Set<string>();
+
+    setStore(
+      produce((draft: StoreState) => {
+        draft.sessionStatus = pruneRecordKeys(draft.sessionStatus, sessionIDs);
+        draft.messages = pruneRecordKeys(draft.messages, sessionIDs);
+        draft.todos = pruneRecordKeys(draft.todos, sessionIDs);
+
+        for (const sessionID of sessionIDs) {
+          for (const info of draft.messages[sessionID] ?? []) {
+            keepMessageIDs.add(info.id);
+          }
+        }
+
+        for (const [messageID, parts] of Object.entries(draft.parts)) {
+          if (!Array.isArray(parts) || parts.length === 0) continue;
+          const belongsToKeptSession = parts.some((part) => {
+            const sessionID = typeof part?.sessionID === "string" ? part.sessionID : "";
+            return sessionID ? sessionIDs.has(sessionID) : false;
+          });
+          if (belongsToKeptSession) {
+            keepMessageIDs.add(messageID);
+          }
+        }
+
+        draft.parts = pruneRecordKeys(draft.parts, keepMessageIDs);
+      }),
+    );
+
+    pruneReloadDetectionSetByMessageIDs(keepMessageIDs);
+    trimReloadDetectionSet();
+  };
+
+  const removeSessionCaches = (sessionID: string) => {
+    const removedMessageIDs = new Set<string>();
+
+    setStore(
+      produce((draft: StoreState) => {
+        const messageIDs = (draft.messages[sessionID] ?? []).map((message) => message.id);
+        for (const messageID of messageIDs) {
+          removedMessageIDs.add(messageID);
+        }
+        delete draft.sessionStatus[sessionID];
+        delete draft.messages[sessionID];
+        delete draft.todos[sessionID];
+        for (const messageID of messageIDs) {
+          delete draft.parts[messageID];
+        }
+      }),
+    );
+
+    removeReloadDetectionKeysForMessageIDs(removedMessageIDs);
+    trimReloadDetectionSet();
+  };
+
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
@@ -347,6 +461,7 @@ export function createSessionStore(options: {
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
+    pruneSessionCaches(new Set(filtered.map((session) => session.id)));
   }
 
   async function renameSession(sessionID: string, title: string) {
@@ -533,6 +648,7 @@ export function createSessionStore(options: {
 
   const setSessions = (next: Session[]) => {
     setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
+    pruneSessionCaches(new Set(next.map((session) => session.id)));
   };
 
   const setSessionStatusById = (next: Record<string, string>) => {
@@ -549,6 +665,14 @@ export function createSessionStore(options: {
     const id = options.selectedSessionId();
     if (!id) return;
     setStore("todos", id, next);
+  };
+
+  const clearSessionCaches = () => {
+    setStore("sessionStatus", {});
+    setStore("messages", {});
+    setStore("parts", {});
+    setStore("todos", {});
+    reloadDetectionSet.clear();
   };
 
   const setPendingPermissions = (next: PendingPermission[]) => {
@@ -605,6 +729,10 @@ export function createSessionStore(options: {
         const info = record.info as Session | undefined;
         if (info?.id) {
           setStore("sessions", (current) => removeSession(current, info.id));
+          removeSessionCaches(info.id);
+          if (options.selectedSessionId() === info.id) {
+            options.setSelectedSessionId(null);
+          }
         }
       }
     }
@@ -942,6 +1070,7 @@ export function createSessionStore(options: {
     setSessionStatusById,
     setMessages,
     setTodos,
+    clearSessionCaches,
     setPendingPermissions,
     setPendingQuestions,
   };

@@ -1,4 +1,5 @@
 /* @refresh reload */
+import { ErrorBoundary } from "solid-js";
 import { render } from "solid-js/web";
 import { HashRouter, Route, Router } from "@solidjs/router";
 
@@ -81,11 +82,39 @@ const platform: Platform = {
 
 render(
   () => (
-    <PlatformProvider value={platform}>
-      <RouterComponent root={AppEntry}>
-        <Route path="*all" component={() => null} />
-      </RouterComponent>
-    </PlatformProvider>
+    <ErrorBoundary
+      fallback={(error, reset) => {
+          const message = error instanceof Error ? error.message : String(error ?? "Unknown error");
+          return (
+            <div class="h-screen w-full flex items-center justify-center bg-dls-surface text-dls-text p-6">
+              <div class="max-w-xl w-full rounded-2xl border border-dls-border bg-dls-surface-elevated p-5 shadow-lg space-y-3">
+                <div class="text-lg font-semibold">OpenWork 遇到运行错误</div>
+                <div class="text-sm text-dls-secondary break-words">{message}</div>
+                <div class="flex gap-2 pt-1">
+                  <button
+                    class="px-3 py-2 rounded-lg border border-dls-border bg-dls-surface-hover text-sm"
+                    onClick={() => reset()}
+                  >
+                    重试
+                  </button>
+                  <button
+                    class="px-3 py-2 rounded-lg border border-dls-border bg-dls-surface-hover text-sm"
+                    onClick={() => window.location.reload()}
+                  >
+                    重新加载
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+      }}
+    >
+      <PlatformProvider value={platform}>
+        <RouterComponent root={AppEntry}>
+          <Route path="*all" component={() => null} />
+        </RouterComponent>
+      </PlatformProvider>
+    </ErrorBoundary>
   ),
   root,
 );

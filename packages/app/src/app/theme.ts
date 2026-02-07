@@ -53,8 +53,18 @@ export const subscribeToSystemTheme = (onChange: (isDark: boolean) => void) => {
   if (!list) return () => undefined;
 
   const handler = (event: MediaQueryListEvent) => onChange(event.matches);
-  list.addEventListener("change", handler);
-  return () => list.removeEventListener("change", handler);
+  if (typeof list.addEventListener === "function") {
+    list.addEventListener("change", handler);
+    return () => list.removeEventListener("change", handler);
+  }
+
+  const legacyList = list as MediaQueryList & {
+    addListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+    removeListener?: (listener: (event: MediaQueryListEvent) => void) => void;
+  };
+
+  legacyList.addListener?.(handler);
+  return () => legacyList.removeListener?.(handler);
 };
 
 export const applyThemeMode = (mode: ThemeMode) => {

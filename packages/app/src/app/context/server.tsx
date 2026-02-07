@@ -28,6 +28,23 @@ type ServerContextValue = {
 
 const ServerContext = createContext<ServerContextValue | undefined>(undefined);
 
+function createTimeoutSignal(timeoutMs: number) {
+  if (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+    return {
+      signal: AbortSignal.timeout(timeoutMs),
+      cancel: () => undefined,
+    };
+  }
+
+  const controller = new AbortController();
+  const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cancel: () => globalThis.clearTimeout(timer),
+  };
+}
+
 export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
   const [list, setList] = createSignal<string[]>([]);
   const [active, setActiveRaw] = createSignal("");
@@ -85,15 +102,17 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const checkHealth = async (url: string) => {
     if (!url) return false;
+    const timeout = createTimeoutSignal(3000);
     const client = createOpencodeClient({
       baseUrl: url,
-      signal: AbortSignal.timeout(3000),
+      signal: timeout.signal,
       fetch: isTauriRuntime() ? tauriFetch : undefined,
     });
     return client.global
       .health()
       .then((result) => result.data?.healthy === true)
-      .catch(() => false);
+      .catch(() => false)
+      .finally(() => timeout.cancel());
   };
 
   createEffect(() => {
