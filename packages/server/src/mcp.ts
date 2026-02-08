@@ -31,79 +31,80 @@ function isMcpDisabledByTools(config: Record<string, unknown>, name: string): bo
   return patterns.some((pattern) => candidates.some((candidate) => minimatch(candidate, pattern)));
 }
 
-// 生成 MCP 配置的唯一标识（用于去重）
+// Generate a unique identifier for MCP config (for deduplication)
 function getMcpConfigId(config: Record<string, unknown>): string | null {
   const type = config.type;
-  
+
   if (type === "remote") {
-    // 远程 MCP：使用 URL 作为标识
+    // Remote MCP: use URL as identifier
     const url = config.url;
     if (typeof url === "string") return `remote:${url}`;
   } else if (type === "local") {
-    // 本地 MCP：使用 command 数组作为标识
+    // Local MCP: use full command array as identifier
+    // Keep all arguments including --flags for security-sensitive deduplication
     const command = config.command;
     if (Array.isArray(command)) {
-      // 过滤掉 -y 等选项，只保留核心命令
-      const coreCmd = command.filter((c) => typeof c === "string" && c !== "-y" && !c.startsWith("--"));
-      if (coreCmd.length > 0) return `local:${coreCmd.join(" ")}`;
+      const cmdStr = command.filter((c) => typeof c === "string").join(" ");
+      if (cmdStr.length > 0) return `local:${cmdStr}`;
     }
   }
-  
+
   return null;
 }
 
-// 检查两个 MCP 配置是否是同一个（基于内容去重）
+// Check if two MCP configs are the same (for deduplication)
 function isSameMcpConfig(config1: Record<string, unknown>, config2: Record<string, unknown>): boolean {
   const id1 = getMcpConfigId(config1);
   const id2 = getMcpConfigId(config2);
-  
-  // 如果都能生成 ID，比较 ID
+
+  // If both can generate IDs, compare IDs
   if (id1 && id2) return id1 === id2;
-  
-  // 如果无法生成 ID，比较整个配置对象（排除 enabled 等运行时字段）
-  const keys1 = Object.keys(config1).filter((k) => !["enabled", "environment"].includes(k)).sort();
-  const keys2 = Object.keys(config2).filter((k) => !["enabled", "environment"].includes(k)).sort();
-  
+
+  // If unable to generate ID, compare the entire config object (excluding runtime fields like enabled)
+  // Note: environment is now included in comparison to avoid merging configs with different credentials
+  const keys1 = Object.keys(config1).filter((k) => k !== "enabled").sort();
+  const keys2 = Object.keys(config2).filter((k) => k !== "enabled").sort();
+
   if (keys1.length !== keys2.length) return false;
-  
+
   return keys1.every((key) => JSON.stringify(config1[key]) === JSON.stringify(config2[key]));
 }
 
 export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
-  // 读取全局配置
+  // Read global config
   const globalPath = getGlobalOpencodeConfigPath();
   const { data: globalConfig } = await readJsoncFile(globalPath, {} as Record<string, unknown>);
   const globalMcpMap = getMcpConfig(globalConfig);
 
-  // 读取工作区配置
+  // Read workspace config
   const { data: projectConfig } = await readJsoncFile(opencodeConfigPath(workspaceRoot), {} as Record<string, unknown>);
   const projectMcpMap = getMcpConfig(projectConfig);
 
-  // 收集所有已存在的配置 ID（用于去重）
+  // Collect all existing config IDs (for deduplication)
   const existingConfigIds = new Set<string>();
   const existingConfigs: Array<{ name: string; config: Record<string, unknown> }> = [];
 
-  // 先处理工作区配置（优先级高）
+  // Process workspace config first (higher priority)
   for (const [name, entry] of Object.entries(projectMcpMap)) {
     const configId = getMcpConfigId(entry);
     if (configId) existingConfigIds.add(configId);
     existingConfigs.push({ name, config: entry });
   }
 
-  // 再处理全局配置，过滤掉与工作区重复的内容
+  // Then process global config, filtering out duplicates from workspace
   for (const [name, entry] of Object.entries(globalMcpMap)) {
-    // 检查是否同名（情况 1：已处理，工作区优先）
+    // Check for same name (case 1: already handled, workspace takes priority)
     if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
 
-    // 检查是否内容重复（情况 2：不同名但相同配置）
+    // Check for duplicate content (case 2: different name but same config)
     const configId = getMcpConfigId(entry);
     if (configId && existingConfigIds.has(configId)) continue;
 
-    // 检查是否与任何已存在的配置内容相同（回退方案）
+    // Check if content matches any existing config (fallback)
     const isDuplicate = existingConfigs.some(({ config }) => isSameMcpConfig(entry, config));
     if (isDuplicate) continue;
 
-    // 添加到结果
+    // Add to results
     if (configId) existingConfigIds.add(configId);
     existingConfigs.push({ name, config: entry });
   }
@@ -113,10 +114,10 @@ export async function listMcp(workspaceRoot: string): Promise<McpItem[]> {
       ? "config.project"
       : "config.global";
 
-    // 检查是否被工作区配置禁用
+    // Check if disabled by workspace config
     let disabledByTools = isMcpDisabledByTools(projectConfig, name) || undefined;
 
-    // 如果工作区没禁用，检查全局配置是否禁用（仅对全局来源的 MCP）
+    // If not disabled by workspace, check global config (only for global-sourced MCPs)
     if (!disabledByTools && source === "config.global") {
       disabledByTools = isMcpDisabledByTools(globalConfig, name) || undefined;
     }
