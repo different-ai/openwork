@@ -16,6 +16,8 @@ import { startOpenwrkTui, type TuiHandle } from "./tui/app.js";
 
 type ApprovalMode = "manual" | "auto";
 
+type DeploySyncMode = "none" | "opencode" | "workspace";
+
 type SandboxMode = "none" | "auto" | "docker" | "container";
 
 type ResolvedSandboxMode = "none" | "docker" | "container";
@@ -950,6 +952,82 @@ async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMod
 function shQuote(value: string): string {
   if (!value) return "''";
   return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function sanitizeDeployName(value: string): string {
+  const raw = String(value ?? "").trim();
+  const base = raw || "openwork";
+  const sanitized = base
+    .toLowerCase()
+    .replace(/[^a-z0-9_.-]+/g, "-")
+    .replace(/^-+/, "")
+    .replace(/-+$/, "");
+  return sanitized || "openwork";
+}
+
+function splitCsv(input: string | undefined): string[] {
+  if (!input) return [];
+  return input
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeVersion(value: string | undefined): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.toLowerCase() === "latest") return "latest";
+  return raw.startsWith("v") ? raw.slice(1) : raw;
+}
+
+function extractSshHost(target: string): string {
+  const trimmed = target.trim();
+  if (!trimmed) return "";
+  const atIndex = trimmed.lastIndexOf("@");
+  const hostPart = atIndex >= 0 ? trimmed.slice(atIndex + 1) : trimmed;
+  return hostPart.replace(/^\[(.*)\]$/, "$1").trim();
+}
+
+function buildSshArgs(options: {
+  port?: number;
+  identity?: string;
+  extraOptions?: string[];
+}): string[] {
+  const args: string[] = [];
+  if (options.port) {
+    args.push("-p", String(options.port));
+  }
+  if (options.identity) {
+    args.push("-i", options.identity);
+  }
+  for (const opt of options.extraOptions ?? []) {
+    if (!opt.trim()) continue;
+    args.push("-o", opt);
+  }
+  return args;
+}
+
+async function fetchLatestNpmVersion(packageName: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`, {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (!response.ok) return null;
+    const data = (await response.json()) as { version?: string };
+    const version = typeof data.version === "string" ? data.version.trim() : "";
+    return version ? version : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function openwrkNpmTarballUrl(version: string): string {
+  return `https://registry.npmjs.org/openwrk/-/openwrk-${version}.tgz`;
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
@@ -1971,6 +2049,7 @@ function printHelp(): void {
     "  openwrk approvals list --openwork-url <url> --host-token <token>",
     "  openwrk approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
     "  openwrk status [--openwork-url <url>] [--opencode-url <url>]",
+    "  openwrk deploy ssh <user@host> [--workspace <path>] [options]",
     "",
     "Commands:",
     "  start                   Start OpenCode + OpenWork server + Owpenbot",
@@ -1978,6 +2057,7 @@ function printHelp(): void {
     "  daemon                  Run openwrk router daemon (multi-workspace)",
     "  workspace               Manage workspaces (add/list/switch/path)",
     "  instance                Manage workspace instances (dispose)",
+    "  deploy                  Deploy an OpenWork host to a target",
     "  approvals list           List pending approval requests",
     "  approvals reply <id>     Approve or deny a request",
     "  status                  Check OpenCode/OpenWork health",
@@ -2024,6 +2104,16 @@ function printHelp(): void {
     "  --sandbox-image <ref>     Container image for sandbox mode",
     "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
     "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
+    "  --name <name>            Instance name for deploy (default: workspace basename)",
+    "  --remote-dir <path>      Remote instance directory for deploy (default: $HOME/.openwork/instances/<name>)",
+    "  --sync <mode>            Deploy sync mode: none | opencode | workspace (default: opencode)",
+    "  --public                 Bind remote OpenWork server to 0.0.0.0 (default: 127.0.0.1)",
+    "  --local-port <port>      Local port to suggest for SSH forwarding",
+    "  --ssh-port <port>        SSH port",
+    "  --ssh-identity <path>    SSH identity file (-i)",
+    "  --ssh-option <opts>      SSH -o options (comma-separated)",
+    "  --openwrk-version <v>    Remote openwrk version (default: this CLI version; or 'latest')",
+    "  --dry-run                Print planned actions without running them",
     "  --json                    Output JSON when applicable",
     "  --verbose                 Print additional diagnostics",
     "  --log-format <format>     Log output format: pretty | json",
@@ -3431,7 +3521,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     runId,
     serviceName: "openwrk",
     serviceVersion: cliVersion,
-    output: "stdout",
+    output: outputJson ? "silent" : "stdout",
     color: colorEnabled,
   });
   const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
@@ -4792,6 +4882,393 @@ async function runStart(args: ParsedArgs) {
   }
 }
 
+type DeployConnectArtifact = {
+  kind: "openwork.connect.v1";
+  version: 1;
+  createdAt: string;
+  openwork: {
+    connectUrl: string;
+    token: string;
+    hostToken: string;
+  };
+  workspace: {
+    localPath: string;
+    remotePath: string;
+    sync: DeploySyncMode;
+  };
+  ssh: {
+    target: string;
+    forwardCommand?: string;
+    stopCommand: string;
+    logsCommand: string;
+  };
+};
+
+async function pipeTarToSsh(options: {
+  localWorkspace: string;
+  entries: string[];
+  excludes?: string[];
+  sshTarget: string;
+  sshArgs: string[];
+  remoteWorkspace: string;
+  timeoutMs?: number;
+  dryRun?: boolean;
+  logger?: LoggerChild;
+}): Promise<void> {
+  const remoteExtract = `mkdir -p ${shQuote(options.remoteWorkspace)} && tar -xzf - -C ${shQuote(options.remoteWorkspace)}`;
+  const tarArgs: string[] = ["-czf", "-", "-C", options.localWorkspace];
+  for (const pattern of options.excludes ?? []) {
+    if (!pattern.trim()) continue;
+    tarArgs.push("--exclude", pattern);
+  }
+  tarArgs.push(...options.entries);
+
+  const sshCommandArgs = [...options.sshArgs, options.sshTarget, "bash", "-lc", remoteExtract];
+
+  if (options.dryRun) {
+    const tarPreview = `tar ${tarArgs.map((arg) => (arg.includes(" ") ? shQuote(arg) : arg)).join(" ")}`;
+    const sshPreview = `ssh ${sshCommandArgs.map((arg) => (arg.includes(" ") ? shQuote(arg) : arg)).join(" ")}`;
+    options.logger?.info("Dry-run: workspace sync", { tar: tarPreview, ssh: sshPreview });
+    return;
+  }
+
+  options.logger?.info("Syncing workspace", { remoteWorkspace: options.remoteWorkspace });
+
+  const tarChild = spawn("tar", tarArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  const sshChild = spawn("ssh", sshCommandArgs, { stdio: ["pipe", "ignore", "pipe"] });
+  if (!tarChild.stdout || !sshChild.stdin) {
+    throw new Error("Failed to create tar/ssh pipeline");
+  }
+  tarChild.stdout.pipe(sshChild.stdin);
+
+  let tarStderr = "";
+  let sshStderr = "";
+  tarChild.stderr?.on("data", (chunk) => {
+    tarStderr += chunk.toString();
+  });
+  sshChild.stderr?.on("data", (chunk) => {
+    sshStderr += chunk.toString();
+  });
+
+  type ExitResult = { code: number | null; signal: NodeJS.Signals | null };
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+
+  const result = await Promise.race([
+    Promise.all([
+      once(tarChild, "close").then(([code, signal]) => ({ code: (code ?? null) as number | null, signal: (signal ?? null) as NodeJS.Signals | null })),
+      once(sshChild, "close").then(([code, signal]) => ({ code: (code ?? null) as number | null, signal: (signal ?? null) as NodeJS.Signals | null })),
+    ]) as Promise<[ExitResult, ExitResult]>,
+    new Promise<"timeout">((resolve) => setTimeout(resolve, timeoutMs, "timeout")),
+  ]);
+
+  if (result === "timeout") {
+    try {
+      tarChild.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    try {
+      sshChild.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    throw new Error("Timed out syncing workspace over SSH");
+  }
+
+  const [tarExit, sshExit] = result;
+  if ((tarExit.code ?? 0) !== 0 || (sshExit.code ?? 0) !== 0) {
+    const details = [
+      tarStderr.trim() ? `tar stderr:\n${tarStderr.trim()}` : "",
+      sshStderr.trim() ? `ssh stderr:\n${sshStderr.trim()}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    throw new Error(`Workspace sync failed (tar=${tarExit.code ?? "?"}, ssh=${sshExit.code ?? "?"})${details ? `\n${details}` : ""}`);
+  }
+}
+
+async function runDeployCommand(args: ParsedArgs): Promise<void> {
+  const outputJson = readBool(args.flags, "json", false);
+  const subcommand = args.positionals[1] ?? "";
+  try {
+    if (subcommand === "ssh") {
+      await runDeploySsh(args);
+      return;
+    }
+    throw new Error("deploy requires: openwrk deploy ssh <user@host> [options]");
+  } catch (error) {
+    outputError(error, outputJson);
+    process.exitCode = 1;
+  }
+}
+
+async function runDeploySsh(args: ParsedArgs): Promise<void> {
+  const outputJson = readBool(args.flags, "json", false);
+  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
+  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWRK_LOG_FORMAT");
+  const colorEnabled =
+    readBool(args.flags, "color", process.stdout.isTTY, "OPENWRK_COLOR") && !process.env.NO_COLOR;
+  const dryRun = readBool(args.flags, "dry-run", false, "OPENWRK_DRY_RUN");
+  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWRK_RUN_ID ?? randomUUID();
+
+  const cliVersion = await resolveCliVersion();
+  const logger = createLogger({
+    format: logFormat,
+    runId,
+    serviceName: "openwrk",
+    serviceVersion: cliVersion,
+    output: outputJson ? "silent" : "stdout",
+    color: colorEnabled,
+  });
+  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
+  const logDeploy = logger.child("openwrk-deploy", { runId });
+
+  const sshTarget = args.positionals[2] ?? (readFlag(args.flags, "host") ?? "");
+  if (!sshTarget.trim()) {
+    throw new Error("Missing SSH target. Usage: openwrk deploy ssh <user@host>");
+  }
+
+  const workspaceInput = readFlag(args.flags, "workspace") ?? process.cwd();
+  const localWorkspace = resolve(workspaceInput);
+  const workspaceStat = await stat(localWorkspace).catch(() => null);
+  if (!workspaceStat || !workspaceStat.isDirectory()) {
+    throw new Error(`Workspace directory not found: ${localWorkspace}`);
+  }
+
+  const nameInput = readFlag(args.flags, "name") ?? basename(localWorkspace);
+  const name = sanitizeDeployName(nameInput);
+  const remoteDirInput = readFlag(args.flags, "remote-dir") ?? `.openwork/instances/${name}`;
+  const remoteDirDisplay = remoteDirInput.startsWith("/") ? remoteDirInput : `$HOME/${remoteDirInput}`;
+  const remoteWorkspace = `${remoteDirDisplay.replace(/\/$/, "")}/workspace`;
+
+  const syncModeRaw = (readFlag(args.flags, "sync") ?? "opencode").trim();
+  const syncMode: DeploySyncMode =
+    syncModeRaw === "none" || syncModeRaw === "opencode" || syncModeRaw === "workspace"
+      ? (syncModeRaw as DeploySyncMode)
+      : "opencode";
+
+  const publicRequested = readBool(args.flags, "public", false, "OPENWRK_PUBLIC");
+  const remoteOpenworkHost =
+    (readFlag(args.flags, "openwork-host") ?? process.env.OPENWRK_OPENWORK_HOST)?.trim() ||
+    (publicRequested ? "0.0.0.0" : "127.0.0.1");
+  const remoteOpenworkPort = readNumber(args.flags, "openwork-port", DEFAULT_OPENWORK_PORT, "OPENWRK_OPENWORK_PORT");
+
+  const localPortInput = readNumber(args.flags, "local-port", undefined, "OPENWRK_LOCAL_PORT");
+  const localForwardPort = await resolvePort(localPortInput, "127.0.0.1", remoteOpenworkPort);
+
+  const openworkToken = readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? randomUUID();
+  const openworkHostToken =
+    readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
+
+  const openwrkVersionInput = normalizeVersion(readFlag(args.flags, "openwrk-version")) ?? cliVersion;
+  const openwrkVersion =
+    openwrkVersionInput === "latest" ? await fetchLatestNpmVersion("openwrk") : openwrkVersionInput;
+  if (!openwrkVersion) {
+    throw new Error("Unable to resolve openwrk version from npm. Provide --openwrk-version <version>.");
+  }
+  const npmTarball = openwrkNpmTarballUrl(openwrkVersion);
+  logVerbose(`deploy openwrk version: ${openwrkVersion}`);
+
+  const sshPort = readNumber(args.flags, "ssh-port", undefined, "OPENWRK_SSH_PORT");
+  const sshIdentity = readFlag(args.flags, "ssh-identity") ?? process.env.OPENWRK_SSH_IDENTITY;
+  const sshOptions = splitCsv(readFlag(args.flags, "ssh-option") ?? process.env.OPENWRK_SSH_OPTIONS);
+  const sshArgs = buildSshArgs({ port: sshPort, identity: sshIdentity, extraOptions: sshOptions });
+  const sshPrefix = ["ssh", ...sshArgs, sshTarget].join(" ");
+
+  logDeploy.info("Planning deploy", {
+    sshTarget,
+    localWorkspace,
+    remoteWorkspace,
+    syncMode,
+    remoteOpenworkHost,
+    remoteOpenworkPort,
+    openwrkVersion,
+    dryRun,
+  });
+
+  const remoteSetupScript = [
+    "set -euo pipefail",
+    `remote_dir_input=${shQuote(remoteDirInput)}`,
+    "if [[ \"$remote_dir_input\" = /* ]]; then remote_dir=\"$remote_dir_input\"; else remote_dir=\"$HOME/$remote_dir_input\"; fi",
+    "mkdir -p \"$remote_dir/bin\" \"$remote_dir/workspace\" \"$remote_dir/logs\"",
+    "command -v curl >/dev/null 2>&1 || { echo 'curl is required' >&2; exit 1; }",
+    "command -v tar >/dev/null 2>&1 || { echo 'tar is required' >&2; exit 1; }",
+    `openwrk_bin=\"$remote_dir/bin/openwrk\"`,
+    `if [ ! -x \"$openwrk_bin\" ]; then`,
+    `  tmp=\"$(mktemp -d)\"`,
+    `  curl -fsSL ${shQuote(npmTarball)} -o \"$tmp/openwrk.tgz\"`,
+    `  tar -xzf \"$tmp/openwrk.tgz\" -C \"$tmp\"`,
+    `  cp \"$tmp/package/dist/openwrk\" \"$openwrk_bin\"`,
+    `  chmod 755 \"$openwrk_bin\"`,
+    `fi`,
+    `\"$openwrk_bin\" --version >/dev/null`,
+    "echo ok",
+  ].join("\n");
+
+  const remoteSetupArgs = [...sshArgs, sshTarget, "bash", "-lc", remoteSetupScript];
+  if (dryRun) {
+    logDeploy.info("Dry-run: remote setup", { command: `${sshPrefix} bash -lc <script>` });
+  } else {
+    await captureCommandOutput("ssh", remoteSetupArgs, { timeoutMs: 10 * 60_000 });
+  }
+
+  if (syncMode !== "none") {
+    const entries: string[] = [];
+    let excludes: string[] | undefined;
+    if (syncMode === "workspace") {
+      entries.push(".");
+      excludes = [
+        ".git",
+        "node_modules",
+        "dist",
+        "build",
+        ".next",
+        "target",
+        ".turbo",
+        ".cache",
+        ".DS_Store",
+        ".env",
+        ".env.*",
+      ];
+    } else {
+      const candidates = [".opencode", "opencode.json", "opencode.jsonc", "opencode.yml", "opencode.yaml"];
+      for (const item of candidates) {
+        if (await fileExists(join(localWorkspace, item))) {
+          entries.push(item);
+        }
+      }
+      if (!entries.length) {
+        logDeploy.warn("No .opencode or opencode config files found; skipping sync", { localWorkspace });
+      }
+    }
+    if (entries.length) {
+      await pipeTarToSsh({
+        localWorkspace,
+        entries,
+        excludes,
+        sshTarget,
+        sshArgs,
+        remoteWorkspace,
+        dryRun,
+        logger: logDeploy,
+      });
+    }
+  }
+
+  const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
+  const approvalMode = (readFlag(args.flags, "approval") ?? process.env.OPENWRK_APPROVAL ?? "manual") as ApprovalMode;
+  const approvalTimeoutMs = readNumber(
+    args.flags,
+    "approval-timeout",
+    DEFAULT_APPROVAL_TIMEOUT,
+    "OPENWRK_APPROVAL_TIMEOUT",
+  );
+  const readOnly = readBool(args.flags, "read-only", false, "OPENWRK_READ_ONLY");
+  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWRK_CORS;
+  const corsArg = corsValue && corsValue.trim() ? ` --cors ${shQuote(corsValue.trim())}` : "";
+
+  const remoteStartScript = [
+    "set -euo pipefail",
+    `remote_dir_input=${shQuote(remoteDirInput)}`,
+    "if [[ \"$remote_dir_input\" = /* ]]; then remote_dir=\"$remote_dir_input\"; else remote_dir=\"$HOME/$remote_dir_input\"; fi",
+    `openwrk_bin=\"$remote_dir/bin/openwrk\"`,
+    `pidfile=\"$remote_dir/openwrk.pid\"`,
+    `logfile=\"$remote_dir/logs/openwrk.log\"`,
+    `if [ -f \"$pidfile\" ]; then`,
+    `  pid=\"$(cat \"$pidfile\" 2>/dev/null || true)\"`,
+    `  if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then`,
+    `    kill \"$pid\" 2>/dev/null || true`,
+    `    sleep 0.5`,
+    `    kill -9 \"$pid\" 2>/dev/null || true`,
+    `  fi`,
+    `fi`,
+    `cd \"$remote_dir/workspace\"`,
+    `nohup \"$openwrk_bin\" serve --workspace \"$remote_dir/workspace\"` +
+      ` --openwork-host ${shQuote(remoteOpenworkHost)}` +
+      ` --openwork-port ${shQuote(String(remoteOpenworkPort))}` +
+      ` --openwork-token ${shQuote(openworkToken)}` +
+      ` --openwork-host-token ${shQuote(openworkHostToken)}` +
+      ` --approval ${shQuote(approvalMode)}` +
+      ` --approval-timeout ${shQuote(String(approvalTimeoutMs))}` +
+      (readOnly ? " --read-only" : "") +
+      (!owpenbotEnabled ? " --no-owpenbot" : "") +
+      ` --sidecar-source downloaded --opencode-source downloaded --log-format json` +
+      corsArg +
+      ` > \"$logfile\" 2>&1 &`,
+    `echo $! > \"$pidfile\"`,
+    `for i in {1..40}; do curl -fsS http://127.0.0.1:${remoteOpenworkPort}/health >/dev/null 2>&1 && break; sleep 0.25; done`,
+    `echo \"started $(cat \"$pidfile\")\"`,
+  ].join("\n");
+
+  const remoteStartArgs = [...sshArgs, sshTarget, "bash", "-lc", remoteStartScript];
+  if (dryRun) {
+    logDeploy.info("Dry-run: remote start", { command: `${sshPrefix} bash -lc <script>` });
+  } else {
+    await captureCommandOutput("ssh", remoteStartArgs, { timeoutMs: 10 * 60_000 });
+  }
+
+  const privateBind = remoteOpenworkHost === "127.0.0.1" || remoteOpenworkHost === "localhost" || remoteOpenworkHost === "::1";
+  const connectUrl = privateBind
+    ? `http://127.0.0.1:${localForwardPort}`
+    : `http://${extractSshHost(sshTarget) || "<host>"}:${remoteOpenworkPort}`;
+
+  const forwardCommand = privateBind
+    ? [
+        "ssh",
+        ...sshArgs,
+        "-L",
+        `${localForwardPort}:127.0.0.1:${remoteOpenworkPort}`,
+        sshTarget,
+      ].join(" ")
+    : undefined;
+
+  const stopCommand = `${sshPrefix} bash -lc ${shQuote(
+    `remote_dir_input=${shQuote(remoteDirInput)}; if [[ \"$remote_dir_input\" = /* ]]; then remote_dir=\"$remote_dir_input\"; else remote_dir=\"$HOME/$remote_dir_input\"; fi; pidfile=\"$remote_dir/openwrk.pid\"; pid=\"$(cat \"$pidfile\" 2>/dev/null || true)\"; if [ -n \"$pid\" ]; then kill \"$pid\" 2>/dev/null || true; fi`,
+  )}`;
+  const logsCommand = `${sshPrefix} tail -n 200 -f ${remoteDirDisplay.replace(/\/$/, "")}/logs/openwrk.log`;
+
+  const artifact: DeployConnectArtifact = {
+    kind: "openwork.connect.v1",
+    version: 1,
+    createdAt: new Date().toISOString(),
+    openwork: {
+      connectUrl,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+    },
+    workspace: {
+      localPath: localWorkspace,
+      remotePath: remoteWorkspace,
+      sync: syncMode,
+    },
+    ssh: {
+      target: sshTarget,
+      ...(forwardCommand ? { forwardCommand } : {}),
+      stopCommand,
+      logsCommand,
+    },
+  };
+
+  if (outputJson) {
+    console.log(JSON.stringify(artifact, null, 2));
+    return;
+  }
+
+  console.log(`Deployed: ${name}`);
+  console.log(`Remote workspace: ${remoteWorkspace}`);
+  console.log(`OpenWork connect URL: ${connectUrl}`);
+  if (forwardCommand) {
+    console.log("SSH forward:");
+    console.log(`  ${forwardCommand}`);
+  }
+  console.log(`Client token: ${openworkToken}`);
+  console.log(`Host token: ${openworkHostToken}`);
+  console.log("Stop:");
+  console.log(`  ${stopCommand}`);
+  console.log("Logs:");
+  console.log(`  ${logsCommand}`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (readBool(args.flags, "help", false) || args.flags.get("help") === true) {
@@ -4823,6 +5300,10 @@ async function main() {
   }
   if (command === "instance") {
     await runInstanceCommand(args);
+    return;
+  }
+  if (command === "deploy") {
+    await runDeployCommand(args);
     return;
   }
   if (command === "approvals") {
