@@ -246,25 +246,33 @@ function normalizeBaseUrl(url: string): string {
 function resolveOperatorTarget(options: {
   url?: string;
   openworkUrl?: string;
+  token?: string;
   hostToken?: string;
 }): OperatorApiTarget {
   const openworkUrl = options.openworkUrl?.trim();
   if (openworkUrl) {
+    const token =
+      options.token?.trim() ||
+      process.env.OPENWORK_TOKEN?.trim() ||
+      process.env.OPENWRK_OPENWORK_TOKEN?.trim() ||
+      "";
+    if (!token) {
+      throw new Error("--token is required when using --openwork-url (or set OPENWORK_TOKEN)");
+    }
+
     const hostToken =
       options.hostToken?.trim() ||
       process.env.OPENWORK_HOST_TOKEN?.trim() ||
       process.env.OPENWRK_OPENWORK_HOST_TOKEN?.trim() ||
       "";
-    if (!hostToken) {
-      throw new Error("--host-token is required when using --openwork-url (or set OPENWORK_HOST_TOKEN)");
-    }
 
     const base = normalizeBaseUrl(openworkUrl);
     const baseUrl = base.endsWith("/owpenbot") ? base : `${base}/owpenbot`;
     return {
       baseUrl,
       headers: {
-        "X-OpenWork-Host-Token": hostToken,
+        Authorization: `Bearer ${token}`,
+        ...(hostToken ? { "X-OpenWork-Host-Token": hostToken } : {}),
       },
       mode: "openwork",
     };
@@ -305,7 +313,7 @@ function formatYesNo(value: unknown): string {
   return value ? "yes" : "no";
 }
 
-async function runOperatorTui(options: { url?: string; openworkUrl?: string; hostToken?: string }) {
+async function runOperatorTui(options: { url?: string; openworkUrl?: string; token?: string; hostToken?: string }) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("tui requires an interactive TTY");
   }
@@ -633,8 +641,9 @@ program
   .description("Interactive operator UI (requires a running owpenbot health API)")
   .option("--url <url>", "Owpenbot API base URL (default: http://127.0.0.1:$OWPENBOT_HEALTH_PORT)")
   .option("--openwork-url <url>", "OpenWork server URL to proxy owpenbot through (uses /owpenbot/*)")
-  .option("--host-token <token>", "OpenWork host token (required with --openwork-url; or set OPENWORK_HOST_TOKEN)")
-  .action(async (opts: { url?: string; openworkUrl?: string; hostToken?: string }) => {
+  .option("--token <token>", "OpenWork client token (required with --openwork-url; or set OPENWORK_TOKEN)")
+  .option("--host-token <token>", "OpenWork host token (required for admin actions; or use an owner token)")
+  .action(async (opts: { url?: string; openworkUrl?: string; token?: string; hostToken?: string }) => {
     if (program.opts().json) {
       outputError("tui does not support --json (use health/status/config commands instead)");
     }
