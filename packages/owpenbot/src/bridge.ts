@@ -1157,10 +1157,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   return {
     async stop() {
-      if (healthTimer) {
-        clearInterval(healthTimer);
-        healthTimer = null;
-      }
+      clearInterval(healthTimer);
       if (stopHealthServer) stopHealthServer();
       for (const abort of eventSubscriptions.values()) {
         abort.abort();
