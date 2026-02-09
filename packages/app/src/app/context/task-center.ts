@@ -6,6 +6,49 @@ import { Persist, persisted } from "../utils/persist";
 import { unwrap } from "../lib/opencode";
 
 // Merge automation state with TFS items
+// Merge TFS items with automation state - preserves automation items not in TFS query
+export function mergeTfsItemsWithAutomation(
+  tfsItems: TaskCenterItem[],
+  automation: Map<number, TaskCenterAutomationState>
+): TaskCenterItem[] {
+  const result: TaskCenterItem[] = [];
+  const processedTfsIds = new Set<number>();
+
+  // First, process all TFS items and merge with automation
+  for (const item of tfsItems) {
+    const autoState = automation.get(item.tfsId);
+    if (autoState) {
+      // Merge automation state into TFS item
+      result.push({
+        ...item,
+        status: autoState.status,
+        stage: autoState.stage,
+      });
+    } else {
+      // No automation state, use TFS item as-is
+      result.push(item);
+    }
+    processedTfsIds.add(item.tfsId);
+  }
+
+  // Then, add automation items that are not in TFS query result
+  for (const [tfsId, autoState] of automation.entries()) {
+    if (!processedTfsIds.has(tfsId)) {
+      // Create a TaskCenterItem from automation state
+      result.push({
+        id: `tfs-${tfsId}`,
+        tfsId,
+        title: `Work Item #${tfsId}`, // Placeholder, should be loaded from storage
+        status: autoState.status,
+        stage: autoState.stage,
+        updatedAt: autoState.updatedAt,
+      });
+    }
+  }
+
+  return result;
+}
+
 export function mergeAutomationState(
   tfsItems: Array<{ tfsId: number; status: TaskCenterStatus }>,
   automation: Map<number, TaskCenterAutomationState>
@@ -151,6 +194,13 @@ export function createTaskCenterStore(options: {
   const [syncing, setSyncing] = createSignal(false);
   const [syncSessionId, setSyncSessionId] = createSignal<string | null>(null);
 
+  // Automation state store - persists automation progress
+  const [automationState, setAutomationState] = (() => {
+    const initialState = new Map<number, TaskCenterAutomationState>();
+    const store = createStore<Map<number, TaskCenterAutomationState>>(initialState);
+    return persisted(Persist.global("task-center.automation"), store);
+  })();
+
   const [ui, setUi] = (() => {
     const store = createStore<TaskCenterUiState>({
       search: "",
@@ -250,11 +300,14 @@ export function createTaskCenterStore(options: {
         throw new Error(trimmed);
       }
 
-      const nextItems = parseWorkItems(trimmed).map((item) => ({
+      const tfsItems = parseWorkItems(trimmed).map((item) => ({
         ...item,
-        stage: "idle",
+        stage: "idle" as TaskCenterStage,
       }));
-      setItems(nextItems);
+      
+      // Merge with automation state to preserve items not in TFS query
+      const mergedItems = mergeTfsItemsWithAutomation(tfsItems, automationState[0] ?? new Map());
+      setItems(mergedItems);
       setLastUpdatedAt(Date.now());
       setStatus("idle");
     } catch (error) {
@@ -288,5 +341,7 @@ export function createTaskCenterStore(options: {
     startAutomation,
     setSyncSessionId,
     syncSessionId,
+    automationState: automationState[0] ?? new Map(),
+    setAutomationState: automationState[1],
   };
 }

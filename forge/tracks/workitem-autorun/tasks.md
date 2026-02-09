@@ -12,7 +12,7 @@
 
 ---
 
-### Task 1: 添加自动化状态模型 + 持久化
+### Task 1: 添加自动化状态模型 + 持久化 ✅ 已完成
 
 **Files:**
 - Modify: `packages/app/src/app/types.ts`
