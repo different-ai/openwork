@@ -163,6 +163,16 @@ export type TaskCenterItem = {
   updatedAt?: number | null;
 };
 
+// Task Center Automation State
+export type TaskCenterAutomationState = {
+  status: TaskCenterStatus;
+  stage: TaskCenterStage;
+  subStage?: string | null;
+  sessionId?: string | null;
+  blockedReason?: string | null;
+  updatedAt: number;
+};
+
 export type SettingsTab = "general" | "model" | "advanced" | "debug";
 
 export type WorkspacePreset = "starter" | "automation" | "minimal";

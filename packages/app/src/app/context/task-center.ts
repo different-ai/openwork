@@ -1,9 +1,41 @@
 import { createMemo, createSignal } from "solid-js";
 import { createStore } from "solid-js/store";
 
-import type { Client, TaskCenterItem, TaskCenterStatus } from "../types";
+import type { Client, TaskCenterItem, TaskCenterStatus, TaskCenterStage, TaskCenterAutomationState } from "../types";
 import { Persist, persisted } from "../utils/persist";
 import { unwrap } from "../lib/opencode";
+
+// Merge automation state with TFS items
+export function mergeAutomationState(
+  tfsItems: Array<{ tfsId: number; status: TaskCenterStatus }>,
+  automation: Map<number, TaskCenterAutomationState>
+): Map<number, TaskCenterAutomationState> {
+  const result = new Map<number, TaskCenterAutomationState>();
+
+  for (const item of tfsItems) {
+    const existing = automation.get(item.tfsId);
+    
+    if (existing) {
+      // Check if TFS is in a final state (done/archived) - use TFS state
+      const isTfsFinal = item.status === "done" || item.status === "archived";
+      
+      result.set(item.tfsId, {
+        ...existing,
+        status: isTfsFinal ? item.status : existing.status,
+        updatedAt: Date.now()
+      });
+    } else {
+      // No automation state: create from TFS item
+      result.set(item.tfsId, {
+        status: item.status,
+        stage: "idle" as TaskCenterStage,
+        updatedAt: Date.now()
+      });
+    }
+  }
+
+  return result;
+}
 
 export type TaskCenterStore = ReturnType<typeof createTaskCenterStore>;
 
