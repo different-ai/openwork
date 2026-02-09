@@ -1,6 +1,6 @@
 import { For, Show, createMemo, onCleanup, onMount } from "solid-js";
 
-import type { TaskCenterItem, TaskCenterStatus } from "../types";
+import type { TaskCenterItem, TaskCenterStatus, TaskCenterStage } from "../types";
 import { formatRelativeTime } from "../utils";
 import { usePlatform } from "../context/platform";
 
@@ -11,6 +11,41 @@ import {
   Play,
   RefreshCw,
 } from "lucide-solid";
+
+// Stage labels mapping
+const stageLabels: Record<TaskCenterStage, string> = {
+  idle: "待处理",
+  syncing: "同步中",
+  analyzing: "分析",
+  designing: "设计",
+  planning: "计划",
+  implementing: "实现",
+  reviewing: "评审",
+  archiving: "归档",
+};
+
+// SubStage labels mapping (only for implementing stage)
+const subStageLabels: Record<string, string> = {
+  "workspace-prep": "环境初始化",
+  "plan-exec": "执行计划",
+  "tests": "运行测试",
+  "fixes": "修复问题",
+  "ready-review": "待评审",
+};
+
+// Helper function to get stage label with optional subStage
+const stageLabel = (stage?: TaskCenterStage, subStage?: string | null): string => {
+  if (!stage || stage === "idle" || stage === "syncing") return "";
+  
+  const mainLabel = stageLabels[stage] || stage;
+  
+  // Only show subStage for implementing stage
+  if (stage === "implementing" && subStage && subStageLabels[subStage]) {
+    return `${mainLabel} · ${subStageLabels[subStage]}`;
+  }
+  
+  return mainLabel;
+};
 
 export type TaskCenterViewProps = {
   itemsByStatus: Record<TaskCenterStatus, TaskCenterItem[]>;
@@ -156,6 +191,15 @@ export default function TaskCenterView(props: TaskCenterViewProps) {
                             <p class="mt-2 text-xs text-dls-secondary line-clamp-3">
                               {cleanText(item.description)}
                             </p>
+                          </Show>
+
+                          {/* Stage badge - only show for non-idle stages */}
+                          <Show when={item.stage && item.stage !== "idle" && item.stage !== "syncing"}>
+                            <div class="mt-2">
+                              <span class="inline-flex items-center rounded-full bg-blue-3 px-2 py-0.5 text-[10px] font-medium text-blue-11">
+                                {stageLabel(item.stage, item.subStage)}
+                              </span>
+                            </div>
                           </Show>
 
                           <div class="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
