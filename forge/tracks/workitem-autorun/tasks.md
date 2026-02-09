@@ -96,7 +96,7 @@ git commit -m "feat: add task center automation state model"
 
 ---
 
-### Task 2: 合并自动化状态与 TFS 同步结果
+### Task 2: 合并自动化状态与 TFS 同步结果 ✅ 已完成
 
 **Files:**
 - Modify: `packages/app/src/app/context/task-center.ts`

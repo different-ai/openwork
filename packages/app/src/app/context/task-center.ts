@@ -93,6 +93,10 @@ function mapStateToStatus(state?: string | null): TaskCenterStatus {
   if (normalized === "活动") return "progress";
   if (normalized === "已解决") return "done";
   if (normalized === "已关闭") return "archived";
+  // Only "已分析" should map to "todo"
+  if (normalized === "已分析") return "todo";
+  // Other states like "已建议" should not appear in Task Center
+  // (they will be filtered out by TFS query)
   return "todo";
 }
 

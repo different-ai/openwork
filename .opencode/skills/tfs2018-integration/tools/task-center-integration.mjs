@@ -45,7 +45,7 @@ class TaskCenterTFSClient extends TFSClient {
   async getMyWorkItems(options = {}) {
     const {
       project = null,
-      states = ['已建议', '已分析'],
+      states = ['已分析'],
       workItemTypes = ['Task', 'Bug', 'User Story', '需求'],
       days = null,
       top = 100
@@ -406,7 +406,7 @@ async function main() {
       case 'list':
       case 'list-json': {
         const project = args[1] || null;
-        const statesArg = args[2] || '已建议,已分析';
+        const statesArg = args[2] || '已分析';
         const states = statesArg.split(',');
 
         const tasks = await client.getMyWorkItems({
