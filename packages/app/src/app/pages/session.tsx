@@ -29,6 +29,7 @@ import {
   ChevronRight,
   HardDrive,
   History,
+  KanbanSquare,
   ListTodo,
   Loader2,
   Maximize2,
@@ -1756,6 +1757,21 @@ export default function SessionView(props: SessionViewProps) {
           >
             <History size={18} />
             Automations
+          </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "task-center"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={() => {
+              props.setTab("task-center");
+              props.setView("dashboard");
+            }}
+          >
+            <KanbanSquare size={18} />
+            Task Center
           </button>
           <button
             type="button"

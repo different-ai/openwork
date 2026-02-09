@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "workspace": {
+    "name": "openwork",
+    "createdAt": 1770469663214,
+    "preset": "starter"
+  },
+  "authorizedRoots": [
+    "C:\\Users\\Lenovo\\Desktop\\openwork"
+  ]
+}

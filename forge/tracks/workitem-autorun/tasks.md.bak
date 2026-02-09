@@ -1,0 +1,428 @@
+# Tasks
+
+> **For Claude:** REQUIRED SUB-SKILL: Use forge:executing-plans to implement this plan task-by-task.
+
+**Change:** workitem-autorun
+
+**Goal:** Automate Task Center ToDo("已分析") work items through Forge/openspec workflow with progress sub-stages, and update TFS to "已解决" only after archive.
+
+**Architecture:** Add a persisted automation state map, merge it with TFS sync results, show stage/subStage in UI, and drive Forge artifacts via a new orchestrator skill. TFS state updates only after archive.
+
+**Tech Stack:** SolidJS (Task Center UI/store), OpenCode skills, Node CLI tools, TFS integration.
+
+---
+
+### Task 1: Add automation state model + persistence
+
+**Files:**
+- Modify: `packages/app/src/app/types.ts`
+- Modify: `packages/app/src/app/context/task-center.ts`
+- Create: `packages/app/src/app/context/__tests__/task-center-automation.test.ts`
+- Create: `packages/app/vitest.config.ts`
+- Modify: `packages/app/package.json`
+
+**Step 1: Write the failing test**
+
+```ts
+import { describe, expect, it } from "vitest";
+import { mergeAutomationState } from "../task-center";
+
+it("overrides TFS status with automation state", () => {
+  const tfsItems = [{ tfsId: 1, status: "todo" }];
+  const automation = { 1: { status: "progress", stage: "analyzing" } };
+  const merged = mergeAutomationState(tfsItems, automation);
+  expect(merged[0].status).toBe("progress");
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL because `mergeAutomationState` does not exist.
+
+**Step 3: Write minimal implementation**
+
+```ts
+// packages/app/vitest.config.ts
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    environment: "node",
+    include: ["src/app/context/__tests__/**/*.test.ts"],
+  },
+});
+
+// packages/app/package.json (devDependencies + scripts)
+// "vitest": "^2.1.0"
+// "test": "vitest"
+
+export type TaskCenterAutomationState = {
+  status: TaskCenterStatus;
+  stage: TaskCenterStage;
+  subStage?: string | null;
+  sessionId?: string | null;
+  blockedReason?: string | null;
+  updatedAt: number;
+};
+
+export function mergeAutomationState(...) { ... }
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add packages/app/package.json packages/app/src/app/types.ts packages/app/src/app/context/task-center.ts packages/app/src/app/context/__tests__/task-center-automation.test.ts
+git commit -m "feat: add task center automation state model"
+```
+
+---
+
+### Task 2: Merge automation state with TFS sync results
+
+**Files:**
+- Modify: `packages/app/src/app/context/task-center.ts`
+- Modify: `packages/app/src/app/types.ts`
+
+**Step 1: Write the failing test**
+
+```ts
+it("keeps automation items not returned by TFS query", () => {
+  const tfsItems = [];
+  const automation = { 9: { status: "done", stage: "reviewing" } };
+  const merged = mergeAutomationState(tfsItems, automation);
+  expect(merged.find((i) => i.tfsId === 9)).toBeTruthy();
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```ts
+const automationItems = Object.entries(automationMap).map(...);
+return dedupeByTfsId([...tfsItems, ...automationItems]);
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add packages/app/src/app/context/task-center.ts packages/app/src/app/types.ts packages/app/src/app/context/__tests__/task-center-automation.test.ts
+git commit -m "feat: merge automation state into task sync"
+```
+
+---
+
+### Task 3: Enforce ToDo = "已分析" only
+
+**Files:**
+- Modify: `.opencode/skills/tfs2018-integration/tools/task-center-integration.mjs`
+- Modify: `packages/app/src/app/context/task-center.ts`
+
+**Step 1: Write the failing test**
+
+```ts
+it("maps only 已分析 to todo", () => {
+  expect(mapStateToStatus("已分析")).toBe("todo");
+  expect(mapStateToStatus("已建议")).not.toBe("todo");
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```ts
+if (normalized === "已分析") return "todo";
+if (normalized === "活动") return "progress";
+if (normalized === "已解决") return "done";
+if (normalized === "已关闭") return "archived";
+return "failed";
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add .opencode/skills/tfs2018-integration/tools/task-center-integration.mjs packages/app/src/app/context/task-center.ts
+git commit -m "feat: restrict todo to 已分析"
+```
+
+---
+
+### Task 4: Show stage + subStage in Task Center cards
+
+**Files:**
+- Modify: `packages/app/src/app/pages/task-center.tsx`
+
+**Step 1: Write the failing test**
+
+```ts
+it("renders stage badge when stage is present", () => {
+  // render TaskCenterView with item.stage="analyzing"
+  // expect text "分析" present
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```tsx
+<Show when={item.stage}>
+  <span class="...">{stageLabel(item.stage, item.subStage)}</span>
+</Show>
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add packages/app/src/app/context/task-center.ts
+git commit -m "feat: add automation state (setAutomationState)"
+```
+
+---
+
+### Task 5: Add Forge orchestrator + wire automation start
+
+**Files:**
+- Modify: `packages/app/src/app/context/task-center.ts`
+
+**Step 1: Write failing test**
+
+```ts
+it("sets progress + analyzing on startAutomation", () => {
+  // Mock TFS client and updateWorkItemState
+  const mockUpdateWorkItemState = vi.fn((id, state) => Promise.resolve());
+  const mockTfsClient = {
+    updateWorkItemState: mockUpdateWorkItemState,
+  } as any;
+
+  const { setAutomationState } = vi.hoisted<{ setAutomationState: any }>();
+
+  // Call startAutomation - should NOT open session
+  startAutomation({ tfsId: 1, title: "Test Item" });
+
+  // Verify automation state was set
+  expect(setAutomationState).toHaveBeenCalledWith(1, {
+    status: "progress",
+    stage: "analyzing",
+    subStage: undefined,
+    sessionId: undefined,  // no session should be created
+    updatedAt: expect.any(Number),
+    blockedReason: undefined,
+  });
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```ts
+import type { TaskCenterItem } from "../types";
+
+const startAutomation = (item: TaskCenterItem) => {
+  const prompt = `使用 forge-orchestrator 处理 TFS 工作项 #${item.tfsId}`;
+  options.setPrompt(prompt);
+  // 只设置自动化状态，不自动开启会话
+  // TODO: 添加手动启动功能（可选）
+};
+
+export { startAutomation };
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add packages/app/src/app/context/task-center.ts
+git commit -m "feat: add automation state (setAutomationState)"
+```
+
+---
+
+### Task 6: Archive completion updates TFS to "已解决"
+
+**Files:**
+- Create: `.opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs`
+- Modify: `.opencode/skills/tfs2018-integration/tools/task-center-integration.mjs`
+
+**Step 1: Write failing test**
+
+```ts
+it("updates TFS to 已解决 only after archive", () => {
+  // Mock updateWorkItemState
+  const mockUpdateWorkItemState = vi.fn((id, state) => Promise.resolve());
+
+  // Call updateWorkItemState
+  await updateWorkItemState(1, "已解决");
+
+  // Verify it was called with correct parameters
+  expect(mockUpdateWorkItemState).toHaveBeenCalledWith(1, "已解决");
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 3: Write minimal implementation**
+
+```javascript
+// Add updateWorkItemState to TFS client
+export async function updateWorkItemState(id, state, comment) {
+  // Validate state
+  if (state !== "已解决") {
+    throw new Error(`Only '已解决' state is allowed for updateWorkItemState`);
+  }
+
+  // This would be called by orchestrator on archive completion
+  const tfsApi = await this.getWorkItemApi();
+  await tfsApi.updateWorkItemState(id, state, comment);
+}
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add .opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs .opencode/skills/tfs2018-integration/tools/task-center-integration.mjs
+git commit -m "feat: add updateWorkItemState for TFS archive completion"
+```
+
+---
+
+## Non-goals
+
+## Success criteria
+
+- Task 1: Automation state model added with mergeAutomationState function
+- Task 2: TFS sync preserves automation state from prior runs
+- Task 3: ToDo restricted to "已分析" only
+- Task 4: Stage and subStage visible in UI cards
+- Task 5: Forge orchestrator drives automation workflow
+- Task 6: Archive completion updates TFS to "已解决" only
+
+All tests pass, all commits ready for execution.
+
+---
+
+### Task 5: Add Forge orchestrator + wire automation start
+
+**Files:**
+- Create: `.opencode/skills/forge-orchestrator/SKILL.md`
+- Create: `.opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs`
+- Modify: `packages/app/src/app/context/task-center.ts`
+
+**Step 1: Write the failing test**
+
+```ts
+it("sets progress + analyzing on startAutomation", () => {
+  // call startAutomation, assert automation state updated
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```ts
+const prompt = `使用 forge-orchestrator 处理 TFS 工作项 #${item.tfsId}`;
+setAutomationState(item.tfsId, { status: "progress", stage: "analyzing" });
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add .opencode/skills/forge-orchestrator/SKILL.md .opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs packages/app/src/app/context/task-center.ts
+git commit -m "feat: add forge orchestrator automation"
+```
+
+---
+
+### Task 6: Archive completion updates TFS to "已解决"
+
+**Files:**
+- Modify: `.opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs`
+- Modify: `.opencode/skills/tfs2018-integration/tools/task-center-integration.mjs`
+
+**Step 1: Write the failing test**
+
+```ts
+it("updates TFS to 已解决 only after archive", () => {
+  // simulate archive completion
+  // expect updateWorkItemState("Resolved") called
+});
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pnpm -C packages/app test`
+Expected: FAIL.
+
+**Step 3: Write minimal implementation**
+
+```js
+await tfs.updateWorkItemState(id, "已解决", "Archive complete");
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pnpm -C packages/app test`
+Expected: PASS.
+
+**Step 5: Commit**
+
+```bash
+git add .opencode/skills/forge-orchestrator/tools/forge-orchestrator.mjs .opencode/skills/tfs2018-integration/tools/task-center-integration.mjs
+git commit -m "feat: update TFS after archive"
+```

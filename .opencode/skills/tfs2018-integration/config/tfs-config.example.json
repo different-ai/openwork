@@ -1,0 +1,6 @@
+{
+  "_comment": "TFS 2018 配置文件 - 请填写您的 PAT Token",
+  "serverUrl": "http://tfs2018-web.winning.com.cn:8080/tfs/WINNING-6.0",
+  "pat": "your-personal-access-token-here",
+  "username": "your-username"
+}

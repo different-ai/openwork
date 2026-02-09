@@ -45,6 +45,8 @@ import {
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
+  SIDEBAR_COLLAPSED_PREF_KEY,
+  SIDEBAR_RIGHT_COLLAPSED_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
@@ -115,6 +117,7 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
+import { createTaskCenterStore } from "./context/task-center";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
@@ -165,7 +168,32 @@ export default function App() {
     location.pathname.toLowerCase().startsWith("/proto-v1-ux")
   );
 
-  const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
+  const dashboardTabs = new Set<DashboardTab>([
+    "scheduled",
+    "task-center",
+    "skills",
+    "plugins",
+    "mcp",
+    "config",
+    "settings",
+  ]);
+
+  const resolveDashboardTab = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (dashboardTabs.has(normalized as DashboardTab)) {
+      return normalized as DashboardTab;
+    }
+    return "scheduled";
+  };
+
+  const initialDashboardTab = () => {
+    const path = location.pathname.toLowerCase();
+    if (!path.startsWith("/dashboard")) return "scheduled";
+    const [, , tabSegment] = path.split("/");
+    return resolveDashboardTab(tabSegment);
+  };
+
+  const [tab, setTabState] = createSignal<DashboardTab>(initialDashboardTab());
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
 
   const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
@@ -1170,6 +1198,7 @@ export default function App() {
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
 
+
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
@@ -1340,6 +1369,10 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
+  const toggleSidebarCollapsed = () => setSidebarCollapsed((prev) => !prev);
+  const [rightSidebarCollapsed, setRightSidebarCollapsed] = createSignal(false);
+  const toggleRightSidebarCollapsed = () => setRightSidebarCollapsed((prev) => !prev);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
@@ -1423,6 +1456,13 @@ export default function App() {
     openworkServerClient,
     onEngineStable: () => setReloadLastFinishedAtRef(Date.now()),
     engineRuntime,
+  });
+
+  const taskCenterStore = createTaskCenterStore({
+    client,
+    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
+    createSessionAndOpen,
+    setPrompt,
   });
 
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
@@ -3560,6 +3600,32 @@ export default function App() {
           }
         }
 
+        const storedSidebarCollapsed = window.localStorage.getItem(SIDEBAR_COLLAPSED_PREF_KEY);
+        if (storedSidebarCollapsed != null) {
+          try {
+            const parsed = JSON.parse(storedSidebarCollapsed);
+            if (typeof parsed === "boolean") {
+              setSidebarCollapsed(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedRightSidebarCollapsed = window.localStorage.getItem(
+          SIDEBAR_RIGHT_COLLAPSED_PREF_KEY
+        );
+        if (storedRightSidebarCollapsed != null) {
+          try {
+            const parsed = JSON.parse(storedRightSidebarCollapsed);
+            if (typeof parsed === "boolean") {
+              setRightSidebarCollapsed(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
           const normalized = normalizeModelVariant(storedVariant);
@@ -3952,6 +4018,29 @@ export default function App() {
     }
   });
 
+  // Persist sidebar collapsed state
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_PREF_KEY, JSON.stringify(sidebarCollapsed()));
+    } catch {
+      // ignore
+    }
+  });
+
+  // Persist right sidebar collapsed state
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_RIGHT_COLLAPSED_PREF_KEY,
+        JSON.stringify(rightSidebarCollapsed())
+      );
+    } catch {
+      // ignore
+    }
+  });
+
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -4250,6 +4339,16 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
+      taskCenterItemsByStatus: taskCenterStore.itemsByStatus(),
+      taskCenterStatus: taskCenterStore.status(),
+      taskCenterError: taskCenterStore.error(),
+      taskCenterSyncing: taskCenterStore.syncing(),
+      taskCenterLastUpdatedAt: taskCenterStore.lastUpdatedAt(),
+      refreshTaskCenter: (options?: { force?: boolean }) =>
+        taskCenterStore.syncTasks({...options,client}).catch((error) => {
+          console.error("Failed to refresh task center:", error);
+        }),
+      startTaskCenterAutomation: taskCenterStore.startAutomation,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshPlugins: (scopeOverride?: PluginScope) =>
@@ -4290,6 +4389,10 @@ export default function App() {
       toggleShowThinking: () => setShowThinking((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+      sidebarCollapsed: sidebarCollapsed(),
+      toggleSidebarCollapsed,
+      rightSidebarCollapsed: rightSidebarCollapsed(),
+      toggleRightSidebarCollapsed,
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       editModelVariant: handleEditModelVariant,
       updateAutoCheck: updateAutoCheck(),
@@ -4487,23 +4590,6 @@ export default function App() {
     renameSession: renameSessionTitle,
     error: error(),
   });
-
-  const dashboardTabs = new Set<DashboardTab>([
-    "scheduled",
-    "skills",
-    "plugins",
-    "mcp",
-    "config",
-    "settings",
-  ]);
-
-  const resolveDashboardTab = (value?: string | null) => {
-    const normalized = value?.trim().toLowerCase() ?? "";
-    if (dashboardTabs.has(normalized as DashboardTab)) {
-      return normalized as DashboardTab;
-    }
-    return "scheduled";
-  };
 
   const initialRoute = () => {
     if (typeof window === "undefined") return "/session";

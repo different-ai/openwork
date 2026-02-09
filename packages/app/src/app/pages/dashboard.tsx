@@ -10,6 +10,8 @@ import type {
   ScheduledJob,
   SkillCard,
   StartupPreference,
+  TaskCenterItem,
+  TaskCenterStatus,
   WorkspaceSessionGroup,
   View,
 } from "../types";
@@ -29,6 +31,7 @@ import Button from "../components/button";
 import McpView from "./mcp";
 import PluginsView from "./plugins";
 import ScheduledTasksView from "./scheduled";
+import TaskCenterView from "./task-center";
 import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
@@ -40,8 +43,11 @@ import {
   ChevronDown,
   ChevronRight,
   History,
+  KanbanSquare,
   Loader2,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -125,6 +131,13 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
+  taskCenterItemsByStatus: Record<TaskCenterStatus, TaskCenterItem[]>;
+  taskCenterStatus: "idle" | "syncing" | "error";
+  taskCenterError: string | null;
+  taskCenterSyncing: boolean;
+  taskCenterLastUpdatedAt: number | null;
+  refreshTaskCenter: (options?: { force?: boolean }) => void;
+  startTaskCenterAutomation: (item: TaskCenterItem) => void;
   activeWorkspaceRoot: string;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
@@ -192,6 +205,10 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
+  sidebarCollapsed: boolean;
+  toggleSidebarCollapsed: () => void;
+  rightSidebarCollapsed: boolean;
+  toggleRightSidebarCollapsed: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
   updateAutoCheck: boolean;
@@ -255,6 +272,8 @@ export default function DashboardView(props: DashboardViewProps) {
         return "Config";
       case "settings":
         return "Settings";
+      case "task-center":
+        return "Task Center";
       default:
         return "Automations";
     }
@@ -449,6 +468,9 @@ export default function DashboardView(props: DashboardViewProps) {
         }
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
+        }
+        if (currentTab === "task-center" && !cancelled) {
+          await props.refreshTaskCenter();
         }
       } catch {
         // Ignore errors during navigation
@@ -693,7 +715,8 @@ export default function DashboardView(props: DashboardViewProps) {
 
   return (
     <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
-      <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
+      <Show when={!props.sidebarCollapsed}>
+        <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -1038,21 +1061,22 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </div>
 
-        <div class="pt-4 border-t border-dls-border">
+        <div class="pt-4 border-t border-dls-border space-y-1">
           <button
             type="button"
             onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
+            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors w-full"
           >
             <Settings size={18} />
             <span class="text-sm font-medium">Settings</span>
           </button>
         </div>
-      </aside>
+        </aside>
+      </Show>
 
       <main class="flex-1 overflow-y-auto relative pb-24 md:pb-12 bg-dls-surface">
         <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
             <Show when={showUpdatePill()}>
               <button
                 type="button"
@@ -1081,18 +1105,43 @@ export default function DashboardView(props: DashboardViewProps) {
                 </Show>
               </button>
             </Show>
-            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
+            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium min-w-0 truncate">
               {props.activeWorkspaceDisplay.name}
             </div>
-            <h1 class="text-lg font-medium">{title()}</h1>
+            <h1 class="text-lg font-medium truncate">{title()}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary">{props.busyHint}</span>
+              <span class="text-xs text-dls-secondary truncate">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-2" />
+          <div class="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={props.toggleSidebarCollapsed}
+              class="hidden md:flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-[11px] font-medium text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+              aria-label={props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+              title={props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}
+            >
+              <Show when={props.sidebarCollapsed} fallback={<PanelLeftClose size={14} />}>
+                <PanelLeftOpen size={14} />
+              </Show>
+              <span>{props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={props.toggleRightSidebarCollapsed}
+              class="hidden md:flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-[11px] font-medium text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+              aria-label={props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}
+              title={props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}
+            >
+              <Show when={props.rightSidebarCollapsed} fallback={<PanelLeftClose size={14} />}>
+                <PanelLeftOpen size={14} />
+              </Show>
+              <span>{props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}</span>
+            </button>
+          </div>
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
@@ -1112,6 +1161,17 @@ export default function DashboardView(props: DashboardViewProps) {
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
                 newTaskDisabled={props.newTaskDisabled}
+              />
+            </Match>
+            <Match when={props.tab === "task-center"}>
+              <TaskCenterView
+                itemsByStatus={props.taskCenterItemsByStatus}
+                status={props.taskCenterStatus}
+                error={props.taskCenterError}
+                syncing={props.taskCenterSyncing}
+                lastUpdatedAt={props.taskCenterLastUpdatedAt}
+                syncTasks={props.refreshTaskCenter}
+                startAutomation={props.startTaskCenterAutomation}
               />
             </Match>
             <Match when={props.tab === "skills"}>
@@ -1357,7 +1417,7 @@ export default function DashboardView(props: DashboardViewProps) {
               mcpStatuses={props.mcpStatuses}
             />
           <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-4 gap-2">
+            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-5 gap-2">
               <button
                 class={`flex flex-col items-center gap-1 text-xs ${
                   props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1366,6 +1426,15 @@ export default function DashboardView(props: DashboardViewProps) {
               >
                 <History size={18} />
                 Automations
+              </button>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "task-center" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("task-center")}
+              >
+                <KanbanSquare size={18} />
+                Task Center
               </button>
               <button
                 class={`flex flex-col items-center gap-1 text-xs ${
@@ -1399,27 +1468,30 @@ export default function DashboardView(props: DashboardViewProps) {
         </div>
       </main>
 
-      <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
-        <div class="space-y-1 pt-2">
-          {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("skills", "Skills", <Zap size={18} />)}
-          {navItem("mcp", "Apps", <Box size={18} />)}
-          {navItem("config", "Config", <SlidersHorizontal size={18} />)}
-        </div>
+      <Show when={!props.rightSidebarCollapsed}>
+        <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
+          <div class="space-y-1 pt-2">
+            {navItem("scheduled", "Automations", <History size={18} />)}
+            {navItem("task-center", "Task Center", <KanbanSquare size={18} />)}
+            {navItem("skills", "Skills", <Zap size={18} />)}
+            {navItem("mcp", "Apps", <Box size={18} />)}
+            {navItem("config", "Config", <SlidersHorizontal size={18} />)}
+          </div>
 
-        <div class="flex-1" />
+          <div class="flex-1" />
 
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
-      </aside>
+          <div class="pt-4 border-t border-dls-border">
+            <button
+              type="button"
+              onClick={() => openSettings("general")}
+              class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
+            >
+              <Settings size={18} />
+              <span class="text-sm font-medium">Settings</span>
+            </button>
+          </div>
+        </aside>
+      </Show>
     </div>
   );
 }

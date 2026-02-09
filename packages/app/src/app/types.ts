@@ -131,7 +131,37 @@ export type DashboardTab =
   | "plugins"
   | "mcp"
   | "config"
-  | "settings";
+  | "settings"
+  | "task-center";
+
+export type TaskCenterStatus = "todo" | "progress" | "done" | "archived" | "failed";
+
+export type TaskCenterStage =
+  | "idle"
+  | "syncing"
+  | "analyzing"
+  | "designing"
+  | "planning"
+  | "implementing"
+  | "reviewing"
+  | "archiving";
+
+export type TaskCenterItem = {
+  id: string;
+  tfsId: number;
+  title: string;
+  description?: string;
+  project?: string | null;
+  workItemType?: string | null;
+  priority?: number | null;
+  assignedTo?: string | null;
+  tags?: string[];
+  state?: string | null;
+  url?: string | null;
+  status: TaskCenterStatus;
+  stage?: TaskCenterStage;
+  updatedAt?: number | null;
+};
 
 export type SettingsTab = "general" | "model" | "advanced" | "debug";
 

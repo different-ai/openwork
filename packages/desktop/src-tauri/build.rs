@@ -324,7 +324,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 }
 
 fn create_debug_stub(dest_path: &PathBuf, sidecar_dir: &PathBuf, profile: &str, target: &str) {
-  if profile == "release" || target.contains("windows") {
+  if profile == "release" {
     return;
   }
 
@@ -332,11 +332,21 @@ fn create_debug_stub(dest_path: &PathBuf, sidecar_dir: &PathBuf, profile: &str, 
     return;
   }
 
-  let stub = "#!/usr/bin/env bash\n\
+  // Create appropriate stub based on platform
+  if target.contains("windows") {
+    // Windows batch file stub
+    let stub = "@ECHO OFF\r\n\
+ECHO Sidecar missing. Install the binary or set the *_BIN_PATH env var.\r\n\
+EXIT 1\r\n";
+    let _ = fs::write(dest_path, stub);
+  } else {
+    // Unix shell script stub
+    let stub = "#!/usr/bin/env bash\n\
 echo 'Sidecar missing. Install the binary or set the *_BIN_PATH env var.'\n\
 exit 1\n";
-  if fs::write(dest_path, stub).is_ok() {
-    #[cfg(unix)]
-    let _ = fs::set_permissions(dest_path, fs::Permissions::from_mode(0o755));
+    if fs::write(dest_path, stub).is_ok() {
+      #[cfg(unix)]
+      let _ = fs::set_permissions(dest_path, fs::Permissions::from_mode(0o755));
+    }
   }
 }
