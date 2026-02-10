@@ -59,6 +59,7 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import TouchedFilesPanel from "../components/session/touched-files-panel";
+import MarkdownEditorModal from "../components/session/markdown-editor-modal";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -193,6 +194,9 @@ export default function SessionView(props: SessionViewProps) {
   const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
   const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
 
+  const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
+  const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
+
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
   const showRightSidebarSelection = createMemo(() => !props.selectedSessionId);
@@ -241,6 +245,49 @@ export default function SessionView(props: SessionViewProps) {
 
     return out;
   });
+
+  const normalizeSidebarPath = (value: string) => String(value ?? "").trim().replace(/[\\/]+/g, "/");
+
+  const toWorkspaceRelativeForApi = (file: string) => {
+    const normalized = normalizeSidebarPath(file).replace(/^file:\/\//i, "");
+    if (!normalized) return "";
+
+    const root = normalizeSidebarPath(props.activeWorkspaceRoot).replace(/\/+$/, "");
+    const rootKey = root.toLowerCase();
+    const fileKey = normalized.toLowerCase();
+
+    if (root && fileKey.startsWith(`${rootKey}/`)) {
+      return normalized.slice(root.length + 1);
+    }
+    if (root && fileKey === rootKey) {
+      return "";
+    }
+
+    const relative = normalized.replace(/^\.\/+/, "");
+    if (!relative) return "";
+    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
+    if (relative.split("/").some((part) => part === "." || part === "..")) return "";
+    return relative;
+  };
+
+  const openMarkdownEditor = (file: string) => {
+    const relative = toWorkspaceRelativeForApi(file);
+    if (!relative) {
+      setToastMessage("Only workspace-relative files can be opened here.");
+      return;
+    }
+    if (!/\.(md|mdx|markdown)$/i.test(relative)) {
+      setToastMessage("Only markdown files can be edited here right now.");
+      return;
+    }
+    setMarkdownEditorPath(relative);
+    setMarkdownEditorOpen(true);
+  };
+
+  const closeMarkdownEditor = () => {
+    setMarkdownEditorOpen(false);
+    setMarkdownEditorPath(null);
+  };
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
@@ -1824,6 +1871,7 @@ export default function SessionView(props: SessionViewProps) {
             id="sidebar-context"
             files={touchedFiles()}
             workspaceRoot={props.activeWorkspaceRoot}
+            onFileClick={openMarkdownEditor}
           />
 
           <div class="space-y-1">
@@ -1984,6 +2032,15 @@ export default function SessionView(props: SessionViewProps) {
         }
         exportDisabledReason={exportDisabledReason()}
         onOpenBots={openConfig}
+      />
+
+      <MarkdownEditorModal
+        open={markdownEditorOpen()}
+        path={markdownEditorPath()}
+        workspaceId={props.openworkServerWorkspaceId}
+        client={props.openworkServerClient}
+        onClose={closeMarkdownEditor}
+        onToast={(message) => setToastMessage(message)}
       />
 
       <Show when={props.activePermission}>

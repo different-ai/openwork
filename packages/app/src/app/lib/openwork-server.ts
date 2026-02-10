@@ -74,6 +74,20 @@ export type OpenworkSkillContent = {
   content: string;
 };
 
+export type OpenworkWorkspaceFileContent = {
+  path: string;
+  content: string;
+  bytes: number;
+  updatedAt: number;
+};
+
+export type OpenworkWorkspaceFileWriteResult = {
+  ok: boolean;
+  path: string;
+  bytes: number;
+  updatedAt: number;
+};
+
 export type OpenworkCommandItem = {
   name: string;
   description?: string;
@@ -991,6 +1005,28 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
       return result.text;
     },
+
+    readWorkspaceFile: (workspaceId: string, path: string) =>
+      requestJson<OpenworkWorkspaceFileContent>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/content?path=${encodeURIComponent(path)}`,
+        { token, hostToken },
+      ),
+
+    writeWorkspaceFile: (
+      workspaceId: string,
+      payload: { path: string; content: string; baseUpdatedAt?: number | null; force?: boolean },
+    ) =>
+      requestJson<OpenworkWorkspaceFileWriteResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/content`,
+        {
+          token,
+          hostToken,
+          method: "POST",
+          body: payload,
+        },
+      ),
 
     listArtifacts: (workspaceId: string) =>
       requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
