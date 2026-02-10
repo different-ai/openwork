@@ -59,7 +59,7 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import TouchedFilesPanel from "../components/session/touched-files-panel";
-import MarkdownEditorModal from "../components/session/markdown-editor-modal";
+import MarkdownEditorSidebar from "../components/session/markdown-editor-sidebar";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -2038,7 +2038,7 @@ export default function SessionView(props: SessionViewProps) {
         onOpenBots={openConfig}
       />
 
-      <MarkdownEditorModal
+      <MarkdownEditorSidebar
         open={markdownEditorOpen()}
         path={markdownEditorPath()}
         workspaceId={props.openworkServerWorkspaceId}
