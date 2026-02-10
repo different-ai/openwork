@@ -2704,6 +2704,16 @@ async function verifyOwpenbotVersion(binary: ResolvedBinary): Promise<string | u
 
 async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | undefined> {
   const actual = await readCliVersion(binary.bin);
+  // When the binary was explicitly provided via --opencode-bin (source "external"),
+  // a strict version check would break desktop app users whenever a new opencode
+  // release ships on GitHub before OpenWork updates its bundled binary. Log a
+  // warning instead of throwing so the caller can still proceed.
+  if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
+    console.error(
+      `[openwrk] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.`,
+    );
+    return actual;
+  }
   assertVersionMatch("opencode", binary.expectedVersion, actual, binary.bin);
   return actual;
 }
