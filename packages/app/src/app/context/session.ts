@@ -694,8 +694,10 @@ export function createSessionStore(options: {
               message = errorMessage || `API error${statusCode ? ` (${statusCode})` : ""}`;
             }
           } else if (errorName === "MessageAbortedError") {
-            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
-            message = errorMessage || "Request was cancelled";
+            // Cancellation is a user-driven control flow. Don't treat it as a
+            // fatal error banner; the session UI already provides local UX.
+            options.setError(null);
+            return;
           } else if (errorName === "MessageOutputLengthError") {
             message = "Output length limit exceeded";
           } else {

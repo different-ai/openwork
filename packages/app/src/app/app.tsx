@@ -920,6 +920,28 @@ export default function App() {
     }
   }
 
+  async function abortSession(sessionID?: string) {
+    const c = client();
+    if (!c) return;
+    const id = (sessionID ?? selectedSessionId() ?? "").trim();
+    if (!id) return;
+    // OpenCode exposes session.abort which interrupts the active prompt/run.
+    // We intentionally don't mutate global busy state here; the SessionView
+    // provides local UX (button disabled + toast) for cancellation.
+    unwrap(await (c.session as any).abort({ sessionID: id }));
+  }
+
+  function retryLastPrompt() {
+    const text = lastPromptSent().trim();
+    if (!text) return;
+    void sendPrompt({
+      mode: "prompt",
+      text,
+      parts: [{ type: "text", text }],
+      attachments: [],
+    });
+  }
+
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -4518,6 +4540,9 @@ export default function App() {
     skillsStatus: skillsStatus(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
+    abortSession: abortSession,
+    lastPromptSent: lastPromptSent(),
+    retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
     openRenameWorkspace,

@@ -27,6 +27,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
   Cpu,
   HardDrive,
   History,
@@ -37,7 +38,9 @@ import {
   Minimize2,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Settings,
+  Square,
   Shield,
   SlidersHorizontal,
   Zap,
@@ -106,6 +109,9 @@ export type SessionViewProps = {
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => void;
   sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
+  abortSession: (sessionId?: string) => Promise<void>;
+  lastPromptSent: string;
+  retryLastPrompt: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   openRenameWorkspace: (workspaceId: string) => void;
@@ -404,10 +410,12 @@ export default function SessionView(props: SessionViewProps) {
   const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
   const [runHasBegun, setRunHasBegun] = createSignal(false);
   const [runTick, setRunTick] = createSignal(Date.now());
+  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
   const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
     assistantId: null,
     partCount: 0,
   });
+  const [abortBusy, setAbortBusy] = createSignal(false);
   const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
 
@@ -430,7 +438,9 @@ export default function SessionView(props: SessionViewProps) {
 
   const startRun = () => {
     if (runStartedAt()) return;
-    setRunStartedAt(Date.now());
+    const now = Date.now();
+    setRunStartedAt(now);
+    setRunLastProgressAt(now);
     setRunHasBegun(false);
     captureRunBaseline();
   };
@@ -614,6 +624,7 @@ export default function SessionView(props: SessionViewProps) {
     if (props.sessionStatus === "idle" && runHasBegun() && !props.error) {
       setRunStartedAt(null);
       setRunHasBegun(false);
+      setRunLastProgressAt(null);
       setRunBaseline({ assistantId: null, partCount: 0 });
     }
   });
@@ -643,6 +654,9 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
+          if (showRunIndicator()) {
+            setRunLastProgressAt(Date.now());
+          }
           const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
           if (shouldScroll) {
             scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
@@ -654,6 +668,84 @@ export default function SessionView(props: SessionViewProps) {
       },
     ),
   );
+
+  const runStallMs = createMemo(() => {
+    if (!showRunIndicator()) return 0;
+    if (runPhase() === "error") return 0;
+    const last = runLastProgressAt() ?? runStartedAt() ?? Date.now();
+    return Math.max(0, runTick() - last);
+  });
+
+  const stallThresholds = createMemo(() => {
+    // Keep these thresholds user-friendly:
+    // - "Still working" should appear quickly enough to reassure, but not so quickly it feels noisy.
+    // - "Taking longer than usual" should appear late enough to avoid false alarms.
+    const phase = runPhase();
+    if (phase === "sending" || phase === "retrying") {
+      return { softMs: 8_000, hardMs: 20_000 };
+    }
+    if (phase === "thinking") {
+      return { softMs: 25_000, hardMs: 70_000 };
+    }
+    if (phase === "responding") {
+      return { softMs: 25_000, hardMs: 90_000 };
+    }
+    return { softMs: 0, hardMs: 0 };
+  });
+
+  const stallStage = createMemo<"none" | "soft" | "hard">(() => {
+    if (!showRunIndicator()) return "none";
+    if (runPhase() === "error") return "none";
+    const ms = runStallMs();
+    const { softMs, hardMs } = stallThresholds();
+    if (!softMs || !hardMs) return "none";
+    if (ms >= hardMs) return "hard";
+    if (ms >= softMs) return "soft";
+    return "none";
+  });
+
+  const cancelRun = async () => {
+    if (abortBusy()) return;
+    if (!props.selectedSessionId) {
+      setToastMessage("No session selected");
+      return;
+    }
+
+    setAbortBusy(true);
+    setToastMessage("Stopping the run...");
+    try {
+      await props.abortSession(props.selectedSessionId);
+      setToastMessage("Stopped.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to stop";
+      setToastMessage(message);
+    } finally {
+      setAbortBusy(false);
+    }
+  };
+
+  const retryRun = async () => {
+    const text = props.lastPromptSent.trim();
+    if (!text) {
+      setToastMessage("Nothing to retry yet");
+      return;
+    }
+
+    if (abortBusy()) return;
+    setAbortBusy(true);
+    setToastMessage("Trying again...");
+    try {
+      if (showRunIndicator() && props.selectedSessionId) {
+        await props.abortSession(props.selectedSessionId);
+      }
+    } catch {
+      // If abort fails, still allow the retry. Users care more about forward motion.
+    } finally {
+      setAbortBusy(false);
+    }
+
+    props.retryLastPrompt();
+  };
 
 
   const triggerFlyout = (
@@ -1620,6 +1712,63 @@ export default function SessionView(props: SessionViewProps) {
                         </Show>
                       </div>
                     </Show>
+                    <Show when={stallStage() !== "none"}>
+                      <div
+                        class={`rounded-xl border px-3 py-2 text-xs ${
+                          stallStage() === "hard"
+                            ? "border-amber-7/30 bg-amber-2/30 text-amber-12"
+                            : "border-gray-6/70 bg-gray-2/40 text-gray-11"
+                        }`}
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="flex items-start gap-2 min-w-0">
+                            <Clock3 size={14} class={stallStage() === "hard" ? "text-amber-11" : "text-gray-9"} />
+                            <div class="min-w-0">
+                              <div class={stallStage() === "hard" ? "text-amber-12" : "text-gray-12"}>
+                                {stallStage() === "hard" ? "This is taking longer than usual." : "Still working..."}
+                              </div>
+                              <Show when={stallStage() === "hard"}>
+                                <div class="mt-1 text-[11px] leading-snug">
+                                  You can keep waiting, try again, or stop the run.
+                                </div>
+                              </Show>
+                              <Show when={props.developerMode && stallStage() === "hard"}>
+                                <div class="mt-1 text-[10px] font-mono opacity-80">
+                                  phase={runPhase()} stallMs={Math.round(runStallMs())}
+                                </div>
+                              </Show>
+                            </div>
+                          </div>
+                          <Show when={stallStage() === "hard"}>
+                            <div class="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-12 hover:bg-gray-2/60 transition-colors disabled:opacity-50"
+                                onClick={retryRun}
+                                disabled={abortBusy()}
+                                title="Try sending the last message again"
+                                aria-label="Try again"
+                              >
+                                <RotateCcw size={12} />
+                                Try again
+                              </button>
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-12 hover:bg-gray-2/60 transition-colors disabled:opacity-50"
+                                onClick={cancelRun}
+                                disabled={abortBusy()}
+                                title="Stop the current run"
+                                aria-label="Stop"
+                              >
+                                <Square size={12} />
+                                Stop
+                              </button>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+                    </Show>
+
                     <div
                       class={`w-full flex items-center justify-between gap-3 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"
                         }`}
@@ -1655,9 +1804,24 @@ export default function SessionView(props: SessionViewProps) {
                         </Show>
                         <span class="truncate">{runLabel()}</span>
                       </div>
-                      <Show when={props.developerMode}>
-                        <span class="shrink-0 text-[10px] text-gray-8">{runElapsedLabel()}</span>
-                      </Show>
+                      <div class="shrink-0 flex items-center gap-2">
+                        <Show when={props.developerMode}>
+                          <span class="text-[10px] text-gray-8">{runElapsedLabel()}</span>
+                        </Show>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1.5 rounded-full border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-11 hover:bg-gray-2/60 hover:text-gray-12 transition-colors disabled:opacity-50"
+                          onClick={cancelRun}
+                          disabled={abortBusy()}
+                          title="Stop the current run"
+                          aria-label="Stop"
+                        >
+                          <Show when={abortBusy()} fallback={<Square size={12} />}>
+                            <Loader2 size={12} class="animate-spin" />
+                          </Show>
+                          Stop
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>

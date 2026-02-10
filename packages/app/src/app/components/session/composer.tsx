@@ -603,7 +603,10 @@ export default function Composer(props: ComposerProps) {
     // Limit Set size to prevent memory leak (though unlikely to grow huge)
     if (recentEmits.size > 20) {
       const it = recentEmits.values();
-      recentEmits.delete(it.next().value);
+      const first = it.next();
+      if (!first.done) {
+        recentEmits.delete(first.value);
+      }
     }
 
     const resolvedText = normalizeText(partsToResolvedText(parts));
