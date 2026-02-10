@@ -289,8 +289,15 @@ export default function MarkdownEditorModal(props: MarkdownEditorModalProps) {
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-dls-surface border border-dls-border w-full max-w-6xl h-[85vh] rounded-2xl shadow-2xl overflow-hidden flex flex-col">
+      <div class="fixed inset-0 z-50">
+        <button
+          type="button"
+          class="absolute inset-0 w-full h-full bg-gray-1/60 backdrop-blur-sm"
+          aria-label="Close editor"
+          onClick={requestClose}
+        />
+
+        <div class="absolute inset-y-0 right-0 w-full md:w-[720px] lg:w-[860px] bg-dls-surface border-l border-dls-border shadow-2xl overflow-hidden flex flex-col">
           <div class="shrink-0 px-5 py-4 border-b border-dls-border flex items-center gap-3">
             <div class="shrink-0 w-9 h-9 rounded-xl bg-dls-hover border border-dls-border flex items-center justify-center text-dls-secondary">
               <FileText size={16} />
@@ -390,9 +397,7 @@ export default function MarkdownEditorModal(props: MarkdownEditorModalProps) {
 
           <div class="flex-1 overflow-hidden">
             <div
-              class={`h-full grid gap-4 p-5 ${
-                showSplit() ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"
-              }`}
+              class={`h-full grid gap-4 p-5 ${showSplit() ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"}`}
             >
               <Show when={mode() !== "preview"}>
                 <div class="h-full flex flex-col overflow-hidden">
