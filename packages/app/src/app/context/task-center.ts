@@ -4,6 +4,7 @@ import { createStore } from "solid-js/store";
 import type { Client, TaskCenterItem, TaskCenterStatus, TaskCenterStage, TaskCenterAutomationState } from "../types";
 import { Persist, persisted } from "../utils/persist";
 import { unwrap } from "../lib/opencode";
+import { parseTasks, updateTaskStatus, type ParsedTask } from "../lib/tasks-parser";
 
 // Merge automation state with TFS items
 // Merge TFS items with automation state - preserves automation items not in TFS query
@@ -197,23 +198,33 @@ export function createTaskCenterStore(options: {
   const [lastUpdatedAt, setLastUpdatedAt] = createSignal<number | null>(null);
   const [syncing, setSyncing] = createSignal(false);
   const [syncSessionId, setSyncSessionId] = createSignal<string | null>(null);
+  
+  // Task execution state
+  const [selectedItem, setSelectedItem] = createSignal<TaskCenterItem | null>(null);
+  const [tasks, setTasks] = createSignal<ParsedTask[]>([]);
+  const [currentTaskIndex, setCurrentTaskIndex] = createSignal<number>(-1);
+  const [executing, setExecuting] = createSignal(false);
 
   // Automation state store - persists automation progress
-  const [automationState, setAutomationState] = (() => {
+  const automationStore = (() => {
     const initialState = new Map<number, TaskCenterAutomationState>();
     const store = createStore<Map<number, TaskCenterAutomationState>>(initialState);
     return persisted(Persist.global("task-center.automation"), store);
   })();
+  const automationState = automationStore[0];
+  const setAutomationState = automationStore[1];
 
-  const [ui, setUi] = (() => {
+  const uiStore = (() => {
     const store = createStore<TaskCenterUiState>({
       search: "",
     });
     return persisted(Persist.global("task-center.ui"), store);
   })();
+  const ui = uiStore[0];
+  const setUi = uiStore[1];
 
   const filteredItems = createMemo(() => {
-    const uiState = ui[0];
+    const uiState = ui;
     if (!uiState) return items();
     const query = uiState.search?.trim().toLowerCase() ?? "";
     if (!query) return items();
@@ -237,7 +248,7 @@ export function createTaskCenterStore(options: {
     return grouped;
   });
 
-  const setSearch = (value: string) => setUi[1]("search", value);
+  const setSearch = (value: string) => setUi("search", value);
 
   const syncTasks = async (syncOptions?: { force?: boolean }) => {
     if (syncing() && !syncOptions?.force) return;
@@ -310,7 +321,7 @@ export function createTaskCenterStore(options: {
       }));
       
       // Merge with automation state to preserve items not in TFS query
-      const mergedItems = mergeTfsItemsWithAutomation(tfsItems, automationState[0] ?? new Map());
+      const mergedItems = mergeTfsItemsWithAutomation(tfsItems, automationState ?? new Map());
       setItems(mergedItems);
       setLastUpdatedAt(Date.now());
       setStatus("idle");
@@ -323,10 +334,356 @@ export function createTaskCenterStore(options: {
     }
   };
 
-  const startAutomation = (item: TaskCenterItem) => {
-    const prompt = `使用 task-automation skill 完整处理 TFS 工作项 #${item.tfsId}。`;
-    options.setPrompt(prompt);
-    options.createSessionAndOpen();
+  const startAutomation = async (item: TaskCenterItem) => {
+    const activeClient = options.client();
+    if (!activeClient) {
+      setError("Not connected to OpenCode.");
+      return;
+    }
+
+    const directory = options.activeWorkspaceRoot().trim();
+    const tfsId = item.tfsId;
+
+    try {
+      // Step 1: Update TFS state to "活动" via shell command
+      const activateCommand = `node .opencode/skills/tfs2018-integration/tools/task-center-integration.mjs activate ${tfsId}`;
+      
+      const sessionApi = activeClient.session as typeof activeClient.session & {
+        shellAsync?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+        shell?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+      };
+
+      // Create a temporary session for TFS operations
+      const result = await sessionApi.create({ directory: directory || undefined });
+      const session = unwrap(result);
+      const sessionID = session.id;
+
+      const shellInput = {
+        sessionID,
+        command: activateCommand,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      const shellResult = sessionApi.shellAsync
+        ? await sessionApi.shellAsync(shellInput)
+        : sessionApi.shell
+          ? await sessionApi.shell(shellInput)
+          : null;
+
+      if (!shellResult) {
+        throw new Error("Shell execution is unavailable for TFS state update.");
+      }
+
+      const output = extractOutput(shellResult);
+      if (!output?.includes("activated successfully")) {
+        console.warn("TFS activation may have failed:", output);
+      }
+
+      // Step 2: Update local automation state
+      setAutomationState(tfsId, {
+        status: "progress",
+        stage: "analyzing",
+        subStage: null,
+        sessionId: null,
+        blockedReason: null,
+        updatedAt: Date.now(),
+      });
+
+      // Step 3: Create OpenCode session with task-automation prompt
+      const prompt = `使用 task-automation skill 完整处理 TFS 工作项 #${item.tfsId}。`;
+      options.setPrompt(prompt);
+      options.createSessionAndOpen();
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start automation.";
+      setError(message);
+      console.error("Start automation error:", error);
+    }
+  };
+
+  // Task execution functions
+  const selectItem = (item: TaskCenterItem | null) => {
+    setSelectedItem(item);
+    if (item) {
+      loadTasks(item);
+    } else {
+      setTasks([]);
+      setCurrentTaskIndex(-1);
+    }
+  };
+
+  const loadTasks = async (item: TaskCenterItem) => {
+    const activeClient = options.client();
+    if (!activeClient) return;
+
+    const directory = options.activeWorkspaceRoot().trim();
+    const tasksPath = `forge/tracks/workitem-autorun/tfs-${item.tfsId}/tasks.md`;
+
+    try {
+      const sessionApi = activeClient.session as typeof activeClient.session & {
+        shellAsync?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+        shell?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+      };
+
+      const result = await sessionApi.create({ directory: directory || undefined });
+      const session = unwrap(result);
+      const sessionID = session.id;
+
+      // Try to read tasks.md
+      const shellInput = {
+        sessionID,
+        command: `cat ${tasksPath}`,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      const shellResult = sessionApi.shellAsync
+        ? await sessionApi.shellAsync(shellInput)
+        : sessionApi.shell
+          ? await sessionApi.shell(shellInput)
+          : null;
+
+      if (shellResult) {
+        const output = extractOutput(shellResult);
+        if (output) {
+          const parsed = parseTasks(output);
+          setTasks(parsed);
+          const nextIndex = parsed.findIndex(t => t.status === "pending" || t.status === "in-progress");
+          setCurrentTaskIndex(nextIndex >= 0 ? nextIndex : 0);
+        }
+      }
+    } catch (err) {
+      console.warn("Failed to load tasks:", err);
+      setTasks([]);
+    }
+  };
+
+  const executeTaskStep = async (item: TaskCenterItem, taskIndex: number) => {
+    const activeClient = options.client();
+    if (!activeClient || executing()) return;
+
+    const directory = options.activeWorkspaceRoot().trim();
+    const tasksPath = `forge/tracks/workitem-autorun/tfs-${item.tfsId}/tasks.md`;
+
+    setExecuting(true);
+    
+    try {
+      const sessionApi = activeClient.session as typeof activeClient.session & {
+        shellAsync?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+        shell?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+      };
+
+      // Create session for file operations
+      const result = await sessionApi.create({ directory: directory || undefined });
+      const session = unwrap(result);
+      const sessionID = session.id;
+
+      // Read current tasks.md
+      const readInput = {
+        sessionID,
+        command: `cat ${tasksPath}`,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      const readResult = sessionApi.shellAsync
+        ? await sessionApi.shellAsync(readInput)
+        : sessionApi.shell
+          ? await sessionApi.shell(readInput)
+          : null;
+
+      if (!readResult) {
+        throw new Error("Cannot read tasks.md");
+      }
+
+      const content = extractOutput(readResult);
+      if (!content) {
+        throw new Error("Tasks.md is empty");
+      }
+
+      // Update task status to in-progress
+      const updated = updateTaskStatus(content, taskIndex, "in-progress");
+      
+      // Write back
+      const writeInput = {
+        sessionID,
+        command: `cat > ${tasksPath} << 'EOF'
+${updated}
+EOF`,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      await sessionApi.shellAsync?.(writeInput) ?? sessionApi.shell?.(writeInput);
+
+      // Update local state
+      setTasks(prev => prev.map((t, i) => i === taskIndex ? { ...t, status: "in-progress" } : t));
+      setCurrentTaskIndex(taskIndex);
+
+      // Update automation state
+      setAutomationState(item.tfsId, {
+        status: "progress",
+        stage: getStageForTask(taskIndex),
+        subStage: `task-${taskIndex}`,
+        sessionId: sessionID,
+        blockedReason: null,
+        updatedAt: Date.now(),
+      });
+
+      // Create OpenCode session for task execution
+      const task = tasks()[taskIndex];
+      if (task) {
+        const prompt = `执行任务 ${taskIndex + 1}：${task.title}\n\n工作项: #${item.tfsId}\n\n${task.description}`;
+        options.setPrompt(prompt);
+        options.createSessionAndOpen();
+      }
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Task execution failed.";
+      setError(message);
+      console.error("Execute task step error:", error);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const completeTaskStep = async (item: TaskCenterItem, taskIndex: number) => {
+    const activeClient = options.client();
+    if (!activeClient || executing()) return;
+
+    const directory = options.activeWorkspaceRoot().trim();
+    const tasksPath = `forge/tracks/workitem-autorun/tfs-${item.tfsId}/tasks.md`;
+
+    setExecuting(true);
+
+    try {
+      const sessionApi = activeClient.session as typeof activeClient.session & {
+        shellAsync?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+        shell?: (input: {
+          sessionID: string;
+          command: string;
+          agent?: string;
+          directory?: string;
+        }) => Promise<unknown>;
+      };
+
+      const result = await sessionApi.create({ directory: directory || undefined });
+      const session = unwrap(result);
+      const sessionID = session.id;
+
+      // Read current tasks.md
+      const readInput = {
+        sessionID,
+        command: `cat ${tasksPath}`,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      const readResult = sessionApi.shellAsync
+        ? await sessionApi.shellAsync(readInput)
+        : sessionApi.shell
+          ? await sessionApi.shell(readInput)
+          : null;
+
+      if (!readResult) {
+        throw new Error("Cannot read tasks.md");
+      }
+
+      const content = extractOutput(readResult);
+      if (!content) {
+        throw new Error("Tasks.md is empty");
+      }
+
+      // Mark current task as completed
+      const updated = updateTaskStatus(content, taskIndex, "completed");
+
+      // Write back
+      const writeInput = {
+        sessionID,
+        command: `cat > ${tasksPath} << 'EOF'
+${updated}
+EOF`,
+        agent: "openwork",
+        directory: directory || undefined,
+      };
+
+      await sessionApi.shellAsync?.(writeInput) ?? sessionApi.shell?.(writeInput);
+
+      // Update local state
+      setTasks(prev => prev.map((t, i) => i === taskIndex ? { ...t, status: "completed" } : t));
+
+      // Check if all tasks completed
+      const allTasks = tasks().map((t, i) => i === taskIndex ? { ...t, status: "completed" as const } : t);
+      const allCompleted = allTasks.every(t => t.status === "completed");
+
+      if (allCompleted) {
+        setAutomationState(item.tfsId, {
+          status: "done",
+          stage: "reviewing",
+          subStage: null,
+          sessionId: null,
+          blockedReason: null,
+          updatedAt: Date.now(),
+        });
+      } else {
+        // Move to next task
+        const nextIndex = allTasks.findIndex(t => t.status === "pending");
+        if (nextIndex >= 0) {
+          setCurrentTaskIndex(nextIndex);
+        }
+      }
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Complete task step failed.";
+      setError(message);
+      console.error("Complete task step error:", error);
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const getStageForTask = (taskIndex: number): TaskCenterStage => {
+    // Map task index to stage based on typical workflow
+    if (taskIndex === 0) return "analyzing";
+    if (taskIndex === 1) return "designing";
+    if (taskIndex === 2) return "planning";
+    return "implementing";
   };
 
   return {
@@ -336,8 +693,8 @@ export function createTaskCenterStore(options: {
     error,
     lastUpdatedAt,
     syncing,
-    ui: ui[0] ?? { search: "" },
-    setUi: ui[1],
+    ui: ui ?? { search: "" },
+    setUi,
     setSearch,
     filteredItems,
     itemsByStatus,
@@ -345,7 +702,16 @@ export function createTaskCenterStore(options: {
     startAutomation,
     setSyncSessionId,
     syncSessionId,
-    automationState: automationState[0] ?? new Map(),
-    setAutomationState: automationState[1],
+    automationState: automationState ?? new Map(),
+    setAutomationState,
+    // Task execution
+    selectedItem,
+    selectItem,
+    tasks,
+    currentTaskIndex,
+    executing,
+    executeTaskStep,
+    completeTaskStep,
+    loadTasks,
   };
 }
