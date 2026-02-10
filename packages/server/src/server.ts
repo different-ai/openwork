@@ -2108,6 +2108,103 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return new Response((Bun as any).file(absPath), { status: 200, headers });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/files/content", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const requested = (ctx.url.searchParams.get("path") ?? "").trim();
+    const relativePath = normalizeWorkspaceRelativePath(requested, { allowSubdirs: true });
+    const lowered = relativePath.toLowerCase();
+    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
+    if (!isMarkdown) {
+      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    }
+
+    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+    if (!(await exists(absPath))) {
+      throw new ApiError(404, "file_not_found", "File not found");
+    }
+    const info = await stat(absPath);
+    if (!info.isFile()) {
+      throw new ApiError(404, "file_not_found", "File not found");
+    }
+
+    const maxBytes = 5_000_000;
+    if (info.size > maxBytes) {
+      throw new ApiError(413, "file_too_large", "File exceeds size limit", { maxBytes, size: info.size });
+    }
+
+    const content = await readFile(absPath, "utf8");
+    return jsonResponse({ path: relativePath, content, bytes: info.size, updatedAt: info.mtimeMs });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/files/content", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const body = await readJsonBody(ctx.request);
+
+    const requestedPath = String(body.path ?? "");
+    const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
+    const lowered = relativePath.toLowerCase();
+    const isMarkdown = lowered.endsWith(".md") || lowered.endsWith(".mdx") || lowered.endsWith(".markdown");
+    if (!isMarkdown) {
+      throw new ApiError(400, "invalid_path", "Only markdown files are supported");
+    }
+
+    if (typeof body.content !== "string") {
+      throw new ApiError(400, "invalid_payload", "content must be a string");
+    }
+    const content = body.content;
+    const bytes = Buffer.byteLength(content, "utf8");
+    const maxBytes = 5_000_000;
+    if (bytes > maxBytes) {
+      throw new ApiError(413, "file_too_large", "File exceeds size limit", { maxBytes, size: bytes });
+    }
+
+    const baseUpdatedAtRaw = body.baseUpdatedAt;
+    const baseUpdatedAt =
+      typeof baseUpdatedAtRaw === "number" && Number.isFinite(baseUpdatedAtRaw) ? baseUpdatedAtRaw : null;
+    const force = body.force === true;
+
+    const absPath = resolveSafeChildPath(workspace.path, relativePath);
+
+    const before = (await exists(absPath)) ? await stat(absPath) : null;
+    if (before && !before.isFile()) {
+      throw new ApiError(400, "invalid_path", "Path must point to a file");
+    }
+    const beforeUpdatedAt = before ? before.mtimeMs : null;
+    if (!force && beforeUpdatedAt !== null && baseUpdatedAt !== null && beforeUpdatedAt !== baseUpdatedAt) {
+      throw new ApiError(409, "conflict", "File changed since it was loaded", {
+        baseUpdatedAt,
+        currentUpdatedAt: beforeUpdatedAt,
+      });
+    }
+
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "workspace.file.write",
+      summary: `Write ${relativePath}`,
+      paths: [absPath],
+    });
+
+    await ensureDir(dirname(absPath));
+    const tmp = `${absPath}.tmp-${shortId()}`;
+    await writeFile(tmp, content, "utf8");
+    await rename(tmp, absPath);
+    const after = await stat(absPath);
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "workspace.file.write",
+      target: absPath,
+      summary: `Wrote ${relativePath}`,
+      timestamp: Date.now(),
+    });
+
+    return jsonResponse({ ok: true, path: relativePath, bytes, updatedAt: after.mtimeMs });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const includeGlobal = ctx.url.searchParams.get("includeGlobal") === "true";
