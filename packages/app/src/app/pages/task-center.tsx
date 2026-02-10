@@ -1,15 +1,21 @@
-import { For, Show, createMemo, onCleanup, onMount } from "solid-js";
+import { For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
 import type { TaskCenterItem, TaskCenterStatus, TaskCenterStage } from "../types";
+import type { ParsedTask } from "../lib/tasks-parser";
 import { formatRelativeTime } from "../utils";
 import { usePlatform } from "../context/platform";
 
 import Button from "../components/button";
 import {
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Circle,
   ExternalLink,
   Loader2,
   Play,
   RefreshCw,
+  X,
 } from "lucide-solid";
 
 // Stage labels mapping
@@ -47,6 +53,27 @@ const stageLabel = (stage?: TaskCenterStage, subStage?: string | null): string =
   return mainLabel;
 };
 
+// Task status display helpers
+const taskStatusIcon = (status: ParsedTask["status"]) => {
+  switch (status) {
+    case "pending": return <Circle size={14} class="text-gray-6" />;
+    case "in-progress": return <Loader2 size={14} class="text-amber-6 animate-spin" />;
+    case "completed": return <CheckCircle2 size={14} class="text-emerald-6" />;
+    case "failed": return <X size={14} class="text-red-6" />;
+    default: return <Circle size={14} class="text-gray-6" />;
+  }
+};
+
+const taskStatusText = (status: ParsedTask["status"]) => {
+  switch (status) {
+    case "pending": return "待执行";
+    case "in-progress": return "执行中";
+    case "completed": return "已完成";
+    case "failed": return "失败";
+    default: return "待执行";
+  }
+};
+
 export type TaskCenterViewProps = {
   itemsByStatus: Record<TaskCenterStatus, TaskCenterItem[]>;
   status: "idle" | "syncing" | "error";
@@ -55,6 +82,14 @@ export type TaskCenterViewProps = {
   lastUpdatedAt: number | null;
   syncTasks: (options?: { force?: boolean }) => void;
   startAutomation: (item: TaskCenterItem) => void;
+  // Task execution props
+  selectedItem?: TaskCenterItem | null;
+  tasks?: ParsedTask[];
+  currentTaskIndex?: number;
+  executing?: boolean;
+  onSelectItem?: (item: TaskCenterItem | null) => void;
+  onExecuteTask?: (item: TaskCenterItem, taskIndex: number) => void;
+  onCompleteTask?: (item: TaskCenterItem, taskIndex: number) => void;
 };
 
 const STATUS_ORDER: TaskCenterStatus[] = ["todo", "progress", "done", "failed", "archived"];
@@ -99,14 +134,184 @@ const cleanText = (value?: string) => {
   return value.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 };
 
+// Task Execution Panel Component
+function TaskExecutionPanel(props: {
+  item: TaskCenterItem;
+  tasks: ParsedTask[];
+  currentTaskIndex: number;
+  executing: boolean;
+  onClose: () => void;
+  onExecuteTask: (taskIndex: number) => void;
+  onCompleteTask: (taskIndex: number) => void;
+}) {
+  const [expandedTask, setExpandedTask] = createSignal<number | null>(null);
+
+  const canExecute = (task: ParsedTask, index: number) => {
+    // Can execute if task is pending and it's the current task or all previous are completed
+    if (task.status !== "pending") return false;
+    if (index === 0) return true;
+    return props.tasks.slice(0, index).every(t => t.status === "completed");
+  };
+
+  const canComplete = (task: ParsedTask, index: number) => {
+    return task.status === "in-progress" && index === props.currentTaskIndex;
+  };
+
+  return (
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div class="w-full max-w-lg max-h-[80vh] overflow-hidden rounded-2xl border border-dls-border bg-dls-surface shadow-xl flex flex-col">
+        {/* Header */}
+        <div class="flex items-center justify-between border-b border-dls-border px-4 py-3">
+          <div>
+            <h3 class="text-sm font-semibold text-dls-text">执行计划</h3>
+            <p class="text-[11px] text-dls-secondary">#{props.item.tfsId} · {props.item.title}</p>
+          </div>
+          <button
+            onClick={props.onClose}
+            class="rounded-full p-1 text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Task List */}
+        <div class="flex-1 overflow-y-auto p-4 space-y-2">
+          <For each={props.tasks}>
+            {(task, index) => {
+              const isExpanded = () => expandedTask() === index();
+              const canExec = () => canExecute(task, index());
+              const canComp = () => canComplete(task, index());
+
+              return (
+                <div
+                  class={`rounded-xl border p-3 transition-colors ${
+                    task.status === "in-progress"
+                      ? "border-amber-6/40 bg-amber-1/20"
+                      : task.status === "completed"
+                      ? "border-emerald-6/40 bg-emerald-1/20"
+                      : task.status === "failed"
+                      ? "border-red-6/40 bg-red-1/20"
+                      : "border-dls-border bg-dls-surface"
+                  }`}
+                >
+                  {/* Task Header */}
+                  <div class="flex items-start gap-3">
+                    <div class="mt-0.5 flex-shrink-0">
+                      {taskStatusIcon(task.status)}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center justify-between gap-2">
+                        <span class="text-sm font-medium text-dls-text truncate">
+                          Task {index() + 1}: {task.title}
+                        </span>
+                        <span class="text-[10px] text-dls-secondary whitespace-nowrap">
+                          {taskStatusText(task.status)}
+                        </span>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div class="mt-2 flex items-center gap-2">
+                        <Show when={canExec() && !props.executing}>
+                          <Button
+                            variant="primary"
+                            class="h-6 px-2 text-[10px]"
+                            onClick={() => props.onExecuteTask(index())}
+                          >
+                            <Play size={10} />
+                            开始执行
+                          </Button>
+                        </Show>
+                        <Show when={canComp() && !props.executing}>
+                          <Button
+                            variant="outline"
+                            class="h-6 px-2 text-[10px]"
+                            onClick={() => props.onCompleteTask(index())}
+                          >
+                            <CheckCircle2 size={10} />
+                            标记完成
+                          </Button>
+                        </Show>
+                        <Show when={props.executing && index() === props.currentTaskIndex}>
+                          <span class="text-[10px] text-amber-6 flex items-center gap-1">
+                            <Loader2 size={10} class="animate-spin" />
+                            执行中...
+                          </span>
+                        </Show>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setExpandedTask(isExpanded() ? null : index())}
+                      class="rounded p-1 text-dls-secondary hover:text-dls-text hover:bg-dls-hover flex-shrink-0"
+                    >
+                      {isExpanded() ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                  </div>
+
+                  {/* Expanded Description */}
+                  <Show when={isExpanded()}>
+                    <div class="mt-2 pl-6 text-[11px] text-dls-secondary border-t border-dls-border pt-2">
+                      <p class="whitespace-pre-wrap">{task.description || "暂无描述"}</p>
+                    </div>
+                  </Show>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+
+        {/* Footer */}
+        <div class="border-t border-dls-border px-4 py-3 bg-dls-hover/50">
+          <div class="flex items-center justify-between text-[11px] text-dls-secondary">
+            <span>
+              进度: {props.tasks.filter(t => t.status === "completed").length} / {props.tasks.length}
+            </span>
+            <Show when={props.tasks.every(t => t.status === "completed")}>
+              <span class="text-emerald-6 font-medium">✓ 所有任务已完成</span>
+            </Show>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function TaskCenterView(props: TaskCenterViewProps) {
   const platform = usePlatform();
   const lastUpdatedLabel = createMemo(() => toLabel(props.lastUpdatedAt));
+
+  // Local state for task execution panel
+  const [showTaskPanel, setShowTaskPanel] = createSignal(false);
+  const [selectedItem, setSelectedItem] = createSignal<TaskCenterItem | null>(null);
 
   onMount(() => {
     const interval = window.setInterval(() => props.syncTasks(), 60_000);
     onCleanup(() => window.clearInterval(interval));
   });
+
+  const handleStartAutomation = (item: TaskCenterItem) => {
+    setSelectedItem(item);
+    setShowTaskPanel(true);
+    props.startAutomation(item);
+  };
+
+  const handleClosePanel = () => {
+    setShowTaskPanel(false);
+    setSelectedItem(null);
+  };
+
+  const handleExecuteTask = (taskIndex: number) => {
+    const item = selectedItem();
+    if (item && props.onExecuteTask) {
+      props.onExecuteTask(item, taskIndex);
+    }
+  };
+
+  const handleCompleteTask = (taskIndex: number) => {
+    const item = selectedItem();
+    if (item && props.onCompleteTask) {
+      props.onCompleteTask(item, taskIndex);
+    }
+  };
 
   return (
     <section class="space-y-4">
@@ -135,6 +340,19 @@ export default function TaskCenterView(props: TaskCenterViewProps) {
         <div class="rounded-2xl border border-red-7/40 bg-red-3/60 px-5 py-4 text-sm text-red-11">
           {props.error}
         </div>
+      </Show>
+
+      {/* Task Execution Panel Modal */}
+      <Show when={showTaskPanel() && selectedItem()}>
+        <TaskExecutionPanel
+          item={selectedItem()!}
+          tasks={props.tasks ?? []}
+          currentTaskIndex={props.currentTaskIndex ?? -1}
+          executing={props.executing ?? false}
+          onClose={handleClosePanel}
+          onExecuteTask={handleExecuteTask}
+          onCompleteTask={handleCompleteTask}
+        />
       </Show>
 
       <div class="flex gap-4 overflow-x-auto pb-4 h-[calc(100vh-180px)] md:h-[calc(100vh-220px)]">
@@ -235,15 +453,42 @@ export default function TaskCenterView(props: TaskCenterViewProps) {
                             </div>
                           </Show>
 
+                          {/* Action buttons based on status */}
                           <Show when={item.status === "todo"}>
                             <div class="mt-4">
                               <Button
-                                variant="ghost"
+                                variant="primary"
                                 class="h-8 px-3 text-xs"
-                                onClick={() => props.startAutomation(item)}
+                                onClick={() => handleStartAutomation(item)}
                               >
                                 <Play size={12} />
-                                Run automation
+                                生成计划
+                              </Button>
+                            </div>
+                          </Show>
+
+                          <Show when={item.status === "progress" || item.status === "done" || item.status === "failed"}>
+                            <div class="mt-4">
+                              <Button
+                                variant="outline"
+                                class="h-8 px-3 text-xs"
+                                onClick={() => handleStartAutomation(item)}
+                              >
+                                <ExternalLink size={12} />
+                                查看计划
+                              </Button>
+                            </div>
+                          </Show>
+
+                          <Show when={item.status === "archived"}>
+                            <div class="mt-4">
+                              <Button
+                                variant="outline"
+                                class="h-8 px-3 text-xs"
+                                onClick={() => handleStartAutomation(item)}
+                              >
+                                <ExternalLink size={12} />
+                                查看归档
                               </Button>
                             </div>
                           </Show>

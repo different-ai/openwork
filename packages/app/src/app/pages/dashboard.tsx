@@ -138,6 +138,13 @@ export type DashboardViewProps = {
   taskCenterLastUpdatedAt: number | null;
   refreshTaskCenter: (options?: { force?: boolean }) => void;
   startTaskCenterAutomation: (item: TaskCenterItem) => void;
+  taskCenterSelectedItem?: TaskCenterItem | null;
+  taskCenterTasks?: import("../lib/tasks-parser").ParsedTask[];
+  taskCenterCurrentTaskIndex?: number;
+  taskCenterExecuting?: boolean;
+  taskCenterSelectItem?: (item: TaskCenterItem | null) => void;
+  taskCenterExecuteTask?: (item: TaskCenterItem, taskIndex: number) => void;
+  taskCenterCompleteTask?: (item: TaskCenterItem, taskIndex: number) => void;
   activeWorkspaceRoot: string;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
@@ -1172,6 +1179,13 @@ export default function DashboardView(props: DashboardViewProps) {
                 lastUpdatedAt={props.taskCenterLastUpdatedAt}
                 syncTasks={props.refreshTaskCenter}
                 startAutomation={props.startTaskCenterAutomation}
+                selectedItem={props.taskCenterSelectedItem}
+                tasks={props.taskCenterTasks}
+                currentTaskIndex={props.taskCenterCurrentTaskIndex}
+                executing={props.taskCenterExecuting}
+                onSelectItem={props.taskCenterSelectItem}
+                onExecuteTask={props.taskCenterExecuteTask}
+                onCompleteTask={props.taskCenterCompleteTask}
               />
             </Match>
             <Match when={props.tab === "skills"}>

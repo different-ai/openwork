@@ -4349,6 +4349,13 @@ export default function App() {
           console.error("Failed to refresh task center:", error);
         }),
       startTaskCenterAutomation: taskCenterStore.startAutomation,
+      taskCenterSelectedItem: taskCenterStore.selectedItem?.(),
+      taskCenterTasks: taskCenterStore.tasks?.(),
+      taskCenterCurrentTaskIndex: taskCenterStore.currentTaskIndex?.(),
+      taskCenterExecuting: taskCenterStore.executing?.(),
+      taskCenterSelectItem: taskCenterStore.selectItem,
+      taskCenterExecuteTask: taskCenterStore.executeTaskStep,
+      taskCenterCompleteTask: taskCenterStore.completeTaskStep,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshPlugins: (scopeOverride?: PluginScope) =>
