@@ -160,6 +160,7 @@ export type TaskCenterItem = {
   url?: string | null;
   status: TaskCenterStatus;
   stage?: TaskCenterStage;
+  subStage?: string | null;
   updatedAt?: number | null;
 };
 
