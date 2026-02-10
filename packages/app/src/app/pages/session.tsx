@@ -263,8 +263,12 @@ export default function SessionView(props: SessionViewProps) {
       return "";
     }
 
-    const relative = normalized.replace(/^\.\/+/, "");
+    let relative = normalized.replace(/^\.\/+/, "");
     if (!relative) return "";
+    // Some tool outputs include a leading "workspace/" prefix.
+    if (/^workspace\//i.test(relative)) {
+      relative = relative.replace(/^workspace\//i, "");
+    }
     if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
     if (relative.split("/").some((part) => part === "." || part === "..")) return "";
     return relative;
