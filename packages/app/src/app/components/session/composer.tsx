@@ -497,6 +497,73 @@ export default function Composer(props: ComposerProps) {
     setMentionIndex(0);
   });
 
+  // Track recent emits to distinguish echoes from external updates
+  const recentEmits = new Set<string>();
+  recentEmits.add(props.prompt); // Initialize with current prop
+
+  // Sync from props: ignore echoes of what we just sent
+  createEffect(() => {
+    if (!editorRef) return;
+    const value = props.prompt;
+    const current = normalizeText(editorRef.innerText);
+
+    // Robust Echo Cancellation:
+    // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
+    // We ignore it to prevent overwriting the user's newer local state.
+    if (recentEmits.has(value)) {
+      // If we've converged (parent matches local), we can clean up the set to save memory,
+      // but keeping a few items is cheap and safer for race conditions.
+      if (value === current) {
+        recentEmits.clear();
+        recentEmits.add(value);
+      }
+      return;
+    }
+
+    // If we get here, 'value' is something we didn't send recently.
+    // It must be an external event (History Navigation, Clear, Agent Action, etc).
+
+    if (suppressPromptSync) {
+      if (!value && current) {
+        setEditorText("");
+        setAttachments([]);
+        setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
+        setHistorySnapshot(null);
+        queueMicrotask(() => focusEditorEnd());
+      }
+      return;
+    }
+    if (value === current) {
+      // Even if it matches current, make sure it's tracked as a valid base state
+      recentEmits.add(value);
+      return;
+    }
+
+    // External update confirmed
+    if (value.startsWith("!") && mode() === "prompt") {
+      setMode("shell");
+      setEditorText(value.slice(1).trimStart());
+      recentEmits.add(value);
+      emitDraftChange();
+      queueMicrotask(() => focusEditorEnd());
+      return;
+    }
+
+    recentEmits.add(value); // It's now the new baseline
+    setEditorText(value);
+    if (!value) {
+      setAttachments([]);
+      setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
+      setHistorySnapshot(null);
+    }
+
+    // We don't emitDraftChange here usually, to avoid loops, but if we changed text we might need to?
+    // Actually original code did emitDraftChange(). Let's keep it but be careful.
+    // If we emit, we add to Set again.
+    emitDraftChange();
+    queueMicrotask(() => focusEditorEnd());
+  });
+
   const syncHeight = () => {
     if (!editorRef) return;
     editorRef.style.height = "auto";
@@ -507,10 +574,34 @@ export default function Composer(props: ComposerProps) {
     editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
   };
 
+  let emitTimer: number | null = null;
   const emitDraftChange = () => {
+    if (!editorRef) return;
+    syncHeight();
+
+    if (emitTimer) window.clearTimeout(emitTimer);
+    emitTimer = window.setTimeout(() => {
+      flushDraftChange();
+    }, 50);
+  };
+
+  const flushDraftChange = () => {
+    if (emitTimer) {
+      window.clearTimeout(emitTimer);
+      emitTimer = null;
+    }
     if (!editorRef) return;
     const parts = buildPartsFromEditor(editorRef, pasteTextById);
     const text = normalizeText(partsToText(parts));
+
+    recentEmits.add(text); // Track that we sent this, expect an echo later
+
+    // Limit Set size to prevent memory leak (though unlikely to grow huge)
+    if (recentEmits.size > 20) {
+      const it = recentEmits.values();
+      recentEmits.delete(it.next().value);
+    }
+
     const resolvedText = normalizeText(partsToResolvedText(parts));
     suppressPromptSync = true;
     props.onDraftChange({
@@ -523,7 +614,6 @@ export default function Composer(props: ComposerProps) {
     queueMicrotask(() => {
       suppressPromptSync = false;
     });
-    syncHeight();
   };
 
   const focusEditorEnd = () => {
@@ -760,6 +850,9 @@ export default function Composer(props: ComposerProps) {
   };
 
   const sendDraft = () => {
+    // Ensure any pending debounce updates are committed before sending
+    flushDraftChange();
+
     if (!editorRef) return;
     const parts = buildPartsFromEditor(editorRef, pasteTextById);
     const text = normalizeText(partsToText(parts));
@@ -1168,37 +1261,7 @@ export default function Composer(props: ComposerProps) {
     setSlashQuery("");
   });
 
-  createEffect(() => {
-    if (!editorRef) return;
-    const value = props.prompt;
-    const current = normalizeText(editorRef.innerText);
-    if (suppressPromptSync) {
-      if (!value && current) {
-        setEditorText("");
-        setAttachments([]);
-        setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
-        setHistorySnapshot(null);
-        queueMicrotask(() => focusEditorEnd());
-      }
-      return;
-    }
-    if (value === current) return;
-    if (value.startsWith("!") && mode() === "prompt") {
-      setMode("shell");
-      setEditorText(value.slice(1).trimStart());
-      emitDraftChange();
-      queueMicrotask(() => focusEditorEnd());
-      return;
-    }
-    setEditorText(value);
-    if (!value) {
-      setAttachments([]);
-      setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
-      setHistorySnapshot(null);
-    }
-    emitDraftChange();
-    queueMicrotask(() => focusEditorEnd());
-  });
+
 
   createEffect(() => {
     if (!variantMenuOpen()) return;
@@ -1223,9 +1286,8 @@ export default function Composer(props: ComposerProps) {
     <div class="px-4 pb-4 pt-0 bg-dls-surface sticky bottom-0 z-20">
       <div class="max-w-3xl mx-auto">
         <div
-          class={`bg-dls-surface border border-dls-border rounded-2xl overflow-visible transition-all relative group/input ${
-            mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent shadow-none" : "shadow-xl"
-          }`}
+          class={`bg-dls-surface border border-dls-border rounded-2xl overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent shadow-none" : "shadow-xl"
+            }`}
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
             if (attachmentsDisabled()) return;
@@ -1247,9 +1309,8 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${
-                              active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
-                            }`}
+                            class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
+                              }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
                               insertMention(option);
@@ -1312,9 +1373,8 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
-                              active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
-                            }`}
+                            class={`w-full flex items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
+                              }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
                               handleSlashSelect(cmd);
@@ -1392,7 +1452,7 @@ export default function Composer(props: ComposerProps) {
               </div>
             </Show>
 
-                   <div class="relative min-h-[120px]">
+            <div class="relative min-h-[120px]">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-secondary shadow-lg backdrop-blur-md">
                   {props.toast}
@@ -1445,9 +1505,8 @@ export default function Composer(props: ComposerProps) {
                         />
                         <button
                           type="button"
-                          class={`p-1.5 hover:bg-dls-hover rounded-md text-dls-secondary transition-colors ${
-                            attachmentsDisabled() ? "cursor-not-allowed" : ""
-                          }`}
+                          class={`p-1.5 hover:bg-dls-hover rounded-md text-dls-secondary transition-colors ${attachmentsDisabled() ? "cursor-not-allowed" : ""
+                            }`}
                           onClick={() => {
                             if (attachmentsDisabled()) return;
                             fileInputRef?.click();
@@ -1492,11 +1551,10 @@ export default function Composer(props: ComposerProps) {
                                   <Show when={!props.agentPickerError}>
                                     <button
                                       type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                        !props.selectedAgent
-                                          ? "bg-dls-active text-dls-text"
-                                          : "text-dls-secondary hover:bg-dls-hover"
-                                      }`}
+                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent
+                                        ? "bg-dls-active text-dls-text"
+                                        : "text-dls-secondary hover:bg-dls-hover"
+                                        }`}
                                       onMouseDown={(event: MouseEvent) => {
                                         event.preventDefault();
                                         props.onSelectAgent(null);
@@ -1514,11 +1572,10 @@ export default function Composer(props: ComposerProps) {
                                         return (
                                           <button
                                             type="button"
-                                            class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                              active()
-                                                ? "bg-dls-active text-dls-text"
-                                                : "text-dls-secondary hover:bg-dls-hover"
-                                            }`}
+                                            class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active()
+                                              ? "bg-dls-active text-dls-text"
+                                              : "text-dls-secondary hover:bg-dls-hover"
+                                              }`}
                                             onMouseDown={(event: MouseEvent) => {
                                               event.preventDefault();
                                               props.onSelectAgent(agent.name);
@@ -1576,11 +1633,10 @@ export default function Composer(props: ComposerProps) {
                                   {(option) => (
                                     <button
                                       type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                        activeVariant() === option.value
-                                          ? "bg-dls-active text-dls-text"
-                                          : "text-dls-secondary hover:bg-dls-hover"
-                                      }`}
+                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeVariant() === option.value
+                                        ? "bg-dls-active text-dls-text"
+                                        : "text-dls-secondary hover:bg-dls-hover"
+                                        }`}
                                       onClick={() => {
                                         props.onModelVariantChange(option.value);
                                         setVariantMenuOpen(false);
@@ -1603,11 +1659,10 @@ export default function Composer(props: ComposerProps) {
                           type="button"
                           disabled={!props.prompt.trim() && !attachments().length}
                           onClick={sendDraft}
-                          class={`p-1.5 rounded-full ${
-                            !props.prompt.trim() && !attachments().length
-                              ? "bg-dls-active text-dls-secondary"
-                              : "bg-dls-accent text-white"
-                          }`}
+                          class={`p-1.5 rounded-full ${!props.prompt.trim() && !attachments().length
+                            ? "bg-dls-active text-dls-secondary"
+                            : "bg-dls-accent text-white"
+                            }`}
                           title="Send"
                         >
                           <ArrowUp size={18} />
