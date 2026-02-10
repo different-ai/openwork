@@ -1,0 +1,37 @@
+spark:
+  app:
+    name: "WiNEX-Outpatient-ETL"
+    master: "local[*]"
+    parallelism: 100
+
+datasource:
+  type: "json"
+  path: "/data/input/patients.json"
+  options:
+    multiline: "true"
+
+processor:
+  validation:
+    enabled: true
+    rules:
+      - field: "patient_id"
+        required: true
+      - field: "age"
+        required: true
+        min: 0
+        max: 150
+  cleaning:
+    enabled: true
+    trimWhitespace: true
+    removeDuplicates: false
+  transformation:
+    - type: "add_column"
+      name: "process_date"
+      value: "current_date()"
+
+output:
+  type: "parquet"
+  path: "/data/output/patients"
+  mode: "overwrite"
+  partitionBy:
+    - "department"
