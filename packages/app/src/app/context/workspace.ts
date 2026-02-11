@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
+import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 
 import type {
   Client,
@@ -71,6 +72,24 @@ export type WorkspaceDebugEvent = {
   at: number;
   label: string;
   payload?: unknown;
+};
+
+export type SandboxCreateProgressStepStatus = "pending" | "active" | "done" | "error";
+
+export type SandboxCreateProgressStep = {
+  key: "docker" | "workspace" | "sandbox" | "health" | "connect";
+  label: string;
+  status: SandboxCreateProgressStepStatus;
+  detail?: string | null;
+};
+
+export type SandboxCreateProgressState = {
+  runId: string;
+  startedAt: number;
+  stage: string;
+  steps: SandboxCreateProgressStep[];
+  logs: string[];
+  error: string | null;
 };
 
 export function createWorkspaceStore(options: {
@@ -161,6 +180,50 @@ export function createWorkspaceStore(options: {
   const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
   const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
   const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
+
+  const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
+  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
+
+  const pushSandboxCreateLog = (line: string) => {
+    const value = String(line ?? "").trim();
+    if (!value) return;
+    setSandboxCreateProgress((prev) => {
+      if (!prev) return prev;
+      const nextLogs = prev.logs.length ? prev.logs.slice(-119) : [];
+      // Avoid rapid duplicates.
+      const last = nextLogs[nextLogs.length - 1] ?? "";
+      if (last !== value) nextLogs.push(value);
+      return { ...prev, logs: nextLogs };
+    });
+  };
+
+  const setSandboxStep = (key: SandboxCreateProgressStep["key"], patch: Partial<SandboxCreateProgressStep>) => {
+    setSandboxCreateProgress((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((step) => (step.key === key ? { ...step, ...patch } : step)),
+      };
+    });
+  };
+
+  const setSandboxStage = (stage: string) => {
+    const value = String(stage ?? "").trim();
+    if (!value) return;
+    setSandboxCreateProgress((prev) => (prev ? { ...prev, stage: value } : prev));
+  };
+
+  const setSandboxError = (message: string) => {
+    const value = String(message ?? "").trim() || "Sandbox failed to start";
+    setSandboxCreateProgress((prev) => (prev ? { ...prev, error: value } : prev));
+  };
+
+  const makeRunId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
   let lastEngineReconnectAt = 0;
   let reconnectingEngine = false;
 
@@ -1276,12 +1339,36 @@ export function createWorkspaceStore(options: {
       return;
     }
 
+    const runId = makeRunId();
+    const startedAt = Date.now();
+    setSandboxCreateProgress({
+      runId,
+      startedAt,
+      stage: "Checking Docker...",
+      error: null,
+      logs: [],
+      steps: [
+        { key: "docker", label: "Docker ready", status: "active", detail: null },
+        { key: "workspace", label: "Prepare workspace", status: "pending", detail: null },
+        { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
+        { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
+        { key: "connect", label: "Connect in OpenWork", status: "pending", detail: null },
+      ],
+    });
+
     const doctor = await refreshSandboxDoctor();
     if (!doctor?.ready) {
-      const detail = doctor?.error?.trim() || "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
+      const detail =
+        doctor?.error?.trim() ||
+        "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
       options.setError(detail);
+      setSandboxStep("docker", { status: "error", detail });
+      setSandboxError(detail);
+      setSandboxStage("Docker not ready");
       return;
     }
+    setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
+    setSandboxStage("Preparing workspace...");
 
     options.setBusy(true);
     options.setBusyLabel("status.creating_workspace");
@@ -1292,44 +1379,118 @@ export function createWorkspaceStore(options: {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         options.setError(t("app.error.choose_folder", currentLocale()));
+        setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
+        setSandboxError("No folder selected");
         return;
       }
 
       const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
 
+      setSandboxStep("workspace", { status: "active", detail: name });
+      pushSandboxCreateLog(`Workspace: ${resolvedFolder}`);
+
       // Ensure the workspace folder has baseline OpenWork/OpenCode files.
       const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(created.workspaces);
       syncActiveWorkspaceId(created.activeId);
+      setSandboxStep("workspace", { status: "done", detail: null });
 
       // Remove the local workspace entry to avoid duplicate Local+Remote rows.
       const localId = created.activeId;
       if (localId) {
+        pushSandboxCreateLog("Removing local workspace row (will re-add as remote sandbox)...");
         const forgotten = await workspaceForget(localId);
         setWorkspaces(forgotten.workspaces);
         syncActiveWorkspaceId(forgotten.activeId);
       }
 
-      options.setBusyLabel("Starting sandbox...");
-      const host = await openwrkStartDetached({ workspacePath: resolvedFolder, sandboxBackend: "docker" });
+      setSandboxStep("sandbox", { status: "active", detail: null });
+      setSandboxStage("Starting sandbox services...");
 
-      setCreateWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
-      markOnboardingComplete();
+      let stopListen: (() => void) | null = null;
+      try {
+        stopListen = await listen(
+          "openwork://sandbox-create-progress",
+          (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
+            const payload = event.payload ?? {};
+            if ((payload.runId ?? "").trim() !== runId) return;
+            const stage = String(payload.stage ?? "").trim();
+            const message = String(payload.message ?? "").trim();
+            if (message) {
+              setSandboxStage(message);
+              pushSandboxCreateLog(message);
+            }
 
-      await createRemoteWorkspaceFlow({
-        openworkHostUrl: host.openworkUrl,
-        openworkToken: host.token,
-        directory: resolvedFolder,
-        displayName: name,
-        sandboxBackend: host.sandboxBackend ?? "docker",
-        sandboxRunId: host.sandboxRunId ?? null,
-        sandboxContainerName: host.sandboxContainerName ?? null,
-      });
+            if (stage === "docker.container") {
+              const state = String(payload.payload?.containerState ?? "").trim();
+              if (state) {
+                setSandboxStep("sandbox", { status: "active", detail: `Container: ${state}` });
+              }
+            }
+
+            if (stage === "openwork.waiting") {
+              const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
+              const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
+              setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
+            }
+
+            if (stage === "openwork.healthy") {
+              setSandboxStep("sandbox", { status: "done" });
+              setSandboxStep("health", { status: "done", detail: null });
+            }
+
+            if (stage === "error") {
+              const err = String(payload.payload?.error ?? "").trim() || message || "Sandbox failed to start";
+              setSandboxStep("sandbox", { status: "error", detail: err });
+              setSandboxStep("health", { status: "error", detail: err });
+              setSandboxError(err);
+            }
+          },
+        );
+
+        const host = await openwrkStartDetached({
+          workspacePath: resolvedFolder,
+          sandboxBackend: "docker",
+          runId,
+        });
+        setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
+        setSandboxStep("health", { status: "done" });
+        setSandboxStage("Connecting to sandbox...");
+
+        setSandboxStep("connect", { status: "active", detail: null });
+
+        options.setTab("scheduled");
+        options.setView("dashboard");
+        markOnboardingComplete();
+
+        const ok = await createRemoteWorkspaceFlow({
+          openworkHostUrl: host.openworkUrl,
+          openworkToken: host.token,
+          directory: resolvedFolder,
+          displayName: name,
+          sandboxBackend: host.sandboxBackend ?? "docker",
+          sandboxRunId: host.sandboxRunId ?? runId,
+          sandboxContainerName: host.sandboxContainerName ?? null,
+        });
+        if (!ok) {
+          const fallback = "Failed to connect to sandbox";
+          setSandboxStep("connect", { status: "error", detail: fallback });
+          setSandboxError(fallback);
+          return;
+        }
+
+        setSandboxStep("connect", { status: "done", detail: null });
+        setSandboxStage("Sandbox ready.");
+        setCreateWorkspaceOpen(false);
+        clearSandboxCreateProgress();
+      } finally {
+        stopListen?.();
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      setSandboxError(message);
+      setSandboxStage("Sandbox failed");
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);
@@ -2544,6 +2705,8 @@ export function createWorkspaceStore(options: {
     persistReloadSettings,
     setEngineInstallLogs,
     refreshSandboxDoctor,
+    sandboxCreateProgress,
+    clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,
   };

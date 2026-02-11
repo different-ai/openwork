@@ -4803,7 +4803,10 @@ export default function App() {
 
       <CreateWorkspaceModal
         open={workspaceStore.createWorkspaceOpen()}
-        onClose={() => workspaceStore.setCreateWorkspaceOpen(false)}
+        onClose={() => {
+          workspaceStore.setCreateWorkspaceOpen(false);
+          workspaceStore.clearSandboxCreateProgress?.();
+        }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
@@ -4844,6 +4847,7 @@ export default function App() {
           void workspaceStore.refreshSandboxDoctor?.();
         }}
         submitting={busy() && busyLabel() === "status.creating_workspace"}
+        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
       />
 
       <CreateRemoteWorkspaceModal

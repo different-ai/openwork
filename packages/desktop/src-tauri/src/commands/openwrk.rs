@@ -4,7 +4,9 @@ use serde_json::json;
 use std::net::TcpListener;
 use std::process::Command;
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
+use tauri::Emitter;
 use tauri::State;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
@@ -12,6 +14,8 @@ use uuid::Uuid;
 use crate::openwrk::manager::OpenwrkManager;
 use crate::openwrk::{resolve_openwrk_data_dir, resolve_openwrk_status};
 use crate::types::{ExecResult, OpenwrkStatus, OpenwrkWorkspace};
+
+const SANDBOX_PROGRESS_EVENT: &str = "openwork://sandbox-create-progress";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,18 +105,54 @@ fn allocate_free_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn wait_for_openwork_health(openwork_url: &str, timeout_ms: u64) -> Result<(), String> {
-    let start = Instant::now();
-    let mut last_error: Option<String> = None;
-    while start.elapsed() < Duration::from_millis(timeout_ms) {
-        match ureq::get(&format!("{}/health", openwork_url.trim_end_matches('/'))).call() {
-            Ok(response) if response.status() >= 200 && response.status() < 300 => return Ok(()),
-            Ok(response) => last_error = Some(format!("HTTP {}", response.status())),
-            Err(err) => last_error = Some(err.to_string()),
-        }
-        std::thread::sleep(Duration::from_millis(200));
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn emit_sandbox_progress(
+    app: &AppHandle,
+    run_id: &str,
+    stage: &str,
+    message: &str,
+    payload: serde_json::Value,
+) {
+    let event_payload = json!({
+        "runId": run_id,
+        "stage": stage,
+        "message": message,
+        "at": now_ms(),
+        "payload": payload,
+    });
+    let _ = app.emit(SANDBOX_PROGRESS_EVENT, event_payload);
+}
+
+fn docker_container_state(container_name: &str) -> Result<Option<String>, String> {
+    let (status, stdout, stderr) = run_local_command(
+        "docker",
+        &["inspect", "-f", "{{.State.Status}}", container_name],
+    )?;
+    if status == 0 {
+        let trimmed = stdout.trim().to_string();
+        return Ok(if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        });
     }
-    Err(last_error.unwrap_or_else(|| "Timed out waiting for OpenWork server".to_string()))
+
+    let combined = format!("{}\n{}", stdout.trim(), stderr.trim()).to_lowercase();
+    if combined.contains("no such object")
+        || combined.contains("not found")
+        || combined.contains("does not exist")
+    {
+        return Ok(None);
+    }
+
+    // If docker returned something unexpected, don't block progress reporting.
+    Ok(None)
 }
 
 #[derive(Debug, Deserialize)]
@@ -262,6 +302,20 @@ pub fn openwrk_start_detached(
     let host_token = Uuid::new_v4().to_string();
     let openwork_url = format!("http://127.0.0.1:{port}");
 
+    emit_sandbox_progress(
+        &app,
+        &sandbox_run_id,
+        "init",
+        "Starting sandbox...",
+        json!({
+            "workspacePath": workspace_path,
+            "openworkUrl": openwork_url,
+            "port": port,
+            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+            "containerName": sandbox_container_name,
+        }),
+    );
+
     let command = match app.shell().sidecar("openwrk") {
         Ok(command) => command,
         Err(_) => app.shell().command("openwrk"),
@@ -309,8 +363,111 @@ pub fn openwrk_start_detached(
             .map_err(|e| format!("Failed to start openwrk: {e}"))?;
     }
 
+    emit_sandbox_progress(
+        &app,
+        &sandbox_run_id,
+        "spawned",
+        "Sandbox process launched. Waiting for OpenWork server...",
+        json!({
+            "openworkUrl": openwork_url,
+        }),
+    );
+
     let health_timeout_ms = if wants_docker_sandbox { 90_000 } else { 12_000 };
-    wait_for_openwork_health(&openwork_url, health_timeout_ms)?;
+    let start = Instant::now();
+    let mut last_tick = Instant::now() - Duration::from_secs(5);
+    let mut last_container_check = Instant::now() - Duration::from_secs(10);
+    let mut last_container_state: Option<String> = None;
+    let mut last_error: Option<String> = None;
+
+    while start.elapsed() < Duration::from_millis(health_timeout_ms) {
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        if wants_docker_sandbox {
+            if last_container_check.elapsed() > Duration::from_millis(1500) {
+                last_container_check = Instant::now();
+                if let Some(name) = sandbox_container_name.as_deref() {
+                    if let Ok(state) = docker_container_state(name) {
+                        if state != last_container_state {
+                            last_container_state = state.clone();
+                            let label = state.clone().unwrap_or_else(|| "not-created".to_string());
+                            emit_sandbox_progress(
+                                &app,
+                                &sandbox_run_id,
+                                "docker.container",
+                                &format!("Sandbox container: {label}"),
+                                json!({
+                                    "containerName": name,
+                                    "containerState": state,
+                                    "elapsedMs": elapsed_ms,
+                                }),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        match ureq::get(&format!("{}/health", openwork_url.trim_end_matches('/'))).call() {
+            Ok(response) if response.status() >= 200 && response.status() < 300 => {
+                emit_sandbox_progress(
+                    &app,
+                    &sandbox_run_id,
+                    "openwork.healthy",
+                    "OpenWork server is ready.",
+                    json!({
+                        "openworkUrl": openwork_url,
+                        "elapsedMs": elapsed_ms,
+                        "containerState": last_container_state,
+                    }),
+                );
+                last_error = None;
+                break;
+            }
+            Ok(response) => {
+                last_error = Some(format!("HTTP {}", response.status()));
+            }
+            Err(err) => {
+                last_error = Some(err.to_string());
+            }
+        }
+
+        if last_tick.elapsed() > Duration::from_millis(850) {
+            last_tick = Instant::now();
+            emit_sandbox_progress(
+                &app,
+                &sandbox_run_id,
+                "openwork.waiting",
+                "Waiting for OpenWork server...",
+                json!({
+                    "openworkUrl": openwork_url,
+                    "elapsedMs": elapsed_ms,
+                    "lastError": last_error,
+                    "containerState": last_container_state,
+                }),
+            );
+        }
+
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
+        let message =
+            last_error.unwrap_or_else(|| "Timed out waiting for OpenWork server".to_string());
+        emit_sandbox_progress(
+            &app,
+            &sandbox_run_id,
+            "error",
+            "Sandbox failed to start.",
+            json!({
+                "error": message,
+                "elapsedMs": start.elapsed().as_millis() as u64,
+                "openworkUrl": openwork_url,
+                "containerState": last_container_state,
+            }),
+        );
+        return Err(message);
+    }
 
     Ok(OpenwrkDetachedHost {
         openwork_url,
