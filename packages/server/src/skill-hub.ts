@@ -5,7 +5,7 @@ import type { HubSkillItem } from "./types.js";
 import { ApiError } from "./errors.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
-import { validateDescription, validateSkillName } from "./validators.js";
+import { validateSkillName } from "./validators.js";
 import { projectSkillsDir } from "./workspace-files.js";
 
 type HubRepo = { owner: string; repo: string; ref: string };
@@ -117,7 +117,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
       const skillMd = await fetchText(`${rawBase}/skills/${encodeURIComponent(skillName)}/SKILL.md`);
       const { data, body } = parseFrontmatter(skillMd);
       const name = typeof data.name === "string" ? data.name : skillName;
-      const description = typeof data.description === "string" ? data.description : "";
+      const descriptionRaw = typeof data.description === "string" ? data.description : "";
       const triggerRaw =
         typeof data.trigger === "string"
           ? data.trigger
@@ -129,7 +129,7 @@ export async function listHubSkills(repo: HubRepo = DEFAULT_HUB_REPO): Promise<H
         return null;
       }
 
-      validateDescription(description);
+      const description = descriptionRaw.replace(/\s+/g, " ").trim().slice(0, 1024);
       const trigger = triggerRaw?.trim() || "";
       const item: HubSkillItem = {
         name,
