@@ -1078,19 +1078,10 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </div>
 
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
       </aside>
 
-      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-12 bg-dls-surface">
+      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+        <div class="flex-1 overflow-y-auto">
         <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
           <div class="flex items-center gap-3">
             <Show when={showUpdatePill()}>
@@ -1397,78 +1388,77 @@ export default function DashboardView(props: DashboardViewProps) {
           exportDisabledReason={exportDisabledReason()}
           onOpenBots={openConfig}
         />
-
-        <div class="fixed bottom-0 left-0 right-0">
-            <StatusBar
-              clientConnected={props.clientConnected}
-              openworkServerStatus={props.openworkServerStatus}
-              developerMode={props.developerMode}
-              onOpenSettings={() => openSettings("general")}
-              onOpenMessaging={openConfig}
-              onOpenProviders={() => props.openProviderAuthModal()}
-              onOpenMcp={() => props.setTab("mcp")}
-              providerConnectedIds={props.providerConnectedIds}
-              mcpStatuses={props.mcpStatuses}
-            />
-          <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("scheduled")}
-              >
-                <History size={18} />
-                Automations
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "skills" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("skills")}
-              >
-                <Zap size={18} />
-                Skills
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("plugins")}
-              >
-                <Cpu size={18} />
-                Plugins
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("mcp")}
-              >
-                <Box size={18} />
-                Apps
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "identities" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("identities")}
-              >
-                <MessageCircle size={18} />
-                IDs
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("config")}
-              >
-                <SlidersHorizontal size={18} />
-                Config
-              </button>
-            </div>
-          </nav>
         </div>
+
+        <StatusBar
+          clientConnected={props.clientConnected}
+          openworkServerStatus={props.openworkServerStatus}
+          developerMode={props.developerMode}
+          onOpenSettings={() => openSettings("general")}
+          onOpenMessaging={openConfig}
+          onOpenProviders={() => props.openProviderAuthModal()}
+          onOpenMcp={() => props.setTab("mcp")}
+          providerConnectedIds={props.providerConnectedIds}
+          mcpStatuses={props.mcpStatuses}
+        />
+        <nav class="md:hidden border-t border-dls-border bg-dls-surface">
+          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("scheduled")}
+            >
+              <History size={18} />
+              Automations
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "skills" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("skills")}
+            >
+              <Zap size={18} />
+              Skills
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("plugins")}
+            >
+              <Cpu size={18} />
+              Plugins
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("mcp")}
+            >
+              <Box size={18} />
+              Apps
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "identities" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("identities")}
+            >
+              <MessageCircle size={18} />
+              IDs
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "config" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("config")}
+            >
+              <SlidersHorizontal size={18} />
+              Config
+            </button>
+          </div>
+        </nav>
       </main>
 
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
@@ -1479,19 +1469,6 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("mcp", "Apps", <Box size={18} />)}
           {navItem("identities", "Identities", <MessageCircle size={18} />)}
           {navItem("config", "Config", <SlidersHorizontal size={18} />)}
-        </div>
-
-        <div class="flex-1" />
-
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
         </div>
       </aside>
     </div>

@@ -1696,20 +1696,10 @@ export default function SessionView(props: SessionViewProps) {
           </div>
         </div>
 
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
       </aside>
 
-      <main class="flex-1 flex flex-col relative pb-16 md:pb-12 bg-dls-surface">
-        <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 sticky top-0">
+      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+        <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 shrink-0">
           <div class="flex items-center gap-3">
             <Show when={showUpdatePill()}>
               <button
@@ -2066,6 +2056,17 @@ export default function SessionView(props: SessionViewProps) {
         attachmentsDisabledReason={attachmentsDisabledReason()}
       />
 
+        <StatusBar
+          clientConnected={props.clientConnected}
+          openworkServerStatus={props.openworkServerStatus}
+          developerMode={props.developerMode}
+          onOpenSettings={() => openSettings("general")}
+          onOpenMessaging={openConfig}
+          onOpenProviders={openProviderAuth}
+          onOpenMcp={openMcp}
+          providerConnectedIds={props.providerConnectedIds}
+          mcpStatuses={props.mcpStatuses}
+        />
       </main>
 
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
@@ -2167,32 +2168,7 @@ export default function SessionView(props: SessionViewProps) {
           </button>
           </div>
         </div>
-
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
       </aside>
-
-      <div class="fixed bottom-0 left-0 right-0">
-        <StatusBar
-          clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
-          developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
-          onOpenMessaging={openConfig}
-          onOpenProviders={openProviderAuth}
-          onOpenMcp={openMcp}
-          providerConnectedIds={props.providerConnectedIds}
-          mcpStatuses={props.mcpStatuses}
-        />
-      </div>
 
       <ProviderAuthModal
         open={props.providerAuthModalOpen}
