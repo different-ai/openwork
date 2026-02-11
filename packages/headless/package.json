@@ -9,7 +9,7 @@
     "build": "tsc -p tsconfig.json",
     "build:bin": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwrk",
     "build:bin:all": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwrk --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
-    "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun build --compile src/cli.ts --plugin ./script/opentui-solid-plugin.mjs --define __OPENWRK_VERSION__=\\\"$npm_package_version\\\" --outfile dist/openwrk && bun scripts/build-bin.ts",
+    "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun ./script/build.ts --outdir dist --filename openwrk && bun scripts/build-bin.ts",
     "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test:router": "pnpm build && node scripts/router.mjs",
@@ -51,15 +51,12 @@
     "solid-js": "1.9.9"
   },
   "devDependencies": {
-    "@babel/core": "7.28.6",
-    "@babel/preset-typescript": "7.28.5",
     "@opentui/core-darwin-arm64": "0.1.77",
     "@opentui/core-darwin-x64": "0.1.77",
     "@opentui/core-linux-arm64": "0.1.77",
     "@opentui/core-linux-x64": "0.1.77",
     "@opentui/core-win32-x64": "0.1.77",
     "@types/node": "^22.10.2",
-    "babel-preset-solid": "1.9.9",
     "bun-types": "^1.3.6",
     "typescript": "^5.6.3"
   },

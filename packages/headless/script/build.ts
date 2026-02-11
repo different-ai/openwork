@@ -1,6 +1,6 @@
-import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import solidPlugin from "../node_modules/@opentui/solid/scripts/solid-plugin";
 
 const bunRuntime = (globalThis as typeof globalThis & {
   Bun?: {
@@ -88,29 +88,41 @@ function outputName(filename: string, target?: string) {
   return `${filename}${suffix}${ext}`;
 }
 
+function defaultTarget(): string {
+  const os = process.platform === "win32" ? "windows" : process.platform;
+  return `bun-${os}-${process.arch}`;
+}
+
 async function buildOnce(entrypoint: string, outdir: string, filename: string, target?: string) {
   mkdirSync(outdir, { recursive: true });
   const outfile = join(outdir, outputName(filename, target));
-  const solidPluginPath = resolve("script", "opentui-solid-plugin.mjs");
-
-  const args = ["build", entrypoint, "--compile", "--plugin", solidPluginPath, "--outfile", outfile];
+  const define: Record<string, string> = {};
   const pkgPath = resolve("package.json");
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
     if (typeof pkg.version === "string" && pkg.version.trim()) {
-      args.push("--define", `__OPENWRK_VERSION__=\"${pkg.version.trim()}\"`);
+      define.__OPENWRK_VERSION__ = `\"${pkg.version.trim()}\"`;
     }
   } catch {
     // ignore
   }
 
-  if (target) {
-    args.push("--target", target);
-  }
-
-  const result = spawnSync("bun", args, { stdio: "inherit" });
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+  const resolvedTarget = target ?? defaultTarget();
+  const result = await bun.build({
+    tsconfig: "./tsconfig.json",
+    plugins: [solidPlugin],
+    entrypoints: [entrypoint],
+    define,
+    compile: {
+      target: resolvedTarget,
+      outfile,
+    },
+  });
+  if (!result.success) {
+    for (const log of result.logs) {
+      console.error(log);
+    }
+    process.exit(1);
   }
 }
 
