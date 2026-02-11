@@ -1,5 +1,6 @@
 import { parse } from "jsonc-parser";
 import type { McpServerConfig, McpServerEntry } from "./types";
+import { readOpencodeConfig, writeOpencodeConfig } from "./lib/tauri";
 
 type McpConfigValue = Record<string, unknown> | null | undefined;
 
@@ -15,6 +16,34 @@ export function validateMcpServerName(name: string): string {
     throw new Error("server_name must be alphanumeric with '-' or '_'");
   }
   return trimmed;
+}
+
+export async function removeMcpFromConfig(
+  projectDir: string,
+  name: string,
+): Promise<void> {
+  const configFile = await readOpencodeConfig("project", projectDir);
+  let existingConfig: Record<string, unknown> = {};
+  if (configFile.exists && configFile.content?.trim()) {
+    try {
+      existingConfig = parse(configFile.content) ?? {};
+    } catch {
+      existingConfig = {};
+    }
+  }
+
+  const mcpSection = existingConfig["mcp"] as Record<string, unknown> | undefined;
+  if (!mcpSection || !(name in mcpSection)) return;
+
+  delete mcpSection[name];
+  const writeResult = await writeOpencodeConfig(
+    "project",
+    projectDir,
+    `${JSON.stringify(existingConfig, null, 2)}\n`,
+  );
+  if (!writeResult.ok) {
+    throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
+  }
 }
 
 export function parseMcpServersFromContent(content: string): McpServerEntry[] {

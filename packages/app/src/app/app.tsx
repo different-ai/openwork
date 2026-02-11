@@ -49,7 +49,7 @@ import {
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./constants";
-import { parseMcpServersFromContent, validateMcpServerName } from "./mcp";
+import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
 import type {
   Client,
   DashboardTab,
@@ -3635,6 +3635,40 @@ export default function App() {
     }
   }
 
+  async function removeMcp(name: string) {
+    try {
+      setMcpStatus(null);
+
+      const openworkClient = openworkServerClient();
+      const openworkWorkspaceId = openworkServerWorkspaceId();
+      const canUseOpenworkServer =
+        openworkServerStatus() === "connected" &&
+        openworkClient &&
+        openworkWorkspaceId &&
+        resolvedOpenworkCapabilities()?.mcp?.write;
+
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        await openworkClient.removeMcp(openworkWorkspaceId, name);
+      } else {
+        const projectDir = workspaceProjectDir().trim();
+        if (!projectDir) {
+          setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
+          return;
+        }
+        await removeMcpFromConfig(projectDir, name);
+      }
+
+      markReloadRequired("mcp", { trigger: { type: "mcp", name, action: "removed" } });
+      await refreshMcpServers();
+      if (selectedMcp() === name) {
+        setSelectedMcp(null);
+      }
+      setMcpStatus(t("mcp.reload_required_after_add", currentLocale()));
+    } catch (e) {
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.remove_failed", currentLocale()));
+    }
+  }
+
   async function createSessionAndOpen() {
     console.log("[DEBUG] createSessionAndOpen");
     console.log("[DEBUG] current baseUrl:", baseUrl());
@@ -4682,6 +4716,7 @@ export default function App() {
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
       logoutMcpAuth,
+      removeMcp,
       refreshMcpServers,
       showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
       mcpReloadBlocked: anyActiveRuns(),

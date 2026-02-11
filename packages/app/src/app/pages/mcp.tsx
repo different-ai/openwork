@@ -6,6 +6,7 @@ import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils"
 import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/tauri";
 
 import Button from "../components/button";
+import AddMcpModal from "../components/add-mcp-modal";
 import ConfirmModal from "../components/confirm-modal";
 import {
   BookOpen,
@@ -20,6 +21,7 @@ import {
   Loader2,
   MonitorSmartphone,
   Plug2,
+  Plus,
   RefreshCw,
   Settings2,
   Unplug,
@@ -41,6 +43,7 @@ export type McpViewProps = {
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
+  removeMcp: (name: string) => void;
   showMcpReloadBanner: boolean;
   reloadBlocked: boolean;
   reloadMcpEngine: () => void;
@@ -131,12 +134,16 @@ export default function McpView(props: McpViewProps) {
   const [logoutTarget, setLogoutTarget] = createSignal<string | null>(null);
   const [logoutBusy, setLogoutBusy] = createSignal(false);
 
+  const [removeOpen, setRemoveOpen] = createSignal(false);
+  const [removeTarget, setRemoveTarget] = createSignal<string | null>(null);
+
   const [configScope, setConfigScope] = createSignal<"project" | "global">("project");
   const [projectConfig, setProjectConfig] = createSignal<OpencodeConfigFile | null>(null);
   const [globalConfig, setGlobalConfig] = createSignal<OpencodeConfigFile | null>(null);
   const [configError, setConfigError] = createSignal<string | null>(null);
   const [revealBusy, setRevealBusy] = createSignal(false);
   const [showAdvanced, setShowAdvanced] = createSignal(false);
+  const [addMcpModalOpen, setAddMcpModalOpen] = createSignal(false);
 
   const selectedEntry = createMemo(() =>
     props.mcpServers.find((entry) => entry.name === props.selectedMcp) ?? null,
@@ -516,6 +523,20 @@ export default function McpView(props: McpViewProps) {
                             {tr("mcp.logout_hint")}
                           </div>
                         </Show>
+
+                        <div class="flex justify-end pt-1">
+                          <Button
+                            variant="danger"
+                            class="!px-3 !py-1.5 !text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRemoveTarget(entry.name);
+                              setRemoveOpen(true);
+                            }}
+                          >
+                            {tr("mcp.remove_app")}
+                          </Button>
+                        </div>
                       </div>
                     </Show>
                   </div>
@@ -540,6 +561,25 @@ export default function McpView(props: McpViewProps) {
         }}
         onConfirm={() => {
           void confirmLogout();
+        }}
+      />
+
+      <ConfirmModal
+        open={removeOpen()}
+        title={tr("mcp.remove_modal_title")}
+        message={tr("mcp.remove_modal_message").replace("{server}", removeTarget() ?? "")}
+        confirmLabel={tr("mcp.remove_app")}
+        cancelLabel={tr("common.cancel")}
+        variant="danger"
+        onCancel={() => {
+          setRemoveOpen(false);
+          setRemoveTarget(null);
+        }}
+        onConfirm={() => {
+          const target = removeTarget();
+          if (target) props.removeMcp(target);
+          setRemoveOpen(false);
+          setRemoveTarget(null);
         }}
       />
 
@@ -626,9 +666,24 @@ export default function McpView(props: McpViewProps) {
             <Show when={configError()}>
               <div class="text-xs text-red-11">{configError()}</div>
             </Show>
+
+            <div class="border-t border-dls-border pt-4">
+              <Button variant="secondary" onClick={() => setAddMcpModalOpen(true)}>
+                <Plus size={14} />
+                {tr("mcp.add_modal_title")}
+              </Button>
+            </div>
           </div>
         </Show>
       </div>
+
+      <AddMcpModal
+        open={addMcpModalOpen()}
+        onClose={() => setAddMcpModalOpen(false)}
+        onAdd={(entry) => props.connectMcp(entry)}
+        busy={props.busy}
+        language={locale()}
+      />
     </section>
   );
 }

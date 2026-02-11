@@ -60,12 +60,14 @@ services:
         mkdir -p /tmp/openwork-bins
 
         echo "[headless] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
+        cd /app/packages/server && bun build --compile src/cli.ts --outfile ./openwork-server-compiled \
+          && cp ./openwork-server-compiled "$$OPENWORK_SERVER_BIN" && rm -f ./openwork-server-compiled
 
         echo "[headless] Building owpenbot binary (linux)..."
         OWPENBOT_VERSION=$$(node -p "require('/app/packages/owpenbot/package.json').version")
         cd /app/packages/owpenbot && bun build --compile src/cli.ts \
-          --define "__OWPENBOT_VERSION__=\"$${OWPENBOT_VERSION}\"" --outfile "$$OWPENBOT_BIN"
+          --define "__OWPENBOT_VERSION__=\"$${OWPENBOT_VERSION}\"" --outfile ./owpenbot-compiled \
+          && cp ./owpenbot-compiled "$$OWPENBOT_BIN" && rm -f ./owpenbot-compiled
 
         cd /app
 
