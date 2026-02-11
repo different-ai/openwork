@@ -1,6 +1,6 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 
-import type { SkillCard } from "../types";
+import type { HubSkillCard, SkillCard } from "../types";
 
 import Button from "../components/button";
 import { Edit2, FolderOpen, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
@@ -14,10 +14,14 @@ export type SkillsViewProps = {
   canUseDesktopTools: boolean;
   accessHint?: string | null;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshHubSkills: (options?: { force?: boolean }) => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  hubSkills: HubSkillCard[];
+  hubSkillsStatus: string | null;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<InstallResult>;
+  installHubSkill: (name: string) => Promise<InstallResult>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -46,6 +50,11 @@ export default function SkillsView(props: SkillsViewProps) {
 
   const [toast, setToast] = createSignal<string | null>(null);
   const [installingSkillCreator, setInstallingSkillCreator] = createSignal(false);
+  const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
+
+  onMount(() => {
+    props.refreshHubSkills();
+  });
 
   createEffect(() => {
     const message = toast();
@@ -66,6 +75,27 @@ export default function SkillsView(props: SkillsViewProps) {
     });
   });
 
+  const installedNames = createMemo(() => new Set(props.skills.map((skill) => skill.name)));
+
+  const availableHubSkills = createMemo(() =>
+    props.hubSkills.filter((skill) => !installedNames().has(skill.name))
+  );
+
+  const filteredHubSkills = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase();
+    const items = availableHubSkills();
+    if (!query) return items;
+    return items.filter((skill) => {
+      const description = skill.description ?? "";
+      const trigger = skill.trigger ?? "";
+      return (
+        skill.name.toLowerCase().includes(query) ||
+        description.toLowerCase().includes(query) ||
+        trigger.toLowerCase().includes(query)
+      );
+    });
+  });
+
   const installSkillCreator = async () => {
     if (props.busy || installingSkillCreator()) return;
     if (!props.canInstallSkillCreator) {
@@ -81,6 +111,20 @@ export default function SkillsView(props: SkillsViewProps) {
       setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
     } finally {
       setInstallingSkillCreator(false);
+    }
+  };
+
+  const installFromHub = async (skill: HubSkillCard) => {
+    if (props.busy || installingHubSkill()) return;
+    setInstallingHubSkill(skill.name);
+    setToast(`Installing ${skill.name}…`);
+    try {
+      const result = await props.installHubSkill(skill.name);
+      setToast(result.message);
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
+    } finally {
+      setInstallingHubSkill(null);
     }
   };
 
@@ -262,6 +306,90 @@ export default function SkillsView(props: SkillsViewProps) {
           {props.skillsStatus}
         </div>
       </Show>
+
+      <div class="space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">Available (Hub)</h3>
+          <button
+            type="button"
+            onClick={() => props.refreshHubSkills({ force: true })}
+            disabled={props.busy}
+            class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
+              props.busy
+                ? "text-dls-secondary"
+                : "text-dls-secondary hover:text-dls-text"
+            }`}
+            title="Refresh hub catalog"
+          >
+            <RefreshCw size={14} />
+            Refresh hub
+          </button>
+        </div>
+
+        <Show when={props.hubSkillsStatus}>
+          <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary whitespace-pre-wrap break-words">
+            {props.hubSkillsStatus}
+          </div>
+        </Show>
+
+        <Show
+          when={filteredHubSkills().length}
+          fallback={
+            <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
+              No hub skills available.
+            </div>
+          }
+        >
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <For each={filteredHubSkills()}>
+              {(skill) => (
+                <div class="bg-dls-surface border border-dls-border rounded-xl p-4 flex items-start justify-between group hover:border-dls-border hover:bg-dls-hover transition-all text-left">
+                  <div class="flex gap-4 min-w-0">
+                    <div class="w-10 h-10 rounded-lg flex items-center justify-center shadow-sm border border-dls-border bg-dls-surface">
+                      <Package size={20} class="text-dls-secondary" />
+                    </div>
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2 mb-0.5">
+                        <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
+                      </div>
+                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From openwork-hub</p>}>
+                        <p class="text-xs text-dls-secondary line-clamp-1">{skill.description}</p>
+                      </Show>
+                      <Show when={skill.trigger}>
+                        <div class="mt-1 text-[11px] text-dls-secondary line-clamp-1">
+                          Trigger: {skill.trigger}
+                        </div>
+                      </Show>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    class={`p-1.5 rounded-md transition-colors ${
+                      props.busy
+                        ? "text-dls-secondary opacity-40"
+                        : "text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+                    }`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      void installFromHub(skill);
+                    }}
+                    disabled={props.busy || installingHubSkill() === skill.name}
+                    title={`Install ${skill.name}`}
+                  >
+                    <Show
+                      when={installingHubSkill() === skill.name}
+                      fallback={<Plus size={16} />}
+                    >
+                      <Loader2 size={16} class="animate-spin" />
+                    </Show>
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
 
       <div class="space-y-4">
         <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">

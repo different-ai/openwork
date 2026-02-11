@@ -8,6 +8,7 @@ import type {
   ProviderListItem,
   SettingsTab,
   ScheduledJob,
+  HubSkillCard,
   SkillCard,
   StartupPreference,
   WorkspaceSessionGroup,
@@ -132,15 +133,19 @@ export type DashboardViewProps = {
   deleteScheduledJob: (name: string) => Promise<void> | void;
   activeWorkspaceRoot: string;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  hubSkills: HubSkillCard[];
+  hubSkillsStatus: string | null;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
   installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
+  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -1153,10 +1158,14 @@ export default function DashboardView(props: DashboardViewProps) {
                 canUseDesktopTools={props.canUseDesktopTools}
                 accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
+                refreshHubSkills={props.refreshHubSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
+                hubSkills={props.hubSkills}
+                hubSkillsStatus={props.hubSkillsStatus}
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
+                installHubSkill={props.installHubSkill}
                 revealSkillsFolder={props.revealSkillsFolder}
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}

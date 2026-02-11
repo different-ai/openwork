@@ -64,6 +64,13 @@ export interface Capabilities {
   schemaVersion: number;
   serverVersion: string;
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
+  hub: {
+    skills: {
+      read: boolean;
+      install: boolean;
+      repo: { owner: string; name: string; ref: string };
+    };
+  };
   plugins: { read: boolean; write: boolean };
   mcp: { read: boolean; write: boolean };
   commands: { read: boolean; write: boolean };
@@ -137,6 +144,18 @@ export interface SkillItem {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+}
+
+export interface HubSkillItem {
+  name: string;
+  description: string;
+  trigger?: string;
+  source: {
+    owner: string;
+    repo: string;
+    ref: string;
+    path: string;
+  };
 }
 
 export interface CommandItem {

@@ -4,7 +4,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
-import type { Client, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
+import type { Client, HubSkillCard, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
 import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
@@ -55,6 +55,9 @@ export function createExtensionsStore(options: {
   const [skills, setSkills] = createSignal<SkillCard[]>([]);
   const [skillsStatus, setSkillsStatus] = createSignal<string | null>(null);
 
+  const [hubSkills, setHubSkills] = createSignal<HubSkillCard[]>([]);
+  const [hubSkillsStatus, setHubSkillsStatus] = createSignal<string | null>(null);
+
   const formatSkillPath = (location: string) => location.replace(/[/\\]SKILL\.md$/i, "");
 
   const [pluginScope, setPluginScope] = createSignal<PluginScope>("project");
@@ -71,10 +74,132 @@ export function createExtensionsStore(options: {
   // Track in-flight requests to prevent duplicate calls
   let refreshSkillsInFlight = false;
   let refreshPluginsInFlight = false;
+  let refreshHubSkillsInFlight = false;
   let refreshSkillsAborted = false;
   let refreshPluginsAborted = false;
+  let refreshHubSkillsAborted = false;
   let skillsLoaded = false;
+  let hubSkillsLoaded = false;
   let skillsRoot = "";
+  let hubSkillsRoot = "";
+
+  async function refreshHubSkills(optionsOverride?: { force?: boolean }) {
+    const root = options.activeWorkspaceRoot().trim();
+    const openworkClient = options.openworkServerClient();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkCapabilities?.hub?.skills?.read &&
+      typeof (openworkClient as any).listHubSkills === "function";
+
+    if (root !== hubSkillsRoot) {
+      hubSkillsLoaded = false;
+    }
+
+    if (!optionsOverride?.force && hubSkillsLoaded) return;
+    if (refreshHubSkillsInFlight) return;
+
+    refreshHubSkillsInFlight = true;
+    refreshHubSkillsAborted = false;
+
+    try {
+      setHubSkillsStatus(null);
+
+      if (canUseOpenworkServer) {
+        const response = await (openworkClient as any).listHubSkills();
+        if (refreshHubSkillsAborted) return;
+        const next: HubSkillCard[] = Array.isArray(response?.items)
+          ? response.items.map((entry: any) => ({
+              name: String(entry.name ?? ""),
+              description: typeof entry.description === "string" ? entry.description : undefined,
+              trigger: typeof entry.trigger === "string" ? entry.trigger : undefined,
+              source: entry.source,
+            }))
+          : [];
+        setHubSkills(next);
+        if (!next.length) setHubSkillsStatus("No hub skills found.");
+        hubSkillsLoaded = true;
+        hubSkillsRoot = root;
+        return;
+      }
+
+      // Browser fallback: fetch directly from GitHub (public catalog).
+      const listingRes = await fetch("https://api.github.com/repos/different-ai/openwork-hub/contents/skills?ref=main", {
+        headers: { Accept: "application/vnd.github+json" },
+      });
+      if (!listingRes.ok) {
+        throw new Error(`Failed to fetch hub catalog (${listingRes.status})`);
+      }
+      const listing = (await listingRes.json()) as any;
+      const dirs: string[] = Array.isArray(listing)
+        ? listing
+            .filter((entry) => entry && entry.type === "dir" && typeof entry.name === "string")
+            .map((entry) => String(entry.name))
+        : [];
+
+      const next: HubSkillCard[] = dirs.map((dirName) => ({
+        name: dirName,
+        source: { owner: "different-ai", repo: "openwork-hub", ref: "main", path: `skills/${dirName}` },
+      }));
+
+      if (refreshHubSkillsAborted) return;
+      const sorted = next.slice().sort((a, b) => a.name.localeCompare(b.name));
+      setHubSkills(sorted);
+      if (!sorted.length) setHubSkillsStatus("No hub skills found.");
+      hubSkillsLoaded = true;
+      hubSkillsRoot = root;
+    } catch (e) {
+      if (refreshHubSkillsAborted) return;
+      setHubSkills([]);
+      setHubSkillsStatus(e instanceof Error ? e.message : "Failed to load hub skills.");
+    } finally {
+      refreshHubSkillsInFlight = false;
+    }
+  }
+
+  async function installHubSkill(name: string): Promise<{ ok: boolean; message: string }> {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, message: "Skill name is required." };
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.hub?.skills?.install &&
+      typeof (openworkClient as any).installHubSkill === "function";
+
+    if (!canUseOpenworkServer) {
+      if (isRemoteWorkspace) {
+        return { ok: false, message: "OpenWork server unavailable. Connect to install skills." };
+      }
+      return { ok: false, message: "Hub install requires OpenWork server." };
+    }
+
+    options.setBusy(true);
+    options.setError(null);
+    setSkillsStatus(null);
+
+    try {
+      const result = await (openworkClient as any).installHubSkill(openworkWorkspaceId, trimmed);
+      await refreshSkills({ force: true });
+      await refreshHubSkills({ force: true });
+      if (!result?.ok) {
+        return { ok: false, message: "Install failed." };
+      }
+      return { ok: true, message: `Installed ${trimmed}.` };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : translate("skills.unknown_error");
+      options.setError(addOpencodeCacheHint(message));
+      return { ok: false, message };
+    } finally {
+      options.setBusy(false);
+    }
+  }
 
   const isPluginInstalledByName = (pluginName: string, aliases: string[] = []) =>
     isPluginInstalled(pluginList(), pluginName, aliases);
@@ -895,11 +1020,14 @@ export function createExtensionsStore(options: {
   function abortRefreshes() {
     refreshSkillsAborted = true;
     refreshPluginsAborted = true;
+    refreshHubSkillsAborted = true;
   }
 
   return {
     skills,
     skillsStatus,
+    hubSkills,
+    hubSkillsStatus,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -914,10 +1042,12 @@ export function createExtensionsStore(options: {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshHubSkills,
     refreshPlugins,
     addPlugin,
     importLocalSkill,
     installSkillCreator,
+    installHubSkill,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,

@@ -177,6 +177,18 @@ export type SkillCard = {
   trigger?: string;
 };
 
+export type HubSkillCard = {
+  name: string;
+  description?: string;
+  trigger?: string;
+  source: {
+    owner: string;
+    repo: string;
+    ref: string;
+    path: string;
+  };
+};
+
 export type PluginInstallStep = {
   title: string;
   description: string;
