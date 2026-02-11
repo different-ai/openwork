@@ -4791,6 +4791,16 @@ export default function App() {
         return;
       }
 
+      // If the URL points at a session that no longer exists (e.g. after deletion),
+      // route back to /session so the app can fall back safely.
+      if (sessionsLoaded() && !sessions().some((session) => session.id === id)) {
+        if (selectedSessionId() === id) {
+          setSelectedSessionId(null);
+        }
+        navigate("/session", { replace: true });
+        return;
+      }
+
       if (selectedSessionId() !== id) {
         void selectSession(id);
       }
