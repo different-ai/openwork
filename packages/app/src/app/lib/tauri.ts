@@ -811,3 +811,36 @@ export async function owpenbotRestart(options: {
 export async function setWindowDecorations(decorations: boolean): Promise<void> {
   return invoke<void>("set_window_decorations", { decorations });
 }
+
+// File System Types
+export type FileEntry = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  size?: number;
+  modified?: number;
+};
+
+export type FileReadResult = {
+  content: string;
+  size: number;
+  language?: string;
+};
+
+/**
+ * Read directory contents
+ * @param path Directory path to read
+ * @returns Array of file entries
+ */
+export async function fsReadDir(path: string): Promise<FileEntry[]> {
+  return invoke<FileEntry[]>("fs_read_dir", { path });
+}
+
+/**
+ * Read file content
+ * @param path File path to read
+ * @returns File content and metadata
+ */
+export async function fsReadFile(path: string): Promise<FileReadResult> {
+  return invoke<FileReadResult>("fs_read_file", { path });
+}

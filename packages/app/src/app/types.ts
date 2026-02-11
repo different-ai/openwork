@@ -368,3 +368,23 @@ export type UpdateHandle = {
   install: () => Promise<void>;
   downloadAndInstall: (onEvent?: (event: any) => void) => Promise<void>;
 };
+
+// Workspace File Explorer Types
+export type FileNode = {
+  name: string;
+  path: string;
+  type: "file" | "directory";
+  children?: FileNode[];
+  size?: number;
+  modified?: number;
+};
+
+export type FileContent = {
+  path: string;
+  content: string;
+  size: number;
+  language?: string;
+  readonly: true;
+};
+
+export type WorkspaceSecondaryTab = "sessions" | "files";
