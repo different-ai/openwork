@@ -1,6 +1,7 @@
 pub mod command_files;
 pub mod config;
 pub mod engine;
+pub mod fs;
 pub mod misc;
 pub mod openwrk;
 pub mod openwork_server;
