@@ -513,10 +513,12 @@ pub fn install_builtin_skills(openwork_dir: Option<String>) -> Result<BuiltinSki
         path
     } else {
         // Fallback to XDG config path
-        let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
-            let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
-            home.join(".config")
-        });
+        let xdg_config = std::env::var("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+                home.join(".config")
+            });
         return Err(format!(
             "Global skills directory not found. Please create: {}/opencode/skills/",
             xdg_config.display()
