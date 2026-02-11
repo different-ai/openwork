@@ -47,6 +47,7 @@ import {
 } from "lucide-solid";
 
 import Button from "../components/button";
+import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -196,12 +197,17 @@ export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
   let agentPickerRef: HTMLDivElement | undefined;
+  let sessionMenuRef: HTMLDivElement | undefined;
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+
+  const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
+  const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
+  const [deleteSessionBusy, setDeleteSessionBusy] = createSignal(false);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
@@ -915,6 +921,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const openRenameModal = () => {
+    setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
       setToastMessage("No session selected");
       return;
@@ -942,6 +949,39 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage(message);
     } finally {
       setRenameBusy(false);
+    }
+  };
+
+  const openDeleteSessionModal = () => {
+    setSessionMenuOpen(false);
+    if (!props.selectedSessionId) {
+      setToastMessage("No session selected");
+      return;
+    }
+    setDeleteSessionOpen(true);
+  };
+
+  const closeDeleteSessionModal = () => {
+    if (deleteSessionBusy()) return;
+    setDeleteSessionOpen(false);
+  };
+
+  const confirmDeleteSession = async () => {
+    if (deleteSessionBusy()) return;
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) return;
+    setDeleteSessionBusy(true);
+    try {
+      await props.deleteSession(sessionId);
+      setDeleteSessionOpen(false);
+      setToastMessage("Session deleted");
+      // Route away from the deleted session id.
+      props.setView("session");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setToastMessage(message || "Failed to delete session");
+    } finally {
+      setDeleteSessionBusy(false);
     }
   };
 
@@ -973,6 +1013,17 @@ export default function SessionView(props: SessionViewProps) {
       if (!agentPickerRef) return;
       if (agentPickerRef.contains(event.target as Node)) return;
       setAgentPickerOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
+  createEffect(() => {
+    if (!sessionMenuOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!sessionMenuRef) return;
+      if (sessionMenuRef.contains(event.target as Node)) return;
+      setSessionMenuOpen(false);
     };
     window.addEventListener("mousedown", handler);
     onCleanup(() => window.removeEventListener("mousedown", handler));
@@ -1739,6 +1790,47 @@ export default function SessionView(props: SessionViewProps) {
               <span class="text-xs text-dls-secondary">· {props.busyHint}</span>
             </Show>
           </div>
+
+          <div class="flex items-center gap-2">
+            <div ref={(el) => (sessionMenuRef = el)} class="relative">
+              <button
+                type="button"
+                class="h-9 w-9 flex items-center justify-center rounded-lg text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={!props.selectedSessionId}
+                title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSessionMenuOpen((current) => !current);
+                }}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+
+              <Show when={sessionMenuOpen() && props.selectedSessionId}>
+                <div
+                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-dls-border bg-dls-surface shadow-lg p-1"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                    onClick={openRenameModal}
+                  >
+                    Rename session
+                  </button>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover text-red-11"
+                    onClick={openDeleteSessionModal}
+                  >
+                    Delete session
+                  </button>
+                </div>
+              </Show>
+            </div>
+          </div>
         </header>
 
       <Show when={props.error}>
@@ -2191,6 +2283,21 @@ export default function SessionView(props: SessionViewProps) {
         onClose={closeRenameModal}
         onSave={submitRename}
         onTitleChange={setRenameTitle}
+      />
+
+      <ConfirmModal
+        open={deleteSessionOpen()}
+        title="Delete session?"
+        message={
+          selectedSessionTitle().trim()
+            ? `This will permanently delete \"${selectedSessionTitle().trim()}\" and its messages.`
+            : "This will permanently delete the selected session and its messages."
+        }
+        confirmLabel={deleteSessionBusy() ? "Deleting..." : "Delete"}
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteSession}
+        onCancel={closeDeleteSessionModal}
       />
 
       <ShareWorkspaceModal

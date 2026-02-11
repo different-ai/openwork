@@ -16,6 +16,7 @@ import { parseFrontmatter } from "./frontmatter.js";
 import { startReloadWatchers } from "./reload-watcher.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
+import { workspaceIdForPath } from "./workspaces.js";
 import { sanitizeCommandName, validateMcpName } from "./validators.js";
 import { TokenService } from "./tokens.js";
 import { TOY_UI_CSS, TOY_UI_HTML, TOY_UI_JS, cssResponse, htmlResponse, jsResponse } from "./toy-ui.js";
@@ -1185,6 +1186,46 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ activeId: workspace.id, workspace: serializeWorkspace(workspace) });
   });
 
+  addRoute(routes, "DELETE", "/workspaces/:id", "host", async (ctx) => {
+    ensureWritable(config);
+
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+
+    // Attempt to persist to server.json (when present) before mutating in-memory state.
+    const configPath = config.configPath?.trim() ?? "";
+    const persisted = configPath
+      ? await persistWorkspaceDeletion(configPath, workspace.id, workspace.path)
+      : false;
+
+    const before = config.workspaces.length;
+    config.workspaces = config.workspaces.filter((entry) => entry.id !== workspace.id);
+    const deleted = before !== config.workspaces.length;
+
+    if (deleted) {
+      // Only remove exact matches; authorizedRoots can contain broader entries.
+      config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
+    }
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "host" },
+      action: "workspace.delete",
+      target: "workspace",
+      summary: "Deleted workspace from OpenWork server",
+      timestamp: Date.now(),
+    });
+
+    const active = config.workspaces[0] ?? null;
+    return jsonResponse({
+      ok: true,
+      deleted,
+      persisted,
+      activeId: active?.id ?? null,
+      items: config.workspaces.map(serializeWorkspace),
+    });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/config", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const opencode = await readOpencodeConfig(workspace.path);
@@ -1200,6 +1241,24 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const limit = Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : 50;
     const items = await readAuditEntries(workspace.path, workspace.id, limit);
     return jsonResponse({ items });
+  });
+
+  addRoute(routes, "DELETE", "/workspace/:id/sessions/:sessionId", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const sessionId = (ctx.params.sessionId ?? "").trim();
+    if (!sessionId) {
+      throw new ApiError(400, "invalid_payload", "sessionId is required");
+    }
+
+    // OpenCode session deletion via the upstream API.
+    await fetchOpencodeJson(workspace, `/session/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+
+    return jsonResponse({ ok: true });
   });
 
   addRoute(routes, "PATCH", "/workspace/:id/config", "client", async (ctx) => {
@@ -2957,6 +3016,84 @@ type TelegramBotInfo = {
 function ensurePlainObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+type OpenworkServerConfigFile = Record<string, unknown> & {
+  workspaces?: Array<Record<string, unknown>>;
+  authorizedRoots?: string[];
+};
+
+async function persistWorkspaceDeletion(configPath: string, workspaceId: string, workspacePath: string): Promise<boolean> {
+  if (!configPath.trim()) return false;
+  if (!(await exists(configPath))) {
+    // If the server was started from CLI args/env, avoid implicitly creating server.json
+    // because it can change token behavior on restart.
+    return false;
+  }
+
+  let raw = "";
+  try {
+    raw = await readFile(configPath, "utf8");
+  } catch (error) {
+    throw new ApiError(500, "server_config_read_failed", "Failed to read server config", {
+      path: configPath,
+      error: String(error),
+    });
+  }
+
+  let parsed: OpenworkServerConfigFile;
+  try {
+    parsed = ensurePlainObject(JSON.parse(raw)) as OpenworkServerConfigFile;
+  } catch (error) {
+    throw new ApiError(422, "invalid_json", "Failed to parse server config", {
+      path: configPath,
+      error: String(error),
+    });
+  }
+
+  const configDir = dirname(configPath);
+  const workspacesRaw = parsed.workspaces;
+  const workspaces = Array.isArray(workspacesRaw) ? workspacesRaw : [];
+
+  const nextWorkspaces = workspaces.filter((entry) => {
+    const obj = ensurePlainObject(entry);
+    const path = typeof obj.path === "string" ? obj.path.trim() : "";
+    if (!path) return true;
+    const id = workspaceIdForPath(resolve(configDir, path));
+    return id !== workspaceId;
+  });
+
+  const rootsRaw = parsed.authorizedRoots;
+  const roots = Array.isArray(rootsRaw) ? rootsRaw : [];
+  const nextRoots = roots.filter((root) => {
+    const value = typeof root === "string" ? root.trim() : "";
+    if (!value) return false;
+    return resolve(configDir, value) !== resolve(workspacePath);
+  });
+
+  const workspacesChanged = nextWorkspaces.length !== workspaces.length;
+  const rootsChanged = nextRoots.length !== roots.length;
+  if (!workspacesChanged && !rootsChanged) return false;
+
+  const next: OpenworkServerConfigFile = {
+    ...parsed,
+    ...(workspacesChanged ? { workspaces: nextWorkspaces } : {}),
+    ...(rootsChanged ? { authorizedRoots: nextRoots } : {}),
+  };
+
+  await ensureDir(dirname(configPath));
+  const tmpPath = `${configPath}.tmp.${shortId()}`;
+  try {
+    await writeFile(tmpPath, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    await rename(tmpPath, configPath);
+    return true;
+  } finally {
+    try {
+      await rm(tmpPath);
+    } catch {
+      // ignore
+    }
+  }
 }
 
 function normalizeOwpenbotIdentityId(value: unknown): string {

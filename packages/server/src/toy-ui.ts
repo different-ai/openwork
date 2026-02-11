@@ -344,6 +344,7 @@ export const TOY_UI_HTML = `<!doctype html>
             <div class="row">
               <button class="btn" id="btn-new">New session</button>
               <button class="btn" id="btn-refresh">Refresh messages</button>
+              <button class="btn" id="btn-delete-session">Delete session</button>
               <span class="small" id="hint">Tip: open this page as /w/&lt;id&gt;/ui#token=&lt;token&gt;</span>
             </div>
             <textarea id="prompt" placeholder="Write a prompt..." spellcheck="false"></textarea>
@@ -420,6 +421,13 @@ export const TOY_UI_HTML = `<!doctype html>
                 <span class="small">(pastes JSON below)</span>
               </div>
               <textarea class="inputarea" id="import" placeholder="Paste export JSON..." spellcheck="false"></textarea>
+
+              <div class="hr"></div>
+
+              <div class="row">
+                <button class="btn danger" id="btn-delete-workspace">Delete workspace</button>
+                <span class="small">Removes from host config. Requires owner/host token.</span>
+              </div>
             </div>
 
             <div class="panel hidden" data-panel="automations">
@@ -1570,6 +1578,29 @@ async function main() {
     await refreshMessages(workspaceId).catch((e) => setStatus(e && e.message ? e.message : "refresh failed", "bad"));
   };
 
+  qs("#btn-delete-session").onclick = async () => {
+    const sessionId = readSessionId(workspaceId);
+    if (!sessionId) {
+      setStatus("No session selected", "bad");
+      return;
+    }
+    if (!confirm("Delete this session? This cannot be undone.")) return;
+    try {
+      await apiFetch(
+        "/workspace/" + encodeURIComponent(workspaceId) + "/sessions/" + encodeURIComponent(sessionId),
+        { method: "DELETE" },
+      );
+      writeSessionId(workspaceId, "");
+      sessionIdEl.textContent = "session: -";
+      chatlog.innerHTML = "";
+      clearTimeline();
+      setRun("idle");
+      setStatus("Session deleted", "ok");
+    } catch (e) {
+      setStatus(e && e.message ? e.message : "delete failed", "bad");
+    }
+  };
+
   qs("#btn-send").onclick = async () => {
     const text = (promptEl.value || "").trim();
     if (!text) return;
@@ -1689,6 +1720,16 @@ async function main() {
       setStatus("Import requested (check approvals)", "ok");
     } catch (e) {
       setStatus(e && e.message ? e.message : "import failed", "bad");
+    }
+  };
+
+  qs("#btn-delete-workspace").onclick = async () => {
+    if (!confirm("Delete this workspace from the host's OpenWork server config?")) return;
+    try {
+      await apiFetch("/workspaces/" + encodeURIComponent(workspaceId), { method: "DELETE" });
+      setStatus("Workspace deleted (refresh workspaces)", "ok");
+    } catch (e) {
+      setStatus(e && e.message ? e.message : "workspace delete failed", "bad");
     }
   };
 

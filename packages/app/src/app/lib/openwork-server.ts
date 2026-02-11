@@ -716,6 +716,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     capabilities: 6_000,
     listWorkspaces: 8_000,
     activateWorkspace: 10_000,
+    deleteWorkspace: 10_000,
+    deleteSession: 12_000,
     status: 6_000,
     config: 10_000,
     owpenbot: 10_000,
@@ -751,6 +753,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspaces/${encodeURIComponent(workspaceId)}/activate`,
         { token, hostToken, method: "POST", timeoutMs: timeouts.activateWorkspace },
+      ),
+    deleteWorkspace: (workspaceId: string) =>
+      requestJson<{ ok: boolean; deleted: boolean; persisted: boolean; activeId: string | null; items: OpenworkWorkspaceInfo[] }>(
+        baseUrl,
+        `/workspaces/${encodeURIComponent(workspaceId)}`,
+        { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteWorkspace },
+      ),
+    deleteSession: (workspaceId: string, sessionId: string) =>
+      requestJson<{ ok: boolean }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/sessions/${encodeURIComponent(sessionId)}`,
+        { token, hostToken, method: "DELETE", timeoutMs: timeouts.deleteSession },
       ),
     exportWorkspace: (workspaceId: string) =>
       requestJson<OpenworkWorkspaceExport>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/export`, {
