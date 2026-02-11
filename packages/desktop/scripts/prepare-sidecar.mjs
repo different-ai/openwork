@@ -567,28 +567,17 @@ if (shouldBuildOpenwrk) {
       // ignore
     }
   }
-  // openwrk uses bun build --compile directly
-  const openwrkCliPath = resolve(openwrkDir, "src", "cli.ts");
-  if (!existsSync(openwrkCliPath)) {
-    console.error(`Openwrk CLI source not found at ${openwrkCliPath}`);
+  const openwrkBuildScript = resolveBuildScript(openwrkDir);
+  if (!existsSync(openwrkBuildScript)) {
+    console.error(`Openwrk build script not found at ${openwrkBuildScript}`);
     process.exit(1);
   }
-  const openwrkVersionForDefine = (() => {
-    try {
-      const raw = readFileSync(resolve(openwrkDir, "package.json"), "utf8");
-      return String(JSON.parse(raw).version ?? "").trim();
-    } catch {
-      return "";
-    }
-  })();
   const openwrkArgs = [
-    "build",
-    "--compile",
-    openwrkCliPath,
-    "--define",
-    `__OPENWRK_VERSION__=\"${openwrkVersionForDefine}\"`,
-    "--outfile",
-    openwrkBuildPath,
+    openwrkBuildScript,
+    "--outdir",
+    sidecarDir,
+    "--filename",
+    "openwrk",
   ];
   if (bunTarget) {
     openwrkArgs.push("--target", bunTarget);
