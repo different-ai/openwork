@@ -1,4 +1,4 @@
-import { readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
@@ -149,4 +149,17 @@ export async function upsertSkill(
   const existed = await exists(skillPath);
   await writeFile(skillPath, content.endsWith("\n") ? content : content + "\n", "utf8");
   return { path: skillPath, action: existed ? "updated" : "added" };
+}
+
+export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
+  const trimmed = name.trim();
+  validateSkillName(trimmed);
+  const baseDir = projectSkillsDir(workspaceRoot);
+  const skillDir = join(baseDir, trimmed);
+  const skillPath = join(skillDir, "SKILL.md");
+  if (!(await exists(skillPath))) {
+    throw new ApiError(404, "skill_not_found", `Skill not found: ${trimmed}`);
+  }
+  await rm(skillDir, { recursive: true, force: true });
+  return { path: skillDir };
 }

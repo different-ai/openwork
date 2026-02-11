@@ -527,6 +527,49 @@ jobs:
           updaterJsonPreferNsis: true
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
+      - name: Verify versions.json bundled (macOS)
+        if: success() && matrix.os_type == 'macos'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          case "${{ matrix.target }}" in
+            aarch64-apple-darwin)
+              asset_arch="aarch64"
+              ;;
+            x86_64-apple-darwin)
+              asset_arch="x64"
+              ;;
+            *)
+              echo "Unexpected target for macOS verify: ${{ matrix.target }}" >&2
+              exit 1
+              ;;
+          esac
+
+          tmp_dir="$RUNNER_TEMP/openwork-bundle-verify"
+          rm -rf "$tmp_dir"
+          mkdir -p "$tmp_dir"
+
+          gh release download "${RELEASE_TAG}" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "openwork-desktop-darwin-${asset_arch}.app.tar.gz" \
+            --dir "$tmp_dir"
+
+          tar -xzf "$tmp_dir/openwork-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
+
+          app_path="$tmp_dir/OpenWork.app"
+          manifest_path="$app_path/Contents/MacOS/versions.json"
+
+          if [ ! -f "$manifest_path" ]; then
+            echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
+            echo "Hint: ensure packages/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
+            exit 1
+          fi
+
+          echo "Found bundled versions.json at $manifest_path"
+
   release-openwrk-sidecars:
     name: Build + Upload openwrk Sidecars
     needs: [resolve-release, verify-release]
@@ -768,7 +811,8 @@ jobs:
             echo "openwrk sidecar release $tag not found. Publish sidecars before openwrk." >&2
             exit 1
           fi
-          pnpm --filter openwrk publish --access public --no-git-checks
+          pnpm --filter openwrk build:bin:all
+          node packages/headless/scripts/publish-npm.mjs
 
   aur-publish:
     name: Publish AUR

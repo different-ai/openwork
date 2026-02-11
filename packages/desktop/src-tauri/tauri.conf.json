@@ -1,10 +1,10 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenWork",
-  "version": "0.11.29",
+  "version": "0.11.55",
   "identifier": "com.differentai.openwork",
   "build": {
-    "beforeDevCommand": "pnpm -C ../.. --filter @different-ai/openwork run prepare:sidecar && pnpm -w dev:ui",
+    "beforeDevCommand": "node ./scripts/tauri-before-dev.mjs",
     "beforeBuildCommand": "pnpm -C ../.. --filter @different-ai/openwork run prepare:sidecar && pnpm -w build:ui",
     "devUrl": "http://localhost:5173",
     "frontendDist": "../../app/dist"
@@ -38,7 +38,8 @@
       "sidecars/opencode",
       "sidecars/openwork-server",
       "sidecars/owpenbot",
-      "sidecars/openwrk"
+      "sidecars/openwrk",
+      "sidecars/versions.json"
     ]
   },
   "plugins": {

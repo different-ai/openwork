@@ -3,10 +3,11 @@ import type { Logger } from "pino";
 import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 
-import type { Config } from "./config.js";
+import type { Config, SlackIdentity } from "./config.js";
 
 export type InboundMessage = {
   channel: "slack";
+  identityId: string;
   peerId: string;
   text: string;
   raw: unknown;
@@ -16,6 +17,7 @@ export type MessageHandler = (message: InboundMessage) => Promise<void> | void;
 
 export type SlackAdapter = {
   name: "slack";
+  identityId: string;
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -73,21 +75,24 @@ type SlackEvent = {
 };
 
 export function createSlackAdapter(
+  identity: SlackIdentity,
   config: Config,
   logger: Logger,
   onMessage: MessageHandler,
   deps: SlackDeps = { WebClient, SocketModeClient },
 ): SlackAdapter {
-  if (!config.slackBotToken) {
-    throw new Error("SLACK_BOT_TOKEN is required for Slack adapter");
+  const botToken = identity.botToken?.trim() ?? "";
+  const appToken = identity.appToken?.trim() ?? "";
+  if (!botToken) {
+    throw new Error("Slack bot token is required for Slack adapter");
   }
-  if (!config.slackAppToken) {
-    throw new Error("SLACK_APP_TOKEN is required for Slack adapter");
+  if (!appToken) {
+    throw new Error("Slack app token is required for Slack adapter");
   }
 
-  const log = logger.child({ channel: "slack" });
-  const web = new deps.WebClient(config.slackBotToken);
-  const socket = new deps.SocketModeClient({ appToken: config.slackAppToken });
+  const log = logger.child({ channel: "slack", identityId: identity.id });
+  const web = new deps.WebClient(botToken);
+  const socket = new deps.SocketModeClient({ appToken });
 
   let botUserId: string | null = null;
   let started = false;
@@ -136,6 +141,7 @@ export function createSlackAdapter(
     try {
       await onMessage({
         channel: "slack",
+        identityId: identity.id,
         peerId,
         text: filtered.textRaw.trim(),
         raw: event,
@@ -164,6 +170,7 @@ export function createSlackAdapter(
     try {
       await onMessage({
         channel: "slack",
+        identityId: identity.id,
         peerId,
         text,
         raw: event,
@@ -175,6 +182,7 @@ export function createSlackAdapter(
 
   return {
     name: "slack",
+    identityId: identity.id,
     maxTextLength: MAX_TEXT_LENGTH,
     async start() {
       if (started) return;

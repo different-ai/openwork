@@ -11,7 +11,9 @@
 - Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
 - Sharing is caring: start solo, then share. One CLI or desktop command spins up an instantly shareable instance.
 
-<video src="https://github.com/different-ai/openwork/releases/download/v0.11.16/app-demo-compressed.mp4" width="1292" autoplay loop muted playsinline></video>
+<p align="center">
+  <img src="./app-demo.gif" alt="OpenWork demo" width="800" />
+</p>
 
 
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.

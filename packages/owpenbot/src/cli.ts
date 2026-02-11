@@ -3,23 +3,24 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { Command } from "commander";
+import { Bot } from "grammy";
+import { WebClient } from "@slack/web-api";
 
 import { startBridge, type BridgeReporter } from "./bridge.js";
 import {
   loadConfig,
-  normalizeWhatsAppId,
   readConfigFile,
   writeConfigFile,
   type ChannelName,
   type OwpenbotConfigFile,
+  type SlackIdentity,
+  type TelegramIdentity,
 } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { createLogger } from "./logger.js";
 import { createClient } from "./opencode.js";
 import { parseSlackPeerId } from "./slack.js";
 import { truncateText } from "./text.js";
-import { loginWhatsApp, unpairWhatsApp } from "./whatsapp.js";
-import { hasWhatsAppCreds } from "./whatsapp-session.js";
 
 declare const __OWPENBOT_VERSION__: string | undefined;
 
@@ -39,10 +40,6 @@ const VERSION = (() => {
   return "0.0.0";
 })();
 
-// -----------------------------------------------------------------------------
-// JSON output helpers
-// -----------------------------------------------------------------------------
-
 function outputJson(data: unknown) {
   console.log(JSON.stringify(data, null, 2));
 }
@@ -56,20 +53,14 @@ function outputError(message: string, exitCode = 1): never {
   process.exit(exitCode);
 }
 
-// -----------------------------------------------------------------------------
-// App logger and console reporter for start command
-// -----------------------------------------------------------------------------
-
 function createAppLogger(config: ReturnType<typeof loadConfig>) {
   return createLogger(config.logLevel, { logFile: config.logFile });
 }
 
 function createConsoleReporter(): BridgeReporter {
-  const formatChannel = (channel: ChannelName) =>
-    channel === "whatsapp" ? "WhatsApp" : channel === "telegram" ? "Telegram" : "Slack";
-  const formatPeer = (channel: ChannelName, peerId: string, fromMe?: boolean) => {
-    const base = channel === "whatsapp" ? normalizeWhatsAppId(peerId) : peerId;
-    return fromMe ? `${base} (me)` : base;
+  const formatChannel = (channel: ChannelName, identityId: string) => {
+    const name = channel === "telegram" ? "Telegram" : "Slack";
+    return `${name}/${identityId}`;
   };
 
   const printBlock = (prefix: string, text: string) => {
@@ -85,21 +76,18 @@ function createConsoleReporter(): BridgeReporter {
     onStatus(message) {
       console.log(message);
     },
-    onInbound({ channel, peerId, text, fromMe }) {
-      const prefix = `[${formatChannel(channel)}] ${formatPeer(channel, peerId, fromMe)} >`;
+    onInbound({ channel, identityId, peerId, text, fromMe }) {
+      const base = fromMe ? `${peerId} (me)` : peerId;
+      const prefix = `[${formatChannel(channel, identityId)}] ${base} >`;
       printBlock(prefix, text);
     },
-    onOutbound({ channel, peerId, text, kind }) {
+    onOutbound({ channel, identityId, peerId, text, kind }) {
       const marker = kind === "reply" ? "<" : kind === "tool" ? "*" : "!";
-      const prefix = `[${formatChannel(channel)}] ${formatPeer(channel, peerId)} ${marker}`;
+      const prefix = `[${formatChannel(channel, identityId)}] ${peerId} ${marker}`;
       printBlock(prefix, text);
     },
   };
 }
-
-// -----------------------------------------------------------------------------
-// Config helpers
-// -----------------------------------------------------------------------------
 
 function updateConfig(configPath: string, updater: (cfg: OwpenbotConfigFile) => OwpenbotConfigFile) {
   const { config } = readConfigFile(configPath);
@@ -110,44 +98,61 @@ function updateConfig(configPath: string, updater: (cfg: OwpenbotConfigFile) => 
   return next;
 }
 
-function getNestedValue(obj: Record<string, unknown>, keyPath: string): unknown {
-  const keys = keyPath.split(".");
-  let current: unknown = obj;
-  for (const key of keys) {
-    if (current === null || current === undefined || typeof current !== "object") {
-      return undefined;
-    }
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
+function normalizeIdentityId(value: string | undefined): string {
+  const trimmed = (value ?? "").trim();
+  if (!trimmed) return "default";
+  const safe = trimmed.replace(/[^a-zA-Z0-9_.-]+/g, "-");
+  const cleaned = safe.replace(/^-+|-+$/g, "").slice(0, 48);
+  return cleaned || "default";
 }
 
-function setNestedValue(obj: Record<string, unknown>, keyPath: string, value: unknown): void {
-  const keys = keyPath.split(".");
-  let current = obj;
-  for (let i = 0; i < keys.length - 1; i++) {
-    const key = keys[i];
-    if (current[key] === undefined || current[key] === null || typeof current[key] !== "object") {
-      current[key] = {};
-    }
-    current = current[key] as Record<string, unknown>;
-  }
-  current[keys[keys.length - 1]] = value;
+function upsertTelegramBot(cfg: OwpenbotConfigFile, identity: TelegramIdentity): OwpenbotConfigFile {
+  const next = { ...cfg };
+  next.channels = next.channels ?? {};
+  const existing = next.channels.telegram ?? {};
+  const bots = Array.isArray(existing.bots) ? existing.bots.slice() : [];
+  const id = normalizeIdentityId(identity.id);
+  const filtered = bots.filter((b) => normalizeIdentityId(b.id) !== id);
+  filtered.push({ id, token: identity.token, enabled: identity.enabled !== false });
+  next.channels.telegram = { ...existing, enabled: true, bots: filtered };
+  return next;
 }
 
-function parseConfigValue(value: string): unknown {
-  // Try to parse as JSON first (for arrays, objects, booleans, numbers)
-  try {
-    return JSON.parse(value);
-  } catch {
-    // Return as string if not valid JSON
-    return value;
-  }
+function deleteTelegramBot(cfg: OwpenbotConfigFile, idRaw: string): { next: OwpenbotConfigFile; deleted: boolean } {
+  const id = normalizeIdentityId(idRaw);
+  const next = { ...cfg };
+  next.channels = next.channels ?? {};
+  const existing = next.channels.telegram ?? {};
+  const bots = Array.isArray(existing.bots) ? existing.bots.slice() : [];
+  const filtered = bots.filter((b) => normalizeIdentityId(b.id) !== id);
+  const deleted = filtered.length !== bots.length;
+  next.channels.telegram = { ...existing, bots: filtered };
+  return { next, deleted };
 }
 
-// -----------------------------------------------------------------------------
-// Start command
-// -----------------------------------------------------------------------------
+function upsertSlackApp(cfg: OwpenbotConfigFile, identity: SlackIdentity): OwpenbotConfigFile {
+  const next = { ...cfg };
+  next.channels = next.channels ?? {};
+  const existing = next.channels.slack ?? {};
+  const apps = Array.isArray(existing.apps) ? existing.apps.slice() : [];
+  const id = normalizeIdentityId(identity.id);
+  const filtered = apps.filter((a) => normalizeIdentityId(a.id) !== id);
+  filtered.push({ id, botToken: identity.botToken, appToken: identity.appToken, enabled: identity.enabled !== false });
+  next.channels.slack = { ...existing, enabled: true, apps: filtered };
+  return next;
+}
+
+function deleteSlackApp(cfg: OwpenbotConfigFile, idRaw: string): { next: OwpenbotConfigFile; deleted: boolean } {
+  const id = normalizeIdentityId(idRaw);
+  const next = { ...cfg };
+  next.channels = next.channels ?? {};
+  const existing = next.channels.slack ?? {};
+  const apps = Array.isArray(existing.apps) ? existing.apps.slice() : [];
+  const filtered = apps.filter((a) => normalizeIdentityId(a.id) !== id);
+  const deleted = filtered.length !== apps.length;
+  next.channels.slack = { ...existing, apps: filtered };
+  return { next, deleted };
+}
 
 async function runStart(pathOverride?: string, options?: { opencodeUrl?: string }) {
   if (pathOverride?.trim()) {
@@ -163,7 +168,9 @@ async function runStart(pathOverride?: string, options?: { opencodeUrl?: string 
     process.env.OPENCODE_DIRECTORY = config.opencodeDirectory;
   }
   const bridge = await startBridge(config, logger, reporter);
-  reporter.onStatus?.("Commands: owpenwork whatsapp login, owpenwork slack status, owpenwork pairing list, owpenwork status");
+  if (process.stdout.isTTY) {
+    reporter.onStatus?.("Commands: owpenwork identities, owpenwork bindings, owpenwork status");
+  }
 
   const shutdown = async () => {
     logger.info("shutting down");
@@ -175,70 +182,13 @@ async function runStart(pathOverride?: string, options?: { opencodeUrl?: string 
   process.on("SIGTERM", shutdown);
 }
 
-// -----------------------------------------------------------------------------
-// QR code generation for non-interactive use
-// -----------------------------------------------------------------------------
-
-async function getWhatsAppQr(config: ReturnType<typeof loadConfig>, format: "ascii" | "base64"): Promise<string> {
-  const { createWhatsAppSocket, closeWhatsAppSocket } = await import("./whatsapp-session.js");
-  const logger = createAppLogger(config);
-  
-  return new Promise((resolve, reject) => {
-    let resolved = false;
-    const timeout = setTimeout(() => {
-      if (!resolved) {
-        resolved = true;
-        reject(new Error("Timeout waiting for QR code"));
-      }
-    }, 30000);
-
-    void createWhatsAppSocket({
-      authDir: config.whatsappAuthDir,
-      logger,
-      printQr: false,
-      onQr: (qr) => {
-        if (resolved) return;
-        resolved = true;
-        clearTimeout(timeout);
-        
-        if (format === "base64") {
-          resolve(Buffer.from(qr).toString("base64"));
-        } else {
-          // Generate ASCII QR using qrcode-terminal's internal logic
-          // For simplicity, return the raw QR data - consumers can render it
-          resolve(qr);
-        }
-      },
-    }).then((sock) => {
-      // Close socket after getting QR or on timeout
-      setTimeout(() => {
-        closeWhatsAppSocket(sock);
-      }, resolved ? 500 : 30500);
-    }).catch((err) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timeout);
-        reject(err);
-      }
-    });
-  });
-}
-
-// -----------------------------------------------------------------------------
-// Commander setup
-// -----------------------------------------------------------------------------
-
 const program = new Command();
 
 program
   .name("owpenbot")
   .version(VERSION)
-  .description("OpenCode WhatsApp + Telegram + Slack bridge")
+  .description("Slack + Telegram bridge for a running OpenCode server")
   .option("--json", "Output in JSON format", false);
-
-// -----------------------------------------------------------------------------
-// start command
-// -----------------------------------------------------------------------------
 
 program
   .command("start")
@@ -247,37 +197,36 @@ program
   .option("--opencode-url <url>", "OpenCode server URL")
   .action((pathArg?: string, options?: { opencodeUrl?: string }) => runStart(pathArg, options));
 
-// -----------------------------------------------------------------------------
-// health command
-// -----------------------------------------------------------------------------
+program
+  .command("serve")
+  .description("Start the bridge (headless)")
+  .argument("[path]", "OpenCode workspace path")
+  .option("--opencode-url <url>", "OpenCode server URL")
+  .action((pathArg?: string, options?: { opencodeUrl?: string }) => runStart(pathArg, options));
 
 program
   .command("health")
-  .description("Check bridge health (exit 0 if healthy, 1 if not)")
+  .description("Check OpenCode health (exit 0 if healthy, 1 if not)")
   .action(async () => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    
     try {
       const client = createClient(config);
       const health = await client.global.health();
       const healthy = Boolean((health as { healthy?: boolean }).healthy);
-      
       if (useJson) {
         outputJson({
           healthy,
           opencodeUrl: config.opencodeUrl,
-          channels: {
-            whatsapp: hasWhatsAppCreds(config.whatsappAuthDir) ? "linked" : "unlinked",
-            telegram: config.telegramToken ? "configured" : "unconfigured",
-            slack: config.slackBotToken && config.slackAppToken ? "configured" : "unconfigured",
+          identities: {
+            telegram: config.telegramBots.map((b) => ({ id: b.id, enabled: b.enabled !== false })),
+            slack: config.slackApps.map((a) => ({ id: a.id, enabled: a.enabled !== false })),
           },
         });
       } else {
         console.log(`Healthy: ${healthy ? "yes" : "no"}`);
         console.log(`OpenCode URL: ${config.opencodeUrl}`);
       }
-      
       process.exit(healthy ? 0 : 1);
     } catch (error) {
       if (useJson) {
@@ -285,11 +234,6 @@ program
           healthy: false,
           error: String(error),
           opencodeUrl: config.opencodeUrl,
-          channels: {
-            whatsapp: hasWhatsAppCreds(config.whatsappAuthDir) ? "linked" : "unlinked",
-            telegram: config.telegramToken ? "configured" : "unconfigured",
-            slack: config.slackBotToken && config.slackAppToken ? "configured" : "unconfigured",
-          },
         });
       } else {
         console.log("Healthy: no");
@@ -299,88 +243,63 @@ program
     }
   });
 
-// -----------------------------------------------------------------------------
-// status command
-// -----------------------------------------------------------------------------
-
 program
   .command("status")
-  .description("Show WhatsApp, Telegram, and OpenCode status")
-  .action(async () => {
+  .description("Show identity and OpenCode status")
+  .action(() => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    const whatsappLinked = hasWhatsAppCreds(config.whatsappAuthDir);
-    
+    const telegram = config.telegramBots.map((b) => ({ id: b.id, enabled: b.enabled !== false }));
+    const slack = config.slackApps.map((a) => ({ id: a.id, enabled: a.enabled !== false }));
     if (useJson) {
       outputJson({
         config: config.configPath,
         healthPort: config.healthPort ?? null,
-        whatsapp: {
-          linked: whatsappLinked,
-          dmPolicy: config.whatsappDmPolicy,
-          selfChatMode: config.whatsappSelfChatMode,
-          authDir: config.whatsappAuthDir,
-        },
-        telegram: {
-          configured: Boolean(config.telegramToken),
-          enabled: config.telegramEnabled,
-        },
-        slack: {
-          configured: Boolean(config.slackBotToken && config.slackAppToken),
-          enabled: config.slackEnabled,
-        },
-        opencode: {
-          url: config.opencodeUrl,
-          directory: config.opencodeDirectory,
-        },
+        telegram,
+        slack,
+        opencode: { url: config.opencodeUrl, directory: config.opencodeDirectory },
       });
-    } else {
-      console.log(`Config: ${config.configPath}`);
-      console.log(`Health port: ${config.healthPort ?? "(not set)"}`);
-      console.log(`WhatsApp linked: ${whatsappLinked ? "yes" : "no"}`);
-      console.log(`WhatsApp DM policy: ${config.whatsappDmPolicy}`);
-      console.log(`Telegram configured: ${config.telegramToken ? "yes" : "no"}`);
-      console.log(`Slack configured: ${config.slackBotToken && config.slackAppToken ? "yes" : "no"}`);
-      console.log(`Auth dir: ${config.whatsappAuthDir}`);
-      console.log(`OpenCode URL: ${config.opencodeUrl}`);
+      return;
     }
+    console.log(`Config: ${config.configPath}`);
+    console.log(`Health port: ${config.healthPort ?? "(not set)"}`);
+    console.log(`Telegram bots: ${telegram.length}`);
+    console.log(`Slack apps: ${slack.length}`);
+    console.log(`OpenCode URL: ${config.opencodeUrl}`);
   });
 
 // -----------------------------------------------------------------------------
-// config subcommand
+// Config helpers
 // -----------------------------------------------------------------------------
 
 const configCmd = program.command("config").description("Manage configuration");
 
 configCmd
   .command("get")
-  .argument("[key]", "Config key to get (dot notation, e.g., channels.whatsapp.dmPolicy)")
+  .argument("[key]", "Config key to get (dot notation)")
   .description("Get config value(s)")
   .action((key?: string) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
     const { config: configFile } = readConfigFile(config.configPath);
-    
-    if (key) {
-      const value = getNestedValue(configFile as Record<string, unknown>, key);
-      if (useJson) {
-        outputJson({ [key]: value });
-      } else {
-        if (value === undefined) {
-          console.log(`${key}: (not set)`);
-        } else if (typeof value === "object") {
-          console.log(`${key}: ${JSON.stringify(value, null, 2)}`);
-        } else {
-          console.log(`${key}: ${value}`);
-        }
-      }
-    } else {
-      if (useJson) {
-        outputJson(configFile);
-      } else {
-        console.log(JSON.stringify(configFile, null, 2));
-      }
+    if (!key) {
+      if (useJson) outputJson(configFile);
+      else console.log(JSON.stringify(configFile, null, 2));
+      return;
     }
+
+    const keys = key.split(".");
+    let current: any = configFile as any;
+    for (const k of keys) {
+      if (current === null || current === undefined || typeof current !== "object") {
+        current = undefined;
+        break;
+      }
+      current = current[k];
+    }
+
+    if (useJson) outputJson({ [key]: current });
+    else console.log(`${key}: ${current === undefined ? "(not set)" : typeof current === "object" ? JSON.stringify(current, null, 2) : current}`);
   });
 
 configCmd
@@ -391,503 +310,262 @@ configCmd
   .action((key: string, value: string) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    
-    const parsedValue = parseConfigValue(value);
+    const parsed = (() => {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return value;
+      }
+    })();
+
     const updated = updateConfig(config.configPath, (cfg) => {
-      const next = { ...cfg } as Record<string, unknown>;
-      setNestedValue(next, key, parsedValue);
+      const next: any = { ...cfg };
+      const keys = key.split(".");
+      let cur: any = next;
+      for (let i = 0; i < keys.length - 1; i++) {
+        const k = keys[i];
+        if (cur[k] === undefined || cur[k] === null || typeof cur[k] !== "object") cur[k] = {};
+        cur = cur[k];
+      }
+      cur[keys[keys.length - 1]] = parsed;
       return next as OwpenbotConfigFile;
     });
-    
-    if (useJson) {
-      outputJson({ success: true, key, value: parsedValue, config: updated });
-    } else {
-      console.log(`Set ${key} = ${JSON.stringify(parsedValue)}`);
-    }
+
+    if (useJson) outputJson({ success: true, key, value: parsed, config: updated });
+    else console.log(`Set ${key} = ${JSON.stringify(parsed)}`);
   });
 
 // -----------------------------------------------------------------------------
-// whatsapp subcommand
+// Identities
 // -----------------------------------------------------------------------------
 
-const whatsapp = program.command("whatsapp").description("WhatsApp helpers");
-
-whatsapp
-  .command("status")
-  .description("Show WhatsApp status")
-  .action(() => {
-    const useJson = program.opts().json;
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const linked = hasWhatsAppCreds(config.whatsappAuthDir);
-    
-    if (useJson) {
-      outputJson({
-        linked,
-        dmPolicy: config.whatsappDmPolicy,
-        selfChatMode: config.whatsappSelfChatMode,
-        authDir: config.whatsappAuthDir,
-        accountId: config.whatsappAccountId,
-        allowFrom: [...config.whatsappAllowFrom],
-      });
-    } else {
-      console.log(`WhatsApp linked: ${linked ? "yes" : "no"}`);
-      console.log(`DM policy: ${config.whatsappDmPolicy}`);
-      console.log(`Self chat mode: ${config.whatsappSelfChatMode ? "yes" : "no"}`);
-      console.log(`Auth dir: ${config.whatsappAuthDir}`);
-    }
-  });
-
-whatsapp
-  .command("login")
-  .description("Login to WhatsApp via QR code")
-  .action(async () => {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
-  });
-
-whatsapp
-  .command("logout")
-  .description("Logout of WhatsApp and clear auth state")
-  .action(() => {
-    const useJson = program.opts().json;
-    const config = loadConfig(process.env, { requireOpencode: false });
-    unpairWhatsApp(config, createAppLogger(config));
-    
-    if (useJson) {
-      outputJson({ success: true, message: "WhatsApp auth cleared" });
-    } else {
-      console.log("WhatsApp auth cleared.");
-    }
-  });
-
-whatsapp
-  .command("qr")
-  .description("Get WhatsApp QR code non-interactively")
-  .option("--format <format>", "Output format: ascii or base64", "ascii")
-  .action(async (opts) => {
-    const useJson = program.opts().json;
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const format = opts.format as "ascii" | "base64";
-    
-    if (hasWhatsAppCreds(config.whatsappAuthDir)) {
-      if (useJson) {
-        outputJson({ error: "WhatsApp already linked. Use 'whatsapp logout' first." });
-      } else {
-        console.log("WhatsApp already linked. Use 'whatsapp logout' first.");
-      }
-      process.exit(1);
-    }
-    
-    try {
-      const qr = await getWhatsAppQr(config, format);
-      
-      if (useJson) {
-        outputJson({ qr, format });
-      } else {
-        if (format === "ascii") {
-          // Use qrcode-terminal to print ASCII QR
-          const qrcode = await import("qrcode-terminal");
-          qrcode.default.generate(qr, { small: true });
-        } else {
-          console.log(qr);
-        }
-      }
-    } catch (error) {
-      if (useJson) {
-        outputJson({ error: String(error) });
-      } else {
-        console.error(`Failed to get QR code: ${String(error)}`);
-      }
-      process.exit(1);
-    }
-  });
-
-// -----------------------------------------------------------------------------
-// telegram subcommand
-// -----------------------------------------------------------------------------
-
-const telegram = program.command("telegram").description("Telegram helpers");
+const telegram = program.command("telegram").description("Telegram identities");
 
 telegram
-  .command("status")
-  .description("Show Telegram status")
+  .command("list")
+  .description("List Telegram bot identities")
   .action(() => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    
-    if (useJson) {
-      outputJson({
-        configured: Boolean(config.telegramToken),
-        enabled: config.telegramEnabled,
-        hasToken: Boolean(config.telegramToken),
-      });
-    } else {
-      console.log(`Telegram configured: ${config.telegramToken ? "yes" : "no"}`);
-      console.log(`Telegram enabled: ${config.telegramEnabled ? "yes" : "no"}`);
-    }
+    const items = config.telegramBots.map((b) => ({ id: b.id, enabled: b.enabled !== false }));
+    if (useJson) outputJson({ items });
+    else for (const item of items) console.log(`${item.id} ${item.enabled ? "enabled" : "disabled"}`);
   });
 
 telegram
-  .command("set-token")
+  .command("add")
   .argument("<token>", "Telegram bot token")
-  .description("Set Telegram bot token")
-  .action((token: string) => {
+  .option("--id <id>", "Identity id (default: default)")
+  .option("--disabled", "Add identity but disable it", false)
+  .description("Add or update a Telegram bot identity")
+  .action((token: string, opts: { id?: string; disabled?: boolean }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    
-    updateConfig(config.configPath, (cfg) => {
-      const next = { ...cfg } as OwpenbotConfigFile;
-      next.channels = next.channels ?? {};
-      next.channels.telegram = {
-        token,
-        enabled: true,
-      };
-      return next;
-    });
-    
-    if (useJson) {
-      outputJson({ success: true, message: "Telegram token saved" });
-    } else {
-      console.log("Telegram token saved.");
-    }
+    const id = normalizeIdentityId(opts.id);
+    const enabled = !opts.disabled;
+    updateConfig(config.configPath, (cfg) => upsertTelegramBot(cfg, { id, token: token.trim(), enabled }));
+    if (useJson) outputJson({ success: true, id, enabled });
+    else console.log(`Saved Telegram identity: ${id}`);
   });
 
-// -----------------------------------------------------------------------------
-// slack subcommand
-// -----------------------------------------------------------------------------
+telegram
+  .command("remove")
+  .argument("<id>", "Identity id")
+  .description("Remove a Telegram bot identity")
+  .action((idRaw: string) => {
+    const useJson = program.opts().json;
+    const config = loadConfig(process.env, { requireOpencode: false });
+    const { next, deleted } = deleteTelegramBot(readConfigFile(config.configPath).config, idRaw);
+    writeConfigFile(config.configPath, next);
+    if (useJson) outputJson({ success: deleted, id: normalizeIdentityId(idRaw) });
+    else console.log(deleted ? `Removed Telegram identity: ${normalizeIdentityId(idRaw)}` : "Identity not found.");
+    process.exit(deleted ? 0 : 1);
+  });
 
-const slack = program.command("slack").description("Slack helpers");
+const slack = program.command("slack").description("Slack identities");
 
 slack
-  .command("status")
-  .description("Show Slack status")
+  .command("list")
+  .description("List Slack app identities")
   .action(() => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
-    const configured = Boolean(config.slackBotToken && config.slackAppToken);
-
-    if (useJson) {
-      outputJson({
-        configured,
-        enabled: config.slackEnabled,
-        hasBotToken: Boolean(config.slackBotToken),
-        hasAppToken: Boolean(config.slackAppToken),
-      });
-    } else {
-      console.log(`Slack configured: ${configured ? "yes" : "no"}`);
-      console.log(`Slack enabled: ${config.slackEnabled ? "yes" : "no"}`);
-    }
+    const items = config.slackApps.map((a) => ({ id: a.id, enabled: a.enabled !== false }));
+    if (useJson) outputJson({ items });
+    else for (const item of items) console.log(`${item.id} ${item.enabled ? "enabled" : "disabled"}`);
   });
 
 slack
-  .command("set-tokens")
+  .command("add")
   .argument("<botToken>", "Slack bot token (xoxb-...)")
   .argument("<appToken>", "Slack app token (xapp-...)")
-  .description("Set Slack bot/app tokens")
-  .action((botToken: string, appToken: string) => {
+  .option("--id <id>", "Identity id (default: default)")
+  .option("--disabled", "Add identity but disable it", false)
+  .description("Add or update a Slack app identity")
+  .action((botToken: string, appToken: string, opts: { id?: string; disabled?: boolean }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
+    const id = normalizeIdentityId(opts.id);
+    const enabled = !opts.disabled;
+    updateConfig(config.configPath, (cfg) =>
+      upsertSlackApp(cfg, { id, botToken: botToken.trim(), appToken: appToken.trim(), enabled }),
+    );
+    if (useJson) outputJson({ success: true, id, enabled });
+    else console.log(`Saved Slack identity: ${id}`);
+  });
 
-    updateConfig(config.configPath, (cfg) => {
-      const next = { ...cfg } as OwpenbotConfigFile;
-      next.channels = next.channels ?? {};
-      next.channels.slack = {
-        botToken,
-        appToken,
-        enabled: true,
-      };
-      return next;
-    });
-
-    if (useJson) {
-      outputJson({ success: true, message: "Slack tokens saved" });
-    } else {
-      console.log("Slack tokens saved.");
-    }
+slack
+  .command("remove")
+  .argument("<id>", "Identity id")
+  .description("Remove a Slack identity")
+  .action((idRaw: string) => {
+    const useJson = program.opts().json;
+    const config = loadConfig(process.env, { requireOpencode: false });
+    const { next, deleted } = deleteSlackApp(readConfigFile(config.configPath).config, idRaw);
+    writeConfigFile(config.configPath, next);
+    if (useJson) outputJson({ success: deleted, id: normalizeIdentityId(idRaw) });
+    else console.log(deleted ? `Removed Slack identity: ${normalizeIdentityId(idRaw)}` : "Identity not found.");
+    process.exit(deleted ? 0 : 1);
   });
 
 // -----------------------------------------------------------------------------
-// pairing subcommand
+// Bindings
 // -----------------------------------------------------------------------------
 
-const pairing = program.command("pairing").description("Pairing requests");
+const bindings = program.command("bindings").description("Manage identity-scoped bindings");
 
-pairing
+bindings
   .command("list")
-  .description("List pending pairing requests")
-  .action(() => {
+  .option("--channel <channel>", "telegram|slack")
+  .option("--identity <id>", "Identity id")
+  .description("List bindings")
+  .action((opts: { channel?: string; identity?: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
     const store = new BridgeStore(config.dbPath);
-    store.prunePairingRequests();
-    const requests = store.listPairingRequests();
+    const channelRaw = opts.channel?.trim().toLowerCase();
+    const identityId = opts.identity?.trim() ? normalizeIdentityId(opts.identity) : undefined;
+    const channel: ChannelName | undefined =
+      channelRaw === "telegram" || channelRaw === "slack" ? (channelRaw as ChannelName) : channelRaw ? (outputError("Invalid channel"), undefined) : undefined;
+    const items = store
+      .listBindings({ ...(channel ? { channel } : {}), ...(identityId ? { identityId } : {}) })
+      .map((b) => ({
+        channel: b.channel,
+        identityId: b.identity_id,
+        peerId: b.peer_id,
+        directory: b.directory,
+        updatedAt: b.updated_at,
+      }));
     store.close();
-    
-    if (useJson) {
-      outputJson(
-        requests.map((r) => ({
-          code: r.code,
-          peerId: r.peer_id,
-          channel: r.channel,
-          createdAt: new Date(r.created_at).toISOString(),
-          expiresAt: new Date(r.expires_at).toISOString(),
-        })),
-      );
-    } else {
-      if (!requests.length) {
-        console.log("No pending pairing requests.");
-      } else {
-        for (const request of requests) {
-          console.log(`${request.code} ${request.channel} ${request.peer_id}`);
-        }
-      }
-    }
+    if (useJson) outputJson({ items });
+    else for (const item of items) console.log(`${item.channel}/${item.identityId} ${item.peerId} -> ${item.directory}`);
   });
 
-pairing
-  .command("approve")
-  .argument("<code>", "Pairing code to approve")
-  .description("Approve a pairing request")
-  .action((code: string) => {
+bindings
+  .command("set")
+  .requiredOption("--channel <channel>", "telegram|slack")
+  .requiredOption("--identity <id>", "Identity id")
+  .requiredOption("--peer <peerId>", "Peer id")
+  .requiredOption("--dir <directory>", "Directory")
+  .description("Set a binding")
+  .action((opts: { channel: string; identity: string; peer: string; dir: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
     const store = new BridgeStore(config.dbPath);
-    const request = store.approvePairingRequest("whatsapp", code.trim());
-    
-    if (!request) {
-      store.close();
-      if (useJson) {
-        outputJson({ success: false, error: "Pairing code not found or expired" });
-      } else {
-        console.log("Pairing code not found or expired.");
-      }
-      process.exit(1);
-    }
-    
-    store.allowPeer("whatsapp", request.peer_id);
+    const channelRaw = opts.channel.trim().toLowerCase();
+    if (channelRaw !== "telegram" && channelRaw !== "slack") outputError("Invalid channel");
+    const identityId = normalizeIdentityId(opts.identity);
+    const peerId = opts.peer.trim();
+    const directory = opts.dir.trim();
+    if (!peerId || !directory) outputError("peer and dir are required");
+    store.upsertBinding(channelRaw as ChannelName, identityId, peerId, directory);
+    store.deleteSession(channelRaw as ChannelName, identityId, peerId);
     store.close();
-    
-    if (useJson) {
-      outputJson({ success: true, peerId: request.peer_id, channel: request.channel });
-    } else {
-      console.log(`Approved ${request.peer_id}`);
-    }
+    if (useJson) outputJson({ success: true });
+    else console.log("Binding saved.");
   });
 
-pairing
-  .command("deny")
-  .argument("<code>", "Pairing code to deny")
-  .description("Deny a pairing request")
-  .action((code: string) => {
+bindings
+  .command("clear")
+  .requiredOption("--channel <channel>", "telegram|slack")
+  .requiredOption("--identity <id>", "Identity id")
+  .requiredOption("--peer <peerId>", "Peer id")
+  .description("Clear a binding")
+  .action((opts: { channel: string; identity: string; peer: string }) => {
     const useJson = program.opts().json;
     const config = loadConfig(process.env, { requireOpencode: false });
     const store = new BridgeStore(config.dbPath);
-    const ok = store.denyPairingRequest("whatsapp", code.trim());
+    const channelRaw = opts.channel.trim().toLowerCase();
+    if (channelRaw !== "telegram" && channelRaw !== "slack") outputError("Invalid channel");
+    const identityId = normalizeIdentityId(opts.identity);
+    const peerId = opts.peer.trim();
+    const ok = store.deleteBinding(channelRaw as ChannelName, identityId, peerId);
+    store.deleteSession(channelRaw as ChannelName, identityId, peerId);
     store.close();
-    
-    if (useJson) {
-      outputJson({ success: ok, message: ok ? "Pairing request removed" : "Pairing code not found" });
-    } else {
-      console.log(ok ? "Removed pairing request." : "Pairing code not found.");
-    }
-    
+    if (useJson) outputJson({ success: ok });
+    else console.log(ok ? "Binding removed." : "Binding not found.");
     process.exit(ok ? 0 : 1);
   });
 
 // -----------------------------------------------------------------------------
-// Legacy commands for backwards compatibility
-// -----------------------------------------------------------------------------
-
-program
-  .command("qr")
-  .description("Print a WhatsApp QR code to pair (alias for whatsapp qr)")
-  .action(async () => {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
-  });
-
-program
-  .command("unpair")
-  .description("Clear WhatsApp pairing data (alias for whatsapp logout)")
-  .action(() => {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    unpairWhatsApp(config, createAppLogger(config));
-  });
-
-// login subcommand for backwards compatibility
-const login = program.command("login").description("Link channels (legacy)");
-
-login
-  .command("whatsapp")
-  .description("Login to WhatsApp via QR code")
-  .action(async () => {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    await loginWhatsApp(config, createAppLogger(config), { onStatus: console.log });
-  });
-
-login
-  .command("telegram")
-  .option("--token <token>", "Telegram bot token")
-  .description("Save Telegram bot token")
-  .action((opts) => {
-    if (!opts.token) {
-      console.error("Error: --token is required");
-      process.exit(1);
-    }
-    const config = loadConfig(process.env, { requireOpencode: false });
-    updateConfig(config.configPath, (cfg) => {
-      const next = { ...cfg } as OwpenbotConfigFile;
-      next.channels = next.channels ?? {};
-      next.channels.telegram = {
-        token: opts.token,
-        enabled: true,
-      };
-      return next;
-    });
-    console.log("Telegram token saved.");
-  });
-
-// pairing-code (legacy alias)
-program
-  .command("pairing-code")
-  .description("List pending pairing codes (alias for pairing list)")
-  .action(() => {
-    const config = loadConfig(process.env, { requireOpencode: false });
-    const store = new BridgeStore(config.dbPath);
-    store.prunePairingRequests();
-    const requests = store.listPairingRequests("whatsapp");
-    if (!requests.length) {
-      console.log("No pending pairing requests.");
-    } else {
-      for (const request of requests) {
-        console.log(`${request.code} ${request.peer_id}`);
-      }
-    }
-    store.close();
-  });
-
-// -----------------------------------------------------------------------------
-// send command
+// Send helper
 // -----------------------------------------------------------------------------
 
 program
   .command("send")
   .description("Send a test message")
-  .requiredOption("--channel <channel>", "Channel: whatsapp, telegram, or slack")
-  .requiredOption("--to <recipient>", "Recipient ID (phone number or chat ID)")
+  .requiredOption("--channel <channel>", "telegram or slack")
+  .requiredOption("--identity <id>", "Identity id")
+  .requiredOption("--to <recipient>", "Recipient ID (chat ID or peerId)")
   .requiredOption("--message <text>", "Message text to send")
-  .action(async (opts) => {
+  .action(async (opts: { channel: string; identity: string; to: string; message: string }) => {
     const useJson = program.opts().json;
-    const channel = opts.channel as string;
-    const to = opts.to as string;
-    const message = opts.message as string;
-
-    if (channel !== "whatsapp" && channel !== "telegram" && channel !== "slack") {
-      if (useJson) {
-        outputJson({
-          success: false,
-          error: `Invalid channel: ${channel}. Must be 'whatsapp', 'telegram', or 'slack'.`,
-        });
-      } else {
-        console.error(`Error: Invalid channel '${channel}'. Must be 'whatsapp', 'telegram', or 'slack'.`);
-      }
-      process.exit(1);
+    const channelRaw = opts.channel.trim().toLowerCase();
+    if (channelRaw !== "telegram" && channelRaw !== "slack") {
+      outputError("Invalid channel. Must be 'telegram' or 'slack'.");
     }
 
     const config = loadConfig(process.env, { requireOpencode: false });
-    const logger = createAppLogger(config);
+    const identityId = normalizeIdentityId(opts.identity);
+    const to = opts.to.trim();
+    const message = opts.message;
 
     try {
-      if (channel === "whatsapp") {
-        const { createWhatsAppAdapter } = await import("./whatsapp.js");
-        const adapter = createWhatsAppAdapter(config, logger, async () => {}, { printQr: false });
-        await adapter.start();
-        
-        // Format the recipient ID for WhatsApp
-        let peerId = to.trim();
-        if (!peerId.includes("@")) {
-          // Remove + prefix if present and add WhatsApp suffix
-          const cleaned = peerId.startsWith("+") ? peerId.slice(1) : peerId;
-          peerId = `${cleaned}@s.whatsapp.net`;
-        }
-        
-        await adapter.sendText(peerId, message);
-        await adapter.stop();
-        
-        if (useJson) {
-          outputJson({ success: true, channel, to: peerId, message });
-        } else {
-          console.log(`Message sent to ${peerId} via WhatsApp`);
-        }
-      } else if (channel === "telegram") {
-        const { createTelegramAdapter } = await import("./telegram.js");
-        const adapter = createTelegramAdapter(config, logger, async () => {});
-        // Note: Telegram adapter's start() begins long-polling, we just need to send
-        // Use the bot API directly for a one-shot send
-        const { Bot } = await import("grammy");
-        if (!config.telegramToken) {
-          throw new Error("Telegram bot token not configured. Use 'owpenbot telegram set-token <token>' first.");
-        }
-        const bot = new Bot(config.telegramToken);
-        await bot.api.sendMessage(Number(to), message);
-        
-        if (useJson) {
-          outputJson({ success: true, channel, to, message });
-        } else {
-          console.log(`Message sent to ${to} via Telegram`);
-        }
+      if (channelRaw === "telegram") {
+        const bot = config.telegramBots.find((b) => b.id === identityId);
+        if (!bot) throw new Error(`Telegram identity not found: ${identityId}`);
+        const tg = new Bot(bot.token);
+        await tg.api.sendMessage(Number(to), message);
       } else {
-        // Slack
-        const { WebClient } = await import("@slack/web-api");
-        if (!config.slackBotToken) {
-          throw new Error("Slack bot token not configured. Use 'owpenbot slack set-tokens <bot> <app>' first.");
-        }
-        const web = new WebClient(config.slackBotToken);
+        const app = config.slackApps.find((a) => a.id === identityId);
+        if (!app) throw new Error(`Slack identity not found: ${identityId}`);
+        const web = new WebClient(app.botToken);
         const peer = parseSlackPeerId(to);
-        if (!peer.channelId) {
-          throw new Error("Invalid recipient for Slack. Use a channel ID (C..., D...) or encoded peerId (C...|threadTs)");
-        }
+        if (!peer.channelId) throw new Error("Invalid recipient for Slack.");
         await web.chat.postMessage({
           channel: peer.channelId,
           text: message,
           ...(peer.threadTs ? { thread_ts: peer.threadTs } : {}),
-        });
-
-        if (useJson) {
-          outputJson({ success: true, channel, to, message });
-        } else {
-          console.log(`Message sent to ${to} via Slack`);
-        }
+        } as any);
       }
+
+      if (useJson) outputJson({ success: true });
+      else console.log("Message sent.");
       process.exit(0);
     } catch (error) {
-      if (useJson) {
-        outputJson({ success: false, error: String(error) });
-      } else {
-        console.error(`Failed to send message: ${String(error)}`);
-      }
+      if (useJson) outputJson({ success: false, error: String(error) });
+      else console.error(`Failed to send message: ${String(error)}`);
       process.exit(1);
     }
   });
-
-// -----------------------------------------------------------------------------
-// Default action (no subcommand)
-// -----------------------------------------------------------------------------
 
 program.action(() => {
   program.outputHelp();
 });
 
-// -----------------------------------------------------------------------------
-// Parse and run
-// -----------------------------------------------------------------------------
-
 program.parseAsync(process.argv).catch((error) => {
   const useJson = program.opts().json;
-  if (useJson) {
-    outputJson({ error: String(error) });
-  } else {
-    console.error(error);
-  }
+  if (useJson) outputJson({ error: String(error) });
+  else console.error(error);
   process.exitCode = 1;
 });

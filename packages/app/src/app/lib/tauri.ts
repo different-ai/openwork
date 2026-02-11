@@ -118,6 +118,11 @@ export type WorkspaceInfo = {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 };
 
 export type WorkspaceList = {
@@ -172,6 +177,11 @@ export async function workspaceCreateRemote(input: {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_create_remote", {
     baseUrl: input.baseUrl,
@@ -182,6 +192,9 @@ export async function workspaceCreateRemote(input: {
     openworkToken: input.openworkToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    sandboxBackend: input.sandboxBackend ?? null,
+    sandboxRunId: input.sandboxRunId ?? null,
+    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -195,6 +208,11 @@ export async function workspaceUpdateRemote(input: {
   openworkToken?: string | null;
   openworkWorkspaceId?: string | null;
   openworkWorkspaceName?: string | null;
+
+  // Sandbox lifecycle metadata (desktop-managed)
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
 }): Promise<WorkspaceList> {
   return invoke<WorkspaceList>("workspace_update_remote", {
     workspaceId: input.workspaceId,
@@ -206,6 +224,9 @@ export async function workspaceUpdateRemote(input: {
     openworkToken: input.openworkToken ?? null,
     openworkWorkspaceId: input.openworkWorkspaceId ?? null,
     openworkWorkspaceName: input.openworkWorkspaceName ?? null,
+    sandboxBackend: input.sandboxBackend ?? null,
+    sandboxRunId: input.sandboxRunId ?? null,
+    sandboxContainerName: input.sandboxContainerName ?? null,
   });
 }
 
@@ -352,6 +373,56 @@ export async function openwrkInstanceDispose(workspacePath: string): Promise<boo
   return invoke<boolean>("openwrk_instance_dispose", { workspacePath });
 }
 
+export type AppBuildInfo = {
+  version: string;
+  gitSha?: string | null;
+  buildEpoch?: string | null;
+};
+
+export async function appBuildInfo(): Promise<AppBuildInfo> {
+  return invoke<AppBuildInfo>("app_build_info");
+}
+
+export type OpenwrkDetachedHost = {
+  openworkUrl: string;
+  token: string;
+  hostToken: string;
+  port: number;
+  sandboxBackend?: "docker" | null;
+  sandboxRunId?: string | null;
+  sandboxContainerName?: string | null;
+};
+
+export async function openwrkStartDetached(input: {
+  workspacePath: string;
+  sandboxBackend?: "none" | "docker" | null;
+  runId?: string | null;
+}): Promise<OpenwrkDetachedHost> {
+  return invoke<OpenwrkDetachedHost>("openwrk_start_detached", {
+    workspacePath: input.workspacePath,
+    sandboxBackend: input.sandboxBackend ?? null,
+    runId: input.runId ?? null,
+  });
+}
+
+export type SandboxDoctorResult = {
+  installed: boolean;
+  daemonRunning: boolean;
+  permissionOk: boolean;
+  ready: boolean;
+  clientVersion?: string | null;
+  serverVersion?: string | null;
+  error?: string | null;
+};
+
+export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
+  return invoke<SandboxDoctorResult>("sandbox_doctor");
+}
+
+export async function sandboxStop(containerName: string): Promise<ExecResult> {
+  return invoke<ExecResult>("sandbox_stop", { containerName });
+}
+
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
 }
@@ -436,6 +507,9 @@ export type ScheduledJobRun = {
 };
 
 export type ScheduledJob = {
+  scopeId?: string;
+  timeoutSeconds?: number;
+  invocation?: { command: string; args: string[] };
   slug: string;
   name: string;
   schedule: string;
@@ -580,43 +654,32 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
-export async function schedulerListJobs(): Promise<ScheduledJob[]> {
-  return invoke<ScheduledJob[]>("scheduler_list_jobs");
+export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
+  return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }
 
-export async function schedulerDeleteJob(name: string): Promise<ScheduledJob> {
-  return invoke<ScheduledJob>("scheduler_delete_job", { name });
+export async function schedulerDeleteJob(name: string, scopeRoot?: string): Promise<ScheduledJob> {
+  return invoke<ScheduledJob>("scheduler_delete_job", { name, scopeRoot });
 }
 
 // Owpenbot types
-export type OwpenbotWhatsAppStatus = {
-  linked: boolean;
-  dmPolicy: "pairing" | "allowlist" | "open" | "disabled";
-  allowFrom: string[];
-};
-
-export type OwpenbotTelegramStatus = {
-  configured: boolean;
+export type OwpenbotIdentityItem = {
+  id: string;
   enabled: boolean;
+  running?: boolean;
 };
 
-export type OwpenbotSlackStatus = {
-  configured: boolean;
-  enabled: boolean;
-};
-
-export type OwpenbotOpencodeStatus = {
-  url: string;
+export type OwpenbotChannelStatus = {
+  items: OwpenbotIdentityItem[];
 };
 
 export type OwpenbotStatus = {
   running: boolean;
   config: string;
   healthPort?: number | null;
-  whatsapp: OwpenbotWhatsAppStatus;
-  telegram: OwpenbotTelegramStatus;
-  slack: OwpenbotSlackStatus;
-  opencode: OwpenbotOpencodeStatus;
+  telegram: OwpenbotChannelStatus;
+  slack: OwpenbotChannelStatus;
+  opencode: { url: string; directory?: string };
 };
 
 export type OwpenbotStatusResult =
@@ -628,24 +691,9 @@ export type OwpenbotInfo = {
   version: string | null;
   workspacePath: string | null;
   opencodeUrl: string | null;
-  qrData: string | null;
-  whatsappLinked: boolean;
-  telegramConfigured: boolean;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
-};
-
-export type OwpenbotQr = {
-  qr: string; // base64 encoded
-  format: "png" | "ascii";
-};
-
-export type OwpenbotPairingRequest = {
-  code: string;
-  peerId: string;
-  platform: "whatsapp" | "telegram";
-  timestamp: number;
 };
 
 // Owpenbot functions - call Tauri commands that wrap owpenbot CLI
@@ -668,82 +716,6 @@ export async function getOwpenbotStatusDetailed(): Promise<OwpenbotStatusResult>
 
 export async function owpenbotInfo(): Promise<OwpenbotInfo> {
   return invoke<OwpenbotInfo>("owpenbot_info");
-}
-
-export async function getOwpenbotQr(): Promise<OwpenbotQr | null> {
-  try {
-    const qrBase64 = await invoke<string>("owpenbot_qr");
-    return {
-      qr: qrBase64,
-      format: "png",
-    };
-  } catch {
-    return null;
-  }
-}
-
-export async function setOwpenbotDmPolicy(
-  policy: OwpenbotWhatsAppStatus["dmPolicy"],
-): Promise<ExecResult> {
-  try {
-    await invoke("owpenbot_config_set", { key: "channels.whatsapp.dmPolicy", value: policy });
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
-}
-
-export async function setOwpenbotAllowlist(allowlist: string[]): Promise<ExecResult> {
-  try {
-    await invoke("owpenbot_config_set", {
-      key: "channels.whatsapp.allowFrom",
-      value: JSON.stringify(allowlist),
-    });
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
-}
-
-export async function setOwpenbotTelegramToken(token: string): Promise<ExecResult> {
-  try {
-    const status = await getOwpenbotStatus();
-    const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/telegram-token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    if (!response.ok) {
-      const message = await response.text();
-      return { ok: false, status: response.status, stdout: "", stderr: message };
-    }
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
-}
-
-export async function setOwpenbotSlackTokens(botToken: string, appToken: string): Promise<ExecResult> {
-  try {
-    const status = await getOwpenbotStatus();
-    const healthPort = status?.healthPort ?? 3005;
-    const response = await (isTauriRuntime() ? tauriFetch : fetch)(
-      `http://127.0.0.1:${healthPort}/config/slack-tokens`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ botToken, appToken }),
-      },
-    );
-    if (!response.ok) {
-      const message = await response.text();
-      return { ok: false, status: response.status, stdout: "", stderr: message };
-    }
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
 }
 
 export async function getOwpenbotGroupsEnabled(): Promise<boolean | null> {
@@ -777,47 +749,6 @@ export async function setOwpenbotGroupsEnabled(enabled: boolean): Promise<ExecRe
       const message = await response.text();
       return { ok: false, status: response.status, stdout: "", stderr: message };
     }
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
-}
-
-export async function getOwpenbotPairingRequests(): Promise<OwpenbotPairingRequest[]> {
-  try {
-    const result = await invoke<unknown>("owpenbot_pairing_list");
-    const requests = Array.isArray(result) ? result : [];
-    return requests
-      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
-      .map((entry) => {
-        const channel = String(entry.channel ?? "whatsapp");
-        const createdAt = String(entry.createdAt ?? "");
-        const platform: "whatsapp" | "telegram" = channel === "telegram" ? "telegram" : "whatsapp";
-        return {
-          code: String(entry.code ?? ""),
-          peerId: String(entry.peerId ?? ""),
-          platform,
-          timestamp: createdAt ? Date.parse(createdAt) : Date.now(),
-        };
-      })
-      .filter((entry) => entry.code && entry.peerId);
-  } catch {
-    return [];
-  }
-}
-
-export async function approveOwpenbotPairing(code: string): Promise<ExecResult> {
-  try {
-    await invoke("owpenbot_pairing_approve", { code });
-    return { ok: true, status: 0, stdout: "", stderr: "" };
-  } catch (e) {
-    return { ok: false, status: 1, stdout: "", stderr: String(e) };
-  }
-}
-
-export async function denyOwpenbotPairing(code: string): Promise<ExecResult> {
-  try {
-    await invoke("owpenbot_pairing_deny", { code });
     return { ok: true, status: 0, stdout: "", stderr: "" };
   } catch (e) {
     return { ok: false, status: 1, stdout: "", stderr: String(e) };

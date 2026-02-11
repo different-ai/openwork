@@ -17,9 +17,6 @@ pub struct OwpenbotState {
     pub workspace_path: Option<String>,
     pub opencode_url: Option<String>,
     pub health_port: Option<u16>,
-    pub qr_data: Option<String>,
-    pub whatsapp_linked: bool,
-    pub telegram_configured: bool,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
 }
@@ -40,9 +37,6 @@ impl OwpenbotManager {
             version: state.version.clone(),
             workspace_path: state.workspace_path.clone(),
             opencode_url: state.opencode_url.clone(),
-            qr_data: state.qr_data.clone(),
-            whatsapp_linked: state.whatsapp_linked,
-            telegram_configured: state.telegram_configured,
             pid,
             last_stdout: state.last_stdout.clone(),
             last_stderr: state.last_stderr.clone(),
@@ -57,9 +51,6 @@ impl OwpenbotManager {
         state.version = None;
         state.workspace_path = None;
         state.opencode_url = None;
-        state.qr_data = None;
-        state.whatsapp_linked = false;
-        state.telegram_configured = false;
         state.health_port = None;
         state.last_stdout = None;
         state.last_stderr = None;

@@ -54,7 +54,7 @@ export default function RenameSessionModal(props: RenameSessionModalProps) {
                 placeholder={translate("session.rename_placeholder")}
                 class="bg-gray-3"
                 onKeyDown={(event) => {
-                  if (event.key !== "Enter") return;
+                  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return;
                   event.preventDefault();
                   if (props.canSave) props.onSave();
                 }}

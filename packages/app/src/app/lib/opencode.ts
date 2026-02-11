@@ -14,6 +14,47 @@ export type OpencodeAuth = {
   mode?: "basic" | "openwork";
 };
 
+const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
+
+async function fetchWithTimeout(
+  fetchImpl: typeof globalThis.fetch,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return fetchImpl(input, init);
+  }
+
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const signal = controller?.signal;
+  const initWithSignal = signal && !init?.signal ? { ...(init ?? {}), signal } : init;
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      try {
+        controller?.abort();
+      } catch {
+        // ignore
+      }
+      reject(new Error("Request timed out."));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
+  } catch (error) {
+    const name = (error && typeof error === "object" && "name" in error ? (error as any).name : "") as string;
+    if (name === "AbortError") {
+      throw new Error("Request timed out.");
+    }
+    throw error;
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 const encodeBasicAuth = (auth?: OpencodeAuth) => {
   if (!auth?.username || !auth?.password) return null;
   const token = `${auth.username}:${auth.password}`;
@@ -43,15 +84,25 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
       const headers = new Headers(input.headers);
       addAuth(headers);
       const request = new Request(input, { headers });
-      return tauriFetch(request);
+      return fetchWithTimeout(
+        tauriFetch as unknown as typeof globalThis.fetch,
+        request,
+        undefined,
+        DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+      );
     }
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
-    return tauriFetch(input, {
-      ...init,
-      headers,
-    });
+    return fetchWithTimeout(
+      tauriFetch as unknown as typeof globalThis.fetch,
+      input,
+      {
+        ...init,
+        headers,
+      },
+      DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
+    );
   };
 };
 
@@ -77,7 +128,10 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
     }
   }
 
-  const fetchImpl = isTauriRuntime() ? createTauriFetch(auth) : undefined;
+  const fetchImpl = isTauriRuntime()
+    ? createTauriFetch(auth)
+    : (input: RequestInfo | URL, init?: RequestInit) =>
+        fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   return createOpencodeClient({
     baseUrl,
     directory,

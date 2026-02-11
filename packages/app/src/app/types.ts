@@ -76,7 +76,8 @@ export type PromptMode = "prompt" | "shell";
 export type ComposerPart =
   | { type: "text"; text: string }
   | { type: "agent"; name: string }
-  | { type: "file"; path: string; label?: string };
+  | { type: "file"; path: string; label?: string }
+  | { type: "paste"; id: string; label: string; text: string; lines: number };
 
 export type ComposerAttachment = {
   id: string;
@@ -98,7 +99,14 @@ export type ComposerDraft = {
   mode: PromptMode;
   parts: ComposerPart[];
   attachments: ComposerAttachment[];
+  /** Editor-visible text (may include collapsed paste placeholders). */
   text: string;
+  /**
+   * Resolved text to send to the model.
+   * When a paste is collapsed into a placeholder (e.g. "[pasted text 1]"),
+   * this includes the full pasted text instead.
+   */
+  resolvedText?: string;
   /** When set, draft is a slash command invocation */
   command?: { name: string; arguments: string } | undefined;
 };
@@ -130,6 +138,7 @@ export type DashboardTab =
   | "skills"
   | "plugins"
   | "mcp"
+  | "identities"
   | "config"
   | "settings"
   | "task-center";
@@ -209,6 +218,18 @@ export type SkillCard = {
   trigger?: string;
 };
 
+export type HubSkillCard = {
+  name: string;
+  description?: string;
+  trigger?: string;
+  source: {
+    owner: string;
+    repo: string;
+    ref: string;
+    path: string;
+  };
+};
+
 export type PluginInstallStep = {
   title: string;
   description: string;
@@ -264,6 +285,13 @@ export type OpencodeConnectStatus = {
   reason?: string | null;
   status: "connecting" | "connected" | "error";
   error?: string | null;
+  metrics?: {
+    healthyMs?: number;
+    loadSessionsMs?: number;
+    pendingPermissionsMs?: number;
+    providersMs?: number;
+    totalMs?: number;
+  };
 };
 
 export type ReloadTrigger = {

@@ -51,6 +51,11 @@ export default {
   "dashboard.create_workspace_title": "创建工作区",
   "dashboard.create_workspace_subtitle": "初始化新的基于文件夹的工作区。",
   "dashboard.create_workspace_confirm": "创建工作区",
+  "dashboard.create_sandbox_confirm": "创建为沙盒",
+  "dashboard.sandbox_get_ready_title": "沙盒需要 Docker",
+  "dashboard.sandbox_get_ready_action": "准备沙盒环境",
+  "dashboard.sandbox_get_ready_desc": "在隔离的 Docker 容器中运行此工作区，更安全、更可复现。",
+  "dashboard.sandbox_checking_docker": "正在检查 Docker...",
   "dashboard.create_remote_workspace_title": "添加远程工作区",
   "dashboard.create_remote_workspace_subtitle": "保存 OpenWork 服务器为工作区。",
   "dashboard.create_remote_workspace_confirm": "添加工作区",
@@ -398,6 +403,15 @@ export default {
   "mcp.enter_url_first": "先输入服务器 URL。",
   "mcp.use_debug_command": "使用 opencode mcp debug <name> 验证连接。",
   "mcp.add_failed": "添加 MCP 失败。",
+
+  "mcp.logout_label": "OAuth",
+  "mcp.logout_action": "退出登录",
+  "mcp.logout_working": "正在退出...",
+  "mcp.logout_hint": "将删除已保存的 OAuth 凭据。之后需要重新登录。",
+  "mcp.logout_modal_title": "退出登录？",
+  "mcp.logout_modal_message": "这将删除 {server} 的 OAuth 凭据。之后需要重新登录才能使用该应用。",
+  "mcp.logout_success": "{server} 已退出登录。",
+  "mcp.logout_failed": "退出登录失败。",
 
   // MCP Auth Modal
   "mcp.auth.open_browser_signin": "我们将打开您的浏览器完成登录。",

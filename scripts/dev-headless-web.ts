@@ -51,6 +51,34 @@ const logLine = (message: string) => {
   process.stdout.write(`${message}\n`);
 };
 
+const readBool = (value: string | undefined) => {
+  const normalized = (value ?? "").trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+};
+
+const silent = process.argv.includes("--silent");
+
+const autoBuildEnabled = process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD == null
+  ? true
+  : readBool(process.env.OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD);
+
+const runCommand = (command: string, args: string[]) =>
+  new Promise<void>((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      env: process.env,
+      stdio: silent ? "ignore" : "inherit",
+    });
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${command} ${args.join(" ")} exited with code ${code ?? "unknown"}`));
+    });
+  });
+
 const spawnLogged = (command: string, args: string[], logPath: string, env: NodeJS.ProcessEnv) => {
   const logFd = openSync(logPath, "w");
   return spawn(command, args, {
@@ -78,19 +106,64 @@ const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
 const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
 const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
 const openworkServerBin = path.join(cwd, "packages/server/dist/bin/openwork-server");
+const owpenbotBin = path.join(cwd, "packages/owpenbot/dist/bin/owpenbot");
 
 const ensureOpenworkServer = async () => {
   try {
     await access(openworkServerBin);
   } catch {
+    if (!autoBuildEnabled) {
+      logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
+      logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
+      logLine("[dev:headless-web] Run: pnpm --filter openwork-server build:bin");
+      logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
+      process.exit(1);
+    }
+
     logLine(`[dev:headless-web] Missing OpenWork server binary at ${openworkServerBin}`);
-    logLine("[dev:headless-web] Run: pnpm --filter openwork-server build:bin");
-    process.exit(1);
+    logLine("[dev:headless-web] Auto-building: pnpm --filter openwork-server build:bin");
+    try {
+      await runCommand("pnpm", ["--filter", "openwork-server", "build:bin"]);
+      await access(openworkServerBin);
+    } catch (error) {
+      logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  }
+};
+
+const ensureOwpenbot = async () => {
+  try {
+    await access(owpenbotBin);
+  } catch {
+    if (!autoBuildEnabled) {
+      logLine(`[dev:headless-web] Missing owpenbot binary at ${owpenbotBin}`);
+      logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
+      logLine("[dev:headless-web] Run: pnpm --filter owpenwork build:bin");
+      logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
+      process.exit(1);
+    }
+
+    logLine(`[dev:headless-web] Missing owpenbot binary at ${owpenbotBin}`);
+    logLine("[dev:headless-web] Auto-building: pnpm --filter owpenwork build:bin");
+    try {
+      await runCommand("pnpm", ["--filter", "owpenwork", "build:bin"]);
+      await access(owpenbotBin);
+    } catch (error) {
+      logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
   }
 };
 
 const openworkUrl = `http://${clientHost}:${openworkPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
+// In practice we want owpenbot on for end-to-end messaging tests.
+// Allow opt-out via OPENWORK_DEV_OWPENBOT=0.
+const owpenbotEnabled = process.env.OPENWORK_DEV_OWPENBOT == null
+  ? true
+  : readBool(process.env.OPENWORK_DEV_OWPENBOT);
+const owpenbotRequired = readBool(process.env.OPENWORK_DEV_OWPENBOT_REQUIRED);
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
@@ -107,9 +180,14 @@ const headlessEnv = {
   OPENWORK_TOKEN: openworkToken,
   OPENWORK_HOST_TOKEN: openworkHostToken,
   OPENWORK_SERVER_BIN: openworkServerBin,
+  OPENWRK_SIDECAR_SOURCE: process.env.OPENWRK_SIDECAR_SOURCE ?? "external",
+  OWPENBOT_BIN: process.env.OWPENBOT_BIN ?? owpenbotBin,
 };
 
 await ensureOpenworkServer();
+if (owpenbotEnabled) {
+  await ensureOwpenbot();
+}
 
 logLine("[dev:headless-web] Starting services");
 logLine(`[dev:headless-web] Workspace: ${workspace}`);
@@ -117,6 +195,9 @@ logLine(`[dev:headless-web] OpenWork server: ${openworkUrl}`);
 logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);
+logLine(
+  `[dev:headless-web] Owpenbot: ${owpenbotEnabled ? "on" : "off"} (set OPENWORK_DEV_OWPENBOT=0 to disable)`,
+);
 logLine(`[dev:headless-web] OPENWORK_TOKEN: ${openworkToken}`);
 logLine(`[dev:headless-web] OPENWORK_HOST_TOKEN: ${openworkHostToken}`);
 logLine(`[dev:headless-web] Web logs: ${path.relative(cwd, path.join(tmpDir, "dev-web.log"))}`);
@@ -154,7 +235,8 @@ const headlessProcess = spawnLogged(
     "--allow-external",
     "--no-opencode-auth",
     "--owpenbot",
-    "false",
+    owpenbotEnabled ? "true" : "false",
+    ...(owpenbotRequired ? ["--owpenbot-required"] : []),
     "--openwork-host",
     host,
     "--openwork-port",

@@ -1,4 +1,5 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
+import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 
 import type {
   Client,
@@ -36,9 +37,10 @@ import {
   engineInstall,
   engineStart,
   engineStop,
-  installBuiltinSkills,
-  type BuiltinSkillsInstallResult,
+  sandboxDoctor,
+  sandboxStop,
   openwrkInstanceDispose,
+  openwrkStartDetached,
   openwrkWorkspaceActivate,
   pickFile,
   pickDirectory,
@@ -56,6 +58,7 @@ import {
   workspaceUpdateRemote,
   type EngineDoctorResult,
   type EngineInfo,
+  type SandboxDoctorResult,
   type WorkspaceInfo,
 } from "../lib/tauri";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
@@ -64,6 +67,30 @@ import { t, currentLocale } from "../../i18n";
 import { mapConfigProvidersToList } from "../utils/providers";
 
 export type WorkspaceStore = ReturnType<typeof createWorkspaceStore>;
+
+export type WorkspaceDebugEvent = {
+  at: number;
+  label: string;
+  payload?: unknown;
+};
+
+export type SandboxCreateProgressStepStatus = "pending" | "active" | "done" | "error";
+
+export type SandboxCreateProgressStep = {
+  key: "docker" | "workspace" | "sandbox" | "health" | "connect";
+  label: string;
+  status: SandboxCreateProgressStepStatus;
+  detail?: string | null;
+};
+
+export type SandboxCreateProgressState = {
+  runId: string;
+  startedAt: number;
+  stage: string;
+  steps: SandboxCreateProgressStep[];
+  logs: string[];
+  error: string | null;
+};
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -111,13 +138,92 @@ export function createWorkspaceStore(options: {
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
+  developerMode: () => boolean;
 }) {
+
+  const wsDebugEnabled = () => options.developerMode();
+
+  const WORKSPACE_DEBUG_EVENT_LIMIT = 200;
+  const [workspaceDebugEvents, setWorkspaceDebugEvents] = createSignal<WorkspaceDebugEvent[]>([]);
+  const clearWorkspaceDebugEvents = () => setWorkspaceDebugEvents([]);
+  const pushWorkspaceDebugEvent = (label: string, payload?: unknown) => {
+    if (!wsDebugEnabled()) return;
+    const entry: WorkspaceDebugEvent = { at: Date.now(), label, payload };
+    setWorkspaceDebugEvents((prev) => {
+      if (!prev.length) return [entry];
+      const sliceStart = Math.max(0, prev.length - WORKSPACE_DEBUG_EVENT_LIMIT + 1);
+      const next = prev.slice(sliceStart);
+      next.push(entry);
+      return next;
+    });
+  };
+
+  const wsDebug = (label: string, payload?: unknown) => {
+    if (!wsDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.log(`[WSDBG] ${label}`);
+      } else {
+        console.log(`[WSDBG] ${label}`, payload);
+      }
+      pushWorkspaceDebugEvent(label, payload);
+    } catch {
+      // ignore
+    }
+  };
 
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
   const [engineAuth, setEngineAuth] = createSignal<OpencodeAuth | null>(null);
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
   const [engineDoctorCheckedAt, setEngineDoctorCheckedAt] = createSignal<number | null>(null);
   const [engineInstallLogs, setEngineInstallLogs] = createSignal<string | null>(null);
+  const [sandboxDoctorResult, setSandboxDoctorResult] = createSignal<SandboxDoctorResult | null>(null);
+  const [sandboxDoctorCheckedAt, setSandboxDoctorCheckedAt] = createSignal<number | null>(null);
+  const [sandboxDoctorBusy, setSandboxDoctorBusy] = createSignal(false);
+
+  const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
+  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
+
+  const pushSandboxCreateLog = (line: string) => {
+    const value = String(line ?? "").trim();
+    if (!value) return;
+    setSandboxCreateProgress((prev) => {
+      if (!prev) return prev;
+      const nextLogs = prev.logs.length ? prev.logs.slice(-119) : [];
+      // Avoid rapid duplicates.
+      const last = nextLogs[nextLogs.length - 1] ?? "";
+      if (last !== value) nextLogs.push(value);
+      return { ...prev, logs: nextLogs };
+    });
+  };
+
+  const setSandboxStep = (key: SandboxCreateProgressStep["key"], patch: Partial<SandboxCreateProgressStep>) => {
+    setSandboxCreateProgress((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        steps: prev.steps.map((step) => (step.key === key ? { ...step, ...patch } : step)),
+      };
+    });
+  };
+
+  const setSandboxStage = (stage: string) => {
+    const value = String(stage ?? "").trim();
+    if (!value) return;
+    setSandboxCreateProgress((prev) => (prev ? { ...prev, stage: value } : prev));
+  };
+
+  const setSandboxError = (message: string) => {
+    const value = String(message ?? "").trim() || "Sandbox failed to start";
+    setSandboxCreateProgress((prev) => (prev ? { ...prev, error: value } : prev));
+  };
+
+  const makeRunId = () => {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
   let lastEngineReconnectAt = 0;
   let reconnectingEngine = false;
 
@@ -502,6 +608,41 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  async function refreshSandboxDoctor() {
+    if (!isTauriRuntime()) {
+      setSandboxDoctorResult(null);
+      setSandboxDoctorCheckedAt(Date.now());
+      return null;
+    }
+    if (sandboxDoctorBusy()) return sandboxDoctorResult();
+    setSandboxDoctorBusy(true);
+    try {
+      const result = await sandboxDoctor();
+      setSandboxDoctorResult(result);
+      return result;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      const fallback: SandboxDoctorResult = {
+        installed: false,
+        daemonRunning: false,
+        permissionOk: false,
+        ready: false,
+        error: message,
+      };
+      setSandboxDoctorResult(fallback);
+      return fallback;
+    } finally {
+      setSandboxDoctorCheckedAt(Date.now());
+      setSandboxDoctorBusy(false);
+    }
+  }
+
+  createEffect(() => {
+    if (!createWorkspaceOpen()) return;
+    if (!isTauriRuntime()) return;
+    void refreshSandboxDoctor();
+  });
+
   async function activateWorkspace(workspaceId: string) {
     const id = workspaceId.trim();
     if (!id) return false;
@@ -510,6 +651,16 @@ export function createWorkspaceStore(options: {
     if (!next) return false;
     const isRemote = next.workspaceType === "remote";
     console.log("[workspace] activate", { id: next.id, type: next.workspaceType });
+    const activateStart = Date.now();
+    wsDebug("activate:start", {
+      id: next.id,
+      type: next.workspaceType,
+      remoteType: next.remoteType ?? null,
+      prevActiveId: activeWorkspaceId(),
+      prevProjectDir: projectDir(),
+      startupPref: options.startupPreference(),
+      hasClient: Boolean(options.client()),
+    });
 
     const remoteType = isRemote ? normalizeRemoteType(next.remoteType) : "opencode";
     const baseUrl = isRemote ? next.baseUrl?.trim() ?? "" : "";
@@ -566,14 +717,19 @@ export function createWorkspaceStore(options: {
               workspaceId: next.openworkWorkspaceId ?? null,
               directoryHint: next.directory ?? null,
             });
-            if (resolved.kind === "openwork") {
-              resolvedBaseUrl = resolved.opencodeBaseUrl;
-              resolvedDirectory = resolved.directory;
-              workspaceInfo = resolved.workspace;
-              resolvedAuth = resolved.auth;
-            } else {
-              resolvedBaseUrl = baseUrl || hostUrl;
+            if (resolved.kind !== "openwork") {
+              options.setError("OpenWork server unavailable. Check the URL and token.");
+              updateWorkspaceConnectionState(id, {
+                status: "error",
+                message: "OpenWork server unavailable. Check the URL and token.",
+              });
+              return false;
             }
+
+            resolvedBaseUrl = resolved.opencodeBaseUrl;
+            resolvedDirectory = resolved.directory;
+            workspaceInfo = resolved.workspace;
+            resolvedAuth = resolved.auth;
           } catch (error) {
             const message = error instanceof Error ? error.message : safeStringify(error);
             options.setError(addOpencodeCacheHint(message));
@@ -693,6 +849,7 @@ export function createWorkspaceStore(options: {
         }
 
         updateWorkspaceConnectionState(id, { status: "connected", message: null });
+        wsDebug("activate:remote:done", { id, ms: Date.now() - activateStart });
         return true;
       }
 
@@ -701,6 +858,14 @@ export function createWorkspaceStore(options: {
     const nextRoot = isRemote ? next.directory?.trim() ?? "" : next.path;
     const oldWorkspacePath = projectDir();
     const workspaceChanged = oldWorkspacePath !== nextRoot;
+
+    wsDebug("activate:local:prep", {
+      id,
+      nextRoot,
+      workspaceChanged,
+      wasLocalConnection: Boolean(wasLocalConnection),
+      prevProjectDir: oldWorkspacePath,
+    });
 
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
@@ -751,6 +916,12 @@ export function createWorkspaceStore(options: {
     // Without this, we end up keeping the remote client while `startupPreference` flips to
     // "local", and subsequent session/file actions behave inconsistently.
     if (!isRemote && options.client() && !wasLocalConnection) {
+      wsDebug("activate:remote->local:reconnect", {
+        id,
+        nextPath: next.path,
+        engine: engine()?.baseUrl ?? null,
+        engineRunning: Boolean(engine()?.running),
+      });
       options.setSelectedSessionId(null);
       options.setMessages([]);
       options.setTodos([]);
@@ -766,8 +937,16 @@ export function createWorkspaceStore(options: {
         isTauriRuntime() &&
         Boolean(existingEngine?.running && existingEngine.baseUrl);
 
+      wsDebug("activate:remote->local:hostReuse", {
+        canReuseHost,
+        runtime,
+        existingEngineBaseUrl: existingEngine?.baseUrl ?? null,
+        existingEngineProjectDir: existingEngine?.projectDir ?? null,
+      });
+
       if (canReuseHost && runtime === "openwrk") {
         try {
+          const reuseStart = Date.now();
           await openwrkWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
@@ -791,13 +970,20 @@ export function createWorkspaceStore(options: {
               { navigate: false },
             );
           }
+          wsDebug("activate:remote->local:reuseHost:done", {
+            ok: connectedToLocalHost,
+            ms: Date.now() - reuseStart,
+          });
         } catch {
           connectedToLocalHost = false;
+          wsDebug("activate:remote->local:reuseHost:error");
         }
       }
 
       if (!connectedToLocalHost) {
+        const startHostAt = Date.now();
         const ok = await startHost({ workspacePath: next.path, navigate: false });
+        wsDebug("activate:remote->local:startHost:done", { ok, ms: Date.now() - startHostAt });
         if (!ok) {
           updateWorkspaceConnectionState(id, {
             status: "error",
@@ -810,6 +996,7 @@ export function createWorkspaceStore(options: {
 
     // When running locally, restart the engine when workspace changes
     if (!isRemote && wasLocalConnection && workspaceChanged) {
+      wsDebug("activate:local->local:restartEngine", { id, nextPath: next.path });
       options.setError(null);
       options.setBusy(true);
       options.setBusyLabel("status.restarting_engine");
@@ -889,9 +1076,11 @@ export function createWorkspaceStore(options: {
       options.refreshSkills({ force: true }).catch(() => undefined);
       options.refreshPlugins().catch(() => undefined);
       updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      wsDebug("activate:local:done", { id, ms: Date.now() - activateStart });
       return true;
     } finally {
       setConnectingWorkspaceId(null);
+      wsDebug("activate:finally", { id, ms: Date.now() - activateStart });
     }
   }
 
@@ -911,6 +1100,17 @@ export function createWorkspaceStore(options: {
       baseUrl: nextBaseUrl,
       directory: directory ?? null,
       workspaceType: context?.workspaceType ?? null,
+    });
+    const connectStart = Date.now();
+    wsDebug("connect:start", {
+      baseUrl: nextBaseUrl,
+      directory: directory ?? null,
+      reason: context?.reason ?? null,
+      workspaceType: context?.workspaceType ?? null,
+      targetRoot: context?.targetRoot ?? null,
+      quiet: connectOptions?.quiet ?? false,
+      navigate: connectOptions?.navigate ?? true,
+      authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
     });
     const quiet = connectOptions?.quiet ?? false;
     const navigate = connectOptions?.navigate ?? true;
@@ -932,10 +1132,14 @@ export function createWorkspaceStore(options: {
     };
     options.setOpencodeConnectStatus?.(connectMeta);
 
+    const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
+
     try {
       let resolvedDirectory = directory?.trim() ?? "";
       let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
       const health = await waitForHealthy(nextClient, { timeoutMs: 12_000 });
+      connectMetrics.healthyMs = Date.now() - connectStart;
+      wsDebug("connect:healthy", { ms: Date.now() - connectStart, version: health.version });
 
       if (context?.workspaceType === "remote" && !resolvedDirectory) {
         try {
@@ -965,27 +1169,67 @@ export function createWorkspaceStore(options: {
       options.setBaseUrl(nextBaseUrl);
       options.setClientDirectory(resolvedDirectory);
 
-      const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
-      await options.loadSessions(targetRoot);
-      await options.refreshPendingPermissions();
-
-      try {
-        const providerList = unwrap(await nextClient.provider.list());
-        options.setProviders(providerList.all);
-        options.setProviderDefaults(providerList.default);
-        options.setProviderConnectedIds(providerList.connected);
-      } catch {
+      const providersPromise = (async () => {
+        const providersAt = Date.now();
+        wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
         try {
-          const cfg = unwrap(await nextClient.config.providers());
-          options.setProviders(mapConfigProvidersToList(cfg.providers));
-          options.setProviderDefaults(cfg.default);
-          options.setProviderConnectedIds([]);
-        } catch {
-          options.setProviders([]);
-          options.setProviderDefaults({});
-          options.setProviderConnectedIds([]);
+          const providerList = unwrap(await nextClient.provider.list());
+          wsDebug("connect:providers:done", {
+            ms: Date.now() - providersAt,
+            source: "provider.list",
+            available: providerList.all?.length ?? 0,
+            connected: providerList.connected?.length ?? 0,
+          });
+          return {
+            providers: providerList.all,
+            defaults: providerList.default,
+            connectedIds: providerList.connected,
+          };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : safeStringify(error);
+          wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
+          try {
+            const cfg = unwrap(await nextClient.config.providers());
+            const mapped = mapConfigProvidersToList(cfg.providers);
+            wsDebug("connect:providers:done", {
+              ms: Date.now() - providersAt,
+              source: "config.providers",
+              available: mapped.length,
+              connected: 0,
+            });
+            return {
+              providers: mapped,
+              defaults: cfg.default,
+              connectedIds: [],
+            };
+          } catch (fallbackError) {
+            const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
+            wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
+            return {
+              providers: [],
+              defaults: {},
+              connectedIds: [],
+            };
+          }
+        } finally {
+          connectMetrics.providersMs = Date.now() - providersAt;
         }
-      }
+      })();
+
+      const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
+      wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
+      const sessionsAt = Date.now();
+      await options.loadSessions(targetRoot);
+      connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
+      wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
+      const pendingPermissionsAt = Date.now();
+      await options.refreshPendingPermissions();
+      connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
+
+      const providerState = await providersPromise;
+      options.setProviders(providerState.providers);
+      options.setProviderDefaults(providerState.defaults);
+      options.setProviderConnectedIds(providerState.connectedIds);
 
       options.setSelectedSessionId(null);
       options.setMessages([]);
@@ -1004,16 +1248,21 @@ export function createWorkspaceStore(options: {
       // don't force the onboarding flow on subsequent launches.
       markOnboardingComplete();
       options.onEngineStable?.();
-      options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected" });
+      connectMetrics.totalMs = Date.now() - connectStart;
+      options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
+      wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
       return true;
     } catch (e) {
       options.setClient(null);
       options.setConnectedVersion(null);
       const message = e instanceof Error ? e.message : safeStringify(e);
+      wsDebug("connect:error", { ms: Date.now() - connectStart, message });
+      connectMetrics.totalMs = Date.now() - connectStart;
       options.setOpencodeConnectStatus?.({
         ...connectMeta,
         status: "error",
         error: addOpencodeCacheHint(message),
+        metrics: connectMetrics,
       });
       if (!quiet) {
         options.setError(addOpencodeCacheHint(message));
@@ -1079,11 +1328,186 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  async function createSandboxFlow(preset: WorkspacePreset, folder: string | null) {
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    if (!folder) {
+      options.setError(t("app.error.choose_folder", currentLocale()));
+      return;
+    }
+
+    const runId = makeRunId();
+    const startedAt = Date.now();
+    setSandboxCreateProgress({
+      runId,
+      startedAt,
+      stage: "Checking Docker...",
+      error: null,
+      logs: [],
+      steps: [
+        { key: "docker", label: "Docker ready", status: "active", detail: null },
+        { key: "workspace", label: "Prepare workspace", status: "pending", detail: null },
+        { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
+        { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
+        { key: "connect", label: "Connect in OpenWork", status: "pending", detail: null },
+      ],
+    });
+
+    const doctor = await refreshSandboxDoctor();
+    if (!doctor?.ready) {
+      const detail =
+        doctor?.error?.trim() ||
+        "Docker is required for sandboxes. Install Docker Desktop, start it, then retry.";
+      options.setError(detail);
+      setSandboxStep("docker", { status: "error", detail });
+      setSandboxError(detail);
+      setSandboxStage("Docker not ready");
+      return;
+    }
+    setSandboxStep("docker", { status: "done", detail: doctor.serverVersion ?? null });
+    setSandboxStage("Preparing workspace...");
+
+    options.setBusy(true);
+    options.setBusyLabel("status.creating_workspace");
+    options.setBusyStartedAt(Date.now());
+    options.setError(null);
+
+    try {
+      const resolvedFolder = await resolveWorkspacePath(folder);
+      if (!resolvedFolder) {
+        options.setError(t("app.error.choose_folder", currentLocale()));
+        setSandboxStep("workspace", { status: "error", detail: "No folder selected" });
+        setSandboxError("No folder selected");
+        return;
+      }
+
+      const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Workspace";
+
+      setSandboxStep("workspace", { status: "active", detail: name });
+      pushSandboxCreateLog(`Workspace: ${resolvedFolder}`);
+
+      // Ensure the workspace folder has baseline OpenWork/OpenCode files.
+      const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
+      setWorkspaces(created.workspaces);
+      syncActiveWorkspaceId(created.activeId);
+      setSandboxStep("workspace", { status: "done", detail: null });
+
+      // Remove the local workspace entry to avoid duplicate Local+Remote rows.
+      const localId = created.activeId;
+      if (localId) {
+        pushSandboxCreateLog("Removing local workspace row (will re-add as remote sandbox)...");
+        const forgotten = await workspaceForget(localId);
+        setWorkspaces(forgotten.workspaces);
+        syncActiveWorkspaceId(forgotten.activeId);
+      }
+
+      setSandboxStep("sandbox", { status: "active", detail: null });
+      setSandboxStage("Starting sandbox services...");
+
+      let stopListen: (() => void) | null = null;
+      try {
+        stopListen = await listen(
+          "openwork://sandbox-create-progress",
+          (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
+            const payload = event.payload ?? {};
+            if ((payload.runId ?? "").trim() !== runId) return;
+            const stage = String(payload.stage ?? "").trim();
+            const message = String(payload.message ?? "").trim();
+            if (message) {
+              setSandboxStage(message);
+              pushSandboxCreateLog(message);
+            }
+
+            if (stage === "docker.container") {
+              const state = String(payload.payload?.containerState ?? "").trim();
+              if (state) {
+                setSandboxStep("sandbox", { status: "active", detail: `Container: ${state}` });
+              }
+            }
+
+            if (stage === "openwork.waiting") {
+              const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
+              const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
+              setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
+            }
+
+            if (stage === "openwork.healthy") {
+              setSandboxStep("sandbox", { status: "done" });
+              setSandboxStep("health", { status: "done", detail: null });
+            }
+
+            if (stage === "error") {
+              const err = String(payload.payload?.error ?? "").trim() || message || "Sandbox failed to start";
+              setSandboxStep("sandbox", { status: "error", detail: err });
+              setSandboxStep("health", { status: "error", detail: err });
+              setSandboxError(err);
+            }
+          },
+        );
+
+        const host = await openwrkStartDetached({
+          workspacePath: resolvedFolder,
+          sandboxBackend: "docker",
+          runId,
+        });
+        setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
+        setSandboxStep("health", { status: "done" });
+        setSandboxStage("Connecting to sandbox...");
+
+        setSandboxStep("connect", { status: "active", detail: null });
+
+        options.setTab("scheduled");
+        options.setView("dashboard");
+        markOnboardingComplete();
+
+        const ok = await createRemoteWorkspaceFlow({
+          openworkHostUrl: host.openworkUrl,
+          openworkToken: host.token,
+          directory: resolvedFolder,
+          displayName: name,
+          sandboxBackend: host.sandboxBackend ?? "docker",
+          sandboxRunId: host.sandboxRunId ?? runId,
+          sandboxContainerName: host.sandboxContainerName ?? null,
+        });
+        if (!ok) {
+          const fallback = "Failed to connect to sandbox";
+          setSandboxStep("connect", { status: "error", detail: fallback });
+          setSandboxError(fallback);
+          return;
+        }
+
+        setSandboxStep("connect", { status: "done", detail: null });
+        setSandboxStage("Sandbox ready.");
+        setCreateWorkspaceOpen(false);
+        clearSandboxCreateProgress();
+      } finally {
+        stopListen?.();
+      }
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+      setSandboxError(message);
+      setSandboxStage("Sandbox failed");
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
   async function createRemoteWorkspaceFlow(input: {
     openworkHostUrl?: string | null;
     openworkToken?: string | null;
     directory?: string | null;
     displayName?: string | null;
+
+    // Sandbox lifecycle metadata (desktop-managed)
+    sandboxBackend?: "docker" | null;
+    sandboxRunId?: string | null;
+    sandboxContainerName?: string | null;
   }) {
     const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
     const token = input.openworkToken?.trim() ?? "";
@@ -1175,6 +1599,9 @@ export function createWorkspaceStore(options: {
           openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          sandboxBackend: input.sandboxBackend ?? null,
+          sandboxRunId: input.sandboxRunId ?? null,
+          sandboxContainerName: input.sandboxContainerName ?? null,
         });
         setWorkspaces(ws.workspaces);
         syncActiveWorkspaceId(ws.activeId);
@@ -1194,6 +1621,9 @@ export function createWorkspaceStore(options: {
           openworkToken: remoteType === "openwork" ? (token || null) : null,
           openworkWorkspaceId: remoteType === "openwork" ? openworkWorkspace?.id ?? null : null,
           openworkWorkspaceName: remoteType === "openwork" ? openworkWorkspace?.name ?? null : null,
+          sandboxBackend: input.sandboxBackend ?? null,
+          sandboxRunId: input.sandboxRunId ?? null,
+          sandboxContainerName: input.sandboxContainerName ?? null,
         };
 
         setWorkspaces((prev) => {
@@ -1407,6 +1837,55 @@ export function createWorkspaceStore(options: {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+    }
+  }
+
+  async function stopSandbox(workspaceId: string) {
+    if (!isTauriRuntime()) {
+      options.setError(t("app.error.tauri_required", currentLocale()));
+      return;
+    }
+
+    const id = workspaceId.trim();
+    if (!id) return;
+
+    const workspace = workspaces().find((entry) => entry.id === id) ?? null;
+    const containerName = workspace?.sandboxContainerName?.trim() ?? "";
+    if (!containerName) {
+      options.setError("Sandbox container name missing.");
+      return;
+    }
+
+    options.setBusy(true);
+    options.setBusyLabel("Stopping sandbox...");
+    options.setBusyStartedAt(Date.now());
+    options.setError(null);
+
+    try {
+      const result = await sandboxStop(containerName);
+      if (!result.ok) {
+        const details = [result.stderr?.trim(), result.stdout?.trim()]
+          .filter(Boolean)
+          .join("\n")
+          .trim();
+        throw new Error(details || `Failed to stop sandbox (status ${result.status})`);
+      }
+
+      // If the user stopped the active workspace, proactively disconnect the client.
+      if (activeWorkspaceId() === id) {
+        options.setClient(null);
+        options.setConnectedVersion(null);
+        options.setSseConnected(false);
+      }
+
+      updateWorkspaceConnectionState(id, { status: "error", message: "Sandbox stopped." });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      options.setError(addOpencodeCacheHint(message));
+    } finally {
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
     }
   }
 
@@ -1998,22 +2477,6 @@ export function createWorkspaceStore(options: {
     await refreshEngine();
     await refreshEngineDoctor();
 
-    // Install OpenWork builtin skills to global directory on startup
-    // This ensures skills like tfs2018-integration are available across all projects
-    if (isTauriRuntime()) {
-      try {
-        const result = await installBuiltinSkills();
-        if (!result.ok) {
-          console.warn("[workspace] Builtin skills installation issue:", result.message);
-        } else if (result.installed.length > 0) {
-          console.log("[workspace] Installed builtin skills:", result.installed.join(", "));
-        }
-      } catch (err) {
-        console.warn("[workspace] Failed to install builtin skills:", err);
-        // Non-fatal: don't block startup if skills installation fails
-      }
-    }
-
     if (isTauriRuntime()) {
       const active = workspaces().find((w) => w.id === activeWorkspaceId()) ?? null;
       if (active) {
@@ -2181,6 +2644,9 @@ export function createWorkspaceStore(options: {
     engineDoctorResult,
     engineDoctorCheckedAt,
     engineInstallLogs,
+    sandboxDoctorResult,
+    sandboxDoctorCheckedAt,
+    sandboxDoctorBusy,
     projectDir,
     workspaces,
     activeWorkspaceId,
@@ -2212,10 +2678,12 @@ export function createWorkspaceStore(options: {
     testWorkspaceConnection,
     connectToServer,
     createWorkspaceFlow,
+    createSandboxFlow,
     createRemoteWorkspaceFlow,
     updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
     forgetWorkspace,
+    stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
@@ -2236,8 +2704,10 @@ export function createWorkspaceStore(options: {
     removeAuthorizedDirAtIndex,
     persistReloadSettings,
     setEngineInstallLogs,
-    installBuiltinSkills: async (openworkDir?: string): Promise<BuiltinSkillsInstallResult> => {
-      return installBuiltinSkills(openworkDir);
-    },
+    refreshSandboxDoctor,
+    sandboxCreateProgress,
+    clearSandboxCreateProgress,
+    workspaceDebugEvents,
+    clearWorkspaceDebugEvents,
   };
 }

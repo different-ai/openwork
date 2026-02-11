@@ -15,28 +15,13 @@ test("BridgeStore allowlist and sessions", () => {
   store.allowPeer("telegram", "123");
   assert.equal(store.isAllowed("telegram", "123"), true);
 
-  store.upsertSession("telegram", "123", "session-1");
-  const row = store.getSession("telegram", "123");
+  store.upsertSession("telegram", "default", "123", "session-1");
+  const row = store.getSession("telegram", "default", "123");
   assert.equal(row?.session_id, "session-1");
 
-  store.close();
-});
-
-test("BridgeStore pairing requests", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-"));
-  const dbPath = path.join(dir, "owpenbot.db");
-  const store = new BridgeStore(dbPath);
-
-  store.createPairingRequest("whatsapp", "+15551234567", "123456", 1000);
-  const list = store.listPairingRequests("whatsapp");
-  assert.equal(list.length, 1);
-  assert.equal(list[0].code, "123456");
-
-  const approved = store.approvePairingRequest("whatsapp", "123456");
-  assert.equal(approved?.peer_id, "+15551234567");
-
-  const empty = store.listPairingRequests("whatsapp");
-  assert.equal(empty.length, 0);
+  store.upsertBinding("slack", "app-1", "D123", "/tmp/ws");
+  const binding = store.getBinding("slack", "app-1", "D123");
+  assert.equal(binding?.directory, "/tmp/ws");
 
   store.close();
 });

@@ -1,11 +1,12 @@
 use std::path::Path;
 
 use tauri::async_runtime::Receiver;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
+use crate::paths::{prepended_path_env, sidecar_path_candidates};
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -76,6 +77,16 @@ pub fn spawn_engine(
 
     command = command.env("OPENCODE_CLIENT", "openwork");
     command = command.env("OPENWORK", "1");
+
+    let resource_dir = app.path().resource_dir().ok();
+    let current_bin_dir = tauri::process::current_binary(&app.env())
+        .ok()
+        .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
+    let sidecar_paths =
+        sidecar_path_candidates(resource_dir.as_deref(), current_bin_dir.as_deref());
+    if let Some(path_env) = prepended_path_env(&sidecar_paths) {
+        command = command.env("PATH", path_env);
+    }
 
     if let Some(username) = opencode_username {
         if !username.trim().is_empty() {

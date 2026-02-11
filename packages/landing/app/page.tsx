@@ -1,6 +1,7 @@
 import { SiteFooter } from "../components/site-footer";
 import { SiteNav } from "../components/site-nav";
 import { OpenCodeLogo } from "../components/opencode-logo";
+import { WaitlistForm } from "../components/waitlist-form";
 import { getGithubData } from "../lib/github";
 
 export default async function Home() {
@@ -299,6 +300,52 @@ export default async function Home() {
                 </p>
               </div>
             </div>
+          </section>
+
+          <hr />
+
+          <section id="cloud" className="py-12">
+            <h2 className="mb-2 text-2xl font-bold">
+              Automate your entire company, safely
+            </h2>
+            <p className="mb-8 text-[15px] leading-relaxed text-gray-600">
+              OpenWork Cloud runs your automations so you don&apos;t have to
+              manage infrastructure. Join the waitlist to get early access and
+              a free series that walks you through automating every part of
+              your business.
+            </p>
+
+            <div className="mb-10 grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+              <div className="feature-card">
+                <h4 className="mb-2 text-[14px] font-bold">
+                  Hosted for your team
+                </h4>
+                <p className="text-[13px] leading-relaxed text-gray-500">
+                  No servers to maintain. We handle the infrastructure so
+                  your team can focus on the work.
+                </p>
+              </div>
+              <div className="feature-card">
+                <h4 className="mb-2 text-[14px] font-bold">
+                  Permissioned &amp; auditable
+                </h4>
+                <p className="text-[13px] leading-relaxed text-gray-500">
+                  Every agent action is logged. Set clear boundaries for what
+                  agents can and cannot do.
+                </p>
+              </div>
+              <div className="feature-card">
+                <h4 className="mb-2 text-[14px] font-bold">
+                  Free automation series
+                </h4>
+                <p className="text-[13px] leading-relaxed text-gray-500">
+                  Step-by-step guides on safely automating ops, sales, support,
+                  and more. Delivered to your inbox.
+                </p>
+              </div>
+            </div>
+
+            <WaitlistForm />
           </section>
 
           <hr />

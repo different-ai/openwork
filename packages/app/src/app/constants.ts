@@ -77,10 +77,10 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: false,
   },
   {
-    name: "Chrome DevTools",
+    name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
     type: "local",
-    command: ["npx", "-y", "chrome-devtools-mcp@latest"],
+    command: ["chrome-devtools-mcp"],
     oauth: false,
   },
 ];

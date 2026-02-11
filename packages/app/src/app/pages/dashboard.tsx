@@ -8,10 +8,9 @@ import type {
   ProviderListItem,
   SettingsTab,
   ScheduledJob,
+  HubSkillCard,
   SkillCard,
   StartupPreference,
-  TaskCenterItem,
-  TaskCenterStatus,
   WorkspaceSessionGroup,
   View,
 } from "../types";
@@ -31,10 +30,10 @@ import Button from "../components/button";
 import McpView from "./mcp";
 import PluginsView from "./plugins";
 import ScheduledTasksView from "./scheduled";
-import TaskCenterView from "./task-center";
 import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
+import IdentitiesView from "./identities";
 import StatusBar from "../components/status-bar";
 import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
@@ -42,12 +41,11 @@ import {
   Box,
   ChevronDown,
   ChevronRight,
+  Cpu,
   History,
-  KanbanSquare,
   Loader2,
+  MessageCircle,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   Plus,
   Settings,
   SlidersHorizontal,
@@ -112,6 +110,7 @@ export type DashboardViewProps = {
   activeWorkspaceId: string;
   connectingWorkspaceId: string | null;
   activateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
+  testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
@@ -123,6 +122,7 @@ export type DashboardViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  stopSandbox: (workspaceId: string) => void;
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
@@ -131,31 +131,21 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
-  taskCenterItemsByStatus: Record<TaskCenterStatus, TaskCenterItem[]>;
-  taskCenterStatus: "idle" | "syncing" | "error";
-  taskCenterError: string | null;
-  taskCenterSyncing: boolean;
-  taskCenterLastUpdatedAt: number | null;
-  refreshTaskCenter: (options?: { force?: boolean }) => void;
-  startTaskCenterAutomation: (item: TaskCenterItem) => void;
-  taskCenterSelectedItem?: TaskCenterItem | null;
-  taskCenterTasks?: import("../lib/tasks-parser").ParsedTask[];
-  taskCenterCurrentTaskIndex?: number;
-  taskCenterExecuting?: boolean;
-  taskCenterSelectItem?: (item: TaskCenterItem | null) => void;
-  taskCenterExecuteTask?: (item: TaskCenterItem, taskIndex: number) => void;
-  taskCenterCompleteTask?: (item: TaskCenterItem, taskIndex: number) => void;
   activeWorkspaceRoot: string;
   refreshSkills: (options?: { force?: boolean }) => void;
+  refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   refreshMcpServers: () => void;
   skills: SkillCard[];
   skillsStatus: string | null;
+  hubSkills: HubSkillCard[];
+  hubSkillsStatus: string | null;
   skillsAccessHint?: string | null;
   canInstallSkillCreator: boolean;
   canUseDesktopTools: boolean;
   importLocalSkill: () => void;
-  installSkillCreator: () => void;
+  installSkillCreator: () => Promise<{ ok: boolean; message: string }>;
+  installHubSkill: (name: string) => Promise<{ ok: boolean; message: string }>;
   revealSkillsFolder: () => void;
   uninstallSkill: (name: string) => void;
   readSkill: (name: string) => Promise<{ name: string; path: string; content: string } | null>;
@@ -199,6 +189,7 @@ export type DashboardViewProps = {
   setSelectedMcp: (value: string | null) => void;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
+  logoutMcpAuth: (name: string) => Promise<void> | void;
   showMcpReloadBanner: boolean;
   mcpReloadBlocked: boolean;
   reloadMcpEngine: () => void;
@@ -212,10 +203,6 @@ export type DashboardViewProps = {
   toggleShowThinking: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
-  sidebarCollapsed: boolean;
-  toggleSidebarCollapsed: () => void;
-  rightSidebarCollapsed: boolean;
-  toggleRightSidebarCollapsed: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
   updateAutoCheck: boolean;
@@ -253,6 +240,8 @@ export type DashboardViewProps = {
   onResetStartupPreference: () => void;
   pendingPermissions: unknown;
   events: unknown;
+  workspaceDebugEvents: unknown;
+  clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
@@ -275,12 +264,12 @@ export default function DashboardView(props: DashboardViewProps) {
         return "Plugins";
       case "mcp":
         return "Apps";
+      case "identities":
+        return "Identities";
       case "config":
         return "Config";
       case "settings":
         return "Settings";
-      case "task-center":
-        return "Task Center";
       default:
         return "Automations";
     }
@@ -293,7 +282,11 @@ export default function DashboardView(props: DashboardViewProps) {
     workspace.path?.trim() ||
     "Workspace";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote" ? "Remote" : "Local";
+    workspace.workspaceType === "remote"
+      ? workspace.sandboxContainerName?.trim()
+        ? "Sandbox"
+        : "Remote"
+      : "Local";
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     // For same-workspace clicks, just select the session without workspace activation
@@ -475,9 +468,6 @@ export default function DashboardView(props: DashboardViewProps) {
         }
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
-        }
-        if (currentTab === "task-center" && !cancelled) {
-          await props.refreshTaskCenter();
         }
       } catch {
         // Ignore errors during navigation
@@ -696,7 +686,7 @@ export default function DashboardView(props: DashboardViewProps) {
       return props.anyActiveRuns ? "Update ready" : "Restart";
     }
     if (state === "downloading") return "Downloading";
-    return "Update";
+    return "Update available";
   });
 
   const updatePillTitle = createMemo(() => {
@@ -722,8 +712,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   return (
     <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
-      <Show when={!props.sidebarCollapsed}>
-        <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
+      <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -777,6 +766,7 @@ export default function DashboardView(props: DashboardViewProps) {
                         }}
                         onKeyDown={(event) => {
                           if (event.key !== "Enter" && event.key !== " ") return;
+                          if (event.isComposing || event.keyCode === 229) return;
                           event.preventDefault();
                           expandWorkspace(workspace().id);
                           props.activateWorkspace(workspace().id);
@@ -878,11 +868,35 @@ export default function DashboardView(props: DashboardViewProps) {
                               type="button"
                               class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
                               onClick={() => {
+                                void props.testWorkspaceConnection(workspace().id);
+                                setWorkspaceMenuId(null);
+                              }}
+                              disabled={isConnecting()}
+                            >
+                              Test connection
+                            </button>
+                            <button
+                              type="button"
+                              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                              onClick={() => {
                                 props.editWorkspaceConnection(workspace().id);
                                 setWorkspaceMenuId(null);
                               }}
+                              disabled={isConnecting()}
                             >
                               Edit connection
+                            </button>
+                          </Show>
+                          <Show when={workspace().sandboxContainerName?.trim()}>
+                            <button
+                              type="button"
+                              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                              onClick={() => {
+                                props.stopSandbox(workspace().id);
+                                setWorkspaceMenuId(null);
+                              }}
+                            >
+                              Stop sandbox
                             </button>
                           </Show>
                           <button
@@ -919,6 +933,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                     onClick={() => openSessionFromList(workspace().id, session.id)}
                                     onKeyDown={(event) => {
                                       if (event.key !== "Enter" && event.key !== " ") return;
+                                      if (event.isComposing || event.keyCode === 229) return;
                                       event.preventDefault();
                                       openSessionFromList(workspace().id, session.id);
                                     }}
@@ -967,6 +982,7 @@ export default function DashboardView(props: DashboardViewProps) {
                                       onClick={() => openSessionFromList(workspace().id, session.id)}
                                       onKeyDown={(event) => {
                                         if (event.key !== "Enter" && event.key !== " ") return;
+                                        if (event.isComposing || event.keyCode === 229) return;
                                         event.preventDefault();
                                         openSessionFromList(workspace().id, session.id);
                                       }}
@@ -1068,22 +1084,12 @@ export default function DashboardView(props: DashboardViewProps) {
           </div>
         </div>
 
-        <div class="pt-4 border-t border-dls-border space-y-1">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors w-full"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
-        </aside>
-      </Show>
+      </aside>
 
-      <main class="flex-1 overflow-y-auto relative pb-24 md:pb-12 bg-dls-surface">
+      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+        <div class="flex-1 overflow-y-auto">
         <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
-          <div class="flex items-center gap-3 min-w-0 flex-1 overflow-hidden">
+          <div class="flex items-center gap-3">
             <Show when={showUpdatePill()}>
               <button
                 type="button"
@@ -1112,43 +1118,18 @@ export default function DashboardView(props: DashboardViewProps) {
                 </Show>
               </button>
             </Show>
-            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium min-w-0 truncate">
+            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
               {props.activeWorkspaceDisplay.name}
             </div>
-            <h1 class="text-lg font-medium truncate">{title()}</h1>
+            <h1 class="text-lg font-medium">{title()}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary truncate">{props.busyHint}</span>
+              <span class="text-xs text-dls-secondary">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={props.toggleSidebarCollapsed}
-              class="hidden md:flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-[11px] font-medium text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-              aria-label={props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}
-              title={props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}
-            >
-              <Show when={props.sidebarCollapsed} fallback={<PanelLeftClose size={14} />}>
-                <PanelLeftOpen size={14} />
-              </Show>
-              <span>{props.sidebarCollapsed ? "Expand menu" : "Collapse menu"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={props.toggleRightSidebarCollapsed}
-              class="hidden md:flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-[11px] font-medium text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-              aria-label={props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}
-              title={props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}
-            >
-              <Show when={props.rightSidebarCollapsed} fallback={<PanelLeftClose size={14} />}>
-                <PanelLeftOpen size={14} />
-              </Show>
-              <span>{props.rightSidebarCollapsed ? "Expand right" : "Collapse right"}</span>
-            </button>
-          </div>
+          <div class="flex items-center gap-2" />
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
@@ -1170,24 +1151,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 newTaskDisabled={props.newTaskDisabled}
               />
             </Match>
-            <Match when={props.tab === "task-center"}>
-              <TaskCenterView
-                itemsByStatus={props.taskCenterItemsByStatus}
-                status={props.taskCenterStatus}
-                error={props.taskCenterError}
-                syncing={props.taskCenterSyncing}
-                lastUpdatedAt={props.taskCenterLastUpdatedAt}
-                syncTasks={props.refreshTaskCenter}
-                startAutomation={props.startTaskCenterAutomation}
-                selectedItem={props.taskCenterSelectedItem}
-                tasks={props.taskCenterTasks}
-                currentTaskIndex={props.taskCenterCurrentTaskIndex}
-                executing={props.taskCenterExecuting}
-                onSelectItem={props.taskCenterSelectItem}
-                onExecuteTask={props.taskCenterExecuteTask}
-                onCompleteTask={props.taskCenterCompleteTask}
-              />
-            </Match>
             <Match when={props.tab === "skills"}>
               <SkillsView
                 busy={props.busy}
@@ -1195,10 +1158,14 @@ export default function DashboardView(props: DashboardViewProps) {
                 canUseDesktopTools={props.canUseDesktopTools}
                 accessHint={props.skillsAccessHint}
                 refreshSkills={props.refreshSkills}
+                refreshHubSkills={props.refreshHubSkills}
                 skills={props.skills}
                 skillsStatus={props.skillsStatus}
+                hubSkills={props.hubSkills}
+                hubSkillsStatus={props.hubSkillsStatus}
                 importLocalSkill={props.importLocalSkill}
                 installSkillCreator={props.installSkillCreator}
+                installHubSkill={props.installHubSkill}
                 revealSkillsFolder={props.revealSkillsFolder}
                 uninstallSkill={props.uninstallSkill}
                 readSkill={props.readSkill}
@@ -1244,9 +1211,23 @@ export default function DashboardView(props: DashboardViewProps) {
                 setSelectedMcp={props.setSelectedMcp}
                 quickConnect={props.quickConnect}
                 connectMcp={props.connectMcp}
+                logoutMcpAuth={props.logoutMcpAuth}
                 showMcpReloadBanner={props.showMcpReloadBanner}
                 reloadBlocked={props.mcpReloadBlocked}
                 reloadMcpEngine={props.reloadMcpEngine}
+              />
+            </Match>
+
+            <Match when={props.tab === "identities"}>
+              <IdentitiesView
+                busy={props.busy}
+                openworkServerStatus={props.openworkServerStatus}
+                openworkServerUrl={props.openworkServerUrl}
+                openworkServerSettings={props.openworkServerSettings}
+                openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                openworkServerHostInfo={props.openworkServerHostInfo}
+                activeWorkspaceRoot={props.activeWorkspaceRoot}
+                developerMode={props.developerMode}
               />
             </Match>
 
@@ -1337,6 +1318,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   resetModalBusy={props.resetModalBusy}
                   pendingPermissions={props.pendingPermissions}
                   events={props.events}
+                  workspaceDebugEvents={props.workspaceDebugEvents}
+                  clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeCache={props.repairOpencodeCache}
                   cacheRepairBusy={props.cacheRepairBusy}
@@ -1417,95 +1400,89 @@ export default function DashboardView(props: DashboardViewProps) {
           exportDisabledReason={exportDisabledReason()}
           onOpenBots={openConfig}
         />
-
-        <div class="fixed bottom-0 left-0 right-0">
-            <StatusBar
-              clientConnected={props.clientConnected}
-              openworkServerStatus={props.openworkServerStatus}
-              developerMode={props.developerMode}
-              onOpenSettings={() => openSettings("general")}
-              onOpenMessaging={openConfig}
-              onOpenProviders={() => props.openProviderAuthModal()}
-              onOpenMcp={() => props.setTab("mcp")}
-              providerConnectedIds={props.providerConnectedIds}
-              mcpStatuses={props.mcpStatuses}
-            />
-          <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-            <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-5 gap-2">
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("scheduled")}
-              >
-                <History size={18} />
-                Automations
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "task-center" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("task-center")}
-              >
-                <KanbanSquare size={18} />
-                Task Center
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "skills" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("skills")}
-              >
-                <Zap size={18} />
-                Skills
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("mcp")}
-              >
-                <Box size={18} />
-                Apps
-              </button>
-              <button
-                class={`flex flex-col items-center gap-1 text-xs ${
-                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
-                }`}
-                onClick={() => props.setTab("config")}
-              >
-                <SlidersHorizontal size={18} />
-                Config
-              </button>
-            </div>
-          </nav>
         </div>
-      </main>
 
-      <Show when={!props.rightSidebarCollapsed}>
-        <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
-          <div class="space-y-1 pt-2">
-            {navItem("scheduled", "Automations", <History size={18} />)}
-            {navItem("task-center", "Task Center", <KanbanSquare size={18} />)}
-            {navItem("skills", "Skills", <Zap size={18} />)}
-            {navItem("mcp", "Apps", <Box size={18} />)}
-            {navItem("config", "Config", <SlidersHorizontal size={18} />)}
-          </div>
-
-          <div class="flex-1" />
-
-          <div class="pt-4 border-t border-dls-border">
+        <StatusBar
+          clientConnected={props.clientConnected}
+          openworkServerStatus={props.openworkServerStatus}
+          developerMode={props.developerMode}
+          onOpenSettings={() => openSettings("general")}
+          onOpenMessaging={openConfig}
+          onOpenProviders={() => props.openProviderAuthModal()}
+          onOpenMcp={() => props.setTab("mcp")}
+          providerConnectedIds={props.providerConnectedIds}
+          mcpStatuses={props.mcpStatuses}
+        />
+        <nav class="md:hidden border-t border-dls-border bg-dls-surface">
+          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
             <button
-              type="button"
-              onClick={() => openSettings("general")}
-              class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("scheduled")}
             >
-              <Settings size={18} />
-              <span class="text-sm font-medium">Settings</span>
+              <History size={18} />
+              Automations
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "skills" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("skills")}
+            >
+              <Zap size={18} />
+              Skills
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("plugins")}
+            >
+              <Cpu size={18} />
+              Plugins
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("mcp")}
+            >
+              <Box size={18} />
+              Apps
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "identities" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("identities")}
+            >
+              <MessageCircle size={18} />
+              IDs
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "config" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("config")}
+            >
+              <SlidersHorizontal size={18} />
+              Config
             </button>
           </div>
-        </aside>
-      </Show>
+        </nav>
+      </main>
+
+      <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
+        <div class="space-y-1 pt-2">
+          {navItem("scheduled", "Automations", <History size={18} />)}
+          {navItem("skills", "Skills", <Zap size={18} />)}
+          {navItem("plugins", "Plugins", <Cpu size={18} />)}
+          {navItem("mcp", "Apps", <Box size={18} />)}
+          {navItem("identities", "Identities", <MessageCircle size={18} />)}
+          {navItem("config", "Config", <SlidersHorizontal size={18} />)}
+        </div>
+      </aside>
     </div>
   );
 }

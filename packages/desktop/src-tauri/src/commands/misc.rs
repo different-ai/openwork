@@ -16,6 +16,14 @@ pub struct CacheResetResult {
     pub errors: Vec<String>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppBuildInfo {
+    pub version: String,
+    pub git_sha: Option<String>,
+    pub build_epoch: Option<String>,
+}
+
 fn opencode_cache_candidates() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -218,6 +226,18 @@ pub fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), S
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
+    let version = app.package_info().version.to_string();
+    let git_sha = option_env!("OPENWORK_GIT_SHA").map(|value| value.to_string());
+    let build_epoch = option_env!("OPENWORK_BUILD_EPOCH").map(|value| value.to_string());
+    AppBuildInfo {
+        version,
+        git_sha,
+        build_epoch,
+    }
 }
 
 /// Run `opencode mcp auth <server_name>` in the given project directory.

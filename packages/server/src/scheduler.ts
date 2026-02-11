@@ -1,7 +1,7 @@
 import { readdir, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { ApiError } from "./errors.js";
 import { exists, readJsonFile } from "./utils.js";
@@ -24,6 +24,10 @@ export type ScheduledJobRun = {
 };
 
 export type ScheduledJob = {
+  scopeId?: string;
+  timeoutSeconds?: number;
+  invocation?: { command: string; args: string[] };
+
   slug: string;
   name: string;
   schedule: string;
@@ -41,6 +45,11 @@ export type ScheduledJob = {
   lastRunStatus?: string;
 };
 
+type JobEntry = {
+  job: ScheduledJob;
+  jobFile: string;
+};
+
 const SUPPORTED_PLATFORMS = new Set(["darwin", "linux"]);
 
 function ensureSchedulerSupported() {
@@ -56,12 +65,25 @@ function resolveHomeDir(): string {
   return home;
 }
 
-function opencodeJobsDir(): string {
+function legacyJobsDir(): string {
   return join(resolveHomeDir(), ".config", "opencode", "jobs");
 }
 
-function jobFilePath(jobsDir: string, slug: string): string {
-  return join(jobsDir, `${slug}.json`);
+function schedulerScopesDir(): string {
+  return join(resolveHomeDir(), ".config", "opencode", "scheduler", "scopes");
+}
+
+function legacyJobFilePath(slug: string): string {
+  return join(legacyJobsDir(), `${slug}.json`);
+}
+
+function scopedJobFilePath(scopeId: string, slug: string): string {
+  return join(schedulerScopesDir(), scopeId, "jobs", `${slug}.json`);
+}
+
+function normalizePathForCompare(value: string): string {
+  const trimmed = value.trim();
+  return trimmed ? resolve(trimmed) : "";
 }
 
 async function loadJobFile(path: string): Promise<ScheduledJob | null> {
@@ -73,27 +95,47 @@ async function loadJobFile(path: string): Promise<ScheduledJob | null> {
   return job as ScheduledJob;
 }
 
-async function loadJobBySlug(jobsDir: string, slug: string): Promise<ScheduledJob | null> {
-  const trimmed = slug.trim();
-  if (!trimmed) return null;
-  const path = jobFilePath(jobsDir, trimmed);
-  if (!(await exists(path))) return null;
-  return loadJobFile(path);
-}
-
-async function loadAllJobs(jobsDir: string): Promise<ScheduledJob[]> {
+async function loadLegacyJobEntries(): Promise<JobEntry[]> {
+  const jobsDir = legacyJobsDir();
   if (!(await exists(jobsDir))) return [];
   const entries = await readdir(jobsDir, { withFileTypes: true });
-  const jobs: ScheduledJob[] = [];
+  const jobs: JobEntry[] = [];
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     if (!entry.name.endsWith(".json")) continue;
     const path = join(jobsDir, entry.name);
     const job = await loadJobFile(path);
-    if (job) jobs.push(job);
+    if (job) jobs.push({ job, jobFile: path });
   }
-  jobs.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
   return jobs;
+}
+
+async function loadScopedJobEntries(): Promise<JobEntry[]> {
+  const scopes = schedulerScopesDir();
+  if (!(await exists(scopes))) return [];
+  const scopeEntries = await readdir(scopes, { withFileTypes: true });
+  const jobs: JobEntry[] = [];
+  for (const scopeEntry of scopeEntries) {
+    if (!scopeEntry.isDirectory()) continue;
+    const scopeId = scopeEntry.name;
+    const jobsDir = join(scopes, scopeId, "jobs");
+    if (!(await exists(jobsDir))) continue;
+    const entries = await readdir(jobsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      if (!entry.name.endsWith(".json")) continue;
+      const path = join(jobsDir, entry.name);
+      const job = await loadJobFile(path);
+      if (!job) continue;
+      jobs.push({ job: { ...job, scopeId: job.scopeId ?? scopeId }, jobFile: path });
+    }
+  }
+  return jobs;
+}
+
+async function loadAllJobEntries(): Promise<JobEntry[]> {
+  const [scoped, legacy] = await Promise.all([loadScopedJobEntries(), loadLegacyJobEntries()]);
+  return [...scoped, ...legacy];
 }
 
 function slugify(name: string): string {
@@ -113,45 +155,52 @@ function slugify(name: string): string {
   return out.replace(/^-+|-+$/g, "");
 }
 
-async function findJobByName(jobsDir: string, name: string): Promise<ScheduledJob | null> {
+function findJobEntryByName(entries: JobEntry[], name: string): JobEntry | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
   const slug = slugify(trimmed);
-  let job = await loadJobBySlug(jobsDir, slug);
-  if (!job && slug !== trimmed) {
-    job = await loadJobBySlug(jobsDir, trimmed);
-  }
-  if (job) return job;
-  const all = await loadAllJobs(jobsDir);
   const lower = trimmed.toLowerCase();
   return (
-    all.find((entry) =>
-      entry.slug === trimmed ||
-      entry.slug.endsWith(`-${slug}`) ||
-      entry.name.toLowerCase() === lower ||
-      entry.name.toLowerCase().includes(lower)
+    entries.find((entry) =>
+      entry.job.slug === trimmed ||
+      entry.job.slug === slug ||
+      entry.job.slug.endsWith(`-${slug}`) ||
+      entry.job.name.toLowerCase() === lower ||
+      entry.job.name.toLowerCase().includes(lower)
     ) ?? null
   );
 }
 
-function schedulerSystemPaths(slug: string): string[] {
+function schedulerSystemPaths(job: ScheduledJob): string[] {
+  const home = resolveHomeDir();
+  const paths: string[] = [];
+
   if (process.platform === "darwin") {
-    return [join(resolveHomeDir(), "Library", "LaunchAgents", `com.opencode.job.${slug}.plist`)];
+    if (job.scopeId) {
+      paths.push(join(home, "Library", "LaunchAgents", `com.opencode.job.${job.scopeId}.${job.slug}.plist`));
+    }
+    paths.push(join(home, "Library", "LaunchAgents", `com.opencode.job.${job.slug}.plist`));
+    return paths;
   }
+
   if (process.platform === "linux") {
-    const base = join(resolveHomeDir(), ".config", "systemd", "user");
-    return [
-      join(base, `opencode-job-${slug}.service`),
-      join(base, `opencode-job-${slug}.timer`),
-    ];
+    const base = join(home, ".config", "systemd", "user");
+    if (job.scopeId) {
+      paths.push(join(base, `opencode-job-${job.scopeId}-${job.slug}.service`));
+      paths.push(join(base, `opencode-job-${job.scopeId}-${job.slug}.timer`));
+    }
+    paths.push(join(base, `opencode-job-${job.slug}.service`));
+    paths.push(join(base, `opencode-job-${job.slug}.timer`));
+    return paths;
   }
-  return [];
+
+  return paths;
 }
 
-async function uninstallJob(slug: string): Promise<void> {
+async function uninstallJob(job: ScheduledJob): Promise<void> {
   if (process.platform === "darwin") {
-    const [plist] = schedulerSystemPaths(slug);
-    if (plist && (await exists(plist))) {
+    for (const plist of schedulerSystemPaths(job)) {
+      if (!(await exists(plist))) continue;
       spawnSync("launchctl", ["unload", plist]);
       await rm(plist, { force: true });
     }
@@ -159,16 +208,18 @@ async function uninstallJob(slug: string): Promise<void> {
   }
 
   if (process.platform === "linux") {
-    const [service, timer] = schedulerSystemPaths(slug);
-    const timerUnit = `opencode-job-${slug}.timer`;
-    spawnSync("systemctl", ["--user", "stop", timerUnit]);
-    spawnSync("systemctl", ["--user", "disable", timerUnit]);
-
-    if (service && (await exists(service))) {
-      await rm(service, { force: true });
+    const slug = job.slug;
+    const scopedTimerUnit = job.scopeId ? `opencode-job-${job.scopeId}-${slug}.timer` : null;
+    const legacyTimerUnit = `opencode-job-${slug}.timer`;
+    for (const unit of [scopedTimerUnit, legacyTimerUnit].filter(Boolean) as string[]) {
+      spawnSync("systemctl", ["--user", "stop", unit]);
+      spawnSync("systemctl", ["--user", "disable", unit]);
     }
-    if (timer && (await exists(timer))) {
-      await rm(timer, { force: true });
+
+    for (const p of schedulerSystemPaths(job)) {
+      if (await exists(p)) {
+        await rm(p, { force: true });
+      }
     }
 
     spawnSync("systemctl", ["--user", "daemon-reload"]);
@@ -178,13 +229,27 @@ async function uninstallJob(slug: string): Promise<void> {
   ensureSchedulerSupported();
 }
 
-export async function listScheduledJobs(): Promise<ScheduledJob[]> {
+export async function listScheduledJobs(workdir?: string): Promise<ScheduledJob[]> {
   ensureSchedulerSupported();
-  const jobsDir = opencodeJobsDir();
-  return loadAllJobs(jobsDir);
+  const entries = await loadAllJobEntries();
+
+  const filterRoot = typeof workdir === "string" && workdir.trim() ? normalizePathForCompare(workdir) : null;
+  const jobs = entries
+    .map((entry) => entry.job)
+    .filter((job) => {
+      if (!filterRoot) return true;
+      if (!job.workdir) return false;
+      return normalizePathForCompare(job.workdir) === filterRoot;
+    });
+
+  jobs.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  return jobs;
 }
 
-export async function resolveScheduledJob(name: string): Promise<{
+export async function resolveScheduledJob(
+  name: string,
+  workdir?: string
+): Promise<{
   job: ScheduledJob;
   jobFile: string;
   systemPaths: string[];
@@ -194,21 +259,44 @@ export async function resolveScheduledJob(name: string): Promise<{
   if (!trimmed) {
     throw new ApiError(400, "job_name_required", "name is required");
   }
-  const jobsDir = opencodeJobsDir();
-  const job = await findJobByName(jobsDir, trimmed);
-  if (!job) {
+
+  const entries = await loadAllJobEntries();
+  const filterRoot = typeof workdir === "string" && workdir.trim() ? normalizePathForCompare(workdir) : null;
+  const filtered = filterRoot
+    ? entries.filter((entry) => {
+        const wd = entry.job.workdir;
+        if (!wd) return false;
+        return normalizePathForCompare(wd) === filterRoot;
+      })
+    : entries;
+
+  const found = findJobEntryByName(filtered, trimmed);
+  if (!found) {
     throw new ApiError(404, "job_not_found", `Job "${trimmed}" not found.`);
   }
+
   return {
-    job,
-    jobFile: jobFilePath(jobsDir, job.slug),
-    systemPaths: schedulerSystemPaths(job.slug),
+    job: found.job,
+    jobFile: found.jobFile,
+    systemPaths: schedulerSystemPaths(found.job),
   };
 }
 
-export async function deleteScheduledJob(job: ScheduledJob): Promise<void> {
+export async function deleteScheduledJob(job: ScheduledJob, jobFile: string): Promise<void> {
   ensureSchedulerSupported();
-  const jobsDir = opencodeJobsDir();
-  await uninstallJob(job.slug);
-  await rm(jobFilePath(jobsDir, job.slug), { force: true });
+  await uninstallJob(job);
+  await rm(jobFile, { force: true });
+
+  // Best-effort cleanup: if a legacy job file exists with the same slug, remove it.
+  const legacy = legacyJobFilePath(job.slug);
+  if (legacy !== jobFile && (await exists(legacy))) {
+    await rm(legacy, { force: true });
+  }
+  // Best-effort cleanup: if a scoped job file exists with scopeId, remove it.
+  if (job.scopeId) {
+    const scoped = scopedJobFilePath(job.scopeId, job.slug);
+    if (scoped !== jobFile && (await exists(scoped))) {
+      await rm(scoped, { force: true });
+    }
+  }
 }

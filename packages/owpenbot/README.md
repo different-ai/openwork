@@ -1,8 +1,8 @@
 # Owpenbot
 
-Simple Slack + WhatsApp + Telegram bridge for a running OpenCode server.
+Simple Slack + Telegram bridge for a running OpenCode server.
 
-## Install + Run (WhatsApp)
+## Install + Run
 
 One-command install (recommended):
 
@@ -22,7 +22,7 @@ Quick run without install:
 npx owpenwork
 ```
 
-Then follow the guided setup (choose what to configure, link WhatsApp, start).
+Then follow the guided setup (choose what to configure, start).
 
 1) One-command setup (installs deps, builds, creates `.env` if missing):
 
@@ -35,52 +35,27 @@ pnpm -C packages/owpenbot setup
 Required:
 - `OPENCODE_URL`
 - `OPENCODE_DIRECTORY`
-- `WHATSAPP_AUTH_DIR`
 
 Recommended:
 - `OPENCODE_SERVER_USERNAME`
 - `OPENCODE_SERVER_PASSWORD`
 
-3) Run owpenwork and follow the guided setup:
+3) Run owpenwork:
 
 ```bash
 owpenwork
 ```
 
-Owpenwork keeps the WhatsApp session alive once connected.
+## Telegram
 
-6) Pair a user with the bot (only if DM policy is pairing):
+Telegram support is configured via identities. You can either:
+- Use env vars for a single bot: `TELEGRAM_BOT_TOKEN=...`
+- Or add multiple bots to the config file (`owpenbot.json`) using the CLI:
 
-- Run `owpenwork pairing list` to view pending codes.
-- Approve a code: `owpenwork pairing approve <code>`.
-- The user can then message again to receive OpenCode replies.
-
-## Usage Flows
-
-### One-person flow (personal testing)
-
-Use your own WhatsApp account as the bot and test from a second number you control.
-
-1) Run `owpenwork` and choose “personal number.”
-2) Scan the QR when prompted.
-3) Message yourself or from a second number; your number is already allowlisted.
-
-Note: WhatsApp’s “message yourself” thread is not reliable for bot testing.
-
-### Two-person flow (dedicated bot)
-
-Use a separate WhatsApp number as the bot account so it stays independent from your personal chat history.
-
-1) Create a new WhatsApp account for the dedicated number.
-2) Run `owpenwork` and choose “dedicated number.”
-3) Scan the QR when prompted.
-4) If DM policy is pairing, approve codes with `owpenwork pairing approve <code>`.
-
-## Telegram (Untested)
-
-Telegram support is wired but not E2E tested yet. To try it:
-- Run `owpenwork login telegram --token <token>`.
-- Or set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ENABLED=true`.
+```bash
+owpenbot telegram add <token> --id default
+owpenbot telegram list
+```
 
 ## Slack (Socket Mode)
 
@@ -95,31 +70,62 @@ Slack support uses Socket Mode and replies in threads when @mentioned in channel
 4) Subscribe to events (bot events):
    - `app_mention`
    - `message.im`
-5) Set env vars (or save via `owpenbot slack set-tokens ...`):
-   - `SLACK_BOT_TOKEN=xoxb-...`
-   - `SLACK_APP_TOKEN=xapp-...`
-   - `SLACK_ENABLED=true`
+5) Set env vars (or save via `owpenbot slack add ...`):
+    - `SLACK_BOT_TOKEN=xoxb-...`
+    - `SLACK_APP_TOKEN=xapp-...`
+    - `SLACK_ENABLED=true`
+
+To add multiple Slack apps:
+
+```bash
+owpenbot slack add <xoxb> <xapp> --id default
+owpenbot slack list
+```
+
+## Identity-Scoped Routing
+
+Owpenbot routes messages based on `(channel, identityId, peerId) -> directory` bindings.
+
+```bash
+owpenbot bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
+owpenbot bindings list
+```
+
+## Health Server (Local HTTP)
+
+Owpenbot can expose a small local HTTP server for health/config and simple message dispatch.
+
+- `OWPENBOT_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
+- `OWPENBOT_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
+
+Send a message to all peers bound to a directory:
+
+```bash
+curl -sS "http://127.0.0.1:${OWPENBOT_HEALTH_PORT:-3005}/send" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","directory":"/path/to/workdir","text":"hello"}'
+```
 
 ## Commands
 
 ```bash
-owpenwork
-owpenwork --non-interactive
-owpenwork login whatsapp
-  owpenwork login telegram --token <token>
-  owpenwork slack status
-  owpenwork slack set-tokens <xoxb> <xapp>
-  owpenwork pairing list
-  owpenwork pairing approve <code>
-  owpenwork status
-  owpenwork doctor --reset
+owpenbot start
+owpenbot status
+
+owpenbot telegram list
+owpenbot telegram add <token> --id default
+
+owpenbot slack list
+owpenbot slack add <xoxb> <xapp> --id default
+
+owpenbot bindings list
+owpenbot bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
 ```
 
 ## Defaults
 
 - SQLite at `~/.openwork/owpenbot/owpenbot.db` unless overridden.
 - Config stored at `~/.openwork/owpenbot/owpenbot.json` (created by `owpenwork` or `owpenwork setup`).
-- DM policy defaults to `pairing` unless changed in setup.
 - Group chats are disabled unless `GROUPS_ENABLED=true`.
 
 ## Tests

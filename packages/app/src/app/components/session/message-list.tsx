@@ -1,10 +1,10 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, Circle, Copy, File, Sparkles } from "lucide-solid";
+import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
-import { groupMessageParts, summarizeStep } from "../../utils";
+import { classifyTool, groupMessageParts, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 
 export type MessageListProps = {
@@ -35,6 +35,70 @@ type MessageBlock = {
 };
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
+
+/** Icon for a given tool category */
+function ToolIcon(props: { category: string; size?: number }) {
+  const s = () => props.size ?? 12;
+  switch (props.category) {
+    case "read":
+      return <Eye size={s()} />;
+    case "edit":
+      return <Pencil size={s()} />;
+    case "write":
+      return <FileEdit size={s()} />;
+    case "search":
+      return <Search size={s()} />;
+    case "terminal":
+      return <Terminal size={s()} />;
+    case "glob":
+      return <FolderSearch size={s()} />;
+    case "task":
+      return <Sparkles size={s()} />;
+    case "skill":
+      return <Sparkles size={s()} />;
+    default:
+      return <File size={s()} />;
+  }
+}
+
+/** Status dot color */
+function statusDotClass(status?: string): string {
+  switch (status) {
+    case "completed":
+    case "done":
+      return "bg-green-9";
+    case "running":
+    case "pending":
+      return "bg-blue-9 animate-pulse";
+    case "error":
+      return "bg-red-9";
+    default:
+      return "bg-gray-8";
+  }
+}
+
+/** Count total steps in a parts group array */
+function countSteps(partsGroups: Part[][]): number {
+  return partsGroups.reduce((sum, parts) => sum + parts.length, 0);
+}
+
+function latestStepPart(partsGroups: Part[][]): Part | undefined {
+  for (let groupIndex = partsGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+    const parts = partsGroups[groupIndex] ?? [];
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex];
+      if (
+        part.type === "tool" ||
+        part.type === "reasoning" ||
+        part.type === "step-start" ||
+        part.type === "step-finish"
+      ) {
+        return part;
+      }
+    }
+  }
+  return undefined;
+}
 
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
@@ -96,18 +160,14 @@ export default function MessageList(props: MessageListProps) {
     return "";
   };
 
-  // Note: expandedStepIds now tracks COLLAPSED steps (inverted logic for default-expanded behavior)
   const toggleSteps = (id: string, relatedIds: string[] = []) => {
     props.setExpandedStepIds((current) => {
       const next = new Set(current);
-      // Inverted: if in set = collapsed, so check if collapsed to expand (remove from set)
-      const isCollapsed = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
-      if (isCollapsed) {
-        // Currently collapsed -> expand by removing from set
+      const isExpanded = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
+      if (isExpanded) {
         next.delete(id);
         relatedIds.forEach((relatedId) => next.delete(relatedId));
       } else {
-        // Currently expanded -> collapse by adding to set
         next.add(id);
         relatedIds.forEach((relatedId) => next.add(relatedId));
       }
@@ -115,10 +175,9 @@ export default function MessageList(props: MessageListProps) {
     });
   };
 
-  // Inverted: steps are expanded by default (when NOT in the set)
   const isStepsExpanded = (id: string, relatedIds: string[] = []) =>
-    !props.expandedStepIds.has(id) &&
-    !relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
+    props.expandedStepIds.has(id) ||
+    relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
   const renderablePartsForMessage = (message: MessageWithParts) =>
     message.parts.filter((part) => {
@@ -183,57 +242,171 @@ export default function MessageList(props: MessageListProps) {
     return blocks;
   });
 
+  /** Compact single-line step row */
+  const StepRow = (rowProps: { part: Part; isUser: boolean }) => {
+    const summary = () => summarizeStep(rowProps.part);
+    const category = () => {
+      if (rowProps.part.type === "tool") {
+        const toolName = (rowProps.part as any).tool ? String((rowProps.part as any).tool) : "";
+        return classifyTool(toolName);
+      }
+      return "tool";
+    };
+    const status = () => {
+      if (rowProps.part.type === "tool") {
+        const state = (rowProps.part as any).state ?? {};
+        return state.status ? String(state.status) : undefined;
+      }
+      return undefined;
+    };
+
+    return (
+      <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">
+        {/* Status dot */}
+        <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
+        {/* Tool icon */}
+        <div class={`shrink-0 ${
+          summary().isSkill 
+            ? "text-purple-10" 
+            : "text-gray-9"
+        }`}>
+          <ToolIcon category={category()} size={13} />
+        </div>
+        {/* Title */}
+        <span class="text-[13px] text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
+          {summary().title}
+        </span>
+        {/* Skill badge */}
+        <Show when={summary().isSkill}>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
+            skill
+          </span>
+        </Show>
+        {/* Detail - truncated to single line */}
+        <Show when={summary().detail}>
+          <span class="text-[12px] text-gray-9 truncate min-w-0">
+            {summary().detail}
+          </span>
+        </Show>
+      </div>
+    );
+  };
+
+  /** Compact steps list */
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
-    <div class="space-y-3">
+    <div class="divide-y divide-gray-6/40">
       <For each={listProps.parts}>
-        {(part) => {
-          const summary = summarizeStep(part);
-          return (
-            <div class="flex items-start gap-3 text-xs text-gray-11">
-              <div class={`mt-0.5 h-5 w-5 rounded-full border flex items-center justify-center ${
-                summary.isSkill 
-                  ? "border-purple-7 bg-purple-3 text-purple-10" 
-                  : "border-gray-7 text-gray-10"
-              }`}>
-                {summary.isSkill ? <Sparkles size={12} /> : part.type === "tool" ? <File size={12} /> : <Circle size={8} />}
+        {(part) => (
+          <div>
+            <StepRow part={part} isUser={listProps.isUser} />
+            <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
+              <div class="pl-6 pb-2 text-xs text-gray-10">
+                <PartView
+                  part={part}
+                  developerMode={props.developerMode}
+                  showThinking={props.showThinking}
+                  tone={listProps.isUser ? "dark" : "light"}
+                />
               </div>
-              <div class="flex-1">
-                <div class="flex items-center gap-2">
-                  <span class="text-gray-12">{summary.title}</span>
-                  <Show when={summary.isSkill}>
-                    <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
-                      skill
-                    </span>
-                  </Show>
-                </div>
-                <Show when={summary.detail}>
-                  <div class="mt-1 text-gray-10">{summary.detail}</div>
-                </Show>
-                <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
-                  <div class="mt-2 text-xs text-gray-10">
-                    <PartView
-                      part={part}
-                      developerMode={props.developerMode}
-                      showThinking={props.showThinking}
-                      tone={listProps.isUser ? "dark" : "light"}
-                    />
-                  </div>
-                </Show>
-              </div>
-            </div>
-          );
-        }}
+            </Show>
+          </div>
+        )}
       </For>
     </div>
   );
+
+  /** Expandable steps container */
+  const StepsContainer = (containerProps: {
+    id: string;
+    relatedIds?: string[];
+    partsGroups: Part[][];
+    isUser: boolean;
+    isInline?: boolean;
+  }) => {
+    const relatedIds = () => containerProps.relatedIds ?? [];
+    const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
+    const totalSteps = () => countSteps(containerProps.partsGroups);
+    const latestStep = () => latestStepPart(containerProps.partsGroups);
+    const hasRunning = () =>
+      containerProps.partsGroups.some((parts) =>
+        parts.some((part) => {
+          if (part.type !== "tool") return false;
+          const state = (part as any).state ?? {};
+          return state.status === "running" || state.status === "pending";
+        }),
+      );
+
+    return (
+      <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
+        {/* Toggle button - clean, compact */}
+        <button
+          class={`flex items-center gap-2 py-1.5 text-[13px] transition-colors ${
+            containerProps.isUser
+              ? "text-gray-10 hover:text-gray-11"
+              : "text-gray-10 hover:text-gray-12"
+          }`}
+          onClick={() => toggleSteps(containerProps.id, relatedIds())}
+        >
+          <ChevronRight
+            size={14}
+            class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
+          />
+          <span class="font-medium">
+            {expanded() ? "Hide steps" : `Show ${totalSteps()} step${totalSteps() === 1 ? "" : "s"}`}
+          </span>
+          <Show when={hasRunning()}>
+            <span class="flex items-center gap-1.5 text-[11px] text-blue-11">
+              <span class="w-1.5 h-1.5 rounded-full bg-blue-9 animate-pulse" />
+              running
+            </span>
+          </Show>
+        </button>
+
+        <Show when={!expanded()}>
+          <div
+            class={`mt-1 ml-1 pl-3 border-l-2 ${
+              containerProps.isUser ? "border-gray-6" : "border-gray-6/60"
+            }`}
+          >
+            <Show when={latestStep()}>
+              {(part) => <StepRow part={part()} isUser={containerProps.isUser} />}
+            </Show>
+          </div>
+        </Show>
+
+        {/* Expanded content */}
+        <Show when={expanded()}>
+          <div
+            class={`mt-1 ml-1 pl-3 border-l-2 max-h-[480px] overflow-y-auto ${
+              containerProps.isUser
+                ? "border-gray-6"
+                : "border-gray-6/60"
+            }`}
+          >
+            <For each={containerProps.partsGroups}>
+              {(parts, index) => (
+                <div
+                  class={
+                    index() === 0
+                      ? ""
+                      : "mt-2 pt-2 border-t border-gray-6/40"
+                  }
+                >
+                  <StepsList parts={parts} isUser={containerProps.isUser} />
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    );
+  };
 
   return (
     <div class="space-y-6 pb-32">
       <For each={messageBlocks()}>
         {(block) => {
           if (block.kind === "steps-cluster") {
-            const relatedStepIds = block.stepIds.filter((stepId) => stepId !== block.id);
-            const expanded = () => isStepsExpanded(block.id, relatedStepIds);
             return (
               <div
                 class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
@@ -247,43 +420,12 @@ export default function MessageList(props: MessageListProps) {
                       : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
                   }`}
                 >
-                  <div class={block.isUser ? "mt-2" : "mt-3 border-t border-gray-6/60 pt-3"}>
-                    <button
-                      class={`flex items-center gap-2 text-xs ${
-                        block.isUser ? "text-gray-10 hover:text-gray-11" : "text-gray-10 hover:text-gray-12"
-                      }`}
-                      onClick={() => toggleSteps(block.id, relatedStepIds)}
-                    >
-                      <span>{expanded() ? "Hide steps" : "View steps"}</span>
-                      <ChevronDown
-                        size={14}
-                        class={`transition-transform ${expanded() ? "rotate-180" : ""}`.trim()}
-                      />
-                    </button>
-                    <Show when={expanded()}>
-                      <div
-                        class={`mt-3 rounded-xl border p-3 max-h-96 overflow-auto ${
-                          block.isUser
-                            ? "border-gray-6 bg-gray-1/60"
-                            : "border-gray-6/70 bg-gray-2/40"
-                        }`}
-                      >
-                        <For each={block.partsGroups}>
-                          {(parts, index) => (
-                            <div
-                              class={
-                                index() === 0
-                                  ? ""
-                                  : "mt-3 pt-3 border-t border-gray-6/60"
-                              }
-                            >
-                              <StepsList parts={parts} isUser={block.isUser} />
-                            </div>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                  </div>
+                  <StepsContainer
+                    id={block.id}
+                    relatedIds={block.stepIds.filter((stepId) => stepId !== block.id)}
+                    partsGroups={block.partsGroups}
+                    isUser={block.isUser}
+                  />
                 </div>
               </div>
             );
@@ -344,35 +486,13 @@ export default function MessageList(props: MessageListProps) {
                       {group.kind === "steps" &&
                         (() => {
                           const stepGroup = group as { kind: "steps"; id: string; parts: Part[] };
-                          const expanded = () => isStepsExpanded(stepGroup.id);
                           return (
-                            <div class={block.isUser ? "mt-2" : "mt-3 border-t border-gray-6/60 pt-3"}>
-                              <button
-                                class={`flex items-center gap-2 text-xs ${
-                                  block.isUser
-                                    ? "text-gray-10 hover:text-gray-11"
-                                    : "text-gray-10 hover:text-gray-12"
-                                }`}
-                                onClick={() => toggleSteps(stepGroup.id)}
-                              >
-                                <span>{expanded() ? "Hide steps" : "View steps"}</span>
-                                <ChevronDown
-                                  size={14}
-                                  class={`transition-transform ${expanded() ? "rotate-180" : ""}`.trim()}
-                                />
-                              </button>
-                              <Show when={expanded()}>
-                                <div
-                                  class={`mt-3 rounded-xl border p-3 max-h-96 overflow-auto ${
-                                    block.isUser
-                                      ? "border-gray-6 bg-gray-1/60"
-                                      : "border-gray-6/70 bg-gray-2/40"
-                                  }`}
-                                >
-                                  <StepsList parts={stepGroup.parts} isUser={block.isUser} />
-                                </div>
-                              </Show>
-                            </div>
+                            <StepsContainer
+                              id={stepGroup.id}
+                              partsGroups={[stepGroup.parts]}
+                              isUser={block.isUser}
+                              isInline={true}
+                            />
                           );
                         })()}
                     </div>

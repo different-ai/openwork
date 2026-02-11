@@ -466,37 +466,116 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   return groups;
 }
 
-export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string } {
+/** Classify a tool name into a semantic category for icon selection */
+export function classifyTool(toolName: string): "read" | "edit" | "write" | "search" | "terminal" | "glob" | "task" | "skill" | "tool" {
+  const lower = toolName.toLowerCase();
+  if (lower === "skill") return "skill";
+  if (lower.includes("read") || lower.includes("cat") || lower.includes("fetch")) return "read";
+  if (lower.includes("edit") || lower.includes("patch") || lower.includes("replace") || lower.includes("update")) return "edit";
+  if (lower.includes("write") || lower.includes("create")) return "write";
+  if (lower.includes("grep") || lower.includes("search") || lower.includes("find")) return "search";
+  if (lower.includes("bash") || lower.includes("shell") || lower.includes("exec") || lower.includes("command") || lower.includes("run")) return "terminal";
+  if (lower.includes("glob") || lower.includes("list") || lower.includes("ls")) return "glob";
+  if (lower.includes("task") || lower.includes("agent") || lower.includes("todo")) return "task";
+  return "tool";
+}
+
+/** Extract a clean filename from a file path */
+function extractFilename(filePath: string): string {
+  const parts = filePath.replace(/\\/g, "/").split("/");
+  return parts[parts.length - 1] || filePath;
+}
+
+/** Build a concise detail line for a tool call — avoids dumping raw output */
+function buildToolDetail(state: any, toolName: string): string | undefined {
+  // For file operations, show the filename
+  const filePath = state?.path ?? state?.file;
+  if (typeof filePath === "string" && filePath.trim()) {
+    const name = extractFilename(filePath.trim());
+    const status = state?.status;
+    if (status === "completed" || status === "done") {
+      return name;
+    }
+    return name;
+  }
+
+  // For edits that report updated files, show filename(s)
+  const files = state?.files;
+  if (Array.isArray(files) && files.length > 0) {
+    const names = files.filter((f: any) => typeof f === "string").map(extractFilename);
+    if (names.length === 1) return names[0];
+    if (names.length > 1) return `${names[0]} +${names.length - 1} more`;
+  }
+
+  // For bash/terminal commands, show the command
+  const command = state?.command ?? state?.cmd;
+  if (typeof command === "string" && command.trim()) {
+    const clean = command.trim();
+    return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
+  }
+
+  // For search/grep, show the pattern
+  const pattern = state?.pattern ?? state?.query;
+  if (typeof pattern === "string" && pattern.trim()) {
+    return `"${pattern.trim().length > 60 ? pattern.trim().slice(0, 57) + "..." : pattern.trim()}"`;
+  }
+
+  // Subtitle/detail from state as fallback
+  const subtitle = state?.subtitle ?? state?.detail ?? state?.summary;
+  if (typeof subtitle === "string" && subtitle.trim()) {
+    const clean = subtitle.trim();
+    return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
+  }
+
+  // For completed tools with output, show a very short summary
+  const output = typeof state?.output === "string" && state.output.trim() ? state.output.trim() : null;
+  if (output) {
+    // Extract just the first meaningful line (skip line numbers and raw file markers)
+    const lines = output.split("\n").filter((l: string) => {
+      const trimmed = l.trim();
+      return trimmed && !trimmed.startsWith("<file>") && !/^\d{5}\|/.test(trimmed);
+    });
+    if (lines.length > 0) {
+      const first = lines[0].trim();
+      if (first.startsWith("Success")) {
+        // "Success. Updated the following files: M foo.ts" -> "foo.ts"
+        const match = first.match(/:\s*[MADR]\s+(.+)/);
+        if (match) return extractFilename(match[1].trim());
+        return "Done";
+      }
+      return first.length > 80 ? `${first.slice(0, 77)}...` : first;
+    }
+  }
+
+  return undefined;
+}
+
+export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string; toolCategory?: string; status?: string } {
   if (part.type === "tool") {
     const record = part as any;
     const toolName = record.tool ? String(record.tool) : "Tool";
     const state = record.state ?? {};
     const title = state.title ? String(state.title) : toolName;
-    const output = typeof state.output === "string" && state.output.trim() ? state.output.trim() : null;
+    const category = classifyTool(toolName);
+    const status = state.status ? String(state.status) : undefined;
     
     // Detect skill trigger
-    if (toolName === "skill") {
+    if (category === "skill") {
       const skillName = state.metadata?.name || title.replace(/^Loaded skill:\s*/i, "");
-      if (output) {
-        const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-        return { title, isSkill: true, skillName, detail: short };
-      }
-      return { title, isSkill: true, skillName };
+      const detail = buildToolDetail(state, toolName);
+      return { title, isSkill: true, skillName, detail, toolCategory: category, status };
     }
     
-    if (output) {
-      const short = output.length > 160 ? `${output.slice(0, 160)}…` : output;
-      return { title, detail: short };
-    }
-    return { title };
+    const detail = buildToolDetail(state, toolName);
+    return { title, detail, toolCategory: category, status };
   }
 
   if (part.type === "reasoning") {
     const record = part as any;
     const text = typeof record.text === "string" ? record.text.trim() : "";
-    if (!text) return { title: "Planning" };
-    const short = text.length > 120 ? `${text.slice(0, 120)}…` : text;
-    return { title: "Thinking", detail: short };
+    if (!text) return { title: "Planning", toolCategory: "tool" };
+    const short = text.length > 80 ? `${text.slice(0, 77)}...` : text;
+    return { title: "Thinking", detail: short, toolCategory: "tool" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
@@ -504,10 +583,11 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     return {
       title: part.type === "step-start" ? "Step started" : "Step finished",
       detail: reason ? String(reason) : undefined,
+      toolCategory: "tool",
     };
   }
 
-  return { title: "Step" };
+  return { title: "Step", toolCategory: "tool" };
 }
 
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {

@@ -34,13 +34,19 @@ gh release create openwrk-vX.Y.Z packages/headless/dist/sidecars/* \
   --notes "Sidecar binaries and manifest for openwrk vX.Y.Z"
 ```
 
-5. Publish the package.
+5. Build openwrk binaries for all supported platforms.
 
 ```bash
-pnpm --filter openwrk publish --access public
+pnpm --filter openwrk build:bin:all
 ```
 
-6. Verify the published version.
+6. Publish `openwrk` as a meta package + platform packages (optionalDependencies).
+
+```bash
+node packages/headless/scripts/publish-npm.mjs
+```
+
+7. Verify the published version.
 
 ```bash
 npm view openwrk version
@@ -70,6 +76,8 @@ Alternatively, export an npm token in your environment (see `.env.example`).
 
 ## Notes
 
-- `pnpm publish` requires a clean git tree.
+- `openwrk` is published as:
+  - `openwrk` (wrapper + optionalDependencies)
+  - `openwrk-darwin-arm64`, `openwrk-darwin-x64`, `openwrk-linux-arm64`, `openwrk-linux-x64`, `openwrk-windows-x64` (platform binaries)
 - `openwrk` is versioned in lockstep with OpenWork app/desktop releases.
 - openwrk downloads sidecars from `openwrk-vX.Y.Z` release assets by default.

@@ -25,7 +25,9 @@ test("bridge end-to-end: inbound -> prompt -> outbound", async () => {
 
   const sent = [];
   const slackAdapter = {
+    key: "slack:default",
     name: "slack",
+    identityId: "default",
     maxTextLength: 39_000,
     async start() {},
     async stop() {},
@@ -50,39 +52,29 @@ test("bridge end-to-end: inbound -> prompt -> outbound", async () => {
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: dir,
-      telegramEnabled: false,
-      whatsappEnabled: false,
-      slackEnabled: false,
-      whatsappAuthDir: dir,
-      whatsappAccountId: "default",
-      whatsappDmPolicy: "disabled",
-      whatsappAllowFrom: new Set(),
-      whatsappSelfChatMode: false,
+      telegramBots: [],
+      slackApps: [],
       dataDir: dir,
       dbPath,
       logFile: path.join(dir, "owpenbot.log"),
-      allowlist: {
-        telegram: new Set(),
-        whatsapp: new Set(),
-        slack: new Set(),
-      },
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",
       toolOutputLimit: 1200,
+      healthPort: undefined,
       logLevel: "silent",
     },
     createLoggerStub(),
     undefined,
     {
       client: fakeClient,
-      adapters: new Map([["slack", slackAdapter]]),
+      adapters: new Map([["slack:default", slackAdapter]]),
       disableEventStream: true,
       disableHealthServer: true,
     },
   );
 
-  await bridge.dispatchInbound({ channel: "slack", peerId: "D123", text: "ping", raw: {} });
+  await bridge.dispatchInbound({ channel: "slack", identityId: "default", peerId: "D123", text: "ping", raw: {} });
 
   assert.equal(sent.length, 2);
   assert.equal(sent[0].peerId, "D123");

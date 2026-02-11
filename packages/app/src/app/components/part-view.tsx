@@ -56,8 +56,12 @@ function createCustomRenderer(tone: "light" | "dark") {
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
   const isSafeUrl = (url: string) => {
-    const protocol = (url || "").trim().toLowerCase();
-    return !protocol.startsWith("javascript:") && !protocol.startsWith("data:");
+    const normalized = (url || "").trim().toLowerCase();
+    if (normalized.startsWith("javascript:")) return false;
+    // Allow data:image/* URIs (base64-encoded images from AI models) but block
+    // other data: schemes (e.g. data:text/html) which could be used for XSS.
+    if (normalized.startsWith("data:")) return normalized.startsWith("data:image/");
+    return true;
   };
 
   renderer.html = ({ text }) => escapeHtml(text);

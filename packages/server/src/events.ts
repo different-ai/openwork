@@ -5,6 +5,7 @@ export class ReloadEventStore {
   private events: ReloadEvent[] = [];
   private seq = 0;
   private maxSize: number;
+  private lastRecorded: Map<string, number> = new Map();
 
   constructor(maxSize = 200) {
     this.maxSize = maxSize;
@@ -26,6 +27,20 @@ export class ReloadEventStore {
     }
 
     return event;
+  }
+
+  recordDebounced(
+    workspaceId: string,
+    reason: ReloadReason,
+    trigger?: ReloadTrigger,
+    debounceMs = 750,
+  ): ReloadEvent | null {
+    const now = Date.now();
+    const key = `${workspaceId}:${reason}`;
+    const last = this.lastRecorded.get(key) ?? 0;
+    if (now - last < debounceMs) return null;
+    this.lastRecorded.set(key, now);
+    return this.record(workspaceId, reason, trigger);
   }
 
   list(workspaceId: string, since?: number): ReloadEvent[] {

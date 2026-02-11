@@ -60,11 +60,27 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `OPENWORK_OPENCODE_USERNAME`
 - `OPENWORK_OPENCODE_PASSWORD`
 
-## Endpoints (initial)
+Token management (scoped tokens):
+
+- `OPENWORK_TOKEN_STORE` path to token store JSON (default: alongside `server.json`)
+
+File injection / artifacts:
+
+- `OPENWORK_INBOX_ENABLED` (`1` | `0`)
+- `OPENWORK_INBOX_MAX_BYTES` (default: 50MB, capped)
+- `OPENWORK_OUTBOX_ENABLED` (`1` | `0`)
+
+Sandbox advertisement (for capability discovery):
+
+- `OPENWORK_SANDBOX_ENABLED` (`1` | `0`)
+- `OPENWORK_SANDBOX_BACKEND` (`docker` | `container` | `none`)
+
+## Endpoints
 
 - `GET /health`
 - `GET /status`
 - `GET /capabilities`
+- `GET /whoami`
 - `GET /workspaces`
 - `GET /workspace/:id/config`
 - `PATCH /workspace/:id/config`
@@ -85,9 +101,48 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `GET /workspace/:id/export`
 - `POST /workspace/:id/import`
 
+Token management (host/owner auth):
+
+- `GET /tokens`
+- `POST /tokens` (body: `{ "scope": "owner"|"collaborator"|"viewer", "label"?: string }`)
+- `DELETE /tokens/:id`
+
+Inbox/outbox:
+
+- `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
+- `GET /workspace/:id/artifacts`
+- `GET /workspace/:id/artifacts/:artifactId`
+
+Toy UI (static assets served by the server):
+
+- `GET /ui`
+- `GET /w/:id/ui`
+- `GET /ui/assets/*`
+
+OpenCode proxy:
+
+- `GET|POST|... /opencode/*`
+- `GET|POST|... /w/:id/opencode/*`
+
+Owpenbot proxy:
+
+- `GET|POST|... /owpenbot/*`
+- `GET|POST|... /w/:id/owpenbot/*`
+
+Auth policy:
+- `GET /owpenbot/health` requires client auth.
+- All other `/owpenbot/*` endpoints require host/owner auth.
+
 ## Approvals
 
-All writes are gated by host approval. Host APIs require `X-OpenWork-Host-Token`:
+All writes are gated by host approval.
+
+Host APIs accept either:
+
+- `X-OpenWork-Host-Token: <token>` (legacy host token), or
+- `Authorization: Bearer <token>` where the token scope is `owner`.
+
+Approvals endpoints:
 
 - `GET /approvals`
 - `POST /approvals/:id` with `{ "reply": "allow" | "deny" }`

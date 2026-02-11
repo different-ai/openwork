@@ -18,6 +18,15 @@ packages/desktop/src-tauri/sidecars/
 .env.*
 !.env.example
 
+# Bun build artifacts
+*.bun-build
+
+# pnpm store (created by Docker volume mounts)
+.pnpm-store/
+
+# Docker dev workspace (ephemeral mount point)
+packaging/docker/workspace/
+
 # OS
 .DS_Store
 
@@ -27,3 +36,6 @@ vendor/opencode/
 # OpenCode local deps
 .opencode/node_modules/
 .opencode/bun.lock
+
+# OpenWork workspace-local artifacts
+.opencode/openwork/

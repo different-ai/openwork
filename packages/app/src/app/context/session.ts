@@ -118,6 +118,23 @@ export function createSessionStore(options: {
   setSseConnected: (connected: boolean) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
 }) {
+
+  const sessionDebugEnabled = () => options.developerMode();
+
+  const sessionDebug = (label: string, payload?: unknown) => {
+    if (!sessionDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.log(`[WSDBG] ${label}`);
+      } else {
+        console.log(`[WSDBG] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
+  const MAX_RELOAD_DETECTION_KEYS = 5000;
+
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
     sessionStatus: {},
@@ -130,6 +147,7 @@ export function createSessionStore(options: {
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const reloadDetectionSet = new Set<string>();
+  const invalidToolDetectionSet = new Set<string>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -287,6 +305,60 @@ export function createSessionStore(options: {
     options.markReloadRequired(detection.reason, detection.trigger);
   };
 
+  const toolErrorText = (part: Part) => {
+    if (part.type !== "tool") return "";
+    const record = part as any;
+    const state = (record.state ?? {}) as Record<string, unknown>;
+    const title = typeof state.title === "string" ? state.title : "";
+    const error = typeof state.error === "string" ? state.error : "";
+    const detail = typeof state.detail === "string" ? state.detail : "";
+    return [title, error, detail].filter(Boolean).join("\n");
+  };
+
+  const isInvalidToolError = (part: Part) => {
+    if (part.type !== "tool") return false;
+    const haystack = toolErrorText(part).toLowerCase();
+    if (!haystack) return false;
+    return (
+      haystack.includes("invalid tool") ||
+      haystack.includes("model tried to call") ||
+      haystack.includes("unavailable tool") ||
+      haystack.includes("unknown tool") ||
+      haystack.includes("tool not found")
+    );
+  };
+
+  const invalidToolNextStepHint = (part: Part) => {
+    const record = part as any;
+    const name = typeof record.tool === "string" ? record.tool : "";
+    const lower = name.toLowerCase();
+    if (lower.includes("browser") || lower.includes("chrome") || lower.includes("devtools")) {
+      return "OpenWork browser automation isn't set up yet. Go to Plugins and ensure the browser plugin/extension is installed and connected, then retry.";
+    }
+    return "Try again, or switch to an agent/prompt that only uses available tools in this workspace.";
+  };
+
+  const maybeHandleInvalidToolError = (part: Part) => {
+    if (!options.setError) return;
+    if (!isInvalidToolError(part)) return;
+    if (!part?.id || !part.messageID) return;
+
+    const key = `${part.messageID}:${part.id}`;
+    if (invalidToolDetectionSet.has(key)) return;
+    invalidToolDetectionSet.add(key);
+
+    // Ensure the UI doesn't get stuck in a "Responding" state when the model
+    // tries to call a tool that isn't available.
+    if (part.sessionID) {
+      setStore("sessionStatus", part.sessionID, "idle");
+    }
+
+    const record = part as any;
+    const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "(unknown tool)";
+    const hint = invalidToolNextStepHint(part);
+    options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
+  };
+
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
@@ -341,11 +413,33 @@ export function createSessionStore(options: {
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
-    const list = unwrap(await c.session.list());
+
+    // IMPORTANT: OpenCode's session.list() supports server-side filtering by directory.
+    // Use it to avoid fetching every session across every workspace root.
+    //
+    // Note: We intentionally normalize slashes + trailing separators but do NOT
+    // lowercase on Windows for the query value because the server does strict
+    // string equality against the stored session.directory.
+    const queryDirectory = (() => {
+      const trimmed = (scopeRoot ?? "").trim();
+      if (!trimmed) return undefined;
+      const unified = trimmed.replace(/\\/g, "/");
+      const withoutTrailing = unified.replace(/\/+$/, "");
+      return withoutTrailing || "/";
+    })();
+
+    const start = Date.now();
+    sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
+    const list = unwrap(await c.session.list({ directory: queryDirectory, roots: true }));
+    sessionDebug("sessions:load:raw", { count: list.length, ms: Date.now() - start });
+
+    // Defensive client-side filter in case the server returns sessions spanning
+    // multiple roots (e.g. older servers or proxies).
     const root = normalizeDirectoryPath(scopeRoot);
     const filtered = root
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
+    sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
   }
 
@@ -655,8 +749,10 @@ export function createSessionStore(options: {
               message = errorMessage || `API error${statusCode ? ` (${statusCode})` : ""}`;
             }
           } else if (errorName === "MessageAbortedError") {
-            const errorMessage = typeof errorObj.message === "string" ? errorObj.message : "";
-            message = errorMessage || "Request was cancelled";
+            // Cancellation is a user-driven control flow. Don't treat it as a
+            // fatal error banner; the session UI already provides local UX.
+            options.setError(null);
+            return;
           } else if (errorName === "MessageOutputLengthError") {
             message = "Output length limit exceeded";
           } else {
@@ -738,6 +834,7 @@ export function createSessionStore(options: {
             }),
           );
           maybeMarkReloadRequired(part);
+          maybeHandleInvalidToolError(part);
         }
       }
     }

@@ -1,21 +1,55 @@
 import { dirname, join } from "node:path";
 import { appendFile, readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import type { AuditEntry } from "./types.js";
 import { ensureDir, exists } from "./utils.js";
 
-export function auditLogPath(workspaceRoot: string): string {
+function expandHome(value: string): string {
+  if (value.startsWith("~/")) {
+    return join(homedir(), value.slice(2));
+  }
+  return value;
+}
+
+function resolveOpenworkDataDir(): string {
+  const override = process.env.OPENWORK_DATA_DIR?.trim();
+  if (override) return expandHome(override);
+  return join(homedir(), ".openwork", "openwork-server");
+}
+
+export function auditLogPath(workspaceId: string): string {
+  return join(resolveOpenworkDataDir(), "audit", `${workspaceId}.jsonl`);
+}
+
+export function legacyAuditLogPath(workspaceRoot: string): string {
   return join(workspaceRoot, ".opencode", "openwork", "audit.jsonl");
 }
 
+async function resolveReadableAuditPath(workspaceRoot: string, workspaceId: string): Promise<string | null> {
+  const primary = auditLogPath(workspaceId);
+  if (await exists(primary)) return primary;
+  const legacy = legacyAuditLogPath(workspaceRoot);
+  if (await exists(legacy)) return legacy;
+  return null;
+}
+
 export async function recordAudit(workspaceRoot: string, entry: AuditEntry): Promise<void> {
-  const path = auditLogPath(workspaceRoot);
+  const workspaceId = entry.workspaceId?.trim();
+  if (!workspaceId) {
+    const path = legacyAuditLogPath(workspaceRoot);
+    await ensureDir(dirname(path));
+    await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
+    return;
+  }
+
+  const path = auditLogPath(workspaceId);
   await ensureDir(dirname(path));
   await appendFile(path, JSON.stringify(entry) + "\n", "utf8");
 }
 
-export async function readLastAudit(workspaceRoot: string): Promise<AuditEntry | null> {
-  const path = auditLogPath(workspaceRoot);
-  if (!(await exists(path))) return null;
+export async function readLastAudit(workspaceRoot: string, workspaceId: string): Promise<AuditEntry | null> {
+  const path = await resolveReadableAuditPath(workspaceRoot, workspaceId);
+  if (!path) return null;
   const content = await readFile(path, "utf8");
   const lines = content.trim().split("\n");
   const last = lines[lines.length - 1];
@@ -27,9 +61,13 @@ export async function readLastAudit(workspaceRoot: string): Promise<AuditEntry |
   }
 }
 
-export async function readAuditEntries(workspaceRoot: string, limit = 50): Promise<AuditEntry[]> {
-  const path = auditLogPath(workspaceRoot);
-  if (!(await exists(path))) return [];
+export async function readAuditEntries(
+  workspaceRoot: string,
+  workspaceId: string,
+  limit = 50,
+): Promise<AuditEntry[]> {
+  const path = await resolveReadableAuditPath(workspaceRoot, workspaceId);
+  if (!path) return [];
   const content = await readFile(path, "utf8");
   const rawLines = content.trim().split("\n").filter(Boolean);
   if (!rawLines.length) return [];

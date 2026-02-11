@@ -4,10 +4,10 @@ import { isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
 import TextInput from "../components/text-input";
-import { OwpenbotSettings } from "./settings";
 
 import { RefreshCcw } from "lucide-solid";
 
+import { buildOpenworkWorkspaceBaseUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenworkServerInfo } from "../lib/tauri";
 
@@ -109,6 +109,18 @@ export default function ConfigView(props: ConfigViewProps) {
     return openworkUrl().trim() !== currentUrl || openworkToken().trim() !== currentToken;
   });
 
+  const resolvedWorkspaceId = createMemo(() => {
+    const explicitId = props.openworkServerWorkspaceId?.trim() ?? "";
+    if (explicitId) return explicitId;
+    return parseOpenworkWorkspaceIdFromUrl(openworkUrl()) ?? "";
+  });
+
+  const resolvedWorkspaceUrl = createMemo(() => {
+    const baseUrl = openworkUrl().trim();
+    if (!baseUrl) return "";
+    return buildOpenworkWorkspaceBaseUrl(baseUrl, resolvedWorkspaceId()) ?? baseUrl;
+  });
+
   const hostInfo = createMemo(() => props.openworkServerHostInfo);
   const hostStatusLabel = createMemo(() => {
     if (!hostInfo()?.running) return "Offline";
@@ -123,6 +135,53 @@ export default function ConfigView(props: ConfigViewProps) {
     return info?.connectUrl ?? info?.mdnsUrl ?? info?.lanUrl ?? info?.baseUrl ?? "";
   });
   const hostConnectUrlUsesMdns = createMemo(() => hostConnectUrl().includes(".local"));
+
+  const diagnosticsBundle = createMemo(() => {
+    const urlOverride = props.openworkServerSettings.urlOverride?.trim() ?? "";
+    const token = props.openworkServerSettings.token?.trim() ?? "";
+    const host = hostInfo();
+    return {
+      capturedAt: new Date().toISOString(),
+      runtime: {
+        tauri: isTauriRuntime(),
+        developerMode: props.developerMode,
+      },
+      workspace: {
+        openworkServerWorkspaceId: props.openworkServerWorkspaceId ?? null,
+        clientConnected: props.clientConnected,
+        anyActiveRuns: props.anyActiveRuns,
+      },
+      openworkServer: {
+        status: props.openworkServerStatus,
+        url: props.openworkServerUrl,
+        settings: {
+          urlOverride: urlOverride || null,
+          tokenPresent: Boolean(token),
+        },
+        host: host
+          ? {
+              running: Boolean(host.running),
+              baseUrl: host.baseUrl ?? null,
+              connectUrl: host.connectUrl ?? null,
+              mdnsUrl: host.mdnsUrl ?? null,
+              lanUrl: host.lanUrl ?? null,
+            }
+          : null,
+      },
+      reload: {
+        canReloadWorkspace: props.canReloadWorkspace,
+        autoReloadAvailable: props.workspaceAutoReloadAvailable,
+        autoReloadEnabled: props.workspaceAutoReloadEnabled,
+        autoReloadResumeEnabled: props.workspaceAutoReloadResumeEnabled,
+      },
+      sharing: {
+        hostConnectUrl: hostConnectUrl() || null,
+        hostConnectUrlUsesMdns: hostConnectUrlUsesMdns(),
+      },
+    };
+  });
+
+  const diagnosticsBundleJson = createMemo(() => JSON.stringify(diagnosticsBundle(), null, 2));
 
   const handleCopy = async (value: string, field: string) => {
     if (!value) return;
@@ -232,6 +291,28 @@ export default function ConfigView(props: ConfigViewProps) {
           </Button>
         </div>
       </div>
+
+      <Show when={props.developerMode}>
+        <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+          <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div class="text-sm font-medium text-gray-12">Diagnostics bundle</div>
+              <div class="text-xs text-gray-10">Copy sanitized runtime state for debugging.</div>
+            </div>
+            <Button
+              variant="secondary"
+              class="text-xs h-8 py-0 px-3 shrink-0"
+              onClick={() => void handleCopy(diagnosticsBundleJson(), "debug-bundle")}
+              disabled={props.busy}
+            >
+              {copyingField() === "debug-bundle" ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1/20 border border-gray-6 rounded-xl p-3">
+            {diagnosticsBundleJson()}
+          </pre>
+        </div>
+      </Show>
 
       <Show when={hostInfo()}>
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -386,7 +467,10 @@ export default function ConfigView(props: ConfigViewProps) {
           </label>
         </div>
 
-        <div class="text-[11px] text-gray-7 font-mono truncate">Resolved server: {openworkUrl().trim() || "Not set"}</div>
+        <div class="space-y-1">
+          <div class="text-[11px] text-gray-7 font-mono truncate">Resolved workspace URL: {resolvedWorkspaceUrl() || "Not set"}</div>
+          <div class="text-[11px] text-gray-8 font-mono truncate">Workspace ID: {resolvedWorkspaceId() || "Unavailable"}</div>
+        </div>
 
         <div class="flex flex-wrap gap-2">
           <Button
@@ -446,15 +530,12 @@ export default function ConfigView(props: ConfigViewProps) {
         </Show>
       </div>
 
-      <OwpenbotSettings
-        busy={props.busy}
-        openworkServerStatus={props.openworkServerStatus}
-        openworkServerUrl={props.openworkServerUrl}
-        openworkServerSettings={props.openworkServerSettings}
-        openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-        openworkServerHostInfo={props.openworkServerHostInfo}
-        developerMode={props.developerMode}
-      />
+      <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
+        <div class="text-sm font-medium text-gray-12">Messaging identities</div>
+        <div class="text-xs text-gray-10">
+          Manage Telegram/Slack identities and routing in the <span class="font-medium text-gray-12">Identities</span> tab.
+        </div>
+      </div>
 
       <Show when={!isTauriRuntime()}>
         <div class="text-xs text-gray-9">

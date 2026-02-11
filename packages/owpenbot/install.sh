@@ -102,7 +102,9 @@ else
       cat <<EOF > "$ENV_PATH"
 OPENCODE_URL=http://127.0.0.1:4096
 OPENCODE_DIRECTORY=
-WHATSAPP_AUTH_DIR=~/.openwork/owpenbot/whatsapp
+TELEGRAM_BOT_TOKEN=
+SLACK_BOT_TOKEN=
+SLACK_APP_TOKEN=
 EOF
       echo "Created $ENV_PATH (minimal)"
     fi
@@ -140,8 +142,6 @@ cat <<EOF
 Owpenbot installed.
 
 Next steps:
-1) Run owpenwork: owpenwork
-2) Follow the guided setup + QR login
-
-Owpenbot will print a QR code during login and keep the session alive.
+1) Edit: $ENV_PATH
+2) Run: owpenbot start
 EOF

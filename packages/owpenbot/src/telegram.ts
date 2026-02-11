@@ -1,10 +1,11 @@
 import { Bot, type BotError, type Context } from "grammy";
 import type { Logger } from "pino";
 
-import type { Config } from "./config.js";
+import type { Config, TelegramIdentity } from "./config.js";
 
 export type InboundMessage = {
   channel: "telegram";
+  identityId: string;
   peerId: string;
   text: string;
   raw: unknown;
@@ -14,6 +15,7 @@ export type MessageHandler = (message: InboundMessage) => Promise<void> | void;
 
 export type TelegramAdapter = {
   name: "telegram";
+  identityId: string;
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -23,19 +25,22 @@ export type TelegramAdapter = {
 const MAX_TEXT_LENGTH = 4096;
 
 export function createTelegramAdapter(
+  identity: TelegramIdentity,
   config: Config,
   logger: Logger,
   onMessage: MessageHandler,
 ): TelegramAdapter {
-  if (!config.telegramToken) {
-    throw new Error("TELEGRAM_BOT_TOKEN is required for Telegram adapter");
+  const token = identity.token?.trim() ?? "";
+  if (!token) {
+    throw new Error("Telegram token is required for Telegram adapter");
   }
 
-  logger.debug({ tokenPresent: true }, "telegram adapter init");
-  const bot = new Bot(config.telegramToken);
+  const log = logger.child({ channel: "telegram", identityId: identity.id });
+  log.debug({ tokenPresent: true }, "telegram adapter init");
+  const bot = new Bot(token);
 
   bot.catch((err: BotError<Context>) => {
-    logger.error({ error: err.error }, "telegram bot error");
+    log.error({ error: err.error }, "telegram bot error");
   });
 
   bot.on("message", async (ctx: Context) => {
@@ -47,7 +52,7 @@ export function createTelegramAdapter(
     
     // In groups, check if groups are enabled
     if (isGroup && !config.groupsEnabled) {
-      logger.debug({ chatId: msg.chat.id, chatType }, "telegram message ignored (groups disabled)");
+      log.debug({ chatId: msg.chat.id, chatType }, "telegram message ignored (groups disabled)");
       return;
     }
 
@@ -58,25 +63,25 @@ export function createTelegramAdapter(
     if (isGroup) {
       const botUsername = ctx.me?.username;
       if (!botUsername) {
-        logger.debug({ chatId: msg.chat.id }, "telegram message ignored (bot username unknown)");
+        log.debug({ chatId: msg.chat.id }, "telegram message ignored (bot username unknown)");
         return;
       }
       
       const mentionPattern = new RegExp(`@${botUsername}\\b`, "i");
       if (!mentionPattern.test(text)) {
-        logger.debug({ chatId: msg.chat.id, botUsername }, "telegram message ignored (not mentioned)");
+        log.debug({ chatId: msg.chat.id, botUsername }, "telegram message ignored (not mentioned)");
         return;
       }
       
       // Strip the @mention from the message
       text = text.replace(mentionPattern, "").trim();
       if (!text) {
-        logger.debug({ chatId: msg.chat.id }, "telegram message ignored (empty after removing mention)");
+        log.debug({ chatId: msg.chat.id }, "telegram message ignored (empty after removing mention)");
         return;
       }
     }
 
-    logger.debug(
+    log.debug(
       { chatId: msg.chat.id, chatType, isGroup, length: text.length, preview: text.slice(0, 120) },
       "telegram message received",
     );
@@ -84,26 +89,28 @@ export function createTelegramAdapter(
     try {
       await onMessage({
         channel: "telegram",
+        identityId: identity.id,
         peerId: String(msg.chat.id),
         text,
         raw: msg,
       });
     } catch (error) {
-      logger.error({ error, peerId: msg.chat.id }, "telegram inbound handler failed");
+      log.error({ error, peerId: msg.chat.id }, "telegram inbound handler failed");
     }
   });
 
   return {
     name: "telegram",
+    identityId: identity.id,
     maxTextLength: MAX_TEXT_LENGTH,
     async start() {
-      logger.debug("telegram adapter starting");
+      log.debug("telegram adapter starting");
       await bot.start();
-      logger.info("telegram adapter started");
+      log.info("telegram adapter started");
     },
     async stop() {
       bot.stop();
-      logger.info("telegram adapter stopped");
+      log.info("telegram adapter stopped");
     },
     async sendText(peerId: string, text: string) {
       await bot.api.sendMessage(Number(peerId), text);

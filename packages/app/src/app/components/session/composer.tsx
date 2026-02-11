@@ -46,6 +46,8 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
+  isSandboxWorkspace: boolean;
+  onUploadInboxFiles?: (files: File[]) => void | Promise<void>;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
@@ -141,7 +143,18 @@ const partsToText = (parts: ComposerPart[]) =>
     .map((part) => {
       if (part.type === "text") return part.text;
       if (part.type === "agent") return `@${part.name}`;
-      return `@${part.path}`;
+      if (part.type === "file") return `@${part.path}`;
+      return part.label;
+    })
+    .join("");
+
+const partsToResolvedText = (parts: ComposerPart[]) =>
+  parts
+    .map((part) => {
+      if (part.type === "text") return part.text;
+      if (part.type === "agent") return `@${part.name}`;
+      if (part.type === "file") return `@${part.path}`;
+      return part.text;
     })
     .join("");
 
@@ -189,7 +202,27 @@ const insertTextWithBreaks = (target: HTMLElement, text: string) => {
   });
 };
 
-const buildPartsFromEditor = (root: HTMLElement): ComposerPart[] => {
+const sanitizePastedPlainText = (value: string) => normalizeText(value).replace(/\r\n?/g, "\n");
+
+const htmlToPlainText = (html: string) => {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div.innerText ?? "";
+};
+
+const countLines = (value: string) => (value ? value.split("\n").length : 0);
+
+const textToFragment = (text: string) => {
+  const frag = document.createDocumentFragment();
+  const chunks = text.split("\n");
+  chunks.forEach((chunk, index) => {
+    if (chunk.length) frag.appendChild(document.createTextNode(chunk));
+    if (index < chunks.length - 1) frag.appendChild(document.createElement("br"));
+  });
+  return frag;
+};
+
+const buildPartsFromEditor = (root: HTMLElement, pasteTextById?: Map<string, string>): ComposerPart[] => {
   const parts: ComposerPart[] = [];
   const pushText = (text: string) => {
     if (!text) return;
@@ -215,6 +248,14 @@ const buildPartsFromEditor = (root: HTMLElement): ComposerPart[] => {
       } else {
         parts.push({ type: "file", path: el.dataset.mentionValue ?? "", label: el.dataset.mentionLabel ?? undefined });
       }
+      return;
+    }
+    if (el.dataset.pasteId) {
+      const id = el.dataset.pasteId ?? "";
+      const label = el.dataset.pasteLabel ?? el.textContent ?? "[pasted text]";
+      const lines = Number(el.dataset.pasteLines ?? "0") || 0;
+      const text = pasteTextById?.get(id) ?? label;
+      parts.push({ type: "paste", id, label, text, lines });
       return;
     }
     if (el.tagName === "BR") {
@@ -328,9 +369,15 @@ const buildRangeFromOffsets = (root: HTMLElement, start: number, end: number) =>
 export default function Composer(props: ComposerProps) {
   let editorRef: HTMLDivElement | undefined;
   let fileInputRef: HTMLInputElement | undefined;
+  let inboxFileInputRef: HTMLInputElement | undefined;
   let variantPickerRef: HTMLDivElement | undefined;
   let mentionSearchRun = 0;
   let suppressPromptSync = false;
+  let pasteCounter = 0;
+  const pasteTextById = new Map<string, string>();
+  // Track IME composition state so we can combine it with keyCode === 229 to
+  // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
+  let imeComposing = false;
   const [mentionIndex, setMentionIndex] = createSignal(0);
   const [mentionQuery, setMentionQuery] = createSignal("");
   const [mentionOpen, setMentionOpen] = createSignal(false);
@@ -343,8 +390,23 @@ export default function Composer(props: ComposerProps) {
   const [historyIndex, setHistoryIndex] = createSignal({ prompt: -1, shell: -1 });
   const [history, setHistory] = createSignal({ prompt: [] as ComposerDraft[], shell: [] as ComposerDraft[] });
   const [variantMenuOpen, setVariantMenuOpen] = createSignal(false);
+  const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
+
+  const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
+    pasteTextById.set(part.id, part.text);
+    const span = document.createElement("span");
+    span.textContent = part.label;
+    span.contentEditable = "false";
+    span.dataset.pasteId = part.id;
+    span.dataset.pasteLabel = part.label;
+    span.dataset.pasteLines = String(part.lines);
+    span.title = "Click to expand pasted text";
+    span.className =
+      "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-dls-hover text-dls-secondary border border-dls-border cursor-pointer hover:bg-dls-active hover:text-dls-text";
+    return span;
+  };
 
   // Slash command state
   const [slashOpen, setSlashOpen] = createSignal(false);
@@ -355,6 +417,20 @@ export default function Composer(props: ComposerProps) {
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
+
+    // Bind composition events directly via addEventListener because SolidJS
+    // does not delegate compositionstart/compositionend — the camelCase JSX
+    // form (onCompositionStart) may silently fail to attach.
+    if (editorRef) {
+      editorRef.addEventListener("compositionstart", () => {
+        imeComposing = true;
+      });
+      editorRef.addEventListener("compositionend", () => {
+        requestAnimationFrame(() => {
+          imeComposing = false;
+        });
+      });
+    }
   });
 
   const mentionGroups = createMemo<MentionGroup[]>(() => {
@@ -394,7 +470,7 @@ export default function Composer(props: ComposerProps) {
       }));
     const all = [...agents, ...recentFiles, ...searchFiles];
     const list = query
-      ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry) => entry.obj)
+      ? fuzzysort.go(query, all, { keys: ["display"] }).map((entry: any) => entry.obj)
       : all;
     const groups: MentionGroup[] = [];
     const bucket = new Map<MentionGroup["category"], MentionOption[]>();
@@ -407,7 +483,7 @@ export default function Composer(props: ComposerProps) {
       }
       bucket.set(category, [item]);
     }
-    const order: MentionGroup["category"][] = ["agent", "recent", "file"];
+    const order: MentionGroup["category"][] = ["agent", "file", "recent"];
     for (const category of order) {
       const items = bucket.get(category);
       if (!items?.length) continue;
@@ -425,6 +501,73 @@ export default function Composer(props: ComposerProps) {
     setMentionIndex(0);
   });
 
+  // Track recent emits to distinguish echoes from external updates
+  const recentEmits = new Set<string>();
+  recentEmits.add(props.prompt); // Initialize with current prop
+
+  // Sync from props: ignore echoes of what we just sent
+  createEffect(() => {
+    if (!editorRef) return;
+    const value = props.prompt;
+    const current = normalizeText(editorRef.innerText);
+
+    // Robust Echo Cancellation:
+    // If the incoming value matches ANY recently emitted text, it's a stale echo or confirmation.
+    // We ignore it to prevent overwriting the user's newer local state.
+    if (recentEmits.has(value)) {
+      // If we've converged (parent matches local), we can clean up the set to save memory,
+      // but keeping a few items is cheap and safer for race conditions.
+      if (value === current) {
+        recentEmits.clear();
+        recentEmits.add(value);
+      }
+      return;
+    }
+
+    // If we get here, 'value' is something we didn't send recently.
+    // It must be an external event (History Navigation, Clear, Agent Action, etc).
+
+    if (suppressPromptSync) {
+      if (!value && current) {
+        setEditorText("");
+        setAttachments([]);
+        setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
+        setHistorySnapshot(null);
+        queueMicrotask(() => focusEditorEnd());
+      }
+      return;
+    }
+    if (value === current) {
+      // Even if it matches current, make sure it's tracked as a valid base state
+      recentEmits.add(value);
+      return;
+    }
+
+    // External update confirmed
+    if (value.startsWith("!") && mode() === "prompt") {
+      setMode("shell");
+      setEditorText(value.slice(1).trimStart());
+      recentEmits.add(value);
+      emitDraftChange();
+      queueMicrotask(() => focusEditorEnd());
+      return;
+    }
+
+    recentEmits.add(value); // It's now the new baseline
+    setEditorText(value);
+    if (!value) {
+      setAttachments([]);
+      setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
+      setHistorySnapshot(null);
+    }
+
+    // We don't emitDraftChange here usually, to avoid loops, but if we changed text we might need to?
+    // Actually original code did emitDraftChange(). Let's keep it but be careful.
+    // If we emit, we add to Set again.
+    emitDraftChange();
+    queueMicrotask(() => focusEditorEnd());
+  });
+
   const syncHeight = () => {
     if (!editorRef) return;
     editorRef.style.height = "auto";
@@ -435,21 +578,49 @@ export default function Composer(props: ComposerProps) {
     editorRef.style.overflowY = editorRef.scrollHeight > 160 ? "auto" : "hidden";
   };
 
+  let emitTimer: number | null = null;
   const emitDraftChange = () => {
     if (!editorRef) return;
-    const parts = buildPartsFromEditor(editorRef);
+    syncHeight();
+
+    if (emitTimer) window.clearTimeout(emitTimer);
+    emitTimer = window.setTimeout(() => {
+      flushDraftChange();
+    }, 50);
+  };
+
+  const flushDraftChange = () => {
+    if (emitTimer) {
+      window.clearTimeout(emitTimer);
+      emitTimer = null;
+    }
+    if (!editorRef) return;
+    const parts = buildPartsFromEditor(editorRef, pasteTextById);
     const text = normalizeText(partsToText(parts));
+
+    recentEmits.add(text); // Track that we sent this, expect an echo later
+
+    // Limit Set size to prevent memory leak (though unlikely to grow huge)
+    if (recentEmits.size > 20) {
+      const it = recentEmits.values();
+      const first = it.next();
+      if (!first.done) {
+        recentEmits.delete(first.value);
+      }
+    }
+
+    const resolvedText = normalizeText(partsToResolvedText(parts));
     suppressPromptSync = true;
     props.onDraftChange({
       mode: mode(),
       parts,
       attachments: attachments(),
       text,
+      resolvedText,
     });
     queueMicrotask(() => {
       suppressPromptSync = false;
     });
-    syncHeight();
   };
 
   const focusEditorEnd = () => {
@@ -471,6 +642,12 @@ export default function Composer(props: ComposerProps) {
     parts.forEach((part) => {
       if (part.type === "text") {
         insertTextWithBreaks(editorRef!, part.text);
+        return;
+      }
+      if (part.type === "paste") {
+        const span = createPasteSpan(part);
+        editorRef?.appendChild(span);
+        editorRef?.appendChild(document.createTextNode(" "));
         return;
       }
       const span = createMentionSpan(part);
@@ -501,7 +678,7 @@ export default function Composer(props: ComposerProps) {
       setMentionQuery("");
       return;
     }
-    const text = normalizeText(partsToText(buildPartsFromEditor(editorRef)));
+    const text = normalizeText(partsToText(buildPartsFromEditor(editorRef, pasteTextById)));
     const before = text.slice(0, offsets.start);
     const match = before.match(/@(\S*)$/);
     if (!match) {
@@ -520,7 +697,7 @@ export default function Composer(props: ComposerProps) {
       setSlashQuery("");
       return;
     }
-    const text = normalizeText(partsToText(buildPartsFromEditor(editorRef)));
+    const text = normalizeText(partsToText(buildPartsFromEditor(editorRef, pasteTextById)));
     // Only trigger when the entire input matches /command (no spaces, starts with /)
     const slashMatch = text.match(/^\/(\S*)$/);
     if (!slashMatch) {
@@ -539,7 +716,7 @@ export default function Composer(props: ComposerProps) {
     if (!query) return commands.slice(0, 15);
     return fuzzysort
       .go(query, commands, { keys: ["name", "description"] })
-      .map((entry) => entry.obj)
+      .map((entry: any) => entry.obj)
       .slice(0, 15);
   });
 
@@ -663,9 +840,10 @@ export default function Composer(props: ComposerProps) {
     if (nextIndex < -1 || nextIndex >= list.length) return;
 
     if (index === -1 && direction === "up") {
-      const parts = editorRef ? buildPartsFromEditor(editorRef) : [];
+      const parts = editorRef ? buildPartsFromEditor(editorRef, pasteTextById) : [];
       const text = normalizeText(partsToText(parts));
-      setHistorySnapshot({ mode: key, parts, attachments: attachments(), text });
+      const resolvedText = normalizeText(partsToResolvedText(parts));
+      setHistorySnapshot({ mode: key, parts, attachments: attachments(), text, resolvedText });
     }
 
     setHistoryIndex((current: { prompt: number; shell: number }) => ({ ...current, [key]: nextIndex }));
@@ -679,10 +857,14 @@ export default function Composer(props: ComposerProps) {
   };
 
   const sendDraft = () => {
+    // Ensure any pending debounce updates are committed before sending
+    flushDraftChange();
+
     if (!editorRef) return;
-    const parts = buildPartsFromEditor(editorRef);
+    const parts = buildPartsFromEditor(editorRef, pasteTextById);
     const text = normalizeText(partsToText(parts));
-    const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text };
+    const resolvedText = normalizeText(partsToResolvedText(parts));
+    const draft: ComposerDraft = { mode: mode(), parts, attachments: attachments(), text, resolvedText };
 
     // Detect slash command: text like "/commandname arg1 arg2"
     if (text.startsWith("/")) {
@@ -760,6 +942,84 @@ export default function Composer(props: ComposerProps) {
     }
   };
 
+  const insertPlainTextAtSelection = (text: string) => {
+    if (!editorRef) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+    const fragment = textToFragment(text);
+    const last = fragment.lastChild;
+    range.insertNode(fragment);
+
+    if (!last) return;
+    const cursor = document.createRange();
+    cursor.setStartAfter(last);
+    cursor.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(cursor);
+  };
+
+  const insertCollapsedPasteAtSelection = (text: string, lines: number) => {
+    if (!editorRef) return;
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    range.deleteContents();
+
+    pasteCounter += 1;
+    const id = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const label = `[pasted text ${pasteCounter}]`;
+    const part = { type: "paste", id, label, text, lines } as const;
+    const span = createPasteSpan(part);
+
+    range.insertNode(span);
+    span.after(document.createTextNode(" "));
+
+    const cursor = document.createRange();
+    cursor.setStartAfter(span.nextSibling ?? span);
+    cursor.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(cursor);
+  };
+
+  const handleEditorClick = (event: MouseEvent) => {
+    if (!editorRef) return;
+    const target = event.target as HTMLElement | null;
+    const span = (target?.closest?.("span[data-paste-id]") as HTMLElement | null) ?? null;
+    if (!span || !editorRef.contains(span)) return;
+    const id = span.dataset.pasteId ?? "";
+    if (!id) return;
+    const text = pasteTextById.get(id);
+    if (typeof text !== "string") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const fragment = textToFragment(text);
+    const last = fragment.lastChild;
+    span.replaceWith(fragment);
+    pasteTextById.delete(id);
+
+    const selection = window.getSelection();
+    if (selection) {
+      const cursor = document.createRange();
+      if (last && last.parentNode) {
+        cursor.setStartAfter(last);
+        cursor.collapse(true);
+      } else {
+        cursor.selectNodeContents(editorRef);
+        cursor.collapse(false);
+      }
+      selection.removeAllRanges();
+      selection.addRange(cursor);
+    }
+
+    updateMentionQuery();
+    updateSlashQuery();
+    emitDraftChange();
+  };
+
   const handlePaste = (event: ClipboardEvent) => {
     if (!event.clipboardData) return;
     const clipboard = event.clipboardData;
@@ -769,15 +1029,55 @@ export default function Composer(props: ComposerProps) {
       .map((item) => item.getAsFile())
       .filter((file): file is File => !!file);
     const allFiles = files.length ? files : itemFiles;
-    if (!allFiles.length) return;
-    event.preventDefault();
-    const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
-    if (!hasSupported) {
-      props.onToast("Unsupported attachment type.");
+    if (allFiles.length) {
+      event.preventDefault();
+      const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
+      if (!hasSupported) {
+        props.onToast("Unsupported attachment type.");
+        return;
+      }
+      void addAttachments(allFiles);
       return;
     }
-    void addAttachments(allFiles);
+
+    const plainForCheck = clipboard.getData("text/plain") ?? "";
+    const trimmedForCheck = plainForCheck.trim();
+    if (trimmedForCheck && props.isSandboxWorkspace) {
+      const hasFileUrl = /file:\/\//i.test(trimmedForCheck);
+      const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
+      const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
+      if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
+        props.onToast(
+          "Sandboxes can't access local file paths. Upload the file to the workspace inbox instead."
+        );
+        setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
+      }
+    }
+
+    const plain = clipboard.getData("text/plain") || clipboard.getData("text") || "";
+    const html = clipboard.getData("text/html") || "";
+    const raw = plain || (html ? htmlToPlainText(html) : "");
+    if (!raw) return;
+
+    event.preventDefault();
+    const text = sanitizePastedPlainText(raw);
+    const lines = countLines(text);
+    if (lines > 10) {
+      insertCollapsedPasteAtSelection(text, lines);
+    } else {
+      insertPlainTextAtSelection(text);
+    }
+
+    updateMentionQuery();
+    updateSlashQuery();
+    emitDraftChange();
   };
+
+  createEffect(() => {
+    if (!props.toast) {
+      setShowInboxUploadAction(false);
+    }
+  });
 
   const handleDrop = (event: DragEvent) => {
     if (!event.dataTransfer) return;
@@ -832,12 +1132,17 @@ export default function Composer(props: ComposerProps) {
       emitDraftChange();
       return;
     }
-    if (event.key === "Enter" && event.isComposing) return;
+    // Block Enter while IME is composing. We check three signals:
+    // 1. event.isComposing — standard API (unreliable in some WebKit builds)
+    // 2. imeComposing — manual flag from compositionstart/end
+    // 3. event.keyCode === 229 — legacy but reliable IME indicator across all browsers
+    const imeActive = event.isComposing || imeComposing || event.keyCode === 229;
+    if (event.key === "Enter" && imeActive) return;
 
     if (mentionOpen()) {
       const options = mentionOptions();
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
         const active = options[mentionIndex()] ?? options[0];
         if (active) insertMention(active);
@@ -873,7 +1178,7 @@ export default function Composer(props: ComposerProps) {
     if (slashOpen()) {
       const options = slashFiltered();
       const ctrl = event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
-      if (event.key === "Enter" && !event.isComposing) {
+      if (event.key === "Enter" && !imeActive) {
         event.preventDefault();
         const active = options[slashIndex()] ?? options[0];
         if (active) handleSlashSelect(active);
@@ -982,37 +1287,7 @@ export default function Composer(props: ComposerProps) {
     setSlashQuery("");
   });
 
-  createEffect(() => {
-    if (!editorRef) return;
-    const value = props.prompt;
-    const current = normalizeText(editorRef.innerText);
-    if (suppressPromptSync) {
-      if (!value && current) {
-        setEditorText("");
-        setAttachments([]);
-        setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
-        setHistorySnapshot(null);
-        queueMicrotask(() => focusEditorEnd());
-      }
-      return;
-    }
-    if (value === current) return;
-    if (value.startsWith("!") && mode() === "prompt") {
-      setMode("shell");
-      setEditorText(value.slice(1).trimStart());
-      emitDraftChange();
-      queueMicrotask(() => focusEditorEnd());
-      return;
-    }
-    setEditorText(value);
-    if (!value) {
-      setAttachments([]);
-      setHistoryIndex((currentIndex: { prompt: number; shell: number }) => ({ ...currentIndex, [mode()]: -1 }));
-      setHistorySnapshot(null);
-    }
-    emitDraftChange();
-    queueMicrotask(() => focusEditorEnd());
-  });
+
 
   createEffect(() => {
     if (!variantMenuOpen()) return;
@@ -1037,9 +1312,8 @@ export default function Composer(props: ComposerProps) {
     <div class="px-4 pb-4 pt-0 bg-dls-surface sticky bottom-0 z-20">
       <div class="max-w-3xl mx-auto">
         <div
-          class={`bg-dls-surface border border-dls-border rounded-2xl overflow-visible transition-all relative group/input ${
-            mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent shadow-none" : "shadow-xl"
-          }`}
+          class={`bg-dls-surface border border-dls-border rounded-2xl overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent shadow-none" : "shadow-xl"
+            }`}
           onDrop={handleDrop}
           onDragOver={(event: DragEvent) => {
             if (attachmentsDisabled()) return;
@@ -1061,9 +1335,8 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${
-                              active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
-                            }`}
+                            class={`w-full flex items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
+                              }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
                               insertMention(option);
@@ -1126,9 +1399,8 @@ export default function Composer(props: ComposerProps) {
                         return (
                           <button
                             type="button"
-                            class={`w-full flex items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${
-                              active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
-                            }`}
+                            class={`w-full flex items-center justify-between gap-4 rounded-xl px-3 py-2 text-left transition-colors ${active() ? "bg-dls-active text-dls-text" : "text-dls-text hover:bg-dls-hover"
+                              }`}
                             onMouseDown={(event: MouseEvent) => {
                               event.preventDefault();
                               handleSlashSelect(cmd);
@@ -1206,10 +1478,21 @@ export default function Composer(props: ComposerProps) {
               </div>
             </Show>
 
-                   <div class="relative min-h-[120px]">
+            <div class="relative min-h-[120px]">
               <Show when={props.toast}>
                 <div class="absolute bottom-full right-0 mb-2 z-30 rounded-xl border border-dls-border bg-dls-surface px-3 py-2 text-xs text-dls-secondary shadow-lg backdrop-blur-md">
-                  {props.toast}
+                  <div class="flex items-center gap-3">
+                    <span>{props.toast}</span>
+                    <Show when={showInboxUploadAction() && props.onUploadInboxFiles}>
+                      <button
+                        type="button"
+                        class="shrink-0 rounded-md border border-dls-border bg-dls-hover px-2 py-1 text-[10px] text-dls-text hover:bg-dls-active"
+                        onClick={() => inboxFileInputRef?.click()}
+                      >
+                        Upload to inbox
+                      </button>
+                    </Show>
+                  </div>
                 </div>
               </Show>
 
@@ -1237,11 +1520,26 @@ export default function Composer(props: ComposerProps) {
                       }}
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
+                      onClick={handleEditorClick}
                       class="bg-transparent border-none p-0 pb-8 pr-4 text-dls-text focus:ring-0 text-sm leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
                     />
 
                     <div class="mt-3 flex items-center justify-between px-2 pb-2">
                       <div class="flex items-center gap-2">
+                        <input
+                          ref={inboxFileInputRef}
+                          type="file"
+                          multiple
+                          class="hidden"
+                          onChange={(event: Event) => {
+                            const target = event.currentTarget as HTMLInputElement;
+                            const files = Array.from(target.files ?? []);
+                            if (files.length && props.onUploadInboxFiles) {
+                              void Promise.resolve(props.onUploadInboxFiles(files));
+                            }
+                            target.value = "";
+                          }}
+                        />
                         <input
                           ref={fileInputRef}
                           type="file"
@@ -1258,9 +1556,8 @@ export default function Composer(props: ComposerProps) {
                         />
                         <button
                           type="button"
-                          class={`p-1.5 hover:bg-dls-hover rounded-md text-dls-secondary transition-colors ${
-                            attachmentsDisabled() ? "cursor-not-allowed" : ""
-                          }`}
+                          class={`p-1.5 hover:bg-dls-hover rounded-md text-dls-secondary transition-colors ${attachmentsDisabled() ? "cursor-not-allowed" : ""
+                            }`}
                           onClick={() => {
                             if (attachmentsDisabled()) return;
                             fileInputRef?.click();
@@ -1305,11 +1602,10 @@ export default function Composer(props: ComposerProps) {
                                   <Show when={!props.agentPickerError}>
                                     <button
                                       type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                        !props.selectedAgent
-                                          ? "bg-dls-active text-dls-text"
-                                          : "text-dls-secondary hover:bg-dls-hover"
-                                      }`}
+                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${!props.selectedAgent
+                                        ? "bg-dls-active text-dls-text"
+                                        : "text-dls-secondary hover:bg-dls-hover"
+                                        }`}
                                       onMouseDown={(event: MouseEvent) => {
                                         event.preventDefault();
                                         props.onSelectAgent(null);
@@ -1327,11 +1623,10 @@ export default function Composer(props: ComposerProps) {
                                         return (
                                           <button
                                             type="button"
-                                            class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                              active()
-                                                ? "bg-dls-active text-dls-text"
-                                                : "text-dls-secondary hover:bg-dls-hover"
-                                            }`}
+                                            class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${active()
+                                              ? "bg-dls-active text-dls-text"
+                                              : "text-dls-secondary hover:bg-dls-hover"
+                                              }`}
                                             onMouseDown={(event: MouseEvent) => {
                                               event.preventDefault();
                                               props.onSelectAgent(agent.name);
@@ -1389,11 +1684,10 @@ export default function Composer(props: ComposerProps) {
                                   {(option) => (
                                     <button
                                       type="button"
-                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${
-                                        activeVariant() === option.value
-                                          ? "bg-dls-active text-dls-text"
-                                          : "text-dls-secondary hover:bg-dls-hover"
-                                      }`}
+                                      class={`w-full flex items-center justify-between rounded-lg px-3 py-2 text-left text-xs transition-colors ${activeVariant() === option.value
+                                        ? "bg-dls-active text-dls-text"
+                                        : "text-dls-secondary hover:bg-dls-hover"
+                                        }`}
                                       onClick={() => {
                                         props.onModelVariantChange(option.value);
                                         setVariantMenuOpen(false);
@@ -1416,11 +1710,10 @@ export default function Composer(props: ComposerProps) {
                           type="button"
                           disabled={!props.prompt.trim() && !attachments().length}
                           onClick={sendDraft}
-                          class={`p-1.5 rounded-full ${
-                            !props.prompt.trim() && !attachments().length
-                              ? "bg-dls-active text-dls-secondary"
-                              : "bg-dls-accent text-white"
-                          }`}
+                          class={`p-1.5 rounded-full ${!props.prompt.trim() && !attachments().length
+                            ? "bg-dls-active text-dls-secondary"
+                            : "bg-dls-accent text-white"
+                            }`}
                           title="Send"
                         >
                           <ArrowUp size={18} />

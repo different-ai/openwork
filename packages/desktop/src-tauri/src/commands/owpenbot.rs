@@ -47,14 +47,6 @@ pub async fn owpenbot_info(
                     info.opencode_url = Some(url.to_string());
                 }
             }
-            if let Some(channels) = health.get("channels") {
-                if let Some(telegram) = channels.get("telegram").and_then(|v| v.as_bool()) {
-                    info.telegram_configured = telegram;
-                }
-                if let Some(whatsapp) = channels.get("whatsapp").and_then(|v| v.as_bool()) {
-                    info.whatsapp_linked = whatsapp;
-                }
-            }
         }
     }
 
@@ -86,18 +78,6 @@ pub async fn owpenbot_info(
                             info.workspace_path = Some(trimmed.to_string());
                         }
                     }
-                }
-            }
-
-            if let Some(whatsapp) = status.get("whatsapp") {
-                if let Some(linked) = whatsapp.get("linked").and_then(|value| value.as_bool()) {
-                    info.whatsapp_linked = linked;
-                }
-            }
-
-            if let Some(telegram) = status.get("telegram") {
-                if let Some(configured) = telegram.get("configured").and_then(|value| value.as_bool()) {
-                    info.telegram_configured = configured;
                 }
             }
         }
@@ -158,11 +138,6 @@ pub fn owpenbot_start(
                             .to_string()
                             + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
-
-                        // Check for WhatsApp linked status in output
-                        if line.contains("WhatsApp linked") {
-                            state.whatsapp_linked = true;
-                        }
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {
@@ -217,68 +192,11 @@ pub fn owpenbot_stop(manager: State<OwpenbotManager>) -> Result<OwpenbotInfo, St
 }
 
 #[tauri::command]
-pub async fn owpenbot_qr(app: AppHandle) -> Result<String, String> {
-    use tauri_plugin_shell::ShellExt;
-    use base64::engine::general_purpose;
-    use base64::Engine as _;
-    use image::{DynamicImage, ImageFormat, Luma};
-    use qrcode::QrCode;
-    use std::io::Cursor;
-
-    let command = match app.shell().sidecar("owpenbot") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
-    };
-
-    let output = command
-        .args(["whatsapp", "qr", "--format", "ascii", "--json"])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to get QR code: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to get QR code: {stderr}"));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    // Parse JSON response
-    #[derive(serde::Deserialize)]
-    struct QrResponse {
-        qr: Option<String>,
-        error: Option<String>,
-    }
-
-    let response: QrResponse =
-        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse QR response: {e}"))?;
-
-    if let Some(error) = response.error {
-        return Err(error);
-    }
-
-    let qr_data = response.qr.ok_or_else(|| "No QR code returned".to_string())?;
-    let code = QrCode::new(qr_data.as_bytes()).map_err(|e| format!("Failed to encode QR: {e}"))?;
-    let image = code
-        .render::<Luma<u8>>()
-        .min_dimensions(256, 256)
-        .build();
-    let mut buffer = Vec::new();
-    DynamicImage::ImageLuma8(image)
-        .write_to(&mut Cursor::new(&mut buffer), ImageFormat::Png)
-        .map_err(|e| format!("Failed to encode QR image: {e}"))?;
-    Ok(general_purpose::STANDARD.encode(buffer))
-}
-
-#[tauri::command]
 pub async fn owpenbot_status(
     app: AppHandle,
     manager: State<'_, OwpenbotManager>,
 ) -> Result<serde_json::Value, String> {
     let status = owpenbot_json(&app, &["status", "--json"], "get status").await?;
-    let whatsapp = owpenbot_json(&app, &["whatsapp", "status", "--json"], "get WhatsApp status").await?;
-    let telegram = owpenbot_json(&app, &["telegram", "status", "--json"], "get Telegram status").await?;
-    let slack = owpenbot_json(&app, &["slack", "status", "--json"], "get Slack status").await?;
 
     let mut running = {
         let mut state = manager
@@ -288,12 +206,12 @@ pub async fn owpenbot_status(
         OwpenbotManager::snapshot_locked(&mut state).running
     };
 
-    // If manager doesn't think owpenbot is running, check health endpoint as fallback
     if !running {
         let check_port = {
             manager.inner.lock().ok().and_then(|s| s.health_port)
-        }.unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
-        
+        }
+        .unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
+
         if check_health_endpoint(check_port).is_some() {
             running = true;
         }
@@ -302,15 +220,10 @@ pub async fn owpenbot_status(
     let config_path = status
         .get("config")
         .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    let opencode_url = status
-        .get("opencode")
-        .and_then(|value| value.get("url"))
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    let health_port = status
-        .get("healthPort")
-        .and_then(|value| value.as_u64());
+        .unwrap_or_default()
+        .to_string();
+
+    let cli_health_port = status.get("healthPort").and_then(|value| value.as_u64());
     let manager_health_port = {
         let state = manager
             .inner
@@ -320,60 +233,53 @@ pub async fn owpenbot_status(
     };
     let health_port = manager_health_port
         .map(|value| value as u64)
-        .or(health_port);
+        .or(cli_health_port);
 
-    let whatsapp_linked = whatsapp
-        .get("linked")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    let whatsapp_dm_policy = whatsapp
-        .get("dmPolicy")
-        .and_then(|value| value.as_str())
-        .unwrap_or("pairing");
-    let whatsapp_allow_from = whatsapp
-        .get("allowFrom")
+    let telegram_items: Vec<serde_json::Value> = status
+        .get("telegram")
         .and_then(|value| value.as_array())
-        .cloned()
+        .map(|arr| arr.iter().cloned().collect())
         .unwrap_or_default();
 
-    let telegram_configured = telegram
-        .get("configured")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    let telegram_enabled = telegram
-        .get("enabled")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+    let slack_items: Vec<serde_json::Value> = status
+        .get("slack")
+        .and_then(|value| value.as_array())
+        .map(|arr| arr.iter().cloned().collect())
+        .unwrap_or_default();
 
-    let slack_configured = slack
-        .get("configured")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    let slack_enabled = slack
-        .get("enabled")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
+    let opencode_url = status
+        .get("opencode")
+        .and_then(|value| value.get("url"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    let opencode_directory = status
+        .get("opencode")
+        .and_then(|value| value.get("directory"))
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+
+    let mut opencode = serde_json::Map::new();
+    opencode.insert("url".to_string(), serde_json::Value::String(opencode_url.to_string()));
+    if let Some(directory) = opencode_directory {
+        opencode.insert(
+            "directory".to_string(),
+            serde_json::Value::String(directory.to_string()),
+        );
+    }
 
     Ok(serde_json::json!({
         "running": running,
         "config": config_path,
         "healthPort": health_port,
-        "whatsapp": {
-            "linked": whatsapp_linked,
-            "dmPolicy": whatsapp_dm_policy,
-            "allowFrom": whatsapp_allow_from,
-        },
         "telegram": {
-            "configured": telegram_configured,
-            "enabled": telegram_enabled,
+            "items": telegram_items,
         },
         "slack": {
-            "configured": slack_configured,
-            "enabled": slack_enabled,
+            "items": slack_items,
         },
-        "opencode": {
-            "url": opencode_url,
-        },
+        "opencode": serde_json::Value::Object(opencode),
     }))
 }
 
@@ -402,11 +308,6 @@ pub async fn owpenbot_config_set(
     }
 
     Ok(())
-}
-
-#[tauri::command]
-pub async fn owpenbot_pairing_list(app: AppHandle) -> Result<serde_json::Value, String> {
-    owpenbot_json(&app, &["pairing", "list", "--json"], "list pairing requests").await
 }
 
 async fn owpenbot_json(
@@ -456,50 +357,4 @@ async fn owpenbot_version(app: &AppHandle) -> Option<String> {
     }
 
     Some(trimmed.to_string())
-}
-
-#[tauri::command]
-pub async fn owpenbot_pairing_approve(app: AppHandle, code: String) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let command = match app.shell().sidecar("owpenbot") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
-    };
-
-    let output = command
-        .args(["pairing", "approve", &code])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to approve pairing: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to approve pairing: {stderr}"));
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn owpenbot_pairing_deny(app: AppHandle, code: String) -> Result<(), String> {
-    use tauri_plugin_shell::ShellExt;
-
-    let command = match app.shell().sidecar("owpenbot") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
-    };
-
-    let output = command
-        .args(["pairing", "deny", &code])
-        .output()
-        .await
-        .map_err(|e| format!("Failed to deny pairing: {e}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Failed to deny pairing: {stderr}"));
-    }
-
-    Ok(())
 }

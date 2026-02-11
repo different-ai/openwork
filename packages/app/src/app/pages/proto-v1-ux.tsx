@@ -82,11 +82,6 @@ const skillRecommended = [
     description: "Manage tabs in ChatGPT Atlas and access your...",
   },
   {
-    icon: Cloud,
-    title: "Cloudflare Deploy",
-    description: "Deploy Workers, Pages, and platform services",
-  },
-  {
     icon: Gamepad2,
     title: "Develop Web Game",
     description: "Web game dev + Playwright test loop",
@@ -163,6 +158,7 @@ const ProjectFolder = (props: { name: string; children: any }) => {
         onClick={toggleExpanded}
         onKeyDown={(event) => {
           if (event.key !== "Enter" && event.key !== " ") return;
+          if (event.isComposing || event.keyCode === 229) return;
           event.preventDefault();
           toggleExpanded();
         }}

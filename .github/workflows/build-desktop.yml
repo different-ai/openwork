@@ -89,6 +89,9 @@ jobs:
             exit 1
           fi
 
+          # Reuse this resolved version for subsequent steps (e.g. prepare-sidecar).
+          echo "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
+
           opencode_asset="opencode-linux-x64-baseline.tar.gz"
           url="https://github.com/anomalyco/opencode/releases/download/v${version}/${opencode_asset}"
           tmp_dir="$RUNNER_TEMP/opencode"

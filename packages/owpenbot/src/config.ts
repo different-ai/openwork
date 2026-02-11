@@ -10,9 +10,24 @@ const packageDir = path.resolve(moduleDir, "..");
 dotenv.config({ path: path.join(packageDir, ".env") });
 dotenv.config();
 
-export type ChannelName = "telegram" | "whatsapp" | "slack";
+export type ChannelName = "telegram" | "slack";
 
-export type DmPolicy = "pairing" | "allowlist" | "open" | "disabled";
+export type TelegramIdentity = {
+  id: string;
+  token: string;
+  enabled?: boolean;
+  // Optional default workspace directory to route peers into.
+  // When set, owpenbot will auto-bind new peerIds to this directory.
+  directory?: string;
+};
+
+export type SlackIdentity = {
+  id: string;
+  botToken: string;
+  appToken: string;
+  enabled?: boolean;
+  directory?: string;
+};
 
 export type OwpenbotConfigFile = {
   version: number;
@@ -20,26 +35,20 @@ export type OwpenbotConfigFile = {
   opencodeDirectory?: string;
   groupsEnabled?: boolean;
   channels?: {
-    whatsapp?: {
-      dmPolicy?: DmPolicy;
-      allowFrom?: string[];
-      selfChatMode?: boolean;
-      accounts?: Record<
-        string,
-        {
-          authDir?: string;
-          sendReadReceipts?: boolean;
-        }
-      >;
-    };
     telegram?: {
-      token?: string;
       enabled?: boolean;
+      // New format (multi-bot)
+      bots?: TelegramIdentity[];
+      // Legacy (single)
+      token?: string;
     };
     slack?: {
+      enabled?: boolean;
+      // New format (multi-app)
+      apps?: SlackIdentity[];
+      // Legacy (single)
       botToken?: string;
       appToken?: string;
-      enabled?: boolean;
     };
   };
 };
@@ -57,21 +66,11 @@ export type Config = {
   opencodeUsername?: string;
   opencodePassword?: string;
   model?: ModelRef;
-  telegramToken?: string;
-  telegramEnabled: boolean;
-  slackBotToken?: string;
-  slackAppToken?: string;
-  slackEnabled: boolean;
-  whatsappAuthDir: string;
-  whatsappAccountId: string;
-  whatsappDmPolicy: DmPolicy;
-  whatsappAllowFrom: Set<string>;
-  whatsappSelfChatMode: boolean;
-  whatsappEnabled: boolean;
+  telegramBots: TelegramIdentity[];
+  slackApps: SlackIdentity[];
   dataDir: string;
   dbPath: string;
   logFile: string;
-  allowlist: Record<ChannelName, Set<string>>;
   toolUpdatesEnabled: boolean;
   groupsEnabled: boolean;
   permissionMode: "allow" | "deny";
@@ -116,37 +115,6 @@ function expandHome(value: string): string {
   return path.join(os.homedir(), value.slice(2));
 }
 
-export function normalizeWhatsAppId(value: string): string {
-  const trimmed = value.trim();
-  if (!trimmed) return trimmed;
-  if (trimmed.endsWith("@g.us")) return trimmed;
-  const base = trimmed.replace(/@s\.whatsapp\.net$/i, "");
-  if (base.startsWith("+")) return base;
-  if (/^\d+$/.test(base)) return `+${base}`;
-  return base;
-}
-
-function normalizeWhatsAppAllowFrom(list: string[]): Set<string> {
-  const set = new Set<string>();
-  for (const entry of list) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    if (trimmed === "*") {
-      set.add("*");
-      continue;
-    }
-    set.add(normalizeWhatsAppId(trimmed));
-  }
-  return set;
-}
-
-function normalizeDmPolicy(value: unknown): DmPolicy {
-  if (value === "allowlist" || value === "open" || value === "disabled" || value === "pairing") {
-    return value;
-  }
-  return "pairing";
-}
-
 function resolveConfigPath(dataDir: string, env: EnvLike): string {
   const override = env.OWPENBOT_CONFIG_PATH?.trim();
   if (override) return expandHome(override);
@@ -171,43 +139,70 @@ export function writeConfigFile(configPath: string, config: OwpenbotConfigFile) 
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
 
-function parseAllowlist(env: EnvLike): Record<ChannelName, Set<string>> {
-  const allowlist: Record<ChannelName, Set<string>> = {
-    telegram: new Set<string>(),
-    whatsapp: new Set<string>(),
-    slack: new Set<string>(),
-  };
+function normalizeId(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const safe = trimmed.replace(/[^a-zA-Z0-9_.-]+/g, "-");
+  return safe.replace(/^-+|-+$/g, "").slice(0, 48) || "default";
+}
 
-  const shared = parseList(env.ALLOW_FROM);
-  for (const entry of shared) {
-    if (entry.includes(":")) {
-      const idx = entry.indexOf(":");
-      const channel = entry.slice(0, idx);
-      const peer = entry.slice(idx + 1);
-      const normalized = channel.trim().toLowerCase();
-      if (normalized === "telegram" || normalized === "whatsapp" || normalized === "slack") {
-        if (peer.trim()) {
-          allowlist[normalized].add(peer.trim());
-        }
-      }
-    } else {
-      allowlist.telegram.add(entry);
-      allowlist.whatsapp.add(entry);
-      allowlist.slack.add(entry);
-    }
+function coerceTelegramBots(file: OwpenbotConfigFile): TelegramIdentity[] {
+  const telegram = file.channels?.telegram;
+  const bots = Array.isArray((telegram as any)?.bots) ? ((telegram as any).bots as unknown[]) : [];
+  const normalized: TelegramIdentity[] = [];
+  for (const entry of bots) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const token = typeof record.token === "string" ? record.token.trim() : "";
+    if (!token) continue;
+    const id = normalizeId(typeof record.id === "string" ? record.id : "default");
+    const directory = typeof record.directory === "string" ? record.directory.trim() : "";
+    normalized.push({
+      id,
+      token,
+      enabled: record.enabled === undefined ? true : record.enabled === true,
+      ...(directory ? { directory } : {}),
+    });
   }
+  if (normalized.length) return normalized;
 
-  for (const entry of parseList(env.ALLOW_FROM_TELEGRAM)) {
-    allowlist.telegram.add(entry);
+  // Legacy single-bot migration (in-memory).
+  const legacyToken = typeof (telegram as any)?.token === "string" ? String((telegram as any).token).trim() : "";
+  if (legacyToken) {
+    return [{ id: "default", token: legacyToken, enabled: true }];
   }
-  for (const entry of parseList(env.ALLOW_FROM_WHATSAPP)) {
-    allowlist.whatsapp.add(entry);
-  }
-  for (const entry of parseList(env.ALLOW_FROM_SLACK)) {
-    allowlist.slack.add(entry);
-  }
+  return [];
+}
 
-  return allowlist;
+function coerceSlackApps(file: OwpenbotConfigFile): SlackIdentity[] {
+  const slack = file.channels?.slack;
+  const apps = Array.isArray((slack as any)?.apps) ? ((slack as any).apps as unknown[]) : [];
+  const normalized: SlackIdentity[] = [];
+  for (const entry of apps) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    const botToken = typeof record.botToken === "string" ? record.botToken.trim() : "";
+    const appToken = typeof record.appToken === "string" ? record.appToken.trim() : "";
+    if (!botToken || !appToken) continue;
+    const id = normalizeId(typeof record.id === "string" ? record.id : "default");
+    const directory = typeof record.directory === "string" ? record.directory.trim() : "";
+    normalized.push({
+      id,
+      botToken,
+      appToken,
+      enabled: record.enabled === undefined ? true : record.enabled === true,
+      ...(directory ? { directory } : {}),
+    });
+  }
+  if (normalized.length) return normalized;
+
+  // Legacy single-app migration (in-memory).
+  const legacyBot = typeof (slack as any)?.botToken === "string" ? String((slack as any).botToken).trim() : "";
+  const legacyApp = typeof (slack as any)?.appToken === "string" ? String((slack as any).appToken).trim() : "";
+  if (legacyBot && legacyApp) {
+    return [{ id: "default", botToken: legacyBot, appToken: legacyApp, enabled: true }];
+  }
+  return [];
 }
 
 export function loadConfig(
@@ -221,39 +216,35 @@ export function loadConfig(
   const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
   const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
   const configPath = resolveConfigPath(dataDir, env);
-  const { config: configFile } = readConfigFile(configPath);
+  let { config: configFile } = readConfigFile(configPath);
   const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory || "";
   if (!opencodeDirectory && requireOpencode) {
     throw new Error("OPENCODE_DIRECTORY is required");
   }
   const resolvedDirectory = opencodeDirectory || process.cwd();
-  const whatsappFile = configFile.channels?.whatsapp ?? {};
-  const whatsappAccountId = env.WHATSAPP_ACCOUNT_ID?.trim() || "default";
-  const accountAuthDir = whatsappFile.accounts?.[whatsappAccountId]?.authDir;
-  const whatsappAuthDir = expandHome(
-    env.WHATSAPP_AUTH_DIR ??
-      accountAuthDir ??
-      path.join(dataDir, "credentials", "whatsapp", whatsappAccountId),
-  );
-  const dmPolicy = normalizeDmPolicy(
-    env.WHATSAPP_DM_POLICY?.trim().toLowerCase() ?? whatsappFile.dmPolicy,
-  );
-  const selfChatMode = parseBoolean(env.WHATSAPP_SELF_CHAT, whatsappFile.selfChatMode ?? false);
-  const envAllowlist = parseAllowlist(env);
-  const fileAllowFrom = normalizeWhatsAppAllowFrom(whatsappFile.allowFrom ?? []);
-  const envAllowFrom = normalizeWhatsAppAllowFrom(
-    envAllowlist.whatsapp.size ? [...envAllowlist.whatsapp] : [],
-  );
-  const whatsappAllowFrom = new Set<string>([...fileAllowFrom, ...envAllowFrom]);
 
   const toolOutputLimit = parseInteger(env.TOOL_OUTPUT_LIMIT) ?? 1200;
   const permissionMode = env.PERMISSION_MODE?.toLowerCase() === "deny" ? "deny" : "allow";
 
-  const telegramToken = env.TELEGRAM_BOT_TOKEN?.trim() || configFile.channels?.telegram?.token || undefined;
-  const slackBotToken = env.SLACK_BOT_TOKEN?.trim() || configFile.channels?.slack?.botToken || undefined;
-  const slackAppToken = env.SLACK_APP_TOKEN?.trim() || configFile.channels?.slack?.appToken || undefined;
+  // Identities are loaded from config. Env vars are still supported as a convenience
+  // for single-identity setups.
+  const telegramBots = coerceTelegramBots(configFile);
+  const slackApps = coerceSlackApps(configFile);
+
+  const envTelegram = env.TELEGRAM_BOT_TOKEN?.trim() ?? "";
+  if (envTelegram && !telegramBots.some((bot) => bot.token === envTelegram)) {
+    telegramBots.unshift({ id: "env", token: envTelegram, enabled: true });
+  }
+  const envSlackBot = env.SLACK_BOT_TOKEN?.trim() ?? "";
+  const envSlackApp = env.SLACK_APP_TOKEN?.trim() ?? "";
+  if (envSlackBot && envSlackApp && !slackApps.some((app) => app.botToken === envSlackBot && app.appToken === envSlackApp)) {
+    slackApps.unshift({ id: "env", botToken: envSlackBot, appToken: envSlackApp, enabled: true });
+  }
   const healthPort = parseInteger(env.OWPENBOT_HEALTH_PORT) ?? 3005;
   const model = parseModel(env.OWPENBOT_MODEL);
+
+  const telegramEnabledDefault = configFile.channels?.telegram?.enabled ?? true;
+  const slackEnabledDefault = configFile.channels?.slack?.enabled ?? true;
 
   return {
     configPath,
@@ -263,27 +254,14 @@ export function loadConfig(
     opencodeUsername: env.OPENCODE_SERVER_USERNAME?.trim() || undefined,
     opencodePassword: env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
     model,
-    telegramToken,
-    telegramEnabled: parseBoolean(
-      env.TELEGRAM_ENABLED,
-      configFile.channels?.telegram?.enabled ?? Boolean(telegramToken),
-    ),
-    slackBotToken,
-    slackAppToken,
-    slackEnabled: parseBoolean(
-      env.SLACK_ENABLED,
-      configFile.channels?.slack?.enabled ?? Boolean(slackBotToken && slackAppToken),
-    ),
-    whatsappAuthDir,
-    whatsappAccountId,
-    whatsappDmPolicy: dmPolicy,
-    whatsappAllowFrom,
-    whatsappSelfChatMode: selfChatMode,
-    whatsappEnabled: parseBoolean(env.WHATSAPP_ENABLED, true),
+    telegramBots: telegramBots.map((bot) => ({ ...bot, enabled: bot.enabled !== false && parseBoolean(env.TELEGRAM_ENABLED, telegramEnabledDefault) })),
+    slackApps: slackApps.map((app) => ({
+      ...app,
+      enabled: app.enabled !== false && parseBoolean(env.SLACK_ENABLED, slackEnabledDefault),
+    })),
     dataDir,
     dbPath,
     logFile,
-    allowlist: envAllowlist,
     toolUpdatesEnabled: parseBoolean(env.TOOL_UPDATES_ENABLED, false),
     groupsEnabled: parseBoolean(env.GROUPS_ENABLED, configFile.groupsEnabled ?? false),
     permissionMode,

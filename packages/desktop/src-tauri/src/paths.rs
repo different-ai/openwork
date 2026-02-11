@@ -90,3 +90,57 @@ pub fn resolve_in_path(name: &str) -> Option<PathBuf> {
     }
     None
 }
+
+pub fn sidecar_path_candidates(
+    resource_dir: Option<&Path>,
+    current_bin_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Some(current_bin_dir) = current_bin_dir {
+        candidates.push(current_bin_dir.to_path_buf());
+    }
+
+    if let Some(resource_dir) = resource_dir {
+        candidates.push(resource_dir.join("sidecars"));
+        candidates.push(resource_dir.to_path_buf());
+    }
+
+    candidates.push(PathBuf::from("src-tauri/sidecars"));
+
+    let mut unique = Vec::new();
+    for candidate in candidates {
+        if !candidate.is_dir() {
+            continue;
+        }
+        if unique
+            .iter()
+            .any(|existing: &PathBuf| existing == &candidate)
+        {
+            continue;
+        }
+        unique.push(candidate);
+    }
+
+    unique
+}
+
+pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {
+    let mut entries = Vec::<PathBuf>::new();
+
+    for prefix in prefixes {
+        if prefix.is_dir() {
+            entries.push(prefix.clone());
+        }
+    }
+
+    if let Some(existing) = env::var_os("PATH") {
+        entries.extend(env::split_paths(&existing));
+    }
+
+    if entries.is_empty() {
+        return None;
+    }
+
+    env::join_paths(entries).ok()
+}

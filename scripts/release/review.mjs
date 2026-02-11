@@ -62,6 +62,16 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.headless ?? "?"}`,
 );
 addCheck(
+  "App/openwork-server versions match",
+  versions.app && versions.server && versions.app === versions.server,
+  `${versions.app ?? "?"} vs ${versions.server ?? "?"}`,
+);
+addCheck(
+  "App/owpenbot versions match",
+  versions.app && versions.owpenbot && versions.app === versions.owpenbot,
+  `${versions.app ?? "?"} vs ${versions.owpenbot ?? "?"}`,
+);
+addCheck(
   "Desktop/Tauri versions match",
   versions.desktop && versions.tauri && versions.desktop === versions.tauri,
   `${versions.desktop ?? "?"} vs ${versions.tauri ?? "?"}`,

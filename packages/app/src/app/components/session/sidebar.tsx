@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Trash2 } from "lucide-solid";
+import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Square, Trash2 } from "lucide-solid";
 
 import type { TodoItem, WorkspaceConnectionState } from "../../types";
 import type { WorkspaceInfo } from "../../lib/tauri";
@@ -41,6 +41,7 @@ export type SidebarProps = {
   onEditWorkspace: (workspaceId: string) => void;
   onTestWorkspaceConnection: (workspaceId: string) => void;
   onForgetWorkspace: (workspaceId: string) => void;
+  onStopSandbox?: (workspaceId: string) => void;
   onReorderWorkspace: (fromId: string, toId: string | null) => void;
   onSelectSession: (workspaceId: string, sessionId: string) => void;
   selectedSessionId: string | null;
@@ -359,7 +360,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 </span>
                                 <Show when={group.workspace.workspaceType === "remote"}>
                                   <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
-                                    Remote
+                                    {group.workspace.sandboxContainerName?.trim() ? "Sandbox" : "Remote"}
                                   </span>
                                 </Show>
                               </div>
@@ -437,6 +438,17 @@ export default function SessionSidebar(props: SidebarProps) {
                               >
                                 <RefreshCcw size={12} class={connectionStatus() === "connecting" ? "animate-spin" : ""} />
                                 Test connection
+                              </button>
+                            </Show>
+                            <Show when={group.workspace.sandboxContainerName?.trim() && props.onStopSandbox}>
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
+                                onClick={() => props.onStopSandbox?.(group.workspace.id)}
+                                disabled={isConnecting()}
+                              >
+                                <Square size={12} />
+                                Stop sandbox
                               </button>
                             </Show>
                             <button

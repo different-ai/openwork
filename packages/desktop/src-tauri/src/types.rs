@@ -188,9 +188,6 @@ pub struct OwpenbotInfo {
     pub version: Option<String>,
     pub workspace_path: Option<String>,
     pub opencode_url: Option<String>,
-    pub qr_data: Option<String>,
-    pub whatsapp_linked: bool,
-    pub telegram_configured: bool,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,
@@ -259,6 +256,8 @@ pub struct ScheduledJobRun {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduledJob {
+    pub scope_id: Option<String>,
+    pub timeout_seconds: Option<i32>,
     pub slug: String,
     pub name: String,
     pub schedule: String,
@@ -327,6 +326,14 @@ pub struct WorkspaceInfo {
     pub openwork_workspace_id: Option<String>,
     #[serde(default)]
     pub openwork_workspace_name: Option<String>,
+
+    // Sandbox lifecycle metadata (desktop-managed)
+    #[serde(default)]
+    pub sandbox_backend: Option<String>,
+    #[serde(default)]
+    pub sandbox_run_id: Option<String>,
+    #[serde(default)]
+    pub sandbox_container_name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -374,4 +381,4 @@ impl Default for WorkspaceState {
     }
 }
 
-pub const WORKSPACE_STATE_VERSION: u8 = 3;
+pub const WORKSPACE_STATE_VERSION: u8 = 4;

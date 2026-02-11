@@ -57,6 +57,20 @@ pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<Openwrk
             .and_then(|active| status.workspaces.iter().find(|ws| &ws.id == active))
             .map(|ws| ws.path.clone())
             .or_else(|| state.project_dir.clone());
+
+        // Openwrk can keep running across app relaunches. In that case, the in-memory
+        // EngineManager state (including opencode basic auth) is lost. Persist a small
+        // auth snapshot next to openwrk-state.json so the UI can reconnect.
+        let auth_snapshot = openwrk::read_openwrk_auth(&data_dir);
+        let opencode_username = state
+            .opencode_username
+            .clone()
+            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_username.clone()));
+        let opencode_password = state
+            .opencode_password
+            .clone()
+            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_password.clone()));
+        let project_dir = project_dir.or_else(|| auth_snapshot.and_then(|auth| auth.project_dir));
         return EngineInfo {
             running: status.running,
             runtime: state.runtime.clone(),
@@ -64,8 +78,8 @@ pub fn engine_info(manager: State<EngineManager>, openwrk_manager: State<Openwrk
             project_dir,
             hostname: Some("127.0.0.1".to_string()),
             port: opencode.as_ref().map(|entry| entry.port),
-            opencode_username: state.opencode_username.clone(),
-            opencode_password: state.opencode_password.clone(),
+            opencode_username,
+            opencode_password,
             pid: opencode.as_ref().map(|entry| entry.pid),
             last_stdout,
             last_stderr,
@@ -284,6 +298,15 @@ pub fn engine_start(
         };
 
         let (mut rx, child) = openwrk::spawn_openwrk_daemon(&app, &spawn_options)?;
+
+        // Persist basic auth (and project dir) so relaunches can attach.
+        let _ = openwrk::write_openwrk_auth(
+            &data_dir,
+            opencode_username.as_deref(),
+            opencode_password.as_deref(),
+            Some(project_dir.as_str()),
+        );
+
         {
             let mut openwrk_state = openwrk_manager
                 .inner

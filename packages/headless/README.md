@@ -50,6 +50,45 @@ The command prints pairing details (OpenWork server URL + token, OpenCode URL + 
 Use `--detach` to keep services running and exit the dashboard. The detach summary includes the
 OpenWork URL, tokens, and the `opencode attach` command.
 
+## Sandbox mode (Docker / Apple container)
+
+`openwrk` can run the sidecars inside a Linux container boundary while still mounting your workspace
+from the host.
+
+```bash
+# Auto-pick sandbox backend (prefers Apple container on supported Macs)
+openwrk start --sandbox auto --workspace /path/to/workspace --approval auto
+
+# Explicit backends
+openwrk start --sandbox docker --workspace /path/to/workspace --approval auto
+openwrk start --sandbox container --workspace /path/to/workspace --approval auto
+```
+
+Notes:
+
+- `--sandbox auto` prefers Apple `container` on supported Macs (arm64), otherwise Docker.
+- Docker backend requires `docker` on your PATH.
+- Apple container backend requires the `container` CLI (https://github.com/apple/container).
+- In sandbox mode, sidecars are resolved for a Linux target (and `--sidecar-source` / `--opencode-source`
+  are effectively `downloaded`).
+- Custom `--*-bin` overrides are not supported in sandbox mode yet.
+- Use `--sandbox-image` to pick an image with the toolchain you want available to OpenCode.
+- Use `--sandbox-persist-dir` to control the host directory mounted at `/persist` inside the container.
+
+### Extra mounts (allowlisted)
+
+You can add explicit, validated mounts into `/workspace/extra/*`:
+
+```bash
+openwrk start --sandbox auto --sandbox-mount "/path/on/host:datasets:ro" --workspace /path/to/workspace
+```
+
+Additional mounts are blocked unless you create an allowlist at:
+
+- `~/.config/openwork/sandbox-mount-allowlist.json`
+
+Override with `OPENWRK_SANDBOX_MOUNT_ALLOWLIST`.
+
 ## Logging
 
 `openwrk` emits a unified log stream from OpenCode, OpenWork server, and Owpenbot. Use JSON format for

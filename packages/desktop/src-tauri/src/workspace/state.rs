@@ -73,6 +73,9 @@ pub fn ensure_starter_workspace(app: &tauri::AppHandle) -> Result<WorkspaceInfo,
         openwork_token: None,
         openwork_workspace_id: None,
         openwork_workspace_name: None,
+        sandbox_backend: None,
+        sandbox_run_id: None,
+        sandbox_container_name: None,
     })
 }
 

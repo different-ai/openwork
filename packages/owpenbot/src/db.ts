@@ -7,6 +7,7 @@ import type { ChannelName } from "./config.js";
 
 type SessionRow = {
   channel: ChannelName;
+  identity_id: string;
   peer_id: string;
   session_id: string;
   directory?: string | null;
@@ -16,6 +17,7 @@ type SessionRow = {
 
 type BindingRow = {
   channel: ChannelName;
+  identity_id: string;
   peer_id: string;
   directory: string;
   created_at: number;
@@ -28,14 +30,6 @@ type AllowlistRow = {
   created_at: number;
 };
 
-type PairingRow = {
-  channel: ChannelName;
-  peer_id: string;
-  code: string;
-  created_at: number;
-  expires_at: number;
-};
-
 export class BridgeStore {
   private db: Database;
 
@@ -46,11 +40,13 @@ export class BridgeStore {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sessions (
         channel TEXT NOT NULL,
+        identity_id TEXT NOT NULL,
         peer_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
+        directory TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, peer_id)
+        PRIMARY KEY (channel, identity_id, peer_id)
       );
       CREATE TABLE IF NOT EXISTS allowlist (
         channel TEXT NOT NULL,
@@ -60,23 +56,16 @@ export class BridgeStore {
       );
       CREATE TABLE IF NOT EXISTS bindings (
         channel TEXT NOT NULL,
+        identity_id TEXT NOT NULL,
         peer_id TEXT NOT NULL,
         directory TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, peer_id)
+        PRIMARY KEY (channel, identity_id, peer_id)
       );
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS pairing_requests (
-        channel TEXT NOT NULL,
-        peer_id TEXT NOT NULL,
-        code TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        expires_at INTEGER NOT NULL,
-        PRIMARY KEY (channel, peer_id)
       );
     `);
 
@@ -84,12 +73,63 @@ export class BridgeStore {
   }
 
   private migrate() {
-    const columns = this.db
+    // Sessions: migrate from legacy (channel, peer_id) PK to identity-scoped PK.
+    const sessionColumns = this.db
       .prepare("PRAGMA table_info(sessions)")
       .all() as Array<{ name?: string }>;
-    const hasDirectory = columns.some((column) => column.name === "directory");
-    if (!hasDirectory) {
-      this.db.exec("ALTER TABLE sessions ADD COLUMN directory TEXT");
+    const hasSessionIdentity = sessionColumns.some((column) => column.name === "identity_id");
+    if (!hasSessionIdentity) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS sessions_v2 (
+          channel TEXT NOT NULL,
+          identity_id TEXT NOT NULL,
+          peer_id TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          directory TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (channel, identity_id, peer_id)
+        );
+      `);
+      // Copy existing rows, defaulting identity_id to "default".
+      this.db.exec(`
+        INSERT OR IGNORE INTO sessions_v2 (channel, identity_id, peer_id, session_id, directory, created_at, updated_at)
+        SELECT channel, 'default', peer_id, session_id, NULL, created_at, updated_at FROM sessions;
+      `);
+      this.db.exec("DROP TABLE sessions");
+      this.db.exec("ALTER TABLE sessions_v2 RENAME TO sessions");
+    }
+
+    // Bindings: migrate from legacy (channel, peer_id) PK to identity-scoped PK.
+    const bindingColumns = this.db
+      .prepare("PRAGMA table_info(bindings)")
+      .all() as Array<{ name?: string }>;
+    const hasBindingIdentity = bindingColumns.some((column) => column.name === "identity_id");
+    if (!hasBindingIdentity) {
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS bindings_v2 (
+          channel TEXT NOT NULL,
+          identity_id TEXT NOT NULL,
+          peer_id TEXT NOT NULL,
+          directory TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (channel, identity_id, peer_id)
+        );
+      `);
+      this.db.exec(`
+        INSERT OR IGNORE INTO bindings_v2 (channel, identity_id, peer_id, directory, created_at, updated_at)
+        SELECT channel, 'default', peer_id, directory, created_at, updated_at FROM bindings;
+      `);
+      this.db.exec("DROP TABLE bindings");
+      this.db.exec("ALTER TABLE bindings_v2 RENAME TO bindings");
+    }
+
+    // Cleanup: WhatsApp pairing table is no longer used.
+    try {
+      this.db.exec("DROP TABLE IF EXISTS pairing_requests");
+    } catch {
+      // ignore
     }
   }
 
@@ -98,65 +138,75 @@ export class BridgeStore {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  getSession(channel: ChannelName, peerId: string): SessionRow | null {
+  getSession(channel: ChannelName, identityId: string, peerId: string): SessionRow | null {
     const stmt = this.db.prepare(
-      "SELECT channel, peer_id, session_id, directory, created_at, updated_at FROM sessions WHERE channel = ? AND peer_id = ?",
+      "SELECT channel, identity_id, peer_id, session_id, directory, created_at, updated_at FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?",
     );
-    const row = stmt.get(channel, peerId) as SessionRow | null;
+    const row = stmt.get(channel, identityId, peerId) as SessionRow | null;
     return row ?? null;
   }
 
-  upsertSession(channel: ChannelName, peerId: string, sessionId: string, directory?: string | null) {
+  upsertSession(channel: ChannelName, identityId: string, peerId: string, sessionId: string, directory?: string | null) {
     const now = Date.now();
     const stmt = this.db.prepare(
-      `INSERT INTO sessions (channel, peer_id, session_id, directory, created_at, updated_at)
+      `INSERT INTO sessions (channel, identity_id, peer_id, session_id, directory, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, updated_at = excluded.updated_at`,
+    );
+    stmt.run(channel, identityId, peerId, sessionId, directory ?? null, now, now);
+  }
+
+  deleteSession(channel: ChannelName, identityId: string, peerId: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM sessions WHERE channel = ? AND identity_id = ? AND peer_id = ?");
+    const result = stmt.run(channel, identityId, peerId);
+    return result.changes > 0;
+  }
+
+  getBinding(channel: ChannelName, identityId: string, peerId: string): BindingRow | null {
+    const stmt = this.db.prepare(
+      "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? AND identity_id = ? AND peer_id = ?",
+    );
+    const row = stmt.get(channel, identityId, peerId) as BindingRow | null;
+    return row ?? null;
+  }
+
+  upsertBinding(channel: ChannelName, identityId: string, peerId: string, directory: string) {
+    const now = Date.now();
+    const stmt = this.db.prepare(
+      `INSERT INTO bindings (channel, identity_id, peer_id, directory, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO UPDATE SET session_id = excluded.session_id, directory = excluded.directory, updated_at = excluded.updated_at`,
+       ON CONFLICT(channel, identity_id, peer_id) DO UPDATE SET directory = excluded.directory, updated_at = excluded.updated_at`,
     );
-    stmt.run(channel, peerId, sessionId, directory ?? null, now, now);
+    stmt.run(channel, identityId, peerId, directory, now, now);
   }
 
-  deleteSession(channel: ChannelName, peerId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM sessions WHERE channel = ? AND peer_id = ?");
-    const result = stmt.run(channel, peerId);
+  deleteBinding(channel: ChannelName, identityId: string, peerId: string): boolean {
+    const stmt = this.db.prepare("DELETE FROM bindings WHERE channel = ? AND identity_id = ? AND peer_id = ?");
+    const result = stmt.run(channel, identityId, peerId);
     return result.changes > 0;
   }
 
-  getBinding(channel: ChannelName, peerId: string): BindingRow | null {
-    const stmt = this.db.prepare(
-      "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? AND peer_id = ?",
-    );
-    const row = stmt.get(channel, peerId) as BindingRow | null;
-    return row ?? null;
-  }
-
-  upsertBinding(channel: ChannelName, peerId: string, directory: string) {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      `INSERT INTO bindings (channel, peer_id, directory, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO UPDATE SET directory = excluded.directory, updated_at = excluded.updated_at`,
-    );
-    stmt.run(channel, peerId, directory, now, now);
-  }
-
-  deleteBinding(channel: ChannelName, peerId: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM bindings WHERE channel = ? AND peer_id = ?");
-    const result = stmt.run(channel, peerId);
-    return result.changes > 0;
-  }
-
-  listBindings(channel?: ChannelName): BindingRow[] {
-    if (channel) {
-      const stmt = this.db.prepare(
-        "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? ORDER BY updated_at DESC",
-      );
-      return stmt.all(channel) as BindingRow[];
+  listBindings(filters: { channel?: ChannelName; identityId?: string; directory?: string } = {}): BindingRow[] {
+    const where: string[] = [];
+    const args: Array<string> = [];
+    if (filters.channel) {
+      where.push("channel = ?");
+      args.push(filters.channel);
     }
+    if (filters.identityId) {
+      where.push("identity_id = ?");
+      args.push(filters.identityId);
+    }
+    if (filters.directory) {
+      where.push("directory = ?");
+      args.push(filters.directory);
+    }
+
+    const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
     const stmt = this.db.prepare(
-      "SELECT channel, peer_id, directory, created_at, updated_at FROM bindings ORDER BY updated_at DESC",
+      `SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings${clause} ORDER BY updated_at DESC`,
     );
-    return stmt.all() as BindingRow[];
+    return stmt.all(...args) as BindingRow[];
   }
 
   isAllowed(channel: ChannelName, peerId: string): boolean {
@@ -189,64 +239,6 @@ export class BridgeStore {
       }
     });
     transaction();
-  }
-
-  listPairingRequests(channel?: ChannelName): PairingRow[] {
-    const now = Date.now();
-    if (channel) {
-      const stmt = this.db.prepare(
-        "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND expires_at > ? ORDER BY created_at ASC",
-      );
-      return stmt.all(channel, now) as PairingRow[];
-    }
-    const stmt = this.db.prepare(
-      "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE expires_at > ? ORDER BY created_at ASC",
-    );
-    return stmt.all(now) as PairingRow[];
-  }
-
-  getPairingRequest(channel: ChannelName, peerId: string): PairingRow | null {
-    const now = Date.now();
-    const stmt = this.db.prepare(
-      "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND peer_id = ? AND expires_at > ?",
-    );
-    const row = stmt.get(channel, peerId, now) as PairingRow | null;
-    return row ?? null;
-  }
-
-  createPairingRequest(channel: ChannelName, peerId: string, code: string, ttlMs: number) {
-    const now = Date.now();
-    const expiresAt = now + ttlMs;
-    const stmt = this.db.prepare(
-      `INSERT INTO pairing_requests (channel, peer_id, code, created_at, expires_at)
-       VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(channel, peer_id) DO UPDATE SET code = excluded.code, created_at = excluded.created_at, expires_at = excluded.expires_at`,
-    );
-    stmt.run(channel, peerId, code, now, expiresAt);
-  }
-
-  approvePairingRequest(channel: ChannelName, code: string): PairingRow | null {
-    const now = Date.now();
-    const select = this.db.prepare(
-      "SELECT channel, peer_id, code, created_at, expires_at FROM pairing_requests WHERE channel = ? AND code = ? AND expires_at > ?",
-    );
-    const row = select.get(channel, code, now) as PairingRow | null;
-    if (!row) return null;
-    const del = this.db.prepare("DELETE FROM pairing_requests WHERE channel = ? AND peer_id = ?");
-    del.run(channel, row.peer_id);
-    return row;
-  }
-
-  denyPairingRequest(channel: ChannelName, code: string): boolean {
-    const stmt = this.db.prepare("DELETE FROM pairing_requests WHERE channel = ? AND code = ?");
-    const result = stmt.run(channel, code);
-    return result.changes > 0;
-  }
-
-  prunePairingRequests() {
-    const now = Date.now();
-    const stmt = this.db.prepare("DELETE FROM pairing_requests WHERE expires_at <= ?");
-    stmt.run(now);
   }
 
   getSetting(key: string): string | null {

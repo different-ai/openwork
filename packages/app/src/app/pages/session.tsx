@@ -27,36 +27,47 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Clock3,
+  Cpu,
   HardDrive,
   History,
   KanbanSquare,
   ListTodo,
   Loader2,
+  MessageCircle,
   Maximize2,
   Minimize2,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Settings,
+  Square,
   Shield,
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
 
 import Button from "../components/button";
+import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
 import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
-import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type { OpenworkServerClient, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
-import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath, parseTemplateFrontmatter } from "../utils";
+
+import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
+import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
+import TouchedFilesPanel from "../components/session/touched-files-panel";
+import MarkdownEditorSidebar from "../components/session/markdown-editor-sidebar";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -82,8 +93,10 @@ export type SessionViewProps = {
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
+  openworkServerClient: OpenworkServerClient | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
+  openworkServerWorkspaceId: string | null;
   engineInfo: EngineInfo | null;
   stopHost: () => void;
   headerStatus: string;
@@ -103,6 +116,9 @@ export type SessionViewProps = {
   installUpdateAndRestart: () => void;
   createSessionAndOpen: () => void;
   sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
+  abortSession: (sessionId?: string) => Promise<void>;
+  lastPromptSent: string;
+  retryLastPrompt: () => void;
   newTaskDisabled: boolean;
   workspaceSessionGroups: WorkspaceSessionGroup[];
   openRenameWorkspace: (workspaceId: string) => void;
@@ -171,16 +187,39 @@ export type SessionViewProps = {
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
+const BROWSER_SETUP_TEMPLATE = (() => {
+  const parsed = parseTemplateFrontmatter(browserSetupTemplate);
+  const name = parsed?.data?.name?.trim() || "browser-setup";
+  const description = parsed?.data?.description?.trim() || "Guide the user through browser automation setup";
+  const body = (parsed?.body ?? browserSetupTemplate).trim();
+  return { name, description, body };
+})();
+
+const SOUL_SETUP_TEMPLATE = (() => {
+  const parsed = parseTemplateFrontmatter(soulSetupTemplate);
+  const name = parsed?.data?.name?.trim() || "give-me-a-soul";
+  const description =
+    parsed?.data?.description?.trim() ||
+    "Enable optional soul mode with persistent memory and scheduled check-ins";
+  const body = (parsed?.body ?? soulSetupTemplate).trim();
+  return { name, description, body };
+})();
+
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
   let agentPickerRef: HTMLDivElement | undefined;
+  let sessionMenuRef: HTMLDivElement | undefined;
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
+
+  const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
+  const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
+  const [deleteSessionBusy, setDeleteSessionBusy] = createSignal(false);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
@@ -188,6 +227,9 @@ export default function SessionView(props: SessionViewProps) {
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
   const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
   const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
+
+  const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
+  const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
 
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
@@ -207,6 +249,89 @@ export default function SessionView(props: SessionViewProps) {
   const todoCompletedCount = createMemo(() =>
     todoList().filter((todo) => todo.status === "completed").length
   );
+
+  const touchedFiles = createMemo(() => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const add = (value: string) => {
+      const normalized = String(value ?? "").trim().replace(/[\\/]+/g, "/");
+      if (!normalized) return;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(normalized);
+    };
+
+    const artifacts = props.artifacts;
+    for (let idx = artifacts.length - 1; idx >= 0; idx -= 1) {
+      const item = artifacts[idx];
+      add(item?.path ?? item?.name ?? "");
+      if (out.length >= 48) break;
+    }
+
+    if (out.length === 0) {
+      const working = props.workingFiles;
+      for (let idx = working.length - 1; idx >= 0; idx -= 1) {
+        add(working[idx] ?? "");
+        if (out.length >= 48) break;
+      }
+    }
+
+    return out;
+  });
+
+  const normalizeSidebarPath = (value: string) => String(value ?? "").trim().replace(/[\\/]+/g, "/");
+
+  const toWorkspaceRelativeForApi = (file: string) => {
+    const normalized = normalizeSidebarPath(file).replace(/^file:\/\//i, "");
+    if (!normalized) return "";
+
+    const root = normalizeSidebarPath(props.activeWorkspaceRoot).replace(/\/+$/, "");
+    const rootKey = root.toLowerCase();
+    const fileKey = normalized.toLowerCase();
+
+    if (root && fileKey.startsWith(`${rootKey}/`)) {
+      return normalized.slice(root.length + 1);
+    }
+    if (root && fileKey === rootKey) {
+      return "";
+    }
+
+    let relative = normalized.replace(/^\.\/+/, "");
+    if (!relative) return "";
+
+    // Tool output paths sometimes carry git-style prefixes (a/ or b/).
+    if (/^[ab]\/.+\.(md|mdx|markdown)$/i.test(relative)) {
+      relative = relative.slice(2);
+    }
+
+    // Some tool outputs include a leading "workspace/" prefix.
+    if (/^workspace\//i.test(relative)) {
+      relative = relative.replace(/^workspace\//i, "");
+    }
+    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
+    if (relative.split("/").some((part) => part === "." || part === "..")) return "";
+    return relative;
+  };
+
+  const openMarkdownEditor = (file: string) => {
+    const relative = toWorkspaceRelativeForApi(file);
+    if (!relative) {
+      setToastMessage("Only workspace-relative files can be opened here.");
+      return;
+    }
+    if (!/\.(md|mdx|markdown)$/i.test(relative)) {
+      setToastMessage("Only markdown files can be edited here right now.");
+      return;
+    }
+    setMarkdownEditorPath(relative);
+    setMarkdownEditorOpen(true);
+  };
+
+  const closeMarkdownEditor = () => {
+    setMarkdownEditorOpen(false);
+    setMarkdownEditorPath(null);
+  };
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
@@ -401,10 +526,12 @@ export default function SessionView(props: SessionViewProps) {
   const [runStartedAt, setRunStartedAt] = createSignal<number | null>(null);
   const [runHasBegun, setRunHasBegun] = createSignal(false);
   const [runTick, setRunTick] = createSignal(Date.now());
+  const [runLastProgressAt, setRunLastProgressAt] = createSignal<number | null>(null);
   const [runBaseline, setRunBaseline] = createSignal<{ assistantId: string | null; partCount: number }>({
     assistantId: null,
     partCount: 0,
   });
+  const [abortBusy, setAbortBusy] = createSignal(false);
   const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
 
@@ -427,7 +554,9 @@ export default function SessionView(props: SessionViewProps) {
 
   const startRun = () => {
     if (runStartedAt()) return;
-    setRunStartedAt(Date.now());
+    const now = Date.now();
+    setRunStartedAt(now);
+    setRunLastProgressAt(now);
     setRunHasBegun(false);
     captureRunBaseline();
   };
@@ -611,6 +740,7 @@ export default function SessionView(props: SessionViewProps) {
     if (props.sessionStatus === "idle" && runHasBegun() && !props.error) {
       setRunStartedAt(null);
       setRunHasBegun(false);
+      setRunLastProgressAt(null);
       setRunBaseline({ assistantId: null, partCount: 0 });
     }
   });
@@ -640,6 +770,9 @@ export default function SessionView(props: SessionViewProps) {
         const [mLen, tLen, pCount] = current;
         const [prevM, prevT, prevP] = previous;
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
+          if (showRunIndicator()) {
+            setRunLastProgressAt(Date.now());
+          }
           const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
           if (shouldScroll) {
             scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
@@ -651,6 +784,84 @@ export default function SessionView(props: SessionViewProps) {
       },
     ),
   );
+
+  const runStallMs = createMemo(() => {
+    if (!showRunIndicator()) return 0;
+    if (runPhase() === "error") return 0;
+    const last = runLastProgressAt() ?? runStartedAt() ?? Date.now();
+    return Math.max(0, runTick() - last);
+  });
+
+  const stallThresholds = createMemo(() => {
+    // Keep these thresholds user-friendly:
+    // - "Still working" should appear quickly enough to reassure, but not so quickly it feels noisy.
+    // - "Taking longer than usual" should appear late enough to avoid false alarms.
+    const phase = runPhase();
+    if (phase === "sending" || phase === "retrying") {
+      return { softMs: 8_000, hardMs: 20_000 };
+    }
+    if (phase === "thinking") {
+      return { softMs: 25_000, hardMs: 70_000 };
+    }
+    if (phase === "responding") {
+      return { softMs: 25_000, hardMs: 90_000 };
+    }
+    return { softMs: 0, hardMs: 0 };
+  });
+
+  const stallStage = createMemo<"none" | "soft" | "hard">(() => {
+    if (!showRunIndicator()) return "none";
+    if (runPhase() === "error") return "none";
+    const ms = runStallMs();
+    const { softMs, hardMs } = stallThresholds();
+    if (!softMs || !hardMs) return "none";
+    if (ms >= hardMs) return "hard";
+    if (ms >= softMs) return "soft";
+    return "none";
+  });
+
+  const cancelRun = async () => {
+    if (abortBusy()) return;
+    if (!props.selectedSessionId) {
+      setToastMessage("No session selected");
+      return;
+    }
+
+    setAbortBusy(true);
+    setToastMessage("Stopping the run...");
+    try {
+      await props.abortSession(props.selectedSessionId);
+      setToastMessage("Stopped.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to stop";
+      setToastMessage(message);
+    } finally {
+      setAbortBusy(false);
+    }
+  };
+
+  const retryRun = async () => {
+    const text = props.lastPromptSent.trim();
+    if (!text) {
+      setToastMessage("Nothing to retry yet");
+      return;
+    }
+
+    if (abortBusy()) return;
+    setAbortBusy(true);
+    setToastMessage("Trying again...");
+    try {
+      if (showRunIndicator() && props.selectedSessionId) {
+        await props.abortSession(props.selectedSessionId);
+      }
+    } catch {
+      // If abort fails, still allow the retry. Users care more about forward motion.
+    } finally {
+      setAbortBusy(false);
+    }
+
+    props.retryLastPrompt();
+  };
 
 
   const triggerFlyout = (
@@ -728,6 +939,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const openRenameModal = () => {
+    setSessionMenuOpen(false);
     if (!props.selectedSessionId) {
       setToastMessage("No session selected");
       return;
@@ -755,6 +967,39 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage(message);
     } finally {
       setRenameBusy(false);
+    }
+  };
+
+  const openDeleteSessionModal = () => {
+    setSessionMenuOpen(false);
+    if (!props.selectedSessionId) {
+      setToastMessage("No session selected");
+      return;
+    }
+    setDeleteSessionOpen(true);
+  };
+
+  const closeDeleteSessionModal = () => {
+    if (deleteSessionBusy()) return;
+    setDeleteSessionOpen(false);
+  };
+
+  const confirmDeleteSession = async () => {
+    if (deleteSessionBusy()) return;
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) return;
+    setDeleteSessionBusy(true);
+    try {
+      await props.deleteSession(sessionId);
+      setDeleteSessionOpen(false);
+      setToastMessage("Session deleted");
+      // Route away from the deleted session id.
+      props.setView("session");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setToastMessage(message || "Failed to delete session");
+    } finally {
+      setDeleteSessionBusy(false);
     }
   };
 
@@ -786,6 +1031,17 @@ export default function SessionView(props: SessionViewProps) {
       if (!agentPickerRef) return;
       if (agentPickerRef.contains(event.target as Node)) return;
       setAgentPickerOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
+  createEffect(() => {
+    if (!sessionMenuOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!sessionMenuRef) return;
+      if (sessionMenuRef.contains(event.target as Node)) return;
+      setSessionMenuOpen(false);
     };
     window.addEventListener("mousedown", handler);
     onCleanup(() => window.removeEventListener("mousedown", handler));
@@ -990,6 +1246,92 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
+  const handleBrowserAutomationQuickstart = async () => {
+    const name = BROWSER_SETUP_TEMPLATE.name;
+    try {
+      const commands = await props.listCommands();
+      const hasCommand = commands.some((cmd) => cmd.name === name);
+      if (hasCommand) {
+        handleSendPrompt({
+          mode: "prompt",
+          text: `/${name}`,
+          resolvedText: `/${name}`,
+          parts: [{ type: "text", text: `/${name}` }],
+          attachments: [],
+          command: { name, arguments: "" },
+        });
+        return;
+      }
+    } catch {
+      // Fall back to prompt-based setup below.
+    }
+
+    const text = BROWSER_SETUP_TEMPLATE.body || "Help me set up browser automation.";
+    handleSendPrompt({
+      mode: "prompt",
+      text,
+      resolvedText: text,
+      parts: [{ type: "text", text }],
+      attachments: [],
+    });
+  };
+
+  const handleSoulQuickstart = async () => {
+    const name = SOUL_SETUP_TEMPLATE.name;
+    try {
+      const commands = await props.listCommands();
+      const hasCommand = commands.some((cmd) => cmd.name === name);
+      if (hasCommand) {
+        handleSendPrompt({
+          mode: "prompt",
+          text: `/${name}`,
+          resolvedText: `/${name}`,
+          parts: [{ type: "text", text: `/${name}` }],
+          attachments: [],
+          command: { name, arguments: "" },
+        });
+        return;
+      }
+    } catch {
+      // Fall back to prompt-based setup below.
+    }
+
+    const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
+    handleSendPrompt({
+      mode: "prompt",
+      text,
+      resolvedText: text,
+      parts: [{ type: "text", text }],
+      attachments: [],
+    });
+  };
+
+  const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
+
+  const uploadInboxFiles = async (files: File[]) => {
+    const client = props.openworkServerClient;
+    const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+    if (!client || !workspaceId) {
+      setToastMessage("Connect to the OpenWork server to upload inbox files.");
+      return;
+    }
+    if (!files.length) return;
+
+    const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
+    setToastMessage(`Uploading ${label} to inbox...`);
+
+    try {
+      for (const file of files) {
+        await client.uploadInbox(workspaceId, file);
+      }
+      const summary = files.map((file) => file.name).filter(Boolean).join(", ");
+      setToastMessage(summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Inbox upload failed";
+      setToastMessage(message);
+    }
+  };
+
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setPrompt(draft.text);
   };
@@ -1047,7 +1389,7 @@ export default function SessionView(props: SessionViewProps) {
       return props.anyActiveRuns ? "Update ready" : "Restart";
     }
     if (state === "downloading") return "Downloading";
-    return "Update";
+    return "Update available";
   });
 
   const updatePillTitle = createMemo(() => {
@@ -1139,6 +1481,7 @@ export default function SessionView(props: SessionViewProps) {
                           }}
                           onKeyDown={(event) => {
                             if (event.key !== "Enter" && event.key !== " ") return;
+                            if (event.isComposing || event.keyCode === 229) return;
                             event.preventDefault();
                             expandWorkspace(workspace().id);
                             props.activateWorkspace(workspace().id);
@@ -1175,11 +1518,6 @@ export default function SessionView(props: SessionViewProps) {
                               title={group.error ?? "Failed to load tasks"}
                             >
                               Error
-                            </span>
-                          </Show>
-                          <Show when={group.status === "ready" && group.sessions.length > 0}>
-                            <span class="text-[10px] px-2 py-0.5 rounded-full border border-dls-border text-dls-secondary bg-dls-hover">
-                              {group.sessions.length}
                             </span>
                           </Show>
                           <Show when={isConnecting()}>
@@ -1244,9 +1582,21 @@ export default function SessionView(props: SessionViewProps) {
                               type="button"
                               class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
                               onClick={() => {
+                                void props.testWorkspaceConnection(workspace().id);
+                                setWorkspaceMenuId(null);
+                              }}
+                              disabled={isConnecting()}
+                            >
+                              Test connection
+                            </button>
+                            <button
+                              type="button"
+                              class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                              onClick={() => {
                                 props.editWorkspaceConnection(workspace().id);
                                 setWorkspaceMenuId(null);
                               }}
+                              disabled={isConnecting()}
                             >
                               Edit connection
                             </button>
@@ -1285,6 +1635,7 @@ export default function SessionView(props: SessionViewProps) {
                                     onClick={() => openSessionFromList(workspace().id, session.id)}
                                     onKeyDown={(event) => {
                                       if (event.key !== "Enter" && event.key !== " ") return;
+                                      if (event.isComposing || event.keyCode === 229) return;
                                       event.preventDefault();
                                       openSessionFromList(workspace().id, session.id);
                                     }}
@@ -1335,6 +1686,7 @@ export default function SessionView(props: SessionViewProps) {
                                       onClick={() => openSessionFromList(workspace().id, session.id)}
                                       onKeyDown={(event) => {
                                         if (event.key !== "Enter" && event.key !== " ") return;
+                                        if (event.isComposing || event.keyCode === 229) return;
                                         event.preventDefault();
                                         openSessionFromList(workspace().id, session.id);
                                       }}
@@ -1438,20 +1790,10 @@ export default function SessionView(props: SessionViewProps) {
           </div>
         </div>
 
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
-        </div>
       </aside>
 
-      <main class="flex-1 flex flex-col relative pb-16 md:pb-12 bg-dls-surface">
-        <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 sticky top-0">
+      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+        <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 shrink-0">
           <div class="flex items-center gap-3">
             <Show when={showUpdatePill()}>
               <button
@@ -1491,6 +1833,47 @@ export default function SessionView(props: SessionViewProps) {
               <span class="text-xs text-dls-secondary">· {props.busyHint}</span>
             </Show>
           </div>
+
+          <div class="flex items-center gap-2">
+            <div ref={(el) => (sessionMenuRef = el)} class="relative">
+              <button
+                type="button"
+                class="h-9 w-9 flex items-center justify-center rounded-lg text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                disabled={!props.selectedSessionId}
+                title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSessionMenuOpen((current) => !current);
+                }}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+
+              <Show when={sessionMenuOpen() && props.selectedSessionId}>
+                <div
+                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-dls-border bg-dls-surface shadow-lg p-1"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                    onClick={openRenameModal}
+                  >
+                    Rename session
+                  </button>
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover text-red-11"
+                    onClick={openDeleteSessionModal}
+                  >
+                    Delete session
+                  </button>
+                </div>
+              </Show>
+            </div>
+          </div>
         </header>
 
       <Show when={props.error}>
@@ -1518,20 +1901,31 @@ export default function SessionView(props: SessionViewProps) {
                   Pick a starting point or just type below.
                 </p>
               </div>
-              <div class="flex justify-center">
+              <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
                 <button
                   type="button"
-                  class="px-4 py-2.5 rounded-xl border border-gray-6 bg-gray-2 text-sm text-gray-12 hover:bg-gray-3 hover:border-gray-7 transition-all"
+                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
                   onClick={() => {
-                    handleSendPrompt({
-                      mode: "prompt",
-                      text: "Help me set up browser automation.",
-                      parts: [{ type: "text", text: "Help me set up browser automation." }],
-                      attachments: [],
-                    });
+                    void handleBrowserAutomationQuickstart();
                   }}
                 >
-                  Automate your browser
+                  <div class="text-sm font-semibold text-dls-text">Automate your browser</div>
+                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                    Set up browser actions and run reliable web tasks from OpenWork.
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                  onClick={() => {
+                    void handleSoulQuickstart();
+                  }}
+                >
+                  <div class="text-sm font-semibold text-dls-text">Give me a soul</div>
+                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                    Keep your goals and preferences across sessions with light scheduled check-ins.
+                    Tradeoff: more autonomy can create extra background runs, but revert is one command.
+                  </div>
                 </button>
               </div>
             </div>
@@ -1576,6 +1970,63 @@ export default function SessionView(props: SessionViewProps) {
                         </Show>
                       </div>
                     </Show>
+                    <Show when={stallStage() !== "none"}>
+                      <div
+                        class={`rounded-xl border px-3 py-2 text-xs ${
+                          stallStage() === "hard"
+                            ? "border-amber-7/30 bg-amber-2/30 text-amber-12"
+                            : "border-gray-6/70 bg-gray-2/40 text-gray-11"
+                        }`}
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="flex items-start gap-2 min-w-0">
+                            <Clock3 size={14} class={stallStage() === "hard" ? "text-amber-11" : "text-gray-9"} />
+                            <div class="min-w-0">
+                              <div class={stallStage() === "hard" ? "text-amber-12" : "text-gray-12"}>
+                                {stallStage() === "hard" ? "This is taking longer than usual." : "Still working..."}
+                              </div>
+                              <Show when={stallStage() === "hard"}>
+                                <div class="mt-1 text-[11px] leading-snug">
+                                  You can keep waiting, try again, or stop the run.
+                                </div>
+                              </Show>
+                              <Show when={props.developerMode && stallStage() === "hard"}>
+                                <div class="mt-1 text-[10px] font-mono opacity-80">
+                                  phase={runPhase()} stallMs={Math.round(runStallMs())}
+                                </div>
+                              </Show>
+                            </div>
+                          </div>
+                          <Show when={stallStage() === "hard"}>
+                            <div class="flex items-center gap-2 shrink-0">
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-12 hover:bg-gray-2/60 transition-colors disabled:opacity-50"
+                                onClick={retryRun}
+                                disabled={abortBusy()}
+                                title="Try sending the last message again"
+                                aria-label="Try again"
+                              >
+                                <RotateCcw size={12} />
+                                Try again
+                              </button>
+                              <button
+                                type="button"
+                                class="inline-flex items-center gap-1.5 rounded-lg border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-12 hover:bg-gray-2/60 transition-colors disabled:opacity-50"
+                                onClick={cancelRun}
+                                disabled={abortBusy()}
+                                title="Stop the current run"
+                                aria-label="Stop"
+                              >
+                                <Square size={12} />
+                                Stop
+                              </button>
+                            </div>
+                          </Show>
+                        </div>
+                      </div>
+                    </Show>
+
                     <div
                       class={`w-full flex items-center justify-between gap-3 text-xs ${runPhase() === "error" ? "text-red-11" : "text-gray-9"
                         }`}
@@ -1611,9 +2062,24 @@ export default function SessionView(props: SessionViewProps) {
                         </Show>
                         <span class="truncate">{runLabel()}</span>
                       </div>
-                      <Show when={props.developerMode}>
-                        <span class="shrink-0 text-[10px] text-gray-8">{runElapsedLabel()}</span>
-                      </Show>
+                      <div class="shrink-0 flex items-center gap-2">
+                        <Show when={props.developerMode}>
+                          <span class="text-[10px] text-gray-8">{runElapsedLabel()}</span>
+                        </Show>
+                        <button
+                          type="button"
+                          class="inline-flex items-center gap-1.5 rounded-full border border-gray-7/60 bg-gray-1/60 px-2 py-1 text-[11px] text-gray-11 hover:bg-gray-2/60 hover:text-gray-12 transition-colors disabled:opacity-50"
+                          onClick={cancelRun}
+                          disabled={abortBusy()}
+                          title="Stop the current run"
+                          aria-label="Stop"
+                        >
+                          <Show when={abortBusy()} fallback={<Square size={12} />}>
+                            <Loader2 size={12} class="animate-spin" />
+                          </Show>
+                          Stop
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1735,14 +2201,35 @@ export default function SessionView(props: SessionViewProps) {
         searchFiles={props.searchFiles}
         listCommands={props.listCommands}
         isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+        isSandboxWorkspace={isSandboxWorkspace()}
+        onUploadInboxFiles={isSandboxWorkspace() ? uploadInboxFiles : undefined}
         attachmentsEnabled={attachmentsEnabled()}
         attachmentsDisabledReason={attachmentsDisabledReason()}
       />
 
+        <StatusBar
+          clientConnected={props.clientConnected}
+          openworkServerStatus={props.openworkServerStatus}
+          developerMode={props.developerMode}
+          onOpenSettings={() => openSettings("general")}
+          onOpenMessaging={openConfig}
+          onOpenProviders={openProviderAuth}
+          onOpenMcp={openMcp}
+          providerConnectedIds={props.providerConnectedIds}
+          mcpStatuses={props.mcpStatuses}
+        />
       </main>
 
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
-        <div class="space-y-1 pt-2">
+        <div class="flex-1 overflow-y-auto space-y-3 pt-2">
+          <TouchedFilesPanel
+            id="sidebar-context"
+            files={touchedFiles()}
+            workspaceRoot={props.activeWorkspaceRoot}
+            onFileClick={openMarkdownEditor}
+          />
+
+          <div class="space-y-1">
           <button
             type="button"
             class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
@@ -1791,6 +2278,21 @@ export default function SessionView(props: SessionViewProps) {
           <button
             type="button"
             class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "plugins"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={() => {
+              props.setTab("plugins");
+              props.setView("dashboard");
+            }}
+          >
+            <Cpu size={18} />
+            Plugins
+          </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "mcp"
                 ? "bg-dls-active text-dls-text"
                 : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
@@ -1806,6 +2308,21 @@ export default function SessionView(props: SessionViewProps) {
           <button
             type="button"
             class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "identities"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={() => {
+              props.setTab("identities");
+              props.setView("dashboard");
+            }}
+          >
+            <MessageCircle size={18} />
+            Identities
+          </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "config"
                 ? "bg-dls-active text-dls-text"
                 : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
@@ -1815,35 +2332,9 @@ export default function SessionView(props: SessionViewProps) {
             <SlidersHorizontal size={18} />
             Config
           </button>
-        </div>
-
-        <div class="flex-1" />
-
-        <div class="pt-4 border-t border-dls-border">
-          <button
-            type="button"
-            onClick={() => openSettings("general")}
-            class="flex items-center gap-3 px-3 py-2 rounded-lg text-dls-secondary hover:bg-dls-hover transition-colors"
-          >
-            <Settings size={18} />
-            <span class="text-sm font-medium">Settings</span>
-          </button>
+          </div>
         </div>
       </aside>
-
-      <div class="fixed bottom-0 left-0 right-0">
-        <StatusBar
-          clientConnected={props.clientConnected}
-          openworkServerStatus={props.openworkServerStatus}
-          developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
-          onOpenMessaging={openConfig}
-          onOpenProviders={openProviderAuth}
-          onOpenMcp={openMcp}
-          providerConnectedIds={props.providerConnectedIds}
-          mcpStatuses={props.mcpStatuses}
-        />
-      </div>
 
       <ProviderAuthModal
         open={props.providerAuthModalOpen}
@@ -1868,6 +2359,21 @@ export default function SessionView(props: SessionViewProps) {
         onTitleChange={setRenameTitle}
       />
 
+      <ConfirmModal
+        open={deleteSessionOpen()}
+        title="Delete session?"
+        message={
+          selectedSessionTitle().trim()
+            ? `This will permanently delete \"${selectedSessionTitle().trim()}\" and its messages.`
+            : "This will permanently delete the selected session and its messages."
+        }
+        confirmLabel={deleteSessionBusy() ? "Deleting..." : "Delete"}
+        cancelLabel="Cancel"
+        variant="danger"
+        onConfirm={confirmDeleteSession}
+        onCancel={closeDeleteSessionModal}
+      />
+
       <ShareWorkspaceModal
         open={Boolean(shareWorkspaceId())}
         onClose={() => setShareWorkspaceId(null)}
@@ -1886,6 +2392,15 @@ export default function SessionView(props: SessionViewProps) {
         }
         exportDisabledReason={exportDisabledReason()}
         onOpenBots={openConfig}
+      />
+
+      <MarkdownEditorSidebar
+        open={markdownEditorOpen()}
+        path={markdownEditorPath()}
+        workspaceId={props.openworkServerWorkspaceId}
+        client={props.openworkServerClient}
+        onClose={closeMarkdownEditor}
+        onToast={(message) => setToastMessage(message)}
       />
 
       <Show when={props.activePermission}>

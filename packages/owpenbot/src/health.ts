@@ -19,32 +19,64 @@ export type HealthSnapshot = {
   };
 };
 
-export type TelegramTokenResult = {
-  configured: boolean;
-  enabled: boolean;
-  // Whether owpenbot applied the token to a running adapter.
-  // If false, the token is still persisted but may require a restart.
-  applied?: boolean;
-  // True when adapter start is still in flight (timeout).
-  starting?: boolean;
-  // Apply/start failure detail (best-effort, for UI/debugging).
-  error?: string;
-};
-
-export type SlackTokensResult = {
-  configured: boolean;
-  enabled: boolean;
-  applied?: boolean;
-  starting?: boolean;
-  error?: string;
-};
-
 export type GroupsConfigResult = {
   groupsEnabled: boolean;
 };
 
+export type TelegramIdentityItem = {
+  id: string;
+  enabled: boolean;
+  running: boolean;
+};
+
+export type SlackIdentityItem = {
+  id: string;
+  enabled: boolean;
+  running: boolean;
+};
+
+export type TelegramIdentitiesResult = {
+  items: TelegramIdentityItem[];
+};
+
+export type SlackIdentitiesResult = {
+  items: SlackIdentityItem[];
+};
+
+export type UpsertIdentityResult = {
+  id: string;
+  enabled: boolean;
+  applied?: boolean;
+  starting?: boolean;
+  error?: string;
+};
+
+export type DeleteIdentityResult = {
+  id: string;
+  deleted: boolean;
+  applied?: boolean;
+  starting?: boolean;
+  error?: string;
+};
+
+export type TelegramIdentityUpsertInput = {
+  id?: string;
+  token: string;
+  enabled?: boolean;
+  directory?: string;
+};
+
+export type SlackIdentityUpsertInput = {
+  id?: string;
+  botToken: string;
+  appToken: string;
+  enabled?: boolean;
+  directory?: string;
+};
+
 export type BindingItem = {
   channel: string;
+  identityId: string;
   peerId: string;
   directory: string;
   updatedAt?: number;
@@ -54,14 +86,35 @@ export type BindingsListResult = {
   items: BindingItem[];
 };
 
+export type SendMessageInput = {
+  channel: string;
+  identityId?: string;
+  directory: string;
+  text: string;
+};
+
+export type SendMessageResult = {
+  channel: string;
+  directory: string;
+  identityId?: string;
+  attempted: number;
+  sent: number;
+  failures?: Array<{ identityId: string; peerId: string; error: string }>;
+};
+
 export type HealthHandlers = {
-  setTelegramToken?: (token: string) => Promise<TelegramTokenResult>;
-  setSlackTokens?: (tokens: { botToken: string; appToken: string }) => Promise<SlackTokensResult>;
   setGroupsEnabled?: (enabled: boolean) => Promise<GroupsConfigResult>;
   getGroupsEnabled?: () => boolean;
-  listBindings?: () => Promise<BindingsListResult>;
-  setBinding?: (input: { channel: string; peerId: string; directory: string }) => Promise<void>;
-  clearBinding?: (input: { channel: string; peerId: string }) => Promise<void>;
+  listTelegramIdentities?: () => Promise<TelegramIdentitiesResult>;
+  upsertTelegramIdentity?: (input: TelegramIdentityUpsertInput) => Promise<UpsertIdentityResult>;
+  deleteTelegramIdentity?: (id: string) => Promise<DeleteIdentityResult>;
+  listSlackIdentities?: () => Promise<SlackIdentitiesResult>;
+  upsertSlackIdentity?: (input: SlackIdentityUpsertInput) => Promise<UpsertIdentityResult>;
+  deleteSlackIdentity?: (id: string) => Promise<DeleteIdentityResult>;
+  listBindings?: (filters?: { channel?: string; identityId?: string }) => Promise<BindingsListResult>;
+  setBinding?: (input: { channel: string; identityId?: string; peerId: string; directory: string }) => Promise<void>;
+  clearBinding?: (input: { channel: string; identityId?: string; peerId: string }) => Promise<void>;
+  sendMessage?: (input: SendMessageInput) => Promise<SendMessageResult>;
 };
 
 export function startHealthServer(
@@ -79,7 +132,7 @@ export function startHealthServer(
       } else {
         res.setHeader("Access-Control-Allow-Origin", "*");
       }
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
 
       const requestHeaders = req.headers["access-control-request-headers"];
       if (Array.isArray(requestHeaders)) {
@@ -111,8 +164,9 @@ export function startHealthServer(
         return;
       }
 
+      // Legacy alias: POST /config/telegram-token -> upsert telegram identity "default".
       if (pathname === "/config/telegram-token" && req.method === "POST") {
-        if (!handlers.setTelegramToken) {
+        if (!handlers.upsertTelegramIdentity) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: "Not supported" }));
           return;
@@ -136,20 +190,22 @@ export function startHealthServer(
             res.end(JSON.stringify({ ok: false, error: "Token is required" }));
             return;
           }
-
-          const result = await handlers.setTelegramToken(token);
+          const result = await handlers.upsertTelegramIdentity({ id: "default", token, enabled: true });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, telegram: result }));
           return;
         } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }
 
+      // Legacy alias: POST /config/slack-tokens -> upsert slack identity "default".
       if (pathname === "/config/slack-tokens" && req.method === "POST") {
-        if (!handlers.setSlackTokens) {
+        if (!handlers.upsertSlackIdentity) {
           res.writeHead(404, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: "Not supported" }));
           return;
@@ -174,8 +230,187 @@ export function startHealthServer(
             res.end(JSON.stringify({ ok: false, error: "Slack botToken and appToken are required" }));
             return;
           }
+          const result = await handlers.upsertSlackIdentity({ id: "default", botToken, appToken, enabled: true });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, slack: result }));
+          return;
+        } catch (error) {
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
 
-          const result = await handlers.setSlackTokens({ botToken, appToken });
+      // GET /identities/telegram
+      if (pathname === "/identities/telegram" && req.method === "GET") {
+        if (!handlers.listTelegramIdentities) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        try {
+          const result = await handlers.listTelegramIdentities();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
+      // POST /identities/telegram
+      if (pathname === "/identities/telegram" && req.method === "POST") {
+        if (!handlers.upsertTelegramIdentity) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const token = typeof payload.token === "string" ? payload.token.trim() : "";
+          const id = typeof payload.id === "string" ? payload.id.trim() : undefined;
+          const directory = typeof payload.directory === "string" ? payload.directory.trim() : undefined;
+          const enabled = payload.enabled === undefined ? undefined : payload.enabled === true || payload.enabled === "true";
+          if (!token) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "token is required" }));
+            return;
+          }
+          const result = await handlers.upsertTelegramIdentity({
+            id,
+            token,
+            ...(enabled === undefined ? {} : { enabled }),
+            ...(directory ? { directory } : {}),
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, telegram: result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      // DELETE /identities/telegram/:id
+      if (pathname.startsWith("/identities/telegram/") && req.method === "DELETE") {
+        if (!handlers.deleteTelegramIdentity) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        const id = pathname.slice("/identities/telegram/".length).trim();
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "id is required" }));
+          return;
+        }
+        try {
+          const result = await handlers.deleteTelegramIdentity(id);
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, telegram: result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      // GET /identities/slack
+      if (pathname === "/identities/slack" && req.method === "GET") {
+        if (!handlers.listSlackIdentities) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        try {
+          const result = await handlers.listSlackIdentities();
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      // POST /identities/slack
+      if (pathname === "/identities/slack" && req.method === "POST") {
+        if (!handlers.upsertSlackIdentity) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const botToken = typeof payload.botToken === "string" ? payload.botToken.trim() : "";
+          const appToken = typeof payload.appToken === "string" ? payload.appToken.trim() : "";
+          const id = typeof payload.id === "string" ? payload.id.trim() : undefined;
+          const directory = typeof payload.directory === "string" ? payload.directory.trim() : undefined;
+          const enabled = payload.enabled === undefined ? undefined : payload.enabled === true || payload.enabled === "true";
+          if (!botToken || !appToken) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "botToken and appToken are required" }));
+            return;
+          }
+          const result = await handlers.upsertSlackIdentity({
+            id,
+            botToken,
+            appToken,
+            ...(enabled === undefined ? {} : { enabled }),
+            ...(directory ? { directory } : {}),
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, slack: result }));
+          return;
+        } catch (error) {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      // DELETE /identities/slack/:id
+      if (pathname.startsWith("/identities/slack/") && req.method === "DELETE") {
+        if (!handlers.deleteSlackIdentity) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+        const id = pathname.slice("/identities/slack/".length).trim();
+        if (!id) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "id is required" }));
+          return;
+        }
+        try {
+          const result = await handlers.deleteSlackIdentity(id);
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, slack: result }));
           return;
@@ -241,7 +476,13 @@ export function startHealthServer(
         }
 
         try {
-          const result = await handlers.listBindings();
+          const parsed = req.url ? new URL(req.url, "http://localhost") : null;
+          const channel = typeof parsed?.searchParams.get("channel") === "string" ? parsed?.searchParams.get("channel") ?? undefined : undefined;
+          const identityId = typeof parsed?.searchParams.get("identityId") === "string" ? parsed?.searchParams.get("identityId") ?? undefined : undefined;
+          const result = await handlers.listBindings({
+            ...(channel?.trim() ? { channel: channel.trim() } : {}),
+            ...(identityId?.trim() ? { identityId: identityId.trim() } : {}),
+          });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, ...result }));
           return;
@@ -272,6 +513,7 @@ export function startHealthServer(
         try {
           const payload = JSON.parse(raw || "{}");
           const channel = typeof payload.channel === "string" ? payload.channel.trim() : "";
+          const identityId = typeof payload.identityId === "string" ? payload.identityId.trim() : "";
           const peerId = typeof payload.peerId === "string" ? payload.peerId.trim() : "";
           const directory = typeof payload.directory === "string" ? payload.directory.trim() : "";
 
@@ -287,7 +529,7 @@ export function startHealthServer(
               res.end(JSON.stringify({ ok: false, error: "Not supported" }));
               return;
             }
-            await handlers.clearBinding({ channel, peerId });
+            await handlers.clearBinding({ channel, identityId: identityId || undefined, peerId });
             res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ ok: true }));
             return;
@@ -298,13 +540,60 @@ export function startHealthServer(
             res.end(JSON.stringify({ ok: false, error: "Not supported" }));
             return;
           }
-          await handlers.setBinding({ channel, peerId, directory });
+          await handlers.setBinding({ channel, identityId: identityId || undefined, peerId, directory });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true }));
           return;
         } catch (error) {
           res.writeHead(500, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: false, error: String(error) }));
+          return;
+        }
+      }
+
+      if (pathname === "/send" && req.method === "POST") {
+        if (!handlers.sendMessage) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const channel = typeof payload.channel === "string" ? payload.channel.trim() : "";
+          const identityId = typeof payload.identityId === "string" ? payload.identityId.trim() : "";
+          const directory = typeof payload.directory === "string" ? payload.directory.trim() : "";
+          const text = typeof payload.text === "string" ? payload.text : "";
+          if (!channel || !directory || !text.trim()) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "channel, directory, and text are required" }));
+            return;
+          }
+
+          const result = await handlers.sendMessage({
+            channel,
+            ...(identityId ? { identityId } : {}),
+            directory,
+            text,
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }
@@ -318,8 +607,9 @@ export function startHealthServer(
     });
   });
 
-  server.listen(port, "0.0.0.0", () => {
-    logger.info({ port }, "health server listening");
+  const host = (process.env.OWPENBOT_HEALTH_HOST ?? "").trim() || "127.0.0.1";
+  server.listen(port, host, () => {
+    logger.info({ host, port }, "health server listening");
   });
 
   return () => {

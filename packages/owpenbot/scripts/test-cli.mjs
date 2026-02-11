@@ -50,7 +50,7 @@ async function runHelp() {
   if (result.code !== 0) {
     throw new Error(`Help failed: ${result.stderr}`);
   }
-  if (!result.stdout.includes("OpenCode WhatsApp")) {
+  if (!result.stdout.includes("Slack + Telegram")) {
     throw new Error("Help output missing expected header");
   }
 }
@@ -65,7 +65,7 @@ async function runConfigCommands() {
     OPENCODE_DIRECTORY: tempDir,
   };
 
-  const setResult = await run("bun", [cliPath, "config", "set", "channels.whatsapp.dmPolicy", "\"disabled\""], {
+  const setResult = await run("bun", [cliPath, "config", "set", "channels.telegram.enabled", "false"], {
     env,
     timeoutMs: 5000,
   });
@@ -73,14 +73,14 @@ async function runConfigCommands() {
     throw new Error(`Config set failed: ${setResult.stderr}`);
   }
 
-  const getResult = await run("bun", [cliPath, "config", "get", "channels.whatsapp.dmPolicy"], {
+  const getResult = await run("bun", [cliPath, "config", "get", "channels.telegram.enabled"], {
     env,
     timeoutMs: 5000,
   });
   if (getResult.code !== 0) {
     throw new Error(`Config get failed: ${getResult.stderr}`);
   }
-  if (!(`${getResult.stdout}${getResult.stderr}`.includes("disabled"))) {
+  if (!(`${getResult.stdout}${getResult.stderr}`.includes("false"))) {
     throw new Error("Config get output missing expected value");
   }
 
@@ -89,9 +89,10 @@ async function runConfigCommands() {
     throw new Error(`Status failed: ${statusResult.stderr}`);
   }
 
-  const pairingResult = await run("bun", [cliPath, "pairing", "list", "--json"], { env, timeoutMs: 5000 });
-  if (pairingResult.code !== 0) {
-    throw new Error(`Pairing list failed: ${pairingResult.stderr}`);
+  // Ensure identities subcommands are present.
+  const tgList = await run("bun", [cliPath, "telegram", "list", "--json"], { env, timeoutMs: 5000 });
+  if (tgList.code !== 0) {
+    throw new Error(`Telegram list failed: ${tgList.stderr}`);
   }
 }
 

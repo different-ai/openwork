@@ -57,8 +57,24 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     if (typeof window === "undefined") return;
     if (ready()) return;
 
-    const storedList = readStoredList();
     const fallback = normalizeServerUrl(props.defaultUrl) ?? "";
+
+    // In production web builds served by OpenWork (Docker "remote" mode), OpenCode
+    // traffic should go through the server proxy (usually same-origin `/opencode`).
+    // Do not reuse any persisted localhost targets.
+    const forceProxy =
+      !isTauriRuntime() &&
+      (import.meta.env.PROD ||
+        (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
+          import.meta.env.VITE_OPENWORK_URL.trim().length > 0));
+    if (forceProxy && fallback) {
+      setList([fallback]);
+      setActiveRaw(fallback);
+      setReady(true);
+      return;
+    }
+
+    const storedList = readStoredList();
     const storedActive = normalizeServerUrl(readStoredActive());
 
     const initialList = storedList.length ? storedList : fallback ? [fallback] : [];
@@ -83,10 +99,21 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
   const activeUrl = createMemo(() => active());
 
+  const readOpenworkToken = () => {
+    try {
+      return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
+    } catch {
+      return "";
+    }
+  };
+
   const checkHealth = async (url: string) => {
     if (!url) return false;
+    const token = readOpenworkToken();
+    const headers = token && url.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
     const client = createOpencodeClient({
       baseUrl: url,
+      headers,
       signal: AbortSignal.timeout(3000),
       fetch: isTauriRuntime() ? tauriFetch : undefined,
     });

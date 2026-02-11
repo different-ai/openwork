@@ -19,7 +19,7 @@ pub fn resolve_owpenbot_health_port() -> Result<u16, String> {
 }
 
 pub fn build_owpenbot_args(workspace_path: &str, opencode_url: Option<&str>) -> Vec<String> {
-    let mut args = vec!["start".to_string(), workspace_path.to_string()];
+    let mut args = vec!["serve".to_string(), workspace_path.to_string()];
 
     if let Some(url) = opencode_url {
         let trimmed = url.trim();

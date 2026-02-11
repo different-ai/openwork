@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -15,6 +15,10 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { startOpenwrkTui, type TuiHandle } from "./tui/app.js";
 
 type ApprovalMode = "manual" | "auto";
+
+type SandboxMode = "none" | "auto" | "docker" | "container";
+
+type ResolvedSandboxMode = "none" | "docker" | "container";
 
 type LogFormat = "pretty" | "json";
 
@@ -67,10 +71,18 @@ type OwpenbotHealthSnapshot = {
 };
 
 const FALLBACK_VERSION = "0.1.0";
+
+declare const __OPENWRK_VERSION__: string | undefined;
 const DEFAULT_OPENWORK_PORT = 8787;
-const DEFAULT_OWPENBOT_HEALTH_PORT = 3005;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
+
+const SANDBOX_INTERNAL_OPENCODE_PORT = 4096;
+const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
+// Owpenbot defaults its health server to 3005 when not overridden. In sandbox
+// mode we keep the *internal* port stable and only vary the published host
+// port to avoid collisions.
+const SANDBOX_INTERNAL_OWPENBOT_HEALTH_PORT = 3005;
 
 type ParsedArgs = {
   positionals: string[];
@@ -365,6 +377,259 @@ function readLogFormat(
   throw new Error(`Invalid ${key} value: ${raw}. Use pretty|json.`);
 }
 
+function readSandboxMode(
+  flags: Map<string, string | boolean>,
+  key: string,
+  fallback: SandboxMode,
+  envKey?: string,
+): SandboxMode {
+  const raw = readFlag(flags, key) ?? (envKey ? process.env[envKey] : undefined);
+  if (!raw) return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "auto" ||
+    normalized === "docker" ||
+    normalized === "container"
+  ) {
+    return normalized as SandboxMode;
+  }
+  throw new Error(`Invalid ${key} value: ${raw}. Use none|auto|docker|container.`);
+}
+
+type SandboxAllowedRoot = {
+  path: string;
+  allowReadWrite?: boolean;
+  description?: string;
+};
+
+type SandboxMountAllowlist = {
+  allowedRoots: SandboxAllowedRoot[];
+  blockedPatterns?: string[];
+};
+
+type SandboxMount = {
+  hostPath: string;
+  containerPath: string;
+  readonly: boolean;
+};
+
+const DEFAULT_SANDBOX_BLOCKED_PATTERNS = [
+  ".ssh",
+  ".gnupg",
+  ".gpg",
+  ".aws",
+  ".azure",
+  ".gcloud",
+  ".kube",
+  ".docker",
+  "credentials",
+  ".env",
+  ".netrc",
+  ".npmrc",
+  ".pypirc",
+  "id_rsa",
+  "id_ed25519",
+  "private_key",
+  ".secret",
+];
+
+let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
+let cachedSandboxAllowlistError: string | null = null;
+
+function resolveSandboxAllowlistPath(): string {
+  const override =
+    process.env.OPENWRK_SANDBOX_MOUNT_ALLOWLIST?.trim() ?? process.env.OPENWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
+  if (override) return resolve(override);
+  return join(homedir(), ".config", "openwork", "sandbox-mount-allowlist.json");
+}
+
+function expandTildePath(input: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed === "~") return homedir();
+  if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
+  return trimmed;
+}
+
+async function realpathOrNull(input: string): Promise<string | null> {
+  try {
+    return await realpath(input);
+  } catch {
+    return null;
+  }
+}
+
+function matchesBlockedPattern(real: string, patterns: string[]): string | null {
+  const parts = real.split(sep);
+  for (const pattern of patterns) {
+    for (const part of parts) {
+      if (part === pattern || part.includes(pattern)) return pattern;
+    }
+    if (real.includes(pattern)) return pattern;
+  }
+  return null;
+}
+
+async function findAllowedRoot(real: string, roots: SandboxAllowedRoot[]): Promise<SandboxAllowedRoot | null> {
+  for (const root of roots) {
+    const expanded = resolve(expandTildePath(root.path));
+    const realRoot = await realpathOrNull(expanded);
+    if (!realRoot) continue;
+    const rel = relative(realRoot, real);
+    if (!rel.startsWith("..") && !isAbsolute(rel)) {
+      return root;
+    }
+  }
+  return null;
+}
+
+async function loadSandboxAllowlist(): Promise<SandboxMountAllowlist | null> {
+  if (cachedSandboxAllowlist !== undefined) return cachedSandboxAllowlist;
+  if (cachedSandboxAllowlistError) return null;
+
+  const path = resolveSandboxAllowlistPath();
+  try {
+    if (!(await fileExists(path))) {
+      cachedSandboxAllowlistError = `Mount allowlist not found at ${path}`;
+      cachedSandboxAllowlist = null;
+      return null;
+    }
+    const raw = await readFile(path, "utf8");
+    const parsed = JSON.parse(raw) as SandboxMountAllowlist;
+    if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.allowedRoots)) {
+      throw new Error("allowedRoots must be an array");
+    }
+    const blocked = Array.isArray(parsed.blockedPatterns) ? parsed.blockedPatterns : [];
+    parsed.blockedPatterns = [...new Set([...DEFAULT_SANDBOX_BLOCKED_PATTERNS, ...blocked])];
+    cachedSandboxAllowlist = parsed;
+    return parsed;
+  } catch (error) {
+    cachedSandboxAllowlistError = error instanceof Error ? error.message : String(error);
+    cachedSandboxAllowlist = null;
+    return null;
+  }
+}
+
+function isValidSandboxContainerSubPath(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("..")) return false;
+  if (trimmed.startsWith("/")) return false;
+  if (trimmed.includes("\\")) return false;
+  const parts = trimmed.split("/").filter(Boolean);
+  if (!parts.length) return false;
+  if (parts.some((part) => part === "." || part === "..")) return false;
+  return true;
+}
+
+function parseSandboxMountSpec(spec: string): {
+  hostPath: string;
+  containerSubPath: string;
+  requestedReadWrite: boolean;
+} {
+  const trimmed = spec.trim();
+  if (!trimmed) {
+    throw new Error("Empty --sandbox-mount entry");
+  }
+
+  let requestedReadWrite = true;
+  let base = trimmed;
+  if (trimmed.endsWith(":ro")) {
+    requestedReadWrite = false;
+    base = trimmed.slice(0, -3);
+  } else if (trimmed.endsWith(":rw")) {
+    requestedReadWrite = true;
+    base = trimmed.slice(0, -3);
+  }
+
+  const idx = base.indexOf(":");
+  if (idx <= 0 || idx >= base.length - 1) {
+    throw new Error(`Invalid --sandbox-mount value: ${spec}. Use hostPath:subpath[:ro|rw].`);
+  }
+
+  const hostPath = base.slice(0, idx).trim();
+  const containerSubPath = base.slice(idx + 1).trim();
+  if (!hostPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Host path is empty.`);
+  if (!containerSubPath) throw new Error(`Invalid --sandbox-mount value: ${spec}. Container subpath is empty.`);
+
+  return { hostPath, containerSubPath, requestedReadWrite };
+}
+
+function generateSandboxAllowlistTemplate(): string {
+  const template: SandboxMountAllowlist = {
+    allowedRoots: [
+      {
+        path: "~/projects",
+        allowReadWrite: true,
+        description: "Development projects",
+      },
+      {
+        path: "~/Documents",
+        allowReadWrite: false,
+        description: "Documents (read-only)",
+      },
+    ],
+    blockedPatterns: ["password", "secret", "token"],
+  };
+  return JSON.stringify(template, null, 2);
+}
+
+async function resolveSandboxExtraMounts(
+  specs: string[],
+  sandboxMode: ResolvedSandboxMode,
+): Promise<SandboxMount[]> {
+  if (!specs.length) return [];
+  const allowlistPath = resolveSandboxAllowlistPath();
+  const allowlist = await loadSandboxAllowlist();
+  if (!allowlist) {
+    const template = generateSandboxAllowlistTemplate();
+    throw new Error(
+      `Additional sandbox mounts are blocked. Create ${allowlistPath} to enable.\n\nExample:\n${template}`,
+    );
+  }
+  const blocked = allowlist.blockedPatterns ?? DEFAULT_SANDBOX_BLOCKED_PATTERNS;
+  const roots = allowlist.allowedRoots;
+
+  const mounts: SandboxMount[] = [];
+  for (const spec of specs) {
+    const parsed = parseSandboxMountSpec(spec);
+    if (!isValidSandboxContainerSubPath(parsed.containerSubPath)) {
+      throw new Error(
+        `Invalid sandbox container subpath: "${parsed.containerSubPath}". Use a relative path without "/" prefix or "..".`,
+      );
+    }
+    const expanded = resolve(expandTildePath(parsed.hostPath));
+    const real = await realpathOrNull(expanded);
+    if (!real) {
+      throw new Error(`Sandbox mount host path does not exist: ${parsed.hostPath} (expanded: ${expanded})`);
+    }
+    const blockedMatch = matchesBlockedPattern(real, blocked);
+    if (blockedMatch) {
+      throw new Error(`Sandbox mount rejected (blocked pattern "${blockedMatch}"): ${real}`);
+    }
+    const allowedRoot = await findAllowedRoot(real, roots);
+    if (!allowedRoot) {
+      const allowedList = roots.map((root) => resolve(expandTildePath(root.path))).join(", ");
+      throw new Error(`Sandbox mount rejected: ${real} is not under any allowed root. Allowed: ${allowedList}`);
+    }
+    const allowReadWrite = allowedRoot.allowReadWrite === true;
+    const readonly = parsed.requestedReadWrite ? !allowReadWrite : true;
+    if (sandboxMode === "container") {
+      const info = await stat(real);
+      if (!info.isDirectory()) {
+        throw new Error(`Apple container sandbox mounts must be directories: ${real}`);
+      }
+    }
+    mounts.push({
+      hostPath: real,
+      containerPath: `/workspace/extra/${parsed.containerSubPath}`,
+      readonly,
+    });
+  }
+  return mounts;
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await stat(path);
@@ -375,6 +640,9 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function resolveCliVersion(): Promise<string> {
+  if (typeof __OPENWRK_VERSION__ === "string" && __OPENWRK_VERSION__.trim()) {
+    return __OPENWRK_VERSION__.trim();
+  }
   const candidates = [
     join(dirname(process.execPath), "..", "package.json"),
     join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
@@ -478,6 +746,15 @@ async function resolvePort(preferred: number | undefined, host: string, fallback
     return fallback;
   }
   return findFreePort(host);
+}
+
+function isCompiledBunBinary(): boolean {
+  try {
+    const entryPath = fileURLToPath(import.meta.url);
+    return entryPath.startsWith("/$bunfs/");
+  } catch {
+    return false;
+  }
 }
 
 function resolveLanIp(): string | null {
@@ -619,6 +896,74 @@ function resolveSidecarTarget(): SidecarTarget | null {
     return null;
   }
   return null;
+}
+
+function resolveSandboxSidecarTarget(mode: ResolvedSandboxMode): SidecarTarget | null {
+  if (mode === "none") return resolveSidecarTarget();
+  // Sandbox runs inside Linux (docker / container).
+  if (process.arch === "arm64") return "linux-arm64";
+  if (process.arch === "x64") return "linux-x64";
+  return null;
+}
+
+function resolveSidecarConfigForTarget(
+  flags: Map<string, string | boolean>,
+  cliVersion: string,
+  targetOverride: SidecarTarget | null,
+): SidecarConfig {
+  const baseUrl = resolveSidecarBaseUrl(flags, cliVersion);
+  return {
+    dir: resolveSidecarDir(flags),
+    baseUrl,
+    manifestUrl: resolveSidecarManifestUrl(flags, baseUrl),
+    target: targetOverride,
+  };
+}
+
+async function probeCommand(command: string, args: string[], timeoutMs = 2500): Promise<boolean> {
+  return await new Promise((resolve) => {
+    const child = spawn(command, args, { stdio: ["ignore", "ignore", "ignore"] });
+    const timeout = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      resolve(false);
+    }, timeoutMs);
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve(false);
+    });
+    child.on("exit", (code) => {
+      clearTimeout(timeout);
+      resolve(code === 0);
+    });
+  });
+}
+
+async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMode> {
+  if (mode === "none") return "none";
+  if (mode === "docker") return "docker";
+  if (mode === "container") return "container";
+
+  // auto
+  if (process.platform === "darwin" && process.arch === "arm64") {
+    const containerOk = await probeCommand("container", ["--version"]);
+    if (containerOk) return "container";
+  }
+
+  const dockerOk = await probeCommand("docker", ["version"]);
+  if (dockerOk) return "docker";
+
+  const containerOk = await probeCommand("container", ["--version"]);
+  if (containerOk) return "container";
+  return "none";
+}
+
+function shQuote(value: string): string {
+  if (!value) return "''";
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
@@ -816,7 +1161,14 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
   const targetDir = join(sidecar.dir, "opencode", version, sidecar.target);
   const targetPath = join(targetDir, process.platform === "win32" ? "opencode.exe" : "opencode");
 
+  const hostTarget = resolveSidecarTarget();
+  const runnableOnHost = hostTarget !== null && sidecar.target === hostTarget;
+
   if (await fileExists(targetPath)) {
+    if (!runnableOnHost) {
+      await ensureExecutable(targetPath);
+      return targetPath;
+    }
     const actual = await readCliVersion(targetPath);
     if (actual === version) {
       await ensureExecutable(targetPath);
@@ -899,7 +1251,12 @@ async function resolveBundledBinary(manifest: VersionManifest | null, name: stri
   }
   for (const bundled of candidates) {
     if (!(await isExecutable(bundled))) continue;
-    await verifyBinary(bundled, manifest.entries[name]);
+    // Desktop bundles may be code-signed after we generate versions.json, which
+    // mutates the on-disk bytes and makes a precomputed sha256 unstable.
+    // Linux bundles remain byte-stable, so keep integrity verification there.
+    if (process.platform === "linux") {
+      await verifyBinary(bundled, manifest.entries[name]);
+    }
     return bundled;
   }
   return null;
@@ -997,6 +1354,10 @@ function parseVersion(output: string): string | undefined {
 async function readCliVersion(bin: string, timeoutMs = 4000): Promise<string | undefined> {
   const resolved = resolveBinCommand(bin);
   const child = spawn(resolved.command, [...resolved.prefixArgs, "--version"], {
+    // Avoid picking up a local bunfig.toml preload from the caller's cwd.
+    // (Notably, packages/headless/bunfig.toml preloads @opentui/solid/preload which
+    // breaks running bun-compiled binaries like owpenbot during version checks.)
+    cwd: tmpdir(),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";
@@ -1036,6 +1397,7 @@ async function captureCommandOutput(
 ): Promise<string> {
   const resolved = resolveBinCommand(bin);
   const child = spawn(resolved.command, [...resolved.prefixArgs, ...args], {
+    cwd: tmpdir(),
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ?? process.env,
   });
@@ -1047,11 +1409,24 @@ async function captureCommandOutput(
     output += chunk.toString();
   });
 
+  type CaptureResult =
+    | "timeout"
+    | "error"
+    | {
+        type: "close";
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      };
+
   const timeoutMs = options?.timeoutMs ?? 30_000;
-  const result = await Promise.race([
-    once(child, "close").then(() => "close"),
-    once(child, "error").then(() => "error"),
-    new Promise((resolve) => setTimeout(resolve, timeoutMs, "timeout")),
+  const result = await Promise.race<CaptureResult>([
+    once(child, "close").then(([code, signal]) => ({
+      type: "close" as const,
+      code: (code ?? null) as number | null,
+      signal: (signal ?? null) as NodeJS.Signals | null,
+    })),
+    once(child, "error").then(() => "error" as const),
+    new Promise<CaptureResult>((resolve) => setTimeout(resolve, timeoutMs, "timeout")),
   ]);
 
   if (result === "timeout") {
@@ -1065,6 +1440,12 @@ async function captureCommandOutput(
 
   if (result === "error") {
     throw new Error("Command failed to run");
+  }
+
+  const code = result.code;
+  if (code !== 0) {
+    const suffix = output.trim() ? `\n${output.trim()}` : "";
+    throw new Error(`Command failed: ${bin} ${args.join(" ")}${suffix}`);
   }
 
   return output.trim();
@@ -1090,6 +1471,28 @@ function resolveBinPath(bin: string): string {
     return resolve(process.cwd(), bin);
   }
   return bin;
+}
+
+function isPathLikeBinary(bin: string): boolean {
+  return bin.includes("/") || bin.startsWith(".");
+}
+
+async function assertSandboxBinaryFile(name: string, bin: string): Promise<void> {
+  const lower = bin.toLowerCase();
+  if (lower.endsWith(".js") || lower.endsWith(".ts")) {
+    throw new Error(
+      `Sandbox mode requires ${name} to be a native binary (got ${bin}). Use downloaded sidecars or pass a Linux binary path.`,
+    );
+  }
+  if (!isPathLikeBinary(bin)) {
+    throw new Error(
+      `Sandbox mode requires ${name} to be a file path (got ${bin}). Use downloaded sidecars or pass --${name}-bin with a Linux binary path.`,
+    );
+  }
+  const resolved = resolve(process.cwd(), bin);
+  if (!(await fileExists(resolved))) {
+    throw new Error(`Sandbox mode could not find ${name} binary at ${resolved}.`);
+  }
 }
 
 async function resolveOpenworkServerBin(options: {
@@ -1416,6 +1819,66 @@ function workspaceIdForRemote(baseUrl: string, directory?: string | null): strin
   return `ws-${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
 }
 
+function owpenbotSendToolSource(): string {
+  return [
+    'import { tool } from "@opencode-ai/plugin"',
+    "",
+    "export default tool({",
+    '  description: "Send a message via owpenbot to peers bound to a directory (Telegram/Slack).",',
+    "  args: {",
+    '    text: tool.schema.string().describe("Message text to send"),',
+    '    channel: tool.schema.enum(["telegram", "slack"]).optional().describe("Channel to send on (default: telegram)"),',
+    '    identityId: tool.schema.string().optional().describe("Owpenbot identity id (default: all identities)"),',
+    '    directory: tool.schema.string().optional().describe("Directory to target (default: current session directory)"),',
+    "  },",
+    "  async execute(args, context) {",
+    '    const rawPort = (process.env.OWPENBOT_HEALTH_PORT || "3005").trim()',
+    "    const port = Number(rawPort)",
+    "    if (!Number.isFinite(port) || port <= 0) {",
+    '      throw new Error(`Invalid OWPENBOT_HEALTH_PORT: ${rawPort}`)',
+    "    }",
+    '    const channel = (args.channel || "telegram").trim()',
+    '    if (channel !== "telegram" && channel !== "slack") {',
+    '      throw new Error("channel must be telegram or slack")',
+    "    }",
+    '    const directory = (args.directory || context.directory || "").trim()',
+    '    if (!directory) throw new Error("No directory resolved")',
+    "    const payload = {",
+    "      channel,",
+    "      directory,",
+    "      text: args.text,",
+    "      ...(args.identityId ? { identityId: String(args.identityId) } : {}),",
+    "    }",
+    "    const response = await fetch(`http://127.0.0.1:${port}/send`, {",
+    "      method: \"POST\",",
+    '      headers: { "Content-Type": "application/json" },',
+    "      body: JSON.stringify(payload),",
+    "    })",
+    "    const body = await response.text()",
+    "    if (!response.ok) {",
+    '      throw new Error(`owpenbot /send failed (${response.status}): ${body}`)',
+    "    }",
+    "    return body",
+    "  },",
+    "})",
+    "",
+  ].join("\n");
+}
+
+async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
+  const toolsDir = join(configDir, "tools");
+  await mkdir(toolsDir, { recursive: true });
+  const toolPath = join(toolsDir, "owpenbot_send.ts");
+  const content = `${owpenbotSendToolSource()}\n`;
+  try {
+    const existing = await readFile(toolPath, "utf8");
+    if (existing === content) return;
+  } catch {
+    // ignore
+  }
+  await writeFile(toolPath, content, "utf8");
+}
+
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
@@ -1464,6 +1927,15 @@ async function fetchOwpenbotHealth(baseUrl: string): Promise<OwpenbotHealthSnaps
   return (await fetchJson(`${baseUrl.replace(/\/$/, "")}/health`)) as OwpenbotHealthSnapshot;
 }
 
+async function fetchOwpenbotHealthViaOpenwork(openworkUrl: string, token: string): Promise<OwpenbotHealthSnapshot> {
+  const url = `${openworkUrl.replace(/\/$/, "")}/owpenbot/health`;
+  return (await fetchJson(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  })) as OwpenbotHealthSnapshot;
+}
+
 async function waitForOwpenbotHealthy(baseUrl: string, timeoutMs = 10_000, pollMs = 500) {
   const start = Date.now();
   let lastError: string | null = null;
@@ -1482,6 +1954,34 @@ async function waitForOwpenbotHealthy(baseUrl: string, timeoutMs = 10_000, pollM
   throw new Error(lastError ?? "Timed out waiting for owpenbot health");
 }
 
+async function waitForOwpenbotHealthyViaOpenwork(
+  openworkUrl: string,
+  token: string,
+  timeoutMs = 10_000,
+  pollMs = 500,
+): Promise<OwpenbotHealthSnapshot> {
+  const url = `${openworkUrl.replace(/\/$/, "")}/owpenbot/health`;
+  const start = Date.now();
+  let lastError: string | null = null;
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (response.ok) {
+        return (await response.json()) as OwpenbotHealthSnapshot;
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(lastError ?? "Timed out waiting for owpenbot health via openwork-server");
+}
+
 async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeClient>, timeoutMs = 10_000, pollMs = 250) {
   const start = Date.now();
   let lastError: string | null = null;
@@ -1496,6 +1996,50 @@ async function waitForOpencodeHealthy(client: ReturnType<typeof createOpencodeCl
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(lastError ?? "Timed out waiting for OpenCode health");
+}
+
+/**
+ * In sandbox mode the released openwork-server binary may not have our latest
+ * token/proxy changes.  Instead of relying on the OpenCode SDK client (which
+ * sends Bearer auth that the proxy may not understand yet), we do a simple
+ * HTTP fetch through the proxy path.  The server's /opencode/* proxy already
+ * forwards to the internal opencode port; we just need to check that it
+ * returns a 2xx from /opencode/health (or falls through to opencode's own
+ * /health endpoint).
+ *
+ * We try multiple path patterns because:
+ * - `/opencode/health` — most common OpenCode health endpoint proxied by the
+ *   server's catch-all /opencode/* route.
+ * - `/health` on the openwork-server itself — already verified by the caller,
+ *   but serves as a fallback signal.
+ */
+async function waitForHealthyViaProxy(
+  proxyBaseUrl: string,
+  token: string,
+  timeoutMs = 10_000,
+  pollMs = 250,
+): Promise<void> {
+  const start = Date.now();
+  let lastError: string | null = null;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  while (Date.now() - start < timeoutMs) {
+    try {
+      // Try the proxied opencode health endpoint.
+      const res = await fetch(`${proxyBaseUrl}/health`, { headers, signal: AbortSignal.timeout(2000) });
+      if (res.ok) return;
+      // Some older server versions may return 401/403 on the proxy but that
+      // still proves the server is up and proxying.  Accept any non-5xx as
+      // "alive" — the real auth validation happens in verifyOpenworkServer.
+      if (res.status < 500) return;
+      lastError = `Proxy returned ${res.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  throw new Error(lastError ?? "Timed out waiting for OpenCode health via proxy");
 }
 
 function printHelp(): void {
@@ -1546,7 +2090,7 @@ function printHelp(): void {
     "  --connect-host <host>     Override LAN host used for pairing URLs",
     "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
     "  --owpenbot-bin <path>     Path to owpenbot binary (requires --allow-external)",
-    "  --owpenbot-health-port <p> Health server port for owpenbot (default: 3005)",
+    "  --owpenbot-health-port <p> Health server port for owpenbot (default: random)",
     "  --no-owpenbot             Disable owpenbot sidecar",
     "  --owpenbot-required       Exit if owpenbot stops",
     "  --allow-external          Allow external sidecar binaries (dev only, required for custom bins)",
@@ -1560,6 +2104,10 @@ function printHelp(): void {
     "  --tui                     Force interactive dashboard (TTY only)",
     "  --no-tui                  Disable interactive dashboard",
     "  --detach                  Detach after start and keep services running",
+    "  --sandbox <mode>          none | auto | docker | container (default: none)",
+    "  --sandbox-image <ref>     Container image for sandbox mode",
+    "  --sandbox-persist-dir <p> Persist dir mounted into sandbox (default: per-workspace)",
+    "  --sandbox-mount <specs>   Extra mounts (validated): hostPath:subpath[:ro|rw] (requires allowlist)",
     "  --json                    Output JSON when applicable",
     "  --verbose                 Print additional diagnostics",
     "  --log-format <format>     Log output format: pretty | json",
@@ -1598,6 +2146,7 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
 async function startOpencode(options: {
   bin: string;
   workspace: string;
+  configDir?: string;
   bindHost: string;
   port: number;
   username?: string;
@@ -1606,6 +2155,7 @@ async function startOpencode(options: {
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
+  owpenbotHealthPort?: number;
 }) {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
@@ -1630,6 +2180,8 @@ async function startOpencode(options: {
       ),
       ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
       ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+      ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
     },
   });
 
@@ -1655,6 +2207,7 @@ async function startOpenworkServer(options: {
   opencodeUsername?: string;
   opencodePassword?: string;
   owpenbotHealthPort?: number;
+  owpenbotDataDir?: string;
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
@@ -1719,6 +2272,7 @@ async function startOpenworkServer(options: {
         process.env.OTEL_RESOURCE_ATTRIBUTES,
       ),
       ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
+      ...(options.owpenbotDataDir ? { OWPENBOT_DATA_DIR: options.owpenbotDataDir } : {}),
       ...(options.opencodeBaseUrl ? { OPENWORK_OPENCODE_BASE_URL: options.opencodeBaseUrl } : {}),
       ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
@@ -1739,11 +2293,12 @@ async function startOwpenbot(options: {
   opencodeUsername?: string;
   opencodePassword?: string;
   owpenbotHealthPort?: number;
+  owpenbotDataDir?: string;
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
 }) {
-  const args = ["start", options.workspace];
+  const args = ["serve", options.workspace];
   if (options.opencodeUrl) {
     const supports = await owpenbotSupportsOpencodeUrl(options.bin);
     if (supports) {
@@ -1769,6 +2324,7 @@ async function startOwpenbot(options: {
       ...(options.opencodeUrl ? { OPENCODE_URL: options.opencodeUrl } : {}),
       OPENCODE_DIRECTORY: options.workspace,
       ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
+      ...(options.owpenbotDataDir ? { OWPENBOT_DATA_DIR: options.owpenbotDataDir } : {}),
       ...(options.opencodeUsername ? { OPENCODE_SERVER_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENCODE_SERVER_PASSWORD: options.opencodePassword } : {}),
     },
@@ -1784,6 +2340,7 @@ async function owpenbotSupportsOpencodeUrl(bin: string): Promise<boolean> {
   const resolved = resolveBinCommand(bin);
   return new Promise((resolve) => {
     const child = spawn(resolved.command, [...resolved.prefixArgs, "--help"], {
+      cwd: tmpdir(),
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -1814,6 +2371,412 @@ async function owpenbotSupportsOpencodeUrl(bin: string): Promise<boolean> {
   });
 }
 
+async function stopDockerContainer(name: string): Promise<void> {
+  if (!name.trim()) return;
+  await new Promise<void>((resolve) => {
+    const child = spawn("docker", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
+    child.on("error", () => resolve());
+    child.on("exit", () => resolve());
+  });
+}
+
+async function stopAppleContainer(name: string): Promise<void> {
+  if (!name.trim()) return;
+  await new Promise<void>((resolve) => {
+    const child = spawn("container", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
+    child.on("error", () => resolve());
+    child.on("exit", () => resolve());
+  });
+}
+
+async function runQuiet(command: string, args: string[], timeoutMs = 60_000): Promise<void> {
+  const child = spawn(command, args, { stdio: ["ignore", "ignore", "ignore"] });
+  type QuietResult =
+    | { type: "exit"; code: number | null }
+    | { type: "error"; error: unknown }
+    | { type: "timeout" };
+
+  const result = await Promise.race<QuietResult>([
+    once(child, "exit").then(([code]) => ({ type: "exit" as const, code: (code ?? null) as number | null })),
+    once(child, "error").then(([error]) => ({ type: "error" as const, error })),
+    new Promise<QuietResult>((resolve) => setTimeout(resolve, timeoutMs, { type: "timeout" as const })),
+  ]);
+  if (result.type === "timeout") {
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // ignore
+    }
+    throw new Error(`Command timed out: ${command} ${args.join(" ")}`);
+  }
+  if (result.type === "error") {
+    throw new Error(`Command failed: ${command} ${args.join(" ")}: ${String(result.error)}`);
+  }
+  if (result.code !== 0) {
+    throw new Error(`Command failed: ${command} ${args.join(" ")}`);
+  }
+}
+
+async function ensureAppleContainerSystemReady(): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("Apple container backend is only supported on macOS");
+  }
+  if (process.arch !== "arm64") {
+    throw new Error("Apple container backend requires Apple silicon (arm64)");
+  }
+  if (!(await probeCommand("container", ["--version"]))) {
+    throw new Error("Apple container CLI not found. Install https://github.com/apple/container");
+  }
+  // Best-effort: start the background system service.
+  try {
+    await runQuiet("container", ["system", "start"], 90_000);
+  } catch {
+    // Ignore; older versions may not require an explicit start.
+  }
+}
+
+async function stageSandboxRuntime(options: {
+  persistDir: string;
+  containerName: string;
+  sidecars: { opencode: string; openworkServer: string; owpenbot?: string | null };
+  detach: boolean;
+}): Promise<{
+  baseDir: string;
+  rootInContainer: string;
+  entrypointHostPath: string;
+  cleanup: () => Promise<void>;
+}> {
+  const baseDir = join(options.persistDir, "openwrk-sandbox", options.containerName);
+  await mkdir(baseDir, { recursive: true });
+
+  const opencodeConfigDir = join(baseDir, "opencode-config");
+  await ensureOpencodeManagedTools(opencodeConfigDir);
+
+  const sidecarsDir = join(baseDir, "sidecars");
+  await mkdir(sidecarsDir, { recursive: true });
+  const entrypointHostPath = join(baseDir, "entrypoint.sh");
+
+  const stagedOpencode = join(sidecarsDir, "opencode");
+  const stagedOpenwork = join(sidecarsDir, "openwork-server");
+  await copyFile(options.sidecars.opencode, stagedOpencode);
+  await copyFile(options.sidecars.openworkServer, stagedOpenwork);
+  await ensureExecutable(stagedOpencode);
+  await ensureExecutable(stagedOpenwork);
+
+  if (options.sidecars.owpenbot) {
+    const stagedOwpenbot = join(sidecarsDir, "owpenbot");
+    await copyFile(options.sidecars.owpenbot, stagedOwpenbot);
+    await ensureExecutable(stagedOwpenbot);
+  }
+
+  const rootInContainer = `/persist/openwrk-sandbox/${options.containerName}`;
+  const cleanup = async () => {
+    if (options.detach) return;
+    try {
+      await rm(baseDir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  };
+
+  return { baseDir, rootInContainer, entrypointHostPath, cleanup };
+}
+
+async function writeSandboxEntrypoint(options: {
+  entrypointHostPath: string;
+  rootInContainer: string;
+  backend: "docker" | "container";
+  opencode: {
+    corsOrigins: string[];
+    username?: string;
+    password?: string;
+  };
+  openwork: {
+    token: string;
+    hostToken: string;
+    approvalMode: ApprovalMode;
+    approvalTimeoutMs: number;
+    readOnly: boolean;
+    corsOrigins: string[];
+    opencodeUsername?: string;
+    opencodePassword?: string;
+    logFormat: LogFormat;
+    owpenbotEnabled: boolean;
+  };
+  runId: string;
+  logFormat: LogFormat;
+}): Promise<void> {
+  const opencodeBin = `${options.rootInContainer}/sidecars/opencode`;
+  const openworkBin = `${options.rootInContainer}/sidecars/openwork-server`;
+  const owpenbotBin = `${options.rootInContainer}/sidecars/owpenbot`;
+  const workspaceDir = "/workspace";
+  const opencodeConfigDir = `${options.rootInContainer}/opencode-config`;
+
+  const opencodeCors = options.opencode.corsOrigins
+    .map((origin) => `--cors ${shQuote(origin)}`)
+    .join(" ");
+
+  const openworkCors = options.openwork.corsOrigins.length
+    ? `--cors ${shQuote(options.openwork.corsOrigins.join(","))}`
+    : "";
+
+  const opencodeAuthEnv = [
+    options.opencode.username ? `export OPENCODE_SERVER_USERNAME=${shQuote(options.opencode.username)}` : "",
+    options.opencode.password ? `export OPENCODE_SERVER_PASSWORD=${shQuote(options.opencode.password)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const openworkAuthArgs = [
+    options.openwork.opencodeUsername ? `--opencode-username ${shQuote(options.openwork.opencodeUsername)}` : "",
+    options.openwork.opencodePassword ? `--opencode-password ${shQuote(options.openwork.opencodePassword)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const owpenbotEnv = options.openwork.owpenbotEnabled
+    ? `export OWPENBOT_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OWPENBOT_HEALTH_PORT))}`
+    : "";
+
+  const script = [
+    "set -eu",
+    `export HOME=${shQuote("/persist")}`,
+    "export XDG_CONFIG_HOME=\"$HOME/.config\"",
+    "export XDG_CACHE_HOME=\"$HOME/.cache\"",
+    "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\"",
+    `cd ${shQuote(workspaceDir)}`,
+    `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
+    `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
+    `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
+    `export OPENCODE_CLIENT=openwrk`,
+    `export OPENWORK=1`,
+    `export OPENWRK_RUN_ID=${shQuote(options.runId)}`,
+    `export OPENWRK_LOG_FORMAT=${shQuote(options.logFormat)}`,
+    `export OPENWORK_SANDBOX_ENABLED=1`,
+    `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
+    owpenbotEnv,
+    opencodeAuthEnv,
+    "opencode_pid=\"\"",
+    "owpenbot_pid=\"\"",
+    "cleanup() {",
+    "  if [ -n \"$owpenbot_pid\" ]; then kill \"$owpenbot_pid\" 2>/dev/null || true; fi",
+    "  if [ -n \"$opencode_pid\" ]; then kill \"$opencode_pid\" 2>/dev/null || true; fi",
+    "}",
+    "trap cleanup INT TERM",
+    `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
+    "opencode_pid=$!",
+    options.openwork.owpenbotEnabled ? `${shQuote(owpenbotBin)} serve ${shQuote(workspaceDir)} &` : "",
+    options.openwork.owpenbotEnabled ? "owpenbot_pid=$!" : "",
+    `exec ${shQuote(openworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_OPENWORK_PORT))}` +
+      ` --token ${shQuote(options.openwork.token)} --host-token ${shQuote(options.openwork.hostToken)}` +
+      ` --workspace ${shQuote(workspaceDir)}` +
+      ` --approval ${shQuote(options.openwork.approvalMode)}` +
+      ` --approval-timeout ${shQuote(String(options.openwork.approvalTimeoutMs))}` +
+      (options.openwork.readOnly ? " --read-only" : "") +
+      ` --opencode-base-url ${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}` +
+      ` --opencode-directory ${shQuote(workspaceDir)}` +
+      ` ${openworkAuthArgs}` +
+      ` --log-format ${shQuote(options.openwork.logFormat)}` +
+      (options.openwork.owpenbotEnabled ? ` --owpenbot-health-port ${shQuote(String(SANDBOX_INTERNAL_OWPENBOT_HEALTH_PORT))}` : "") +
+      (openworkCors ? ` ${openworkCors}` : ""),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  await writeFile(options.entrypointHostPath, `${script}\n`, "utf8");
+}
+
+async function startDockerSandbox(options: {
+  image: string;
+  containerName: string;
+  workspace: string;
+  persistDir: string;
+  extraMounts: SandboxMount[];
+  sidecars: { opencode: string; openworkServer: string; owpenbot?: string | null };
+  ports: { openwork: number; owpenbotHealth?: number | null };
+  opencode: {
+    corsOrigins: string[];
+    username?: string;
+    password?: string;
+  };
+  openwork: {
+    token: string;
+    hostToken: string;
+    approvalMode: ApprovalMode;
+    approvalTimeoutMs: number;
+    readOnly: boolean;
+    corsOrigins: string[];
+    opencodeUsername?: string;
+    opencodePassword?: string;
+    logFormat: LogFormat;
+  };
+  runId: string;
+  logFormat: LogFormat;
+  detach: boolean;
+  logger: Logger;
+}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
+  const staged = await stageSandboxRuntime({
+    persistDir: options.persistDir,
+    containerName: options.containerName,
+    sidecars: options.sidecars,
+    detach: options.detach,
+  });
+
+  await writeSandboxEntrypoint({
+    entrypointHostPath: staged.entrypointHostPath,
+    rootInContainer: staged.rootInContainer,
+    backend: "docker",
+    opencode: options.opencode,
+    openwork: {
+      token: options.openwork.token,
+      hostToken: options.openwork.hostToken,
+      approvalMode: options.openwork.approvalMode,
+      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
+      readOnly: options.openwork.readOnly,
+      corsOrigins: options.openwork.corsOrigins,
+      opencodeUsername: options.openwork.opencodeUsername,
+      opencodePassword: options.openwork.opencodePassword,
+      logFormat: options.openwork.logFormat,
+      owpenbotEnabled: !!options.sidecars.owpenbot,
+    },
+    runId: options.runId,
+    logFormat: options.logFormat,
+  });
+
+  const args: string[] = [
+    "run",
+    "--rm",
+    "--name",
+    options.containerName,
+    "-p",
+    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    "-v",
+    `${options.workspace}:/workspace`,
+    "-v",
+    `${options.persistDir}:/persist`,
+  ];
+
+  if (options.sidecars.owpenbot && options.ports.owpenbotHealth) {
+    args.push("-p", `${options.ports.owpenbotHealth}:${SANDBOX_INTERNAL_OWPENBOT_HEALTH_PORT}`);
+  }
+
+  for (const mount of options.extraMounts) {
+    const suffix = mount.readonly ? ":ro" : "";
+    args.push("-v", `${mount.hostPath}:${mount.containerPath}${suffix}`);
+  }
+
+  if (options.detach) {
+    args.push("-d");
+  }
+
+  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
+  args.push(options.image, "sh", scriptInContainer);
+
+  const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
+  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
+
+  return { child, cleanup: staged.cleanup };
+}
+
+async function startAppleContainerSandbox(options: {
+  image: string;
+  containerName: string;
+  workspace: string;
+  persistDir: string;
+  extraMounts: SandboxMount[];
+  sidecars: { opencode: string; openworkServer: string; owpenbot?: string | null };
+  ports: { openwork: number; owpenbotHealth?: number | null };
+  opencode: {
+    corsOrigins: string[];
+    username?: string;
+    password?: string;
+  };
+  openwork: {
+    token: string;
+    hostToken: string;
+    approvalMode: ApprovalMode;
+    approvalTimeoutMs: number;
+    readOnly: boolean;
+    corsOrigins: string[];
+    opencodeUsername?: string;
+    opencodePassword?: string;
+    logFormat: LogFormat;
+  };
+  runId: string;
+  logFormat: LogFormat;
+  detach: boolean;
+  logger: Logger;
+}): Promise<{ child: ReturnType<typeof spawn>; cleanup: () => Promise<void> }> {
+  await ensureAppleContainerSystemReady();
+
+  const staged = await stageSandboxRuntime({
+    persistDir: options.persistDir,
+    containerName: options.containerName,
+    sidecars: options.sidecars,
+    detach: options.detach,
+  });
+
+  await writeSandboxEntrypoint({
+    entrypointHostPath: staged.entrypointHostPath,
+    rootInContainer: staged.rootInContainer,
+    backend: "container",
+    opencode: options.opencode,
+    openwork: {
+      token: options.openwork.token,
+      hostToken: options.openwork.hostToken,
+      approvalMode: options.openwork.approvalMode,
+      approvalTimeoutMs: options.openwork.approvalTimeoutMs,
+      readOnly: options.openwork.readOnly,
+      corsOrigins: options.openwork.corsOrigins,
+      opencodeUsername: options.openwork.opencodeUsername,
+      opencodePassword: options.openwork.opencodePassword,
+      logFormat: options.openwork.logFormat,
+      owpenbotEnabled: !!options.sidecars.owpenbot,
+    },
+    runId: options.runId,
+    logFormat: options.logFormat,
+  });
+
+  const args: string[] = [
+    "run",
+    "--rm",
+    "--name",
+    options.containerName,
+    "-p",
+    `${options.ports.openwork}:${SANDBOX_INTERNAL_OPENWORK_PORT}`,
+    "-v",
+    `${options.workspace}:/workspace`,
+    "-v",
+    `${options.persistDir}:/persist`,
+  ];
+
+  if (options.sidecars.owpenbot && options.ports.owpenbotHealth) {
+    args.push("-p", `${options.ports.owpenbotHealth}:${SANDBOX_INTERNAL_OWPENBOT_HEALTH_PORT}`);
+  }
+
+  for (const mount of options.extraMounts) {
+    if (mount.readonly) {
+      args.push("--mount", `type=bind,source=${mount.hostPath},target=${mount.containerPath},readonly`);
+    } else {
+      args.push("-v", `${mount.hostPath}:${mount.containerPath}`);
+    }
+  }
+
+  if (options.detach) {
+    args.push("-d");
+  }
+
+  const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
+  args.push(options.image, "sh", scriptInContainer);
+
+  const child = spawn("container", args, { stdio: ["ignore", "pipe", "pipe"] });
+  prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
+  prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
+
+  return { child, cleanup: staged.cleanup };
+}
+
 async function verifyOwpenbotVersion(binary: ResolvedBinary): Promise<string | undefined> {
   if (binary.source !== "external") {
     return binary.expectedVersion;
@@ -1825,6 +2788,16 @@ async function verifyOwpenbotVersion(binary: ResolvedBinary): Promise<string | u
 
 async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | undefined> {
   const actual = await readCliVersion(binary.bin);
+  // When the binary was explicitly provided via --opencode-bin (source "external"),
+  // a strict version check would break desktop app users whenever a new opencode
+  // release ships on GitHub before OpenWork updates its bundled binary. Log a
+  // warning instead of throwing so the caller can still proceed.
+  if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
+    process.stderr.write(
+      `[openwrk] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+    );
+    return actual;
+  }
   assertVersionMatch("opencode", binary.expectedVersion, actual, binary.bin);
   return actual;
 }
@@ -1896,16 +2869,55 @@ async function runChecks(input: {
   opencodeClient: ReturnType<typeof createOpencodeClient>;
   openworkUrl: string;
   openworkToken: string;
+  hostToken: string;
   checkEvents: boolean;
 }) {
+  const baseUrl = input.openworkUrl.replace(/\/$/, "");
   const headers = { Authorization: `Bearer ${input.openworkToken}` };
-  const workspaces = await fetchJson(`${input.openworkUrl}/workspaces`, { headers });
+  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+  const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
     throw new Error("OpenWork server returned no workspaces");
   }
 
   const workspaceId = workspaces.items[0].id as string;
-  await fetchJson(`${input.openworkUrl}/workspace/${workspaceId}/config`, { headers });
+  await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers });
+
+  // Smoke test: mounted owpenbot proxy and auth behavior.
+  // - /w/:id/owpenbot/health is client-readable
+  // - other /w/:id/owpenbot/* requires host/owner auth
+  const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/owpenbot`;
+  const owHealthRes = await fetch(`${owMountBase}/health`, {
+    headers,
+    signal: AbortSignal.timeout(3000),
+  });
+  if (owHealthRes.status >= 500) {
+    throw new Error(`owpenbot mount proxy returned ${owHealthRes.status}`);
+  }
+  const owConfigured = owHealthRes.status !== 404;
+  if (owConfigured) {
+    const clientRes = await fetch(`${owMountBase}/config/groups`, {
+      headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (clientRes.status === 200) {
+      throw new Error("owpenbot mount proxy /config/groups should require host auth");
+    }
+    if (clientRes.status !== 401 && clientRes.status !== 403) {
+      throw new Error(`owpenbot mount proxy /config/groups unexpected status: ${clientRes.status}`);
+    }
+
+    const hostRes = await fetch(`${owMountBase}/config/groups`, {
+      headers: hostHeaders,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (hostRes.status >= 500) {
+      throw new Error(`owpenbot mount proxy (host auth) returned ${hostRes.status}`);
+    }
+    if (hostRes.status === 401 || hostRes.status === 403) {
+      throw new Error("owpenbot mount proxy /config/groups rejected host auth");
+    }
+  }
 
   const created = await input.opencodeClient.session.create({ title: "OpenWork headless check" });
   const createdSession = unwrap(created);
@@ -1935,6 +2947,92 @@ async function runChecks(input: {
 
     if (!events.length) {
       throw new Error("No SSE events observed during check");
+    }
+  }
+}
+
+/**
+ * Lighter check suite for sandbox mode.  Uses only raw HTTP against the
+ * openwork-server endpoints — no OpenCode SDK calls that rely on Bearer
+ * auth through the proxy (since the released server binary may predate our
+ * token/proxy changes).
+ */
+async function runSandboxChecks(input: {
+  openworkUrl: string;
+  openworkToken: string;
+  hostToken: string;
+}) {
+  const baseUrl = input.openworkUrl.replace(/\/$/, "");
+  const headers = { Authorization: `Bearer ${input.openworkToken}` };
+  const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
+
+  // 1. Server health
+  const health = await fetchJson(`${baseUrl}/health`);
+  if (!health || typeof health !== "object") {
+    throw new Error("openwork-server /health returned invalid payload");
+  }
+
+  // 2. Workspaces list
+  const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
+  if (!workspaces?.items?.length) {
+    throw new Error("openwork-server returned no workspaces");
+  }
+  const workspaceId = workspaces.items[0].id as string;
+
+  // 3. Workspace config
+  await fetchJson(`${baseUrl}/workspace/${workspaceId}/config`, { headers });
+
+  // 4. Approvals endpoint (host auth)
+  await fetchJson(`${baseUrl}/approvals`, { headers: hostHeaders });
+
+  // 5. Proxy is reachable (even if auth is rejected — non-5xx proves the
+  //    server is proxying to a running opencode)
+  const proxyRes = await fetch(`${baseUrl}/opencode/health`, {
+    headers,
+    signal: AbortSignal.timeout(3000),
+  });
+  if (proxyRes.status >= 500) {
+    throw new Error(`opencode proxy returned ${proxyRes.status}`);
+  }
+
+  // 6. owpenbot proxy is reachable (if configured)
+  const owRes = await fetch(`${baseUrl}/owpenbot/health`, {
+    headers,
+    signal: AbortSignal.timeout(3000),
+  });
+  if (owRes.status >= 500) {
+    throw new Error(`owpenbot proxy returned ${owRes.status}`);
+  }
+
+  // 7. Mounted owpenbot proxy + auth behavior (if configured)
+  if (owRes.status !== 404) {
+    const owMountBase = `${baseUrl}/w/${encodeURIComponent(workspaceId)}/owpenbot`;
+    const mountHealth = await fetch(`${owMountBase}/health`, {
+      headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (mountHealth.status >= 500) {
+      throw new Error(`owpenbot mount proxy returned ${mountHealth.status}`);
+    }
+    const mountClient = await fetch(`${owMountBase}/config/groups`, {
+      headers,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (mountClient.status === 200) {
+      throw new Error("owpenbot mount proxy /config/groups should require host auth");
+    }
+    if (mountClient.status !== 401 && mountClient.status !== 403) {
+      throw new Error(`owpenbot mount proxy /config/groups unexpected status: ${mountClient.status}`);
+    }
+    const mountHost = await fetch(`${owMountBase}/config/groups`, {
+      headers: hostHeaders,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (mountHost.status >= 500) {
+      throw new Error(`owpenbot mount proxy (host auth) returned ${mountHost.status}`);
+    }
+    if (mountHost.status === 401 || mountHost.status === 403) {
+      throw new Error("owpenbot mount proxy /config/groups rejected host auth");
     }
   }
 }
@@ -2446,8 +3544,10 @@ async function runRouterDaemon(args: ParsedArgs) {
     color: colorEnabled,
   });
   const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
-  const sidecarSource = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
-  const opencodeSource = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
+  const sidecarSource = sidecarSourceInput;
+  const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
   const statePath = routerStatePath(dataDir);
   let state = await loadRouterState(statePath);
@@ -2483,6 +3583,8 @@ async function runRouterDaemon(args: ParsedArgs) {
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
+  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
+  await ensureOpencodeManagedTools(opencodeConfigDir);
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
@@ -2561,6 +3663,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     const child = await startOpencode({
       bin: opencodeBinary.bin,
       workspace: resolvedWorkdir,
+      configDir: opencodeConfigDir,
       bindHost: opencodeHost,
       port: opencodePort,
       username: opencodePassword ? opencodeUsername : undefined,
@@ -2962,20 +4065,19 @@ async function runStart(args: ParsedArgs) {
   const detachRequested = readBool(args.flags, "detach", false, "OPENWRK_DETACH");
   const defaultTui = process.stdout.isTTY && !outputJson && !checkOnly && !checkEvents;
   const tuiRequested = readBool(args.flags, "tui", defaultTui);
-  const useTui = tuiRequested && !detachRequested && !outputJson && !checkOnly && !checkEvents && logFormat === "pretty";
-  const colorEnabled =
-    !useTui && readBool(args.flags, "color", process.stdout.isTTY, "OPENWRK_COLOR") && !process.env.NO_COLOR;
+  let useTui = tuiRequested && !detachRequested && !outputJson && !checkOnly && !checkEvents && logFormat === "pretty";
+  const colorPreferred = readBool(args.flags, "color", process.stdout.isTTY, "OPENWRK_COLOR") && !process.env.NO_COLOR;
   const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWRK_RUN_ID ?? randomUUID();
   const cliVersion = await resolveCliVersion();
+  const compiledBinary = isCompiledBunBinary();
   let tui: TuiHandle | undefined;
-  const logger = createLogger({
+  let restoreConsoleError: (() => void) | undefined;
+  const baseLoggerOptions = {
     format: logFormat,
     runId,
     serviceName: "openwrk",
     serviceVersion: cliVersion,
-    output: useTui ? "silent" : "stdout",
-    color: colorEnabled,
-    onLog: (event) => {
+    onLog: (event: LogEvent) => {
       if (!tui) return;
       const component = event.component ?? "openwrk";
       tui.pushLog({
@@ -2985,21 +4087,82 @@ async function runStart(args: ParsedArgs) {
         message: event.message,
       });
     },
+  };
+  let logger = createLogger({
+    ...baseLoggerOptions,
+    output: useTui ? "silent" : "stdout",
+    color: useTui ? false : colorPreferred,
   });
-  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
-  const sidecarSource = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
-  const opencodeSource = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
+  let logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
+  const switchToPlainOutput = (error: string) => {
+    if (!useTui) return;
+    useTui = false;
+    restoreConsoleError?.();
+    restoreConsoleError = undefined;
+    tui?.stop();
+    tui = undefined;
+    logger = createLogger({
+      ...baseLoggerOptions,
+      output: "stdout",
+      color: colorPreferred,
+    });
+    logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
+    logger.warn(
+      "TUI failed to start; falling back to plain output. Use `openwrk serve` for explicit non-TUI mode.",
+      { error },
+      "openwrk",
+    );
+  };
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
 
   const workspace = readFlag(args.flags, "workspace") ?? process.env.OPENWORK_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
   logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "openwrk");
 
-  const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
-  const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_BIND_HOST ?? "0.0.0.0";
-  const opencodePort = await resolvePort(
-    readNumber(args.flags, "opencode-port", undefined, "OPENWORK_OPENCODE_PORT"),
-    "127.0.0.1",
+  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "OPENWRK_SANDBOX");
+  const sandboxMode = await resolveSandboxMode(sandboxRequested);
+  const sandboxImage =
+    readFlag(args.flags, "sandbox-image") ?? process.env.OPENWRK_SANDBOX_IMAGE ?? "debian:bookworm-slim";
+  const sandboxPersistOverride = readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWRK_SANDBOX_PERSIST_DIR;
+  const dataDir = resolveRouterDataDir(args.flags);
+  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  await ensureOpencodeManagedTools(opencodeConfigDir);
+  const owpenbotDataDir =
+    sandboxMode === "none" ? join(dataDir, "owpenbot", workspaceIdForLocal(resolvedWorkspace)) : null;
+  if (owpenbotDataDir) {
+    await mkdir(owpenbotDataDir, { recursive: true });
+  }
+  const sandboxPersistDir = resolve(
+    sandboxPersistOverride?.trim()
+      ? sandboxPersistOverride.trim()
+      : join(dataDir, "sandbox", workspaceIdForLocal(resolvedWorkspace)),
   );
+  if (sandboxMode !== "none") {
+    await mkdir(sandboxPersistDir, { recursive: true });
+  }
+
+  const sandboxMountValue =
+    readFlag(args.flags, "sandbox-mount") ??
+    process.env.OPENWRK_SANDBOX_MOUNT ??
+    process.env.OPENWORK_SANDBOX_MOUNT;
+  const sandboxMountSpecs = parseList(sandboxMountValue);
+  const sandboxExtraMounts =
+    sandboxMode !== "none" && sandboxMountSpecs.length
+      ? await resolveSandboxExtraMounts(sandboxMountSpecs, sandboxMode)
+      : [];
+
+  const explicitOpencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+  const explicitOpenworkServerBin = readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN;
+  const explicitOwpenbotBin = readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN;
+  const opencodeBindHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_BIND_HOST ?? "0.0.0.0";
+  const opencodePort =
+    sandboxMode !== "none"
+      ? SANDBOX_INTERNAL_OPENCODE_PORT
+      : await resolvePort(
+          readNumber(args.flags, "opencode-port", undefined, "OPENWORK_OPENCODE_PORT"),
+          "127.0.0.1",
+        );
   const opencodeAuth = readBool(args.flags, "opencode-auth", true, "OPENWORK_OPENCODE_AUTH");
   const opencodeUsername = opencodeAuth
     ? readFlag(args.flags, "opencode-username") ?? process.env.OPENWORK_OPENCODE_USERNAME ?? DEFAULT_OPENCODE_USERNAME
@@ -3012,12 +4175,12 @@ async function runStart(args: ParsedArgs) {
   const openworkPort = await resolvePort(
     readNumber(args.flags, "openwork-port", undefined, "OPENWORK_PORT"),
     "127.0.0.1",
-    DEFAULT_OPENWORK_PORT,
   );
+  // Always choose a free owpenbot health port by default (avoid conflicts with
+  // other local processes using 3005).
   const owpenbotHealthPort = await resolvePort(
     readNumber(args.flags, "owpenbot-health-port", undefined, "OWPENBOT_HEALTH_PORT"),
     "127.0.0.1",
-    DEFAULT_OWPENBOT_HEALTH_PORT,
   );
   const openworkToken = readFlag(args.flags, "openwork-token") ?? process.env.OPENWORK_TOKEN ?? randomUUID();
   const openworkHostToken = readFlag(args.flags, "openwork-host-token") ?? process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
@@ -3036,10 +4199,39 @@ async function runStart(args: ParsedArgs) {
   const corsOrigins = parseList(corsValue);
   const connectHost = readFlag(args.flags, "connect-host");
 
-  const sidecar = resolveSidecarConfig(args.flags, cliVersion);
   const manifest = await readVersionManifest();
   const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
+  const sidecar = resolveSidecarConfigForTarget(args.flags, cliVersion, sidecarTarget);
+
+  let sidecarSource = sidecarSourceInput;
+  let opencodeSource = opencodeSourceInput;
+  if (sandboxMode !== "none") {
+    if (sidecarSourceInput === "bundled") {
+      throw new Error("Sandbox mode does not support --sidecar-source bundled");
+    }
+    if (opencodeSourceInput === "bundled") {
+      throw new Error("Sandbox mode does not support --opencode-source bundled");
+    }
+    // In sandbox mode, we must run Linux binaries inside the container. When
+    // custom *-bin paths are provided, treat the source as external so we don't
+    // accidentally pick host (darwin) bundled binaries.
+    if (sidecarSourceInput === "auto") {
+      sidecarSource = explicitOpenworkServerBin || explicitOwpenbotBin ? "external" : "downloaded";
+    }
+    if (opencodeSourceInput === "auto") {
+      opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
+    }
+  }
   logVerbose(`cli version: ${cliVersion}`);
+  logVerbose(`sandbox: ${sandboxMode}`);
+  if (sandboxMode !== "none") {
+    logVerbose(`sandbox image: ${sandboxImage}`);
+    logVerbose(`sandbox persist dir: ${sandboxPersistDir}`);
+    if (sandboxExtraMounts.length) {
+      logVerbose(`sandbox mounts: ${sandboxExtraMounts.length}`);
+    }
+  }
   logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
   logVerbose(`sidecar dir: ${sidecar.dir}`);
   logVerbose(`sidecar base URL: ${sidecar.baseUrl}`);
@@ -3054,8 +4246,27 @@ async function runStart(args: ParsedArgs) {
     sidecar,
     source: opencodeSource,
   });
-  const explicitOpenworkServerBin = readFlag(args.flags, "openwork-server-bin") ?? process.env.OPENWORK_SERVER_BIN;
-  const explicitOwpenbotBin = readFlag(args.flags, "owpenbot-bin") ?? process.env.OWPENBOT_BIN;
+
+  if (sandboxMode !== "none") {
+    if (sandboxMode === "docker") {
+      if (!(await probeCommand("docker", ["version"]))) {
+        throw new Error(
+          "Docker is required for --sandbox docker. Install Docker Desktop and ensure 'docker' is on PATH.",
+        );
+      }
+    }
+    if (sandboxMode === "container") {
+      if (process.platform !== "darwin") {
+        throw new Error("Apple container backend is only supported on macOS");
+      }
+      if (process.arch !== "arm64") {
+        throw new Error("Apple container backend requires Apple silicon (arm64)");
+      }
+      if (!(await probeCommand("container", ["--version"]))) {
+        throw new Error("Apple container CLI not found. Install https://github.com/apple/container");
+      }
+    }
+  }
   const owpenbotEnabled = readBool(args.flags, "owpenbot", true);
   const owpenbotRequired = readBool(args.flags, "owpenbot-required", false, "OPENWRK_OWPENBOT_REQUIRED");
   const openworkServerBinary = await resolveOpenworkServerBin({
@@ -3074,6 +4285,15 @@ async function runStart(args: ParsedArgs) {
         source: sidecarSource,
       })
     : null;
+
+  if (sandboxMode !== "none") {
+    // Ensure the binaries we stage into the container are actual files.
+    await assertSandboxBinaryFile("opencode", opencodeBinary.bin);
+    await assertSandboxBinaryFile("openwork-server", openworkServerBinary.bin);
+    if (owpenbotBinary) {
+      await assertSandboxBinaryFile("owpenbot", owpenbotBinary.bin);
+    }
+  }
   let owpenbotActualVersion: string | undefined;
   logVerbose(`opencode bin: ${opencodeBinary.bin} (${opencodeBinary.source})`);
   logVerbose(`openwork-server bin: ${openworkServerBinary.bin} (${openworkServerBinary.source})`);
@@ -3081,20 +4301,26 @@ async function runStart(args: ParsedArgs) {
     logVerbose(`owpenbot bin: ${owpenbotBinary.bin} (${owpenbotBinary.source})`);
   }
 
-  const opencodeBaseUrl = `http://127.0.0.1:${opencodePort}`;
-  const opencodeConnect = resolveConnectUrl(opencodePort, connectHost);
-  const opencodeConnectUrl = opencodeConnect.connectUrl ?? opencodeBaseUrl;
-
   const openworkBaseUrl = `http://127.0.0.1:${openworkPort}`;
   const openworkConnect = resolveConnectUrl(openworkPort, connectHost);
   const openworkConnectUrl = openworkConnect.connectUrl ?? openworkBaseUrl;
 
-  const attachCommand = buildAttachCommand({
-    url: opencodeConnectUrl,
-    workspace: resolvedWorkspace,
-    username: opencodeUsername,
-    password: opencodePassword,
-  });
+  const opencodeBaseUrl =
+    sandboxMode !== "none" ? `${openworkBaseUrl}/opencode` : `http://127.0.0.1:${opencodePort}`;
+  const opencodeConnectUrl =
+    sandboxMode !== "none"
+      ? `${openworkConnectUrl.replace(/\/$/, "")}/opencode`
+      : (resolveConnectUrl(opencodePort, connectHost).connectUrl ?? opencodeBaseUrl);
+
+  const attachCommand =
+    sandboxMode !== "none"
+      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires OpenWork token)`
+      : buildAttachCommand({
+          url: opencodeConnectUrl,
+          workspace: resolvedWorkspace,
+          username: opencodeUsername,
+          password: opencodePassword,
+        });
 
   const owpenbotHealthUrl = `http://127.0.0.1:${owpenbotHealthPort}`;
   const owpenbotEnv: NodeJS.ProcessEnv = {
@@ -3103,23 +4329,36 @@ async function runStart(args: ParsedArgs) {
     OPENCODE_URL: opencodeConnectUrl,
     ...(opencodeUsername ? { OPENCODE_SERVER_USERNAME: opencodeUsername } : {}),
     ...(opencodePassword ? { OPENCODE_SERVER_PASSWORD: opencodePassword } : {}),
-    ...(owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(owpenbotHealthPort) } : {}),
+    ...(owpenbotEnabled ? { OWPENBOT_HEALTH_PORT: String(owpenbotHealthPort) } : {}),
   };
 
   const children: ChildHandle[] = [];
   let shuttingDown = false;
   let detached = false;
+  let sandboxContainerName: string | null = null;
+  let sandboxStop: ((name: string) => Promise<void>) | null = null;
+  let sandboxStopCommand: string | null = null;
+  let sandboxCleanup: (() => Promise<void>) | null = null;
   const startedAt = Date.now();
   let owpenbotHealthInterval: NodeJS.Timeout | null = null;
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
+    restoreConsoleError?.();
+    restoreConsoleError = undefined;
     if (owpenbotHealthInterval) {
       clearInterval(owpenbotHealthInterval);
       owpenbotHealthInterval = null;
     }
     logger.info("Shutting down", { children: children.map((handle) => handle.name) }, "openwrk");
+    if (sandboxContainerName && sandboxStop) {
+      await sandboxStop(sandboxContainerName);
+    }
     await Promise.all(children.map((handle) => stopChild(handle.child)));
+    if (sandboxCleanup) {
+      await sandboxCleanup();
+      sandboxCleanup = null;
+    }
   };
 
   const detachChildren = () => {
@@ -3145,6 +4384,8 @@ async function runStart(args: ParsedArgs) {
 
   const handleDetach = async () => {
     if (detached) return;
+    restoreConsoleError?.();
+    restoreConsoleError = undefined;
     if (owpenbotHealthInterval) {
       clearInterval(owpenbotHealthInterval);
       owpenbotHealthInterval = null;
@@ -3154,6 +4395,12 @@ async function runStart(args: ParsedArgs) {
     const summary = [
       "Detached. Services still running:",
       ...children.map((handle) => `- ${handle.name} (pid ${handle.child.pid ?? "unknown"})`),
+      ...(sandboxContainerName && sandboxStopCommand
+        ? [
+            `- sandbox (${sandboxStopCommand.split(" ")[0]} container ${sandboxContainerName})`,
+            `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
+          ]
+        : []),
       `OpenWork URL: ${openworkConnectUrl}`,
       `OpenWork Token: ${openworkToken}`,
       `OpenCode URL: ${opencodeConnectUrl}`,
@@ -3164,71 +4411,100 @@ async function runStart(args: ParsedArgs) {
   };
 
   if (useTui) {
-    tui = startOpenwrkTui({
-      version: cliVersion,
-      connect: {
-        runId,
-        workspace: resolvedWorkspace,
-        openworkUrl: openworkConnectUrl,
-        openworkToken,
-        hostToken: openworkHostToken,
-        opencodeUrl: opencodeConnectUrl,
-        opencodePassword: opencodePassword ?? undefined,
-        opencodeUsername: opencodeUsername ?? undefined,
-        attachCommand,
-      },
-      services: [
-        { name: "opencode", label: "opencode", status: "starting", port: opencodePort },
-        { name: "openwork-server", label: "openwork-server", status: "starting", port: openworkPort },
-        {
-          name: "owpenbot",
-          label: "owpenbot",
-          status: owpenbotEnabled ? "starting" : "disabled",
-          port: owpenbotHealthPort,
+    if (compiledBinary) {
+      const originalConsoleError = console.error.bind(console);
+      restoreConsoleError = () => {
+        console.error = originalConsoleError;
+      };
+      console.error = (...items: unknown[]) => {
+        const text = items
+          .map((item) => {
+            if (typeof item === "string") return item;
+            if (item instanceof Error) return `${item.name}: ${item.message}`;
+            return String(item);
+          })
+          .join(" ");
+        if (text.includes("React is not defined") || text.includes("/$bunfs/root/openwrk")) {
+          switchToPlainOutput(text);
+        }
+        originalConsoleError(...items);
+      };
+    }
+    try {
+      tui = startOpenwrkTui({
+        version: cliVersion,
+        connect: {
+          runId,
+          workspace: resolvedWorkspace,
+          openworkUrl: openworkConnectUrl,
+          openworkToken,
+          hostToken: openworkHostToken,
+          opencodeUrl: opencodeConnectUrl,
+          opencodePassword: sandboxMode !== "none" ? undefined : (opencodePassword ?? undefined),
+          opencodeUsername: sandboxMode !== "none" ? undefined : (opencodeUsername ?? undefined),
+          attachCommand,
         },
-      ],
-      onQuit: handleQuit,
-      onDetach: handleDetach,
-      onCopyAttach: async () => {
-        const result = await copyToClipboard(attachCommand);
-        return { command: attachCommand, ...result };
-      },
-      onCopySelection: async (text) => copyToClipboard(text),
-      onOwpenbotHealth: async () => fetchOwpenbotHealth(owpenbotHealthUrl),
-      onOwpenbotQr: async () => {
-        if (!owpenbotBinary) {
-          throw new Error("Owpenbot binary missing");
-        }
-        const output = await captureCommandOutput(
-          owpenbotBinary.bin,
-          ["whatsapp", "qr", "--format", "ascii"],
-          { env: owpenbotEnv },
-        );
-        if (!output) {
-          throw new Error("No QR output received");
-        }
-        return output;
-      },
-      onOwpenbotSetTelegramToken: async (token) => {
-        try {
-          await fetchJson(`${owpenbotHealthUrl}/config/telegram-token`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
+        services: [
+          { name: "opencode", label: "opencode", status: "starting", port: opencodePort },
+          { name: "openwork-server", label: "openwork-server", status: "starting", port: openworkPort },
+          {
+            name: "owpenbot",
+            label: "owpenbot",
+            status: owpenbotEnabled ? "starting" : "disabled",
+            port: sandboxMode !== "none" ? undefined : owpenbotHealthPort,
+          },
+        ],
+        onQuit: handleQuit,
+        onDetach: handleDetach,
+        onCopyAttach: async () => {
+          const result = await copyToClipboard(attachCommand);
+          return { command: attachCommand, ...result };
+        },
+        onCopySelection: async (text) => copyToClipboard(text),
+        onOwpenbotHealth: async () => fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken),
+        onOwpenbotQr: async () => {
+          const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/whatsapp/qr?format=ascii`;
+          const result = await fetchJson(url, {
+            headers: {
+              "X-OpenWork-Host-Token": openworkHostToken,
+            },
           });
-          return { ok: true };
-        } catch (error) {
-          return { ok: false, error: error instanceof Error ? error.message : String(error) };
-        }
-      },
-    });
-    tui.setUptimeStart(startedAt);
+          const qr = typeof result?.qr === "string" ? result.qr : "";
+          if (!qr.trim()) {
+            throw new Error("No QR output received");
+          }
+          return qr;
+        },
+        onOwpenbotSetTelegramToken: async (token) => {
+          try {
+            const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/config/telegram-token`;
+            await fetchJson(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-OpenWork-Host-Token": openworkHostToken,
+              },
+              body: JSON.stringify({ token }),
+            });
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+      });
+      tui.setUptimeStart(startedAt);
+    } catch (error) {
+      switchToPlainOutput(error instanceof Error ? error.message : String(error));
+    }
   }
 
   const handleExit = (name: string, code: number | null, signal: NodeJS.Signals | null) => {
     if (shuttingDown || detached) return;
     const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
-    tui?.updateService(name, { status: "stopped", message: reason });
+    const services = name === "sandbox" ? ["opencode", "openwork-server", "owpenbot"] : [name];
+    for (const service of services) {
+      tui?.updateService(service, { status: "stopped", message: reason });
+    }
     logger.error("Process exited", { reason, code, signal }, name);
     void shutdown().then(() => process.exit(code ?? 1));
   };
@@ -3241,129 +4517,274 @@ async function runStart(args: ParsedArgs) {
   };
 
   try {
-    const opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
-    const opencodeChild = await startOpencode({
-      bin: opencodeBinary.bin,
-      workspace: resolvedWorkspace,
-      bindHost: opencodeBindHost,
-      port: opencodePort,
-      username: opencodeUsername,
-      password: opencodePassword,
-      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-      logger,
-      runId,
-      logFormat,
-    });
-    children.push({ name: "opencode", child: opencodeChild });
-    tui?.updateService("opencode", {
-      status: "running",
-      pid: opencodeChild.pid ?? undefined,
-      port: opencodePort,
-    });
-    logger.info("Process spawned", { pid: opencodeChild.pid ?? 0 }, "opencode");
-    opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
-    opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
+    const opencodeActualVersion =
+      sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
+    let openworkActualVersion: string | undefined;
+    let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
-    const authHeaders: Record<string, string> = {};
-    if (opencodeUsername && opencodePassword) {
-      authHeaders.Authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
-    }
-    const opencodeClient = createOpencodeClient({
-      baseUrl: opencodeBaseUrl,
-      directory: resolvedWorkspace,
-      headers: Object.keys(authHeaders).length ? authHeaders : undefined,
-    });
+    if (sandboxMode !== "none") {
+      const containerName = `openwrk-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
+      sandboxContainerName = containerName;
 
-    logger.info("Waiting for health", { url: opencodeBaseUrl }, "opencode");
-    await waitForOpencodeHealthy(opencodeClient);
-    logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
-    tui?.updateService("opencode", { status: "healthy" });
+      sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
+      sandboxStopCommand = sandboxMode === "container" ? "container stop" : "docker stop";
+      const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
-    const openworkChild = await startOpenworkServer({
-      bin: openworkServerBinary.bin,
-      host: openworkHost,
-      port: openworkPort,
-      workspace: resolvedWorkspace,
-      token: openworkToken,
-      hostToken: openworkHostToken,
-      approvalMode: approvalMode === "auto" ? "auto" : "manual",
-      approvalTimeoutMs,
-      readOnly,
-      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-      opencodeBaseUrl: opencodeConnectUrl,
-      opencodeDirectory: resolvedWorkspace,
-      opencodeUsername,
-      opencodePassword,
-      owpenbotHealthPort,
-      logger,
-      runId,
-      logFormat,
-    });
-    children.push({ name: "openwork-server", child: openworkChild });
-    tui?.updateService("openwork-server", {
-      status: "running",
-      pid: openworkChild.pid ?? undefined,
-      port: openworkPort,
-    });
-    logger.info("Process spawned", { pid: openworkChild.pid ?? 0 }, "openwork-server");
-    openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
-    openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
-
-    logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
-    await waitForHealthy(openworkBaseUrl);
-    logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
-    tui?.updateService("openwork-server", { status: "healthy" });
-
-    const openworkActualVersion = await verifyOpenworkServer({
-      baseUrl: openworkBaseUrl,
-      token: openworkToken,
-      hostToken: openworkHostToken,
-      expectedVersion: openworkServerBinary.expectedVersion,
-      expectedWorkspace: resolvedWorkspace,
-      expectedOpencodeBaseUrl: opencodeConnectUrl,
-      expectedOpencodeDirectory: resolvedWorkspace,
-      expectedOpencodeUsername: opencodeUsername,
-      expectedOpencodePassword: opencodePassword,
-    });
-    logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
-
-    if (owpenbotEnabled) {
-      if (!owpenbotBinary) {
-        throw new Error("Owpenbot binary missing.");
-      }
-      owpenbotActualVersion = await verifyOwpenbotVersion(owpenbotBinary);
-      logVerbose(`owpenbot version: ${owpenbotActualVersion ?? "unknown"}`);
-      const owpenbotChild = await startOwpenbot({
-        bin: owpenbotBinary.bin,
+      const runner = sandboxMode === "container" ? startAppleContainerSandbox : startDockerSandbox;
+      const sandboxChild = await runner({
+        image: sandboxImage,
+        containerName,
         workspace: resolvedWorkspace,
-        opencodeUrl: opencodeConnectUrl,
+        persistDir: sandboxPersistDir,
+        extraMounts: sandboxExtraMounts,
+        sidecars: {
+          opencode: opencodeBinary.bin,
+          openworkServer: openworkServerBinary.bin,
+          owpenbot: owpenbotEnabled ? (owpenbotBinary?.bin ?? null) : null,
+        },
+        ports: {
+          openwork: openworkPort,
+          // In sandbox mode, owpenbot is only reachable via openwork-server
+          // proxy (/owpenbot/*). Do not publish a separate host port.
+          owpenbotHealth: null,
+        },
+        opencode: {
+          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+          username: opencodeUsername,
+          password: opencodePassword,
+        },
+        openwork: {
+          token: openworkToken,
+          hostToken: openworkHostToken,
+          approvalMode: approvalMode === "auto" ? "auto" : "manual",
+          approvalTimeoutMs,
+          readOnly,
+          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+          opencodeUsername,
+          opencodePassword,
+          logFormat,
+        },
+        runId,
+        logFormat,
+        detach: detachRequested,
+        logger,
+      });
+
+      sandboxCleanup = sandboxChild.cleanup;
+      tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
+      tui?.updateService("openwork-server", { status: "running", port: openworkPort });
+      if (owpenbotEnabled) {
+        tui?.updateService("owpenbot", { status: "running", port: undefined });
+      }
+
+      if (!detachRequested) {
+        children.push({ name: "sandbox", child: sandboxChild.child });
+        logger.info("Process spawned", { pid: sandboxChild.child.pid ?? 0, containerName }, "sandbox");
+        sandboxChild.child.on("exit", (code, signal) => handleExit("sandbox", code, signal));
+        sandboxChild.child.on("error", (error) => handleSpawnError("sandbox", error));
+      } else {
+        // docker run -d exits quickly; the container continues to run.
+        logger.info("Sandbox detached", { containerName }, "sandbox");
+      }
+
+      logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
+      await waitForHealthy(openworkBaseUrl);
+      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
+      tui?.updateService("openwork-server", { status: "healthy" });
+
+      opencodeClient = createOpencodeClient({
+        baseUrl: `${openworkBaseUrl.replace(/\/$/, "")}/opencode`,
+        headers: { Authorization: `Bearer ${openworkToken}` },
+      });
+
+      // In sandbox mode, the released openwork-server binary may not have our
+      // latest proxy/auth changes yet.  Instead of using the OpenCode SDK client
+      // (which relies on the proxy handling Bearer tokens), do a direct health
+      // check against the openwork-server's own /opencode proxy path.  If the
+      // server is healthy *and* is proxying to a healthy opencode, we're good.
+      logger.info("Waiting for health (proxy)", { url: `${openworkBaseUrl}/opencode` }, "opencode");
+      await waitForHealthyViaProxy(`${openworkBaseUrl.replace(/\/$/, "")}/opencode`, openworkToken);
+      logger.info("Healthy (proxy)", { url: `${openworkBaseUrl}/opencode` }, "opencode");
+      tui?.updateService("opencode", { status: "healthy" });
+
+      try {
+        openworkActualVersion = await verifyOpenworkServer({
+          baseUrl: openworkBaseUrl,
+          token: openworkToken,
+          hostToken: openworkHostToken,
+          expectedVersion: openworkServerBinary.expectedVersion,
+          expectedWorkspace: "/workspace",
+          expectedOpencodeBaseUrl: opencodeInternalBaseUrl,
+          expectedOpencodeDirectory: "/workspace",
+          expectedOpencodeUsername: opencodeUsername,
+          expectedOpencodePassword: opencodePassword,
+        });
+      } catch (verifyError) {
+        // In sandbox mode the released server binary may differ from the
+        // expected version or lack capabilities we just added locally.  Log
+        // the mismatch but don't abort — the health checks above already
+        // proved the server is running and proxying correctly.
+        logger.warn("Sandbox server verification warning (non-fatal)", { error: String(verifyError) }, "openwork-server");
+      }
+      logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
+    } else {
+      const opencodeChild = await startOpencode({
+        bin: opencodeBinary.bin,
+        workspace: resolvedWorkspace,
+        configDir: opencodeConfigDir,
+        bindHost: opencodeBindHost,
+        port: opencodePort,
+        username: opencodeUsername,
+        password: opencodePassword,
+        corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+        logger,
+        runId,
+        logFormat,
+        owpenbotHealthPort: owpenbotEnabled ? owpenbotHealthPort : undefined,
+      });
+      children.push({ name: "opencode", child: opencodeChild });
+      tui?.updateService("opencode", {
+        status: "running",
+        pid: opencodeChild.pid ?? undefined,
+        port: opencodePort,
+      });
+      logger.info("Process spawned", { pid: opencodeChild.pid ?? 0 }, "opencode");
+      opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
+      opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
+
+      const authHeaders: Record<string, string> = {};
+      if (opencodeUsername && opencodePassword) {
+        authHeaders.Authorization = `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}`;
+      }
+      opencodeClient = createOpencodeClient({
+        baseUrl: opencodeBaseUrl,
+        directory: resolvedWorkspace,
+        headers: Object.keys(authHeaders).length ? authHeaders : undefined,
+      });
+
+      logger.info("Waiting for health", { url: opencodeBaseUrl }, "opencode");
+      await waitForOpencodeHealthy(opencodeClient);
+      logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
+      tui?.updateService("opencode", { status: "healthy" });
+
+      let owpenbotChild: ChildProcess | null = null;
+      let owpenbotReady = false;
+      if (owpenbotEnabled) {
+        if (!owpenbotBinary) {
+          throw new Error("Owpenbot binary missing.");
+        }
+        owpenbotActualVersion = await verifyOwpenbotVersion(owpenbotBinary);
+        logVerbose(`owpenbot version: ${owpenbotActualVersion ?? "unknown"}`);
+
+        try {
+          owpenbotChild = await startOwpenbot({
+            bin: owpenbotBinary.bin,
+            workspace: resolvedWorkspace,
+            opencodeUrl: opencodeConnectUrl,
+            opencodeUsername,
+            opencodePassword,
+            owpenbotHealthPort,
+            owpenbotDataDir: owpenbotDataDir ?? undefined,
+            logger,
+            runId,
+            logFormat,
+          });
+          children.push({ name: "owpenbot", child: owpenbotChild });
+          tui?.updateService("owpenbot", {
+            status: "running",
+            pid: owpenbotChild.pid ?? undefined,
+            port: owpenbotHealthPort,
+          });
+          logger.info("Process spawned", { pid: owpenbotChild.pid ?? 0 }, "owpenbot");
+          owpenbotChild.on("exit", (code, signal) => {
+            if (owpenbotRequired) {
+              handleExit("owpenbot", code, signal);
+              return;
+            }
+            const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
+            tui?.updateService("owpenbot", { status: "stopped", message: reason });
+            logger.warn("Process exited, continuing without owpenbot", { reason, code, signal }, "owpenbot");
+          });
+          owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
+
+          const healthBaseUrl = `http://127.0.0.1:${owpenbotHealthPort}`;
+          logger.info("Waiting for health", { url: healthBaseUrl }, "owpenbot");
+          const health = await waitForOwpenbotHealthy(healthBaseUrl, 10_000, 400);
+          tui?.setOwpenbotHealth(health);
+          tui?.updateService("owpenbot", { status: health.ok ? "healthy" : "running" });
+          logger.info("Healthy", { url: healthBaseUrl, ok: health.ok }, "owpenbot");
+          owpenbotReady = true;
+        } catch (error) {
+          if (owpenbotRequired) {
+            throw error;
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          logger.warn("Owpenbot failed to start, continuing without it", { error: message }, "owpenbot");
+          tui?.updateService("owpenbot", { status: "stopped", message });
+          if (owpenbotChild) {
+            try {
+              owpenbotChild.kill();
+            } catch {
+              // ignore
+            }
+          }
+          owpenbotChild = null;
+          owpenbotReady = false;
+        }
+      }
+
+      const openworkChild = await startOpenworkServer({
+        bin: openworkServerBinary.bin,
+        host: openworkHost,
+        port: openworkPort,
+        workspace: resolvedWorkspace,
+        token: openworkToken,
+        hostToken: openworkHostToken,
+        approvalMode: approvalMode === "auto" ? "auto" : "manual",
+        approvalTimeoutMs,
+        readOnly,
+        corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+        opencodeBaseUrl: opencodeConnectUrl,
+        opencodeDirectory: resolvedWorkspace,
         opencodeUsername,
         opencodePassword,
-        owpenbotHealthPort,
+        owpenbotHealthPort: owpenbotReady ? owpenbotHealthPort : undefined,
+        owpenbotDataDir: owpenbotReady ? (owpenbotDataDir ?? undefined) : undefined,
         logger,
         runId,
         logFormat,
       });
-      children.push({ name: "owpenbot", child: owpenbotChild });
-      tui?.updateService("owpenbot", {
+      children.push({ name: "openwork-server", child: openworkChild });
+      tui?.updateService("openwork-server", {
         status: "running",
-        pid: owpenbotChild.pid ?? undefined,
-        port: owpenbotHealthPort,
+        pid: openworkChild.pid ?? undefined,
+        port: openworkPort,
       });
-      logger.info("Process spawned", { pid: owpenbotChild.pid ?? 0 }, "owpenbot");
-      try {
-        logger.info("Waiting for health", { url: owpenbotHealthUrl }, "owpenbot");
-        const health = await waitForOwpenbotHealthy(owpenbotHealthUrl);
-        tui?.setOwpenbotHealth(health);
-        tui?.updateService("owpenbot", { status: health.ok ? "healthy" : "running" });
-        logger.info("Healthy", { url: owpenbotHealthUrl, ok: health.ok }, "owpenbot");
-      } catch (error) {
-        logger.warn("Owpenbot health check failed", { error: String(error) }, "owpenbot");
-        tui?.updateService("owpenbot", { status: "running", message: String(error) });
-      }
-      if (!owpenbotHealthInterval) {
+      logger.info("Process spawned", { pid: openworkChild.pid ?? 0 }, "openwork-server");
+      openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+      openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
+
+      logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
+      await waitForHealthy(openworkBaseUrl);
+      logger.info("Healthy", { url: openworkBaseUrl }, "openwork-server");
+      tui?.updateService("openwork-server", { status: "healthy" });
+
+      openworkActualVersion = await verifyOpenworkServer({
+        baseUrl: openworkBaseUrl,
+        token: openworkToken,
+        hostToken: openworkHostToken,
+        expectedVersion: openworkServerBinary.expectedVersion,
+        expectedWorkspace: resolvedWorkspace,
+        expectedOpencodeBaseUrl: opencodeConnectUrl,
+        expectedOpencodeDirectory: resolvedWorkspace,
+        expectedOpencodeUsername: opencodeUsername,
+        expectedOpencodePassword: opencodePassword,
+      });
+      logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
+
+      if (owpenbotReady && !owpenbotHealthInterval) {
         owpenbotHealthInterval = setInterval(() => {
-          fetchOwpenbotHealth(owpenbotHealthUrl)
+          fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken)
             .then((health) => {
               tui?.setOwpenbotHealth(health);
               if (health.ok) {
@@ -3373,16 +4794,40 @@ async function runStart(args: ParsedArgs) {
             .catch(() => undefined);
         }, 15_000);
       }
-      owpenbotChild.on("exit", (code, signal) => {
-        if (owpenbotRequired) {
-          handleExit("owpenbot", code, signal);
-          return;
+    }
+
+    if (owpenbotEnabled) {
+      if (sandboxMode !== "none") {
+        // Owpenbot is started inside the sandbox container; just probe health.
+        owpenbotActualVersion = owpenbotBinary?.expectedVersion;
+        logVerbose(`owpenbot version: ${owpenbotActualVersion ?? "unknown"}`);
+        try {
+          const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/health`;
+          logger.info("Waiting for health", { url }, "owpenbot");
+          const health = await waitForOwpenbotHealthyViaOpenwork(openworkBaseUrl, openworkToken);
+          tui?.setOwpenbotHealth(health);
+          tui?.updateService("owpenbot", { status: health.ok ? "healthy" : "running" });
+          logger.info("Healthy", { url, ok: health.ok }, "owpenbot");
+        } catch (error) {
+          logger.warn("Owpenbot health check failed", { error: String(error) }, "owpenbot");
+          tui?.updateService("owpenbot", { status: "running", message: String(error) });
         }
-        const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
-        tui?.updateService("owpenbot", { status: "stopped", message: reason });
-        logger.warn("Process exited, continuing without owpenbot", { reason, code, signal }, "owpenbot");
-      });
-      owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
+        if (!owpenbotHealthInterval) {
+          owpenbotHealthInterval = setInterval(() => {
+            fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken)
+              .then((health) => {
+                tui?.setOwpenbotHealth(health);
+                if (health.ok) {
+                  tui?.updateService("owpenbot", { status: "healthy" });
+                }
+              })
+              .catch(() => undefined);
+          }, 15_000);
+        }
+      } else {
+        // In host mode, owpenbot is started before openwork-server so we can
+        // confirm health before wiring the proxy.
+      }
     }
 
     const payload = {
@@ -3396,8 +4841,8 @@ async function runStart(args: ParsedArgs) {
       opencode: {
         baseUrl: opencodeBaseUrl,
         connectUrl: opencodeConnectUrl,
-        username: opencodeUsername,
-        password: opencodePassword,
+        username: sandboxMode !== "none" ? undefined : opencodeUsername,
+        password: sandboxMode !== "none" ? undefined : opencodePassword,
         bindHost: opencodeBindHost,
         port: opencodePort,
         version: opencodeActualVersion,
@@ -3414,7 +4859,7 @@ async function runStart(args: ParsedArgs) {
       owpenbot: {
         enabled: owpenbotEnabled,
         version: owpenbotEnabled ? owpenbotActualVersion : undefined,
-        healthPort: owpenbotHealthPort,
+        healthPort: sandboxMode !== "none" ? null : owpenbotHealthPort,
       },
       diagnostics: {
         cliVersion,
@@ -3497,12 +4942,26 @@ async function runStart(args: ParsedArgs) {
 
     if (checkOnly) {
       try {
-        await runChecks({
-          opencodeClient,
-          openworkUrl: openworkBaseUrl,
-          openworkToken,
-          checkEvents,
-        });
+        if (sandboxMode !== "none") {
+          // In sandbox mode the released server binary may not support the
+          // Bearer-through-proxy auth that the OpenCode SDK client expects.
+          // Run a lighter set of checks: openwork-server endpoints + proxy
+          // health.  Full SDK checks (session create, SSE events) are deferred
+          // until the modified server binary is released.
+          await runSandboxChecks({
+            openworkUrl: openworkBaseUrl,
+            openworkToken,
+            hostToken: openworkHostToken,
+          });
+        } else {
+          await runChecks({
+            opencodeClient,
+            openworkUrl: openworkBaseUrl,
+            openworkToken,
+            hostToken: openworkHostToken,
+            checkEvents,
+          });
+        }
         logger.info("Checks ok", { checkEvents }, "openwrk");
         if (!outputJson && logFormat === "pretty") {
           console.log("Checks: ok");

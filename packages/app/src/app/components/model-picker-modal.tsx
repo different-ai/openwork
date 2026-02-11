@@ -99,6 +99,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       }
 
       if (event.key === "Enter") {
+        if (event.isComposing || event.keyCode === 229) return;
         const idx = activeIndex();
         const opt = props.filteredOptions[idx];
         if (!opt) return;

@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createSignal } from "solid-js";
+import { For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
 import type { OnboardingStep, StartupPreference } from "../types";
 import type { WorkspaceInfo } from "../lib/tauri";
 import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
@@ -66,6 +66,18 @@ export default function OnboardingView(props: OnboardingViewProps) {
   // Translation helper that uses current language from i18n
   const translate = (key: string) => t(key, currentLocale());
   const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
+  const [connectingFallbackVisible, setConnectingFallbackVisible] = createSignal(false);
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (props.onboardingStep !== "connecting") {
+      setConnectingFallbackVisible(false);
+      return;
+    }
+    setConnectingFallbackVisible(false);
+    const timer = window.setTimeout(() => setConnectingFallbackVisible(true), 4_000);
+    onCleanup(() => window.clearTimeout(timer));
+  });
 
   const engineDoctorAvailable = () =>
     props.engineDoctorFound === true && props.engineDoctorSupportsServe === true;
@@ -110,6 +122,24 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   ? translate("onboarding.getting_ready")
                   : translate("onboarding.verifying")}
               </p>
+
+              <Show when={props.error}>
+                <div class="mt-4 rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20 text-left">
+                  {props.error}
+                </div>
+              </Show>
+
+              <Show when={connectingFallbackVisible()}>
+                <div class="mt-5 flex items-center justify-center gap-2">
+                  <Button variant="secondary" onClick={props.onOpenSettings} disabled={props.busy}>
+                    {translate("onboarding.open_settings")}
+                  </Button>
+                  <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy}>
+                    {translate("onboarding.back")}
+                  </Button>
+                </div>
+                <div class="mt-3 text-xs text-gray-10">{translate("onboarding.open_settings_hint")}</div>
+              </Show>
 
             </div>
           </div>
@@ -254,6 +284,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                       onInput={(e) => props.onSetAuthorizedDir(e.currentTarget.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
+                          if (e.isComposing || e.keyCode === 229) return;
                           props.onAddAuthorizedDir();
                         }
                       }}
@@ -490,6 +521,15 @@ export default function OnboardingView(props: OnboardingViewProps) {
                 class="w-full py-3 text-base"
               >
                 {translate("onboarding.remote_workspace_action")}
+              </Button>
+
+              <Button
+                variant="secondary"
+                onClick={props.onOpenSettings}
+                disabled={props.busy}
+                class="w-full"
+              >
+                {translate("onboarding.open_settings")}
               </Button>
 
               <Button variant="ghost" onClick={props.onBackToWelcome} disabled={props.busy} class="w-full">

@@ -14,7 +14,9 @@ const usage = () => {
 };
 
 const isDryRun = args.includes("--dry-run");
-const filtered = args.filter((arg) => arg !== "--dry-run");
+// pnpm forwards args to scripts with an explicit "--" separator; strip it so
+// "pnpm bump:set -- 0.1.21" works as expected.
+const filtered = args.filter((arg) => arg !== "--dry-run" && arg !== "--");
 
 if (!filtered.length) {
   usage();
@@ -57,16 +59,32 @@ const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
   const tauriPath = path.join(REPO_ROOT, "packages", "desktop", "package.json");
   const headlessPath = path.join(REPO_ROOT, "packages", "headless", "package.json");
+  const serverPath = path.join(REPO_ROOT, "packages", "server", "package.json");
+  const owpenbotPath = path.join(REPO_ROOT, "packages", "owpenbot", "package.json");
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
   const headlessData = await readJson(headlessPath);
+  const serverData = await readJson(serverPath);
+  const owpenbotData = await readJson(owpenbotPath);
   uiData.version = nextVersion;
   tauriData.version = nextVersion;
+  // Desktop pins owpenbotVersion for sidecar bundling; keep it aligned.
+  tauriData.owpenbotVersion = nextVersion;
   headlessData.version = nextVersion;
+
+  // Ensure openwrk uses the same openwork-server/owpenwork versions.
+  headlessData.dependencies = headlessData.dependencies ?? {};
+  headlessData.dependencies["openwork-server"] = nextVersion;
+  headlessData.dependencies.owpenwork = nextVersion;
+
+  serverData.version = nextVersion;
+  owpenbotData.version = nextVersion;
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
     await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
     await writeFile(headlessPath, JSON.stringify(headlessData, null, 2) + "\n");
+    await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
+    await writeFile(owpenbotPath, JSON.stringify(owpenbotData, null, 2) + "\n");
   }
 };
 
@@ -76,6 +94,16 @@ const updateCargoToml = async (nextVersion) => {
   const updated = raw.replace(/\bversion\s*=\s*"[^"]+"/m, `version = "${nextVersion}"`);
   if (!isDryRun) {
     await writeFile(filePath, updated);
+    // Regenerate Cargo.lock so it stays in sync with the version bump.
+    const { execFileSync } = await import("node:child_process");
+    try {
+      execFileSync("cargo", ["generate-lockfile"], {
+        cwd: path.join(REPO_ROOT, "packages", "desktop", "src-tauri"),
+        stdio: "ignore",
+      });
+    } catch {
+      // cargo may not be installed (e.g. CI without Rust); skip silently.
+    }
   }
 };
 
@@ -111,6 +139,8 @@ const main = async () => {
           "packages/app/package.json",
           "packages/desktop/package.json",
           "packages/headless/package.json",
+          "packages/server/package.json",
+          "packages/owpenbot/package.json",
           "packages/desktop/src-tauri/Cargo.toml",
           "packages/desktop/src-tauri/tauri.conf.json",
         ],

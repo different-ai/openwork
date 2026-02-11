@@ -93,9 +93,12 @@ test("createSlackAdapter routes DM + app mentions", async () => {
 
   const adapter = createSlackAdapter(
     {
-      slackBotToken: "xoxb-test",
-      slackAppToken: "xapp-test",
+      id: "default",
+      botToken: "xoxb-test",
+      appToken: "xapp-test",
+      enabled: true,
     },
+    { groupsEnabled: false },
     logger,
     async (msg) => inbound.push(msg),
     { WebClient: FakeWebClient, SocketModeClient: FakeSocketModeClient },
@@ -129,8 +132,10 @@ test("createSlackAdapter routes DM + app mentions", async () => {
   assert.deepEqual(socketInstance.acks, ["a1", "a2"]);
   assert.equal(inbound.length, 2);
   assert.equal(inbound[0].channel, "slack");
+  assert.equal(inbound[0].identityId, "default");
   assert.equal(inbound[0].peerId, "D123");
   assert.equal(inbound[0].text, "hi");
+  assert.equal(inbound[1].identityId, "default");
   assert.equal(inbound[1].peerId, "C123|1700000000.000100");
   assert.equal(inbound[1].text, "run tests");
 

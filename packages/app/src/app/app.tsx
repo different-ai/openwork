@@ -45,13 +45,11 @@ import {
   MCP_QUICK_CONNECT,
   MODEL_PREF_KEY,
   SESSION_MODEL_PREF_KEY,
-  SIDEBAR_COLLAPSED_PREF_KEY,
-  SIDEBAR_RIGHT_COLLAPSED_PREF_KEY,
   SUGGESTED_PLUGINS,
   THINKING_PREF_KEY,
   VARIANT_PREF_KEY,
 } from "./constants";
-import { parseMcpServersFromContent } from "./mcp";
+import { parseMcpServersFromContent, validateMcpServerName } from "./mcp";
 import type {
   Client,
   DashboardTab,
@@ -117,7 +115,6 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { createSessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
-import { createTaskCenterStore } from "./context/task-center";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
@@ -135,6 +132,7 @@ import {
   type OwpenbotInfo,
 } from "./lib/tauri";
 import {
+  parseOpenworkWorkspaceIdFromUrl,
   createOpenworkServerClient,
   hydrateOpenworkServerSettingsFromEnv,
   normalizeOpenworkServerUrl,
@@ -150,6 +148,22 @@ import {
 } from "./lib/openwork-server";
 
 export default function App() {
+  // Workspace switch tracing is noisy, so only emit in developer mode.
+  // (OpenWork already has a developer mode toggle in Settings.)
+  const wsDebugEnabled = () => developerMode();
+
+  const wsDebug = (label: string, payload?: unknown) => {
+    if (!wsDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.log(`[WSDBG] ${label}`);
+      } else {
+        console.log(`[WSDBG] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
 
   const location = useLocation();
@@ -168,32 +182,7 @@ export default function App() {
     location.pathname.toLowerCase().startsWith("/proto-v1-ux")
   );
 
-  const dashboardTabs = new Set<DashboardTab>([
-    "scheduled",
-    "task-center",
-    "skills",
-    "plugins",
-    "mcp",
-    "config",
-    "settings",
-  ]);
-
-  const resolveDashboardTab = (value?: string | null) => {
-    const normalized = value?.trim().toLowerCase() ?? "";
-    if (dashboardTabs.has(normalized as DashboardTab)) {
-      return normalized as DashboardTab;
-    }
-    return "scheduled";
-  };
-
-  const initialDashboardTab = () => {
-    const path = location.pathname.toLowerCase();
-    if (!path.startsWith("/dashboard")) return "scheduled";
-    const [, , tabSegment] = path.split("/");
-    return resolveDashboardTab(tabSegment);
-  };
-
-  const [tab, setTabState] = createSignal<DashboardTab>(initialDashboardTab());
+  const [tab, setTabState] = createSignal<DashboardTab>("scheduled");
   const [settingsTab, setSettingsTab] = createSignal<SettingsTab>("general");
 
   const goToDashboard = (nextTab: DashboardTab, options?: { replace?: boolean }) => {
@@ -718,7 +707,8 @@ export default function App() {
 
   const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
     const parts: PartInput[] = [];
-    parts.push({ type: "text", text: draft.text } as TextPartInput);
+    const text = draft.resolvedText ?? draft.text;
+    parts.push({ type: "text", text } as TextPartInput);
 
     const root = workspaceProjectDir().trim();
     const toAbsolutePath = (path: string) => {
@@ -830,7 +820,7 @@ export default function App() {
       attachments: [] as ComposerAttachment[],
       text: fallbackText,
     };
-    const content = resolvedDraft.text.trim();
+    const content = (resolvedDraft.resolvedText ?? resolvedDraft.text).trim();
     if (!content && !resolvedDraft.attachments.length) return;
 
     const c = client();
@@ -931,6 +921,28 @@ export default function App() {
     }
   }
 
+  async function abortSession(sessionID?: string) {
+    const c = client();
+    if (!c) return;
+    const id = (sessionID ?? selectedSessionId() ?? "").trim();
+    if (!id) return;
+    // OpenCode exposes session.abort which interrupts the active prompt/run.
+    // We intentionally don't mutate global busy state here; the SessionView
+    // provides local UX (button disabled + toast) for cancellation.
+    unwrap(await (c.session as any).abort({ sessionID: id }));
+  }
+
+  function retryLastPrompt() {
+    const text = lastPromptSent().trim();
+    if (!text) return;
+    void sendPrompt({
+      mode: "prompt",
+      text,
+      parts: [{ type: "text", text }],
+      attachments: [],
+    });
+  }
+
   async function renameSessionTitle(sessionID: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -954,6 +966,31 @@ export default function App() {
     unwrap(await c.session.delete(params));
     await loadSessions(root || undefined).catch(() => undefined);
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+
+    // If we're currently routed to the deleted session, navigate away immediately.
+    // (Otherwise the route effect can try to re-select a session that no longer exists.)
+    try {
+      const path = location.pathname.toLowerCase();
+      if (path === `/session/${trimmed.toLowerCase()}`) {
+        navigate("/session", { replace: true });
+      }
+    } catch {
+      // ignore
+    }
+
+    // If the deleted session was selected, clear selection so routing can fall back cleanly.
+    if (selectedSessionId() === trimmed) {
+      setSelectedSessionId(null);
+      const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
+      if (activeWorkspace) {
+        const map = readSessionByWorkspace();
+        if (map[activeWorkspace] === trimmed) {
+          const next = { ...map };
+          delete next[activeWorkspace];
+          writeSessionByWorkspace(next);
+        }
+      }
+    }
 
     const nextStatus = { ...sessionStatusById() };
     if (nextStatus[trimmed]) {
@@ -1198,7 +1235,6 @@ export default function App() {
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
 
-
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
   const [mcpAuthEntry, setMcpAuthEntry] = createSignal<(typeof MCP_QUICK_CONNECT)[number] | null>(null);
@@ -1233,6 +1269,8 @@ export default function App() {
   const {
     skills,
     skillsStatus,
+    hubSkills,
+    hubSkillsStatus,
     pluginScope,
     setPluginScope,
     pluginConfig,
@@ -1247,10 +1285,12 @@ export default function App() {
     sidebarPluginStatus,
     isPluginInstalledByName,
     refreshSkills,
+    refreshHubSkills,
     refreshPlugins,
     addPlugin,
     importLocalSkill,
     installSkillCreator,
+    installHubSkill,
     revealSkillsFolder,
     uninstallSkill,
     readSkill,
@@ -1369,10 +1409,6 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = createSignal(false);
-  const toggleSidebarCollapsed = () => setSidebarCollapsed((prev) => !prev);
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = createSignal(false);
-  const toggleRightSidebarCollapsed = () => setRightSidebarCollapsed((prev) => !prev);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
@@ -1456,13 +1492,7 @@ export default function App() {
     openworkServerClient,
     onEngineStable: () => setReloadLastFinishedAtRef(Date.now()),
     engineRuntime,
-  });
-
-  const taskCenterStore = createTaskCenterStore({
-    client,
-    activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
-    createSessionAndOpen,
-    setPrompt,
+    developerMode,
   });
 
   type SidebarWorkspaceSessionsStatus = WorkspaceSessionGroup["status"];
@@ -1552,6 +1582,7 @@ export default function App() {
   };
 
   const sidebarRefreshSeqByWorkspaceId: Record<string, number> = {};
+  const SIDEBAR_SESSION_LIMIT = 200;
   const refreshSidebarWorkspaceSessions = async (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
@@ -1561,8 +1592,20 @@ export default function App() {
 
     // For local workspaces, avoid thrashing UI with errors if the engine is offline.
     if (!config.baseUrl) {
-      setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "idle" }));
-      setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
+      let changed = false;
+      setSidebarSessionStatusByWorkspaceId((prev) => {
+        if (prev[id] === "idle") return prev;
+        changed = true;
+        return { ...prev, [id]: "idle" };
+      });
+      setSidebarSessionErrorByWorkspaceId((prev) => {
+        if ((prev[id] ?? null) === null) return prev;
+        changed = true;
+        return { ...prev, [id]: null };
+      });
+      if (changed) {
+        wsDebug("sidebar:skip", { id, reason: "no-baseUrl" });
+      }
       return;
     }
 
@@ -1573,6 +1616,7 @@ export default function App() {
     setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: null }));
 
     try {
+      const start = Date.now();
       let directory = config.directory;
       let c = createClient(config.baseUrl, directory || undefined, config.auth);
 
@@ -1589,17 +1633,32 @@ export default function App() {
         }
       }
 
-      const list = unwrap(await c.session.list());
+      const queryDirectory = (() => {
+        const trimmed = (directory ?? "").trim();
+        if (!trimmed) return undefined;
+        const unified = trimmed.replace(/\\/g, "/");
+        const withoutTrailing = unified.replace(/\/+$/, "");
+        return withoutTrailing || "/";
+      })();
+
+      // Fetch sessions scoped to the workspace directory to avoid loading the
+      // full global session list for every workspace.
+      const list = unwrap(
+        await c.session.list({ directory: queryDirectory, roots: true, limit: SIDEBAR_SESSION_LIMIT }),
+      );
+      wsDebug("sidebar:list", {
+        id,
+        baseUrl: config.baseUrl,
+        directory: directory || null,
+        queryDirectory: queryDirectory ?? null,
+        count: list.length,
+        ms: Date.now() - start,
+      });
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
 
-      // `session.list()` can return sessions across multiple workspace roots.
-      // The dashboard sidebar shows sessions grouped by workspace, so we must
-      // filter by the workspace root to avoid every local workspace rendering the
-      // same global list.
+      // Defensive client-side filter in case upstream ignores the directory query.
       const root = normalizeDirectoryPath(directory);
-      const filtered = root
-        ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
-        : list;
+      const filtered = root ? list.filter((session) => normalizeDirectoryPath(session.directory) === root) : list;
 
       const sorted = sortSessionsByActivity(filtered);
       const items: SidebarSessionItem[] = sorted.map((session) => ({
@@ -1618,6 +1677,7 @@ export default function App() {
     } catch (error) {
       if (sidebarRefreshSeqByWorkspaceId[id] !== seq) return;
       const message = error instanceof Error ? error.message : safeStringify(error);
+      wsDebug("sidebar:error", { id, message });
       setSidebarSessionStatusByWorkspaceId((prev) => ({ ...prev, [id]: "error" }));
       setSidebarSessionErrorByWorkspaceId((prev) => ({ ...prev, [id]: message }));
     }
@@ -1637,13 +1697,29 @@ export default function App() {
     }
   };
 
-  let lastSidebarRefreshKey = "";
+  const refreshLocalSidebarWorkspaceSessions = async (prioritizeWorkspaceId?: string | null) => {
+    const list = workspaceStore.workspaces().filter((ws) => ws.workspaceType === "local");
+    if (!list.length) return;
+    const prioritize = (prioritizeWorkspaceId ?? "").trim();
+    const ordered = prioritize
+      ? [...list.filter((ws) => ws.id === prioritize), ...list.filter((ws) => ws.id !== prioritize)]
+      : list;
+    for (const ws of ordered) {
+      await refreshSidebarWorkspaceSessions(ws.id);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
+  };
+
+  let lastSidebarEngineKey = "";
+  let lastSidebarWorkspaceKey = "";
   createEffect(() => {
     const engineInfo = workspaceStore.engine();
     const engineBaseUrl = engineInfo?.baseUrl?.trim() ?? "";
     const engineUser = engineInfo?.opencodeUsername?.trim() ?? "";
     const enginePass = engineInfo?.opencodePassword?.trim() ?? "";
     const tokenFallback = openworkServerSettings().token?.trim() ?? "";
+
+    const engineKey = [engineBaseUrl, engineUser, enginePass].join("::");
     const workspaceKey = workspaceStore
       .workspaces()
       .map((ws) => {
@@ -1655,19 +1731,42 @@ export default function App() {
       })
       .join(";");
 
-    const key = [engineBaseUrl, engineUser, enginePass, tokenFallback, workspaceKey].join("::");
-    if (key === lastSidebarRefreshKey) return;
-    lastSidebarRefreshKey = key;
+    const combinedWorkspaceKey = [tokenFallback, workspaceKey].join("::");
+    if (engineKey === lastSidebarEngineKey && combinedWorkspaceKey === lastSidebarWorkspaceKey) return;
+
+    const engineChanged = engineKey !== lastSidebarEngineKey;
+    const workspacesChanged = combinedWorkspaceKey !== lastSidebarWorkspaceKey;
+
+    lastSidebarEngineKey = engineKey;
+    lastSidebarWorkspaceKey = combinedWorkspaceKey;
 
     pruneSidebarSessionState(new Set(workspaceStore.workspaces().map((ws) => ws.id)));
+
+    wsDebug("sidebar:refresh", {
+      engineChanged,
+      workspacesChanged,
+      activeWorkspaceId: workspaceStore.activeWorkspaceId(),
+      engineBaseUrl,
+    });
+
+    // Avoid refreshing remote workspace sessions when only the local engine auth/baseUrl changes.
+    // Remote->local switches commonly change engineBaseUrl, and refreshing every remote workspace
+    // at the same time can trigger large /session responses and UI hangs.
+    if (engineChanged && !workspacesChanged) {
+      void refreshLocalSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+      return;
+    }
+
     void refreshAllSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
   });
 
   createEffect(() => {
     const id = workspaceStore.activeWorkspaceId().trim();
     if (!id) return;
-    const status = sidebarSessionStatusByWorkspaceId()[id];
-    if (status === "ready" || status === "loading") return;
+    const status = sidebarSessionStatusByWorkspaceId()[id] ?? "idle";
+    // Only auto-load once per workspace activation.
+    // If a remote is offline, repeated retries here can create an endless refresh loop.
+    if (status !== "idle") return;
     refreshSidebarWorkspaceSessions(id).catch(() => undefined);
   });
 
@@ -1722,6 +1821,7 @@ export default function App() {
   createEffect(() => {
     const active = workspaceStore.activeWorkspaceDisplay();
     const client = openworkServerClient();
+    const openworkUrl = openworkServerUrl().trim();
 
     if (!client || openworkServerStatus() !== "connected") {
       setOpenworkServerWorkspaceId(null);
@@ -1729,7 +1829,11 @@ export default function App() {
     }
 
     if (active.workspaceType === "remote" && active.remoteType === "openwork") {
-      const storedId = active.openworkWorkspaceId ?? null;
+      const inferredWorkspaceId =
+        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ??
+        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ??
+        parseOpenworkWorkspaceIdFromUrl(openworkUrl);
+      const storedId = active.openworkWorkspaceId?.trim() || inferredWorkspaceId || null;
       if (storedId) {
         setOpenworkServerWorkspaceId(storedId);
         return;
@@ -1740,8 +1844,15 @@ export default function App() {
         try {
           const response = await client.listWorkspaces();
           if (cancelled) return;
-          const match = response.items?.[0];
-          setOpenworkServerWorkspaceId(match?.id ?? null);
+          const items = Array.isArray(response.items) ? response.items : [];
+          const directoryHint = normalizeDirectoryPath(active.directory?.trim() ?? active.path?.trim() ?? "");
+          const match = directoryHint
+            ? items.find((entry) => {
+                const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
+                return Boolean(entryPath && entryPath === directoryHint);
+              })
+            : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ?? items[0];
+          setOpenworkServerWorkspaceId(match?.id ?? response.activeId ?? null);
         } catch {
           if (!cancelled) setOpenworkServerWorkspaceId(null);
         }
@@ -2143,6 +2254,21 @@ export default function App() {
     confirmReset,
     anyActiveRuns,
   } = systemState;
+
+  const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
+  const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
+
+  const getUpdateLastCheckedAt = (state: ReturnType<typeof updateStatus>) => {
+    if (state.state === "checking") return null;
+    return state.lastCheckedAt ?? null;
+  };
+
+  const shouldAutoCheckForUpdates = () => {
+    const state = updateStatus();
+    const lastCheckedAt = getUpdateLastCheckedAt(state);
+    if (!lastCheckedAt) return true;
+    return Date.now() - lastCheckedAt >= UPDATE_AUTO_CHECK_EVERY_MS;
+  };
 
   const [pendingReloadReasons, setPendingReloadReasons] = createSignal<ReloadReason[]>([]);
   const [pendingReloadTrigger, setPendingReloadTrigger] = createSignal<ReloadTrigger | null>(null);
@@ -2646,7 +2772,8 @@ export default function App() {
     setScheduledJobsStatus(null);
 
     try {
-      const jobs = await schedulerListJobs();
+      const root = workspaceStore.activeWorkspaceRoot().trim();
+      const jobs = await schedulerListJobs(root || undefined);
       setScheduledJobs(jobs);
       setScheduledJobsUpdatedAt(Date.now());
     } catch (error) {
@@ -2675,7 +2802,8 @@ export default function App() {
     if (isWindowsPlatform()) {
       throw new Error("Scheduler is not supported on Windows yet.");
     }
-    const job = await schedulerDeleteJob(name);
+    const root = workspaceStore.activeWorkspaceRoot().trim();
+    const job = await schedulerDeleteJob(name, root || undefined);
     setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
     return;
   };
@@ -3363,6 +3491,106 @@ export default function App() {
     }
   }
 
+  async function logoutMcpAuth(name: string) {
+    const isRemoteWorkspace =
+      workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
+      (!isTauriRuntime() && openworkServerStatus() === "connected");
+    const projectDir = workspaceProjectDir().trim();
+
+    const openworkClient = openworkServerClient();
+    let openworkWorkspaceId = openworkServerWorkspaceId();
+    const openworkCapabilities = resolvedOpenworkCapabilities();
+    if (!openworkWorkspaceId && openworkClient && openworkServerStatus() === "connected") {
+      try {
+        const response = await openworkClient.listWorkspaces();
+        const match = response.items?.[0];
+        if (match?.id) {
+          openworkWorkspaceId = match.id;
+          setOpenworkServerWorkspaceId(match.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    const canUseOpenworkServer =
+      openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.mcp?.write;
+
+    if (isRemoteWorkspace && !canUseOpenworkServer) {
+      setMcpStatus("OpenWork server unavailable. MCP auth is read-only.");
+      return;
+    }
+
+    if (!canUseOpenworkServer && !isTauriRuntime()) {
+      setMcpStatus(t("mcp.desktop_required", currentLocale()));
+      return;
+    }
+
+    let activeClient = client();
+    if (!activeClient) {
+      const openworkBaseUrl = openworkServerBaseUrl().trim();
+      const auth = openworkServerAuth();
+      if (openworkBaseUrl && auth.token) {
+        const opencodeUrl = `${openworkBaseUrl.replace(/\/+$/, "")}/opencode`;
+        activeClient = createClient(opencodeUrl, undefined, { token: auth.token, mode: "openwork" });
+        setClient(activeClient);
+      }
+    }
+    if (!activeClient) {
+      setMcpStatus(t("mcp.connect_server_first", currentLocale()));
+      return;
+    }
+
+    let resolvedProjectDir = projectDir;
+    if (!resolvedProjectDir) {
+      try {
+        const pathInfo = unwrap(await activeClient.path.get());
+        const discoveredRaw = normalizeDirectoryPath(pathInfo.directory ?? "");
+        const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
+        if (discovered) {
+          resolvedProjectDir = discovered;
+          workspaceStore.setProjectDir(discovered);
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!resolvedProjectDir) {
+      setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
+      return;
+    }
+
+    const safeName = validateMcpServerName(name);
+    setMcpStatus(null);
+
+    try {
+      if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
+        await openworkClient.logoutMcpAuth(openworkWorkspaceId, safeName);
+      } else {
+        try {
+          await activeClient.mcp.disconnect({ directory: resolvedProjectDir, name: safeName });
+        } catch {
+          // ignore
+        }
+        await activeClient.mcp.auth.remove({ directory: resolvedProjectDir, name: safeName });
+      }
+
+      try {
+        const status = unwrap(await activeClient.mcp.status({ directory: resolvedProjectDir }));
+        setMcpStatuses(status as McpStatusMap);
+      } catch {
+        // ignore
+      }
+
+      await refreshMcpServers();
+      setMcpStatus(t("mcp.logout_success", currentLocale()).replace("{server}", safeName));
+    } catch (e) {
+      setMcpStatus(e instanceof Error ? e.message : t("mcp.logout_failed", currentLocale()));
+    }
+  }
+
   async function createSessionAndOpen() {
     console.log("[DEBUG] createSessionAndOpen");
     console.log("[DEBUG] current baseUrl:", baseUrl());
@@ -3600,32 +3828,6 @@ export default function App() {
           }
         }
 
-        const storedSidebarCollapsed = window.localStorage.getItem(SIDEBAR_COLLAPSED_PREF_KEY);
-        if (storedSidebarCollapsed != null) {
-          try {
-            const parsed = JSON.parse(storedSidebarCollapsed);
-            if (typeof parsed === "boolean") {
-              setSidebarCollapsed(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
-        const storedRightSidebarCollapsed = window.localStorage.getItem(
-          SIDEBAR_RIGHT_COLLAPSED_PREF_KEY
-        );
-        if (storedRightSidebarCollapsed != null) {
-          try {
-            const parsed = JSON.parse(storedRightSidebarCollapsed);
-            if (typeof parsed === "boolean") {
-              setRightSidebarCollapsed(parsed);
-            }
-          } catch {
-            // ignore
-          }
-        }
-
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
           const normalized = normalizeModelVariant(storedVariant);
@@ -3705,15 +3907,6 @@ export default function App() {
         setUpdateEnv(await updaterEnvironment());
       } catch {
         // ignore
-      }
-
-      if (updateAutoCheck()) {
-        const state = updateStatus();
-        const lastCheckedAt =
-          state.state === "idle" ? state.lastCheckedAt : null;
-        if (!lastCheckedAt || Date.now() - lastCheckedAt > 24 * 60 * 60_000) {
-          checkForUpdates({ quiet: true }).catch(() => undefined);
-        }
       }
     }
 
@@ -4018,29 +4211,6 @@ export default function App() {
     }
   });
 
-  // Persist sidebar collapsed state
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(SIDEBAR_COLLAPSED_PREF_KEY, JSON.stringify(sidebarCollapsed()));
-    } catch {
-      // ignore
-    }
-  });
-
-  // Persist right sidebar collapsed state
-  createEffect(() => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(
-        SIDEBAR_RIGHT_COLLAPSED_PREF_KEY,
-        JSON.stringify(rightSidebarCollapsed())
-      );
-    } catch {
-      // ignore
-    }
-  });
-
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
@@ -4068,6 +4238,26 @@ export default function App() {
         // ignore
       }
     }
+  });
+
+  createEffect(() => {
+    if (booting()) return;
+    if (typeof window === "undefined") return;
+    if (!isTauriRuntime()) return;
+    if (!updateAutoCheck()) return;
+
+    const maybeRunAutoUpdateCheck = () => {
+      if (!updateAutoCheck()) return;
+      const state = updateStatus();
+      if (state.state === "checking" || state.state === "downloading") return;
+      if (!shouldAutoCheckForUpdates()) return;
+      checkForUpdates({ quiet: true }).catch(() => undefined);
+    };
+
+    maybeRunAutoUpdateCheck();
+
+    const interval = window.setInterval(maybeRunAutoUpdateCheck, UPDATE_AUTO_CHECK_POLL_MS);
+    onCleanup(() => window.clearInterval(interval));
   });
 
   createEffect(() => {
@@ -4240,12 +4430,12 @@ export default function App() {
     const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
     const skillsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
-        ? "OpenWork server unavailable. Connect to manage skills."
+        ? "OpenWork server unavailable. Add the server URL/token in Config to manage skills."
         : openworkStatus === "limited"
-          ? "OpenWork server needs a token to manage skills."
+          ? "OpenWork server needs a host token to install/update skills. Add it in Config and reconnect."
           : openworkServerCanWriteSkills()
             ? null
-            : "OpenWork server is read-only for skills."
+            : "OpenWork server is read-only for skills. Add a host token in Config to enable installs."
       : null;
     const pluginsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
@@ -4315,6 +4505,7 @@ export default function App() {
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
       activateWorkspace: workspaceStore.activateWorkspace,
+      testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -4330,6 +4521,7 @@ export default function App() {
       openRenameWorkspace,
       editWorkspaceConnection: openWorkspaceConnectionSettings,
       forgetWorkspace: workspaceStore.forgetWorkspace,
+      stopSandbox: workspaceStore.stopSandbox,
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
@@ -4339,34 +4531,21 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
-      taskCenterItemsByStatus: taskCenterStore.itemsByStatus(),
-      taskCenterStatus: taskCenterStore.status(),
-      taskCenterError: taskCenterStore.error(),
-      taskCenterSyncing: taskCenterStore.syncing(),
-      taskCenterLastUpdatedAt: taskCenterStore.lastUpdatedAt(),
-      refreshTaskCenter: (options?: { force?: boolean }) =>
-        taskCenterStore.syncTasks(options).catch((error) => {
-          console.error("Failed to refresh task center:", error);
-        }),
-      startTaskCenterAutomation: taskCenterStore.startAutomation,
-      taskCenterSelectedItem: taskCenterStore.selectedItem?.(),
-      taskCenterTasks: taskCenterStore.tasks?.(),
-      taskCenterCurrentTaskIndex: taskCenterStore.currentTaskIndex?.(),
-      taskCenterExecuting: taskCenterStore.executing?.(),
-      taskCenterSelectItem: taskCenterStore.selectItem,
-      taskCenterExecuteTask: taskCenterStore.executeTaskStep,
-      taskCenterCompleteTask: taskCenterStore.completeTaskStep,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
+      refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
       refreshPlugins: (scopeOverride?: PluginScope) =>
         refreshPlugins(scopeOverride).catch(() => undefined),
       skills: skills(),
       skillsStatus: skillsStatus(),
+      hubSkills: hubSkills(),
+      hubSkillsStatus: hubSkillsStatus(),
       skillsAccessHint,
       canInstallSkillCreator,
       canUseDesktopTools,
       importLocalSkill,
       installSkillCreator,
+      installHubSkill,
       revealSkillsFolder,
       uninstallSkill,
       readSkill,
@@ -4396,10 +4575,6 @@ export default function App() {
       toggleShowThinking: () => setShowThinking((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
-      sidebarCollapsed: sidebarCollapsed(),
-      toggleSidebarCollapsed,
-      rightSidebarCollapsed: rightSidebarCollapsed(),
-      toggleRightSidebarCollapsed,
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       editModelVariant: handleEditModelVariant,
       updateAutoCheck: updateAutoCheck(),
@@ -4439,6 +4614,8 @@ export default function App() {
       setThemeMode,
       pendingPermissions: pendingPermissions(),
       events: events(),
+      workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
+      clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
       repairOpencodeCache,
       cacheRepairBusy: cacheRepairBusy(),
@@ -4457,6 +4634,7 @@ export default function App() {
       setSelectedMcp,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
+      logoutMcpAuth,
       refreshMcpServers,
       showMcpReloadBanner: reloadRequired() && reloadReasons().includes("mcp"),
       mcpReloadBlocked: anyActiveRuns(),
@@ -4511,8 +4689,10 @@ export default function App() {
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
     openworkServerStatus: openworkServerStatus(),
+    openworkServerClient: openworkServerClient(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
+    openworkServerWorkspaceId: openworkServerWorkspaceId(),
     engineInfo: workspaceStore.engine(),
     stopHost,
     headerStatus: headerStatus(),
@@ -4535,6 +4715,9 @@ export default function App() {
     skillsStatus: skillsStatus(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
+    abortSession: abortSession,
+    lastPromptSent: lastPromptSent(),
+    retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
     openRenameWorkspace,
@@ -4598,6 +4781,24 @@ export default function App() {
     error: error(),
   });
 
+  const dashboardTabs = new Set<DashboardTab>([
+    "scheduled",
+    "skills",
+    "plugins",
+    "mcp",
+    "identities",
+    "config",
+    "settings",
+  ]);
+
+  const resolveDashboardTab = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase() ?? "";
+    if (dashboardTabs.has(normalized as DashboardTab)) {
+      return normalized as DashboardTab;
+    }
+    return "scheduled";
+  };
+
   const initialRoute = () => {
     if (typeof window === "undefined") return "/session";
     return "/session";
@@ -4634,6 +4835,16 @@ export default function App() {
         if (fallback) {
           goToSession(fallback, { replace: true });
         }
+        return;
+      }
+
+      // If the URL points at a session that no longer exists (e.g. after deletion),
+      // route back to /session so the app can fall back safely.
+      if (sessionsLoaded() && !sessions().some((session) => session.id === id)) {
+        if (selectedSessionId() === id) {
+          setSelectedSessionId(null);
+        }
+        navigate("/session", { replace: true });
         return;
       }
 
@@ -4775,12 +4986,51 @@ export default function App() {
 
       <CreateWorkspaceModal
         open={workspaceStore.createWorkspaceOpen()}
-        onClose={() => workspaceStore.setCreateWorkspaceOpen(false)}
+        onClose={() => {
+          workspaceStore.setCreateWorkspaceOpen(false);
+          workspaceStore.clearSandboxCreateProgress?.();
+        }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
         onConfirm={(preset, folder) =>
           workspaceStore.createWorkspaceFlow(preset, folder)
         }
+        onConfirmWorker={
+          isTauriRuntime()
+            ? (preset, folder) => workspaceStore.createSandboxFlow(preset, folder)
+            : undefined
+        }
+        workerDisabled={(() => {
+          if (!isTauriRuntime()) return true;
+          const doctor = workspaceStore.sandboxDoctorResult?.();
+          return !doctor?.ready;
+        })()}
+        workerDisabledReason={(() => {
+          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+          const doctor = workspaceStore.sandboxDoctorResult?.();
+          if (doctor?.ready) return null;
+          if (workspaceStore.sandboxDoctorBusy?.()) {
+            return t("dashboard.sandbox_checking_docker", currentLocale());
+          }
+          const message = doctor?.error?.trim();
+          return message || t("dashboard.sandbox_get_ready_desc", currentLocale());
+        })()}
+        workerCtaLabel={t("dashboard.sandbox_get_ready_action", currentLocale())}
+        workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
+        onWorkerCta={async () => {
+          const url = "https://www.docker.com/products/docker-desktop/";
+          if (isTauriRuntime()) {
+            const { openUrl } = await import("@tauri-apps/plugin-opener");
+            await openUrl(url);
+          } else {
+            window.open(url, "_blank", "noopener,noreferrer");
+          }
+        }}
+        workerRetryLabel={t("common.retry", currentLocale())}
+        onWorkerRetry={() => {
+          void workspaceStore.refreshSandboxDoctor?.();
+        }}
         submitting={busy() && busyLabel() === "status.creating_workspace"}
+        submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
       />
 
       <CreateRemoteWorkspaceModal

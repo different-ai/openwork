@@ -5,7 +5,6 @@ import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 import Button from "../components/button";
 import { HardDrive, MessageCircle, PlugZap, RefreshCcw, Shield, Smartphone, X } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
-import { createOpenworkServerClient } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
   OpenworkServerCapabilities,
@@ -18,25 +17,13 @@ import type {
   OpenwrkBinaryInfo,
   OpenwrkStatus,
   OpenworkServerInfo,
+  AppBuildInfo,
   OwpenbotInfo,
-  OwpenbotStatus,
-  OwpenbotPairingRequest,
 } from "../lib/tauri";
 import {
-  getOwpenbotStatus,
-  getOwpenbotStatusDetailed,
-  getOwpenbotQr,
-  setOwpenbotDmPolicy,
-  setOwpenbotAllowlist,
-  setOwpenbotTelegramToken,
-  setOwpenbotSlackTokens,
-  getOwpenbotPairingRequests,
-  approveOwpenbotPairing,
-  denyOwpenbotPairing,
+  appBuildInfo,
   owpenbotRestart,
   owpenbotStop,
-  getOwpenbotGroupsEnabled,
-  setOwpenbotGroupsEnabled,
 } from "../lib/tauri";
 
 export type SettingsViewProps = {
@@ -107,6 +94,8 @@ export type SettingsViewProps = {
   resetModalBusy: boolean;
   pendingPermissions: unknown;
   events: unknown;
+  workspaceDebugEvents: unknown;
+  clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
@@ -120,7 +109,9 @@ export type SettingsViewProps = {
 };
 
 // Owpenbot Settings Component
-export function OwpenbotSettings(props: {
+//
+// Messaging identities + routing are managed in the Identities tab.
+export function OwpenbotSettings(_props: {
   busy: boolean;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
@@ -129,1005 +120,22 @@ export function OwpenbotSettings(props: {
   openworkServerHostInfo: OpenworkServerInfo | null;
   developerMode: boolean;
 }) {
-  const [owpenbotStatus, setOwpenbotStatus] = createSignal<OwpenbotStatus | null>(null);
-  const [qrCode, setQrCode] = createSignal<string | null>(null);
-  const [qrLoading, setQrLoading] = createSignal(false);
-  const [pairingRequests, setPairingRequests] = createSignal<OwpenbotPairingRequest[]>([]);
-  const [telegramToken, setTelegramToken] = createSignal("");
-  const [telegramTokenVisible, setTelegramTokenVisible] = createSignal(false);
-  const [slackBotToken, setSlackBotToken] = createSignal("");
-  const [slackAppToken, setSlackAppToken] = createSignal("");
-  const [slackTokensVisible, setSlackTokensVisible] = createSignal(false);
-  const [newAllowlistEntry, setNewAllowlistEntry] = createSignal("");
-  const [savingPolicy, setSavingPolicy] = createSignal(false);
-  const [savingAllowlist, setSavingAllowlist] = createSignal(false);
-  const [savingTelegram, setSavingTelegram] = createSignal(false);
-  const [savingSlack, setSavingSlack] = createSignal(false);
-  const [groupsEnabled, setGroupsEnabled] = createSignal<boolean | null>(null);
-  const [savingGroups, setSavingGroups] = createSignal(false);
-  const [telegramCheckState, setTelegramCheckState] = createSignal<
-    "idle" | "checking" | "success" | "warning" | "error"
-  >("idle");
-  const [telegramCheckMessage, setTelegramCheckMessage] = createSignal<string | null>(null);
-  const [telegramCheckDetail, setTelegramCheckDetail] = createSignal<string | null>(null);
-  const [slackCheckState, setSlackCheckState] = createSignal<
-    "idle" | "checking" | "success" | "warning" | "error"
-  >("idle");
-  const [slackCheckMessage, setSlackCheckMessage] = createSignal<string | null>(null);
-  const [slackCheckDetail, setSlackCheckDetail] = createSignal<string | null>(null);
-  const openworkServerClient = createMemo(() => {
-    const baseUrl = props.openworkServerUrl.trim();
-    const localBaseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
-    const hostToken = props.openworkServerHostInfo?.hostToken?.trim() ?? "";
-    const clientToken = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
-    const settingsToken = props.openworkServerSettings.token?.trim() ?? "";
-    // Use clientToken only when connecting to the local server; use settingsToken for remote
-    const isLocalServer = localBaseUrl && baseUrl === localBaseUrl;
-    const token = isLocalServer ? (clientToken || settingsToken) : (settingsToken || clientToken);
-    if (!baseUrl || !token || !props.openworkServerWorkspaceId) return null;
-    return createOpenworkServerClient({ baseUrl, token, hostToken: isLocalServer ? hostToken : undefined });
-  });
-  const debugOwpenbot = (message: string, data?: Record<string, unknown>) => {
-    if (!props.developerMode) return;
-    const payload = data ? ` ${JSON.stringify(data)}` : "";
-    console.debug(`[owpenbot] ${message}${payload}`);
-  };
-
-  // Load owpenbot status on mount
-  onMount(async () => {
-    await refreshStatus();
-    await refreshPairingRequests();
-    await refreshGroupsEnabled();
-  });
-
-  const refreshGroupsEnabled = async () => {
-    const enabled = await getOwpenbotGroupsEnabled();
-    setGroupsEnabled(enabled);
-  };
-
-  const handleGroupsToggle = async () => {
-    if (savingGroups()) return;
-    const current = groupsEnabled();
-    const newValue = current === null ? true : !current;
-    setSavingGroups(true);
-    try {
-      const result = await setOwpenbotGroupsEnabled(newValue);
-      if (result.ok) {
-        setGroupsEnabled(newValue);
-      }
-    } finally {
-      setSavingGroups(false);
-    }
-  };
-
-  const refreshStatus = async () => {
-    const status = await getOwpenbotStatus();
-    setOwpenbotStatus(status);
-  };
-
-  const refreshPairingRequests = async () => {
-    const requests = await getOwpenbotPairingRequests();
-    setPairingRequests(requests);
-  };
-
-  const setTelegramFeedback = (
-    state: "checking" | "success" | "warning" | "error",
-    message: string,
-    detail?: string | null,
-  ) => {
-    setTelegramCheckState(state);
-    setTelegramCheckMessage(message);
-    setTelegramCheckDetail(detail ?? null);
-  };
-
-  const resetTelegramFeedback = () => {
-    setTelegramCheckState("idle");
-    setTelegramCheckMessage(null);
-    setTelegramCheckDetail(null);
-  };
-
-  const setSlackFeedback = (
-    state: "checking" | "success" | "warning" | "error",
-    message: string,
-    detail?: string | null,
-  ) => {
-    setSlackCheckState(state);
-    setSlackCheckMessage(message);
-    setSlackCheckDetail(detail ?? null);
-  };
-
-  const resetSlackFeedback = () => {
-    setSlackCheckState("idle");
-    setSlackCheckMessage(null);
-    setSlackCheckDetail(null);
-  };
-
-  const normalizeTelegramError = (raw: string) =>
-    raw.replace(/^Error:\s*/i, "").replace(/^Failed to [^:]+:\s*/i, "").trim();
-
-  const formatTelegramError = (raw: string) => {
-    const cleaned = normalizeTelegramError(raw);
-    const lower = cleaned.toLowerCase();
-    if (lower.includes("401") || lower.includes("unauthorized") || lower.includes("token is wrong")) {
-      return {
-        summary: "Telegram rejected this token.",
-        detail: "Check the token in @BotFather and try again.",
-      };
-    }
-    if (lower.includes("409") || lower.includes("conflict") || lower.includes("getupdates")) {
-      return {
-        summary: "Another owpenbot instance is already running.",
-        detail: "Stop extra instances or revoke the token, then retry.",
-      };
-    }
-    const detail = cleaned.length > 180 ? `${cleaned.slice(0, 177)}...` : cleaned;
-    return {
-      summary: "Telegram check failed.",
-      detail: detail || null,
-    };
-  };
-
-  const normalizeSlackError = (raw: string) =>
-    raw.replace(/^Error:\s*/i, "").replace(/^Failed to [^:]+:\s*/i, "").trim();
-
-  const formatSlackError = (raw: string) => {
-    const cleaned = normalizeSlackError(raw);
-    const lower = cleaned.toLowerCase();
-    if (lower.includes("invalid_auth") || lower.includes("not_authed") || lower.includes("token_revoked")) {
-      return {
-        summary: "Slack rejected these tokens.",
-        detail: "Double-check your xoxb- (bot) and xapp- (app) tokens and try again.",
-      };
-    }
-    if (lower.includes("missing_scope") || lower.includes("scope")) {
-      return {
-        summary: "Slack scopes are missing.",
-        detail: "Ensure your Slack app has the required scopes (chat:write, app_mentions:read, im:history) and is reinstalled.",
-      };
-    }
-    const detail = cleaned.length > 180 ? `${cleaned.slice(0, 177)}...` : cleaned;
-    return {
-      summary: "Slack check failed.",
-      detail: detail || null,
-    };
-  };
-
-  const showQrCode = async () => {
-    setQrLoading(true);
-    try {
-      const qr = await getOwpenbotQr();
-      if (qr) {
-        setQrCode(qr.qr);
-      }
-    } finally {
-      setQrLoading(false);
-    }
-  };
-
-  const hideQrCode = () => {
-    setQrCode(null);
-  };
-
-  const handleDmPolicyChange = async (policy: OwpenbotStatus["whatsapp"]["dmPolicy"]) => {
-    setSavingPolicy(true);
-    try {
-      await setOwpenbotDmPolicy(policy);
-      await refreshStatus();
-    } finally {
-      setSavingPolicy(false);
-    }
-  };
-
-  const handleAddAllowlistEntry = async () => {
-    const entry = newAllowlistEntry().trim();
-    if (!entry) return;
-    
-    setSavingAllowlist(true);
-    try {
-      const current = owpenbotStatus()?.whatsapp.allowFrom || [];
-      if (!current.includes(entry)) {
-        await setOwpenbotAllowlist([...current, entry]);
-        await refreshStatus();
-      }
-      setNewAllowlistEntry("");
-    } finally {
-      setSavingAllowlist(false);
-    }
-  };
-
-  const handleRemoveAllowlistEntry = async (entry: string) => {
-    setSavingAllowlist(true);
-    try {
-      const current = owpenbotStatus()?.whatsapp.allowFrom || [];
-      await setOwpenbotAllowlist(current.filter((e) => e !== entry));
-      await refreshStatus();
-    } finally {
-      setSavingAllowlist(false);
-    }
-  };
-
-  const handleSaveTelegramToken = async () => {
-    const token = telegramToken().trim();
-    if (!token || savingTelegram()) return;
-
-    setSavingTelegram(true);
-    try {
-      const latestStatus = await getOwpenbotStatus();
-      if (latestStatus) {
-        setOwpenbotStatus(latestStatus);
-      }
-      const serverClient = openworkServerClient();
-      const workspaceId = props.openworkServerWorkspaceId;
-      const useRemote = Boolean(serverClient && workspaceId);
-      debugOwpenbot("save-token:start", {
-        connection: props.openworkServerHostInfo ? "local" : "remote",
-        tauri: isTauriRuntime(),
-        useRemote,
-        openworkServerStatus: props.openworkServerStatus,
-        openworkServerUrl: props.openworkServerUrl,
-        openworkServerWorkspaceId: props.openworkServerWorkspaceId,
-        owpenbotHealthPort: latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
-        hasToken: Boolean(
-          (props.openworkServerHostInfo?.clientToken?.trim() || props.openworkServerSettings.token?.trim()) ?? false,
-        ),
-      });
-      if (useRemote && serverClient && workspaceId) {
-        if (props.openworkServerStatus === "disconnected") {
-          setTelegramFeedback(
-            "error",
-            "OpenWork server is not connected.",
-            "Add a server URL and token, then try again.",
-          );
-          debugOwpenbot("save-token:remote-missing-client", {
-            openworkServerStatus: props.openworkServerStatus,
-            openworkServerUrl: props.openworkServerUrl,
-            openworkServerWorkspaceId: props.openworkServerWorkspaceId,
-          });
-          return;
-        }
-
-        setTelegramFeedback("checking", "Saving token on the host...");
-        let remoteResult: Awaited<ReturnType<typeof serverClient.setOwpenbotTelegramToken>> | null = null;
-        try {
-          remoteResult = await serverClient.setOwpenbotTelegramToken(
-            workspaceId,
-            token,
-            latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
-          );
-          debugOwpenbot("save-token:remote-success");
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          setTelegramFeedback("error", "Failed to save token.", detail || null);
-          debugOwpenbot("save-token:remote-error", { detail });
-          return;
-        }
-
-        setTelegramToken("");
-
-        // Keep UI in sync: refresh status after host mutation.
-        await refreshStatus();
-
-        const status = owpenbotStatus();
-        const applyError = remoteResult?.applyError || remoteResult?.telegram?.error || null;
-        const applied = remoteResult?.applied ?? remoteResult?.telegram?.applied;
-        const starting = Boolean(remoteResult?.telegram?.starting);
-
-        if (status) {
-          if (!status.telegram.configured) {
-            setTelegramFeedback(
-              "error",
-              "Token saved, but Telegram is still unconfigured.",
-              applyError || "Check the token and try again.",
-            );
-            return;
-          }
-          if (!status.running) {
-            setTelegramFeedback(
-              "warning",
-              "Token saved, but the messaging bridge is offline.",
-              applyError || "Restart owpenbot (or start OpenWork) to activate Telegram.",
-            );
-            return;
-          }
-          if (!status.telegram.enabled) {
-            setTelegramFeedback(
-              "warning",
-              "Token saved, but Telegram is disabled.",
-              applyError || "Enable the bot or review owpenbot settings.",
-            );
-            return;
-          }
-
-          if (applied === false || starting) {
-            setTelegramFeedback(
-              "warning",
-              "Token saved, but Telegram is still applying.",
-              applyError || "Give it a moment or restart owpenbot.",
-            );
-            return;
-          }
-
-          setTelegramFeedback("success", "Telegram connected.");
-          return;
-        }
-
-        if (applied === false || applyError || starting) {
-          setTelegramFeedback(
-            "warning",
-            "Telegram token saved.",
-            applyError || "Owpenbot will pick this up when it starts.",
-          );
-          return;
-        }
-
-        setTelegramFeedback("success", "Telegram token saved.");
-        return;
-      }
-
-      setTelegramFeedback("checking", "Saving token and verifying Telegram...");
-      const result = await setOwpenbotTelegramToken(token);
-      if (!result.ok) {
-        const detail = normalizeTelegramError(result.stderr || "");
-        setTelegramFeedback("error", "Failed to save token.", detail || null);
-        debugOwpenbot("save-token:local-error", { detail });
-        return;
-      }
-
-      const statusResult = await getOwpenbotStatusDetailed();
-      if (!statusResult.ok) {
-        const parsed = formatTelegramError(statusResult.error || "Failed to verify Telegram.");
-        setOwpenbotStatus(null);
-        setTelegramFeedback("error", parsed.summary, parsed.detail);
-        return;
-      }
-
-      const status = statusResult.status;
-      setOwpenbotStatus(status);
-
-      if (!status.telegram.configured) {
-        setTelegramFeedback("error", "Token saved, but Telegram is still unconfigured.", "Check the token and try again.");
-        return;
-      }
-      if (!status.running) {
-        setTelegramFeedback(
-          "warning",
-          "Token saved, but the messaging bridge is offline.",
-          "Start OpenWork to activate Telegram.",
-        );
-        return;
-      }
-      if (!status.telegram.enabled) {
-        setTelegramFeedback(
-          "warning",
-          "Token saved, but Telegram is disabled.",
-          "Enable the bot or review owpenbot settings.",
-        );
-        return;
-      }
-
-      setTelegramFeedback("success", "Telegram connected.");
-      setTelegramToken("");
-    } finally {
-      setSavingTelegram(false);
-    }
-  };
-
-  const handleSaveSlackTokens = async () => {
-    const botToken = slackBotToken().trim();
-    const appToken = slackAppToken().trim();
-    if (!botToken || !appToken || savingSlack()) return;
-
-    setSavingSlack(true);
-    try {
-      const latestStatus = await getOwpenbotStatus();
-      if (latestStatus) {
-        setOwpenbotStatus(latestStatus);
-      }
-      const serverClient = openworkServerClient();
-      const workspaceId = props.openworkServerWorkspaceId;
-      const useRemote = Boolean(serverClient && workspaceId);
-      debugOwpenbot("save-slack:start", {
-        connection: props.openworkServerHostInfo ? "local" : "remote",
-        tauri: isTauriRuntime(),
-        useRemote,
-        openworkServerStatus: props.openworkServerStatus,
-        openworkServerUrl: props.openworkServerUrl,
-        openworkServerWorkspaceId: props.openworkServerWorkspaceId,
-        owpenbotHealthPort: latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
-      });
-
-      if (useRemote && serverClient && workspaceId) {
-        if (props.openworkServerStatus === "disconnected") {
-          setSlackFeedback(
-            "error",
-            "OpenWork server is not connected.",
-            "Add a server URL and token, then try again.",
-          );
-          debugOwpenbot("save-slack:remote-missing-client", {
-            openworkServerStatus: props.openworkServerStatus,
-            openworkServerUrl: props.openworkServerUrl,
-            openworkServerWorkspaceId: props.openworkServerWorkspaceId,
-          });
-          return;
-        }
-
-        setSlackFeedback("checking", "Saving tokens on the host...");
-        let remoteResult: Awaited<ReturnType<typeof serverClient.setOwpenbotSlackTokens>> | null = null;
-        try {
-          remoteResult = await serverClient.setOwpenbotSlackTokens(
-            workspaceId,
-            botToken,
-            appToken,
-            latestStatus?.healthPort ?? owpenbotStatus()?.healthPort ?? null,
-          );
-          debugOwpenbot("save-slack:remote-success");
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          setSlackFeedback("error", "Failed to save tokens.", detail || null);
-          debugOwpenbot("save-slack:remote-error", { detail });
-          return;
-        }
-
-        setSlackBotToken("");
-        setSlackAppToken("");
-
-        await refreshStatus();
-
-        const status = owpenbotStatus();
-        const applyError = remoteResult?.applyError || remoteResult?.slack?.error || null;
-        const applied = remoteResult?.applied ?? remoteResult?.slack?.applied;
-        const starting = Boolean(remoteResult?.slack?.starting);
-
-        if (status) {
-          if (!status.slack.configured) {
-            setSlackFeedback(
-              "error",
-              "Tokens saved, but Slack is still unconfigured.",
-              applyError || "Check the tokens and try again.",
-            );
-            return;
-          }
-          if (!status.running) {
-            setSlackFeedback(
-              "warning",
-              "Tokens saved, but the messaging bridge is offline.",
-              applyError || "Restart owpenbot (or start OpenWork) to activate Slack.",
-            );
-            return;
-          }
-          if (!status.slack.enabled) {
-            setSlackFeedback(
-              "warning",
-              "Tokens saved, but Slack is disabled.",
-              applyError || "Enable the bot or review owpenbot settings.",
-            );
-            return;
-          }
-
-          if (applied === false || starting) {
-            setSlackFeedback(
-              "warning",
-              "Tokens saved, but Slack is still applying.",
-              applyError || "Give it a moment or restart owpenbot.",
-            );
-            return;
-          }
-
-          setSlackFeedback("success", "Slack connected.");
-          return;
-        }
-
-        if (applied === false || applyError || starting) {
-          setSlackFeedback(
-            "warning",
-            "Slack tokens saved.",
-            applyError || "Owpenbot will pick this up when it starts.",
-          );
-          return;
-        }
-
-        setSlackFeedback("success", "Slack tokens saved.");
-        return;
-      }
-
-      setSlackFeedback("checking", "Saving tokens and verifying Slack...");
-      const result = await setOwpenbotSlackTokens(botToken, appToken);
-      if (!result.ok) {
-        const detail = normalizeSlackError(result.stderr || "");
-        setSlackFeedback("error", "Failed to save tokens.", detail || null);
-        debugOwpenbot("save-slack:local-error", { detail });
-        return;
-      }
-
-      const statusResult = await getOwpenbotStatusDetailed();
-      if (!statusResult.ok) {
-        const parsed = formatSlackError(statusResult.error || "Failed to verify Slack.");
-        setOwpenbotStatus(null);
-        setSlackFeedback("error", parsed.summary, parsed.detail);
-        return;
-      }
-
-      const status = statusResult.status;
-      setOwpenbotStatus(status);
-
-      if (!status.slack.configured) {
-        setSlackFeedback(
-          "error",
-          "Tokens saved, but Slack is still unconfigured.",
-          "Check the tokens and try again.",
-        );
-        return;
-      }
-      if (!status.running) {
-        setSlackFeedback(
-          "warning",
-          "Tokens saved, but the messaging bridge is offline.",
-          "Start OpenWork to activate Slack.",
-        );
-        return;
-      }
-      if (!status.slack.enabled) {
-        setSlackFeedback(
-          "warning",
-          "Tokens saved, but Slack is disabled.",
-          "Enable the bot or review owpenbot settings.",
-        );
-        return;
-      }
-
-      setSlackFeedback("success", "Slack connected.");
-      setSlackBotToken("");
-      setSlackAppToken("");
-    } finally {
-      setSavingSlack(false);
-    }
-  };
-
-  const handleApprovePairing = async (code: string) => {
-    await approveOwpenbotPairing(code);
-    await refreshPairingRequests();
-  };
-
-  const handleDenyPairing = async (code: string) => {
-    await denyOwpenbotPairing(code);
-    await refreshPairingRequests();
-  };
-
-  const bridgeStatusStyle = createMemo(() => {
-    if (owpenbotStatus()?.running) {
-      return "bg-green-7/10 text-green-11 border-green-7/20";
-    }
-    return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-  });
-
-  const whatsappStatusStyle = createMemo(() => {
-    if (owpenbotStatus()?.whatsapp.linked) {
-      return "text-green-11";
-    }
-    return "text-gray-9";
-  });
-
-  const telegramStatusStyle = createMemo(() => {
-    if (owpenbotStatus()?.telegram.configured) {
-      return "text-green-11";
-    }
-    return "text-gray-9";
-  });
-
-  const slackStatusStyle = createMemo(() => {
-    if (owpenbotStatus()?.slack.configured) {
-      return "text-green-11";
-    }
-    return "text-gray-9";
-  });
-
-  const telegramCheckStyle = createMemo(() => {
-    switch (telegramCheckState()) {
-      case "success":
-        return "bg-green-7/10 text-green-11 border-green-7/20";
-      case "warning":
-        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-      case "error":
-        return "bg-red-7/10 text-red-11 border-red-7/20";
-      case "checking":
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-      default:
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    }
-  });
-
-  const slackCheckStyle = createMemo(() => {
-    switch (slackCheckState()) {
-      case "success":
-        return "bg-green-7/10 text-green-11 border-green-7/20";
-      case "warning":
-        return "bg-amber-7/10 text-amber-11 border-amber-7/20";
-      case "error":
-        return "bg-red-7/10 text-red-11 border-red-7/20";
-      case "checking":
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-      default:
-        return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    }
-  });
-
-  const dmPolicyOptions: { value: OwpenbotStatus["whatsapp"]["dmPolicy"]; label: string; description: string }[] = [
-    { value: "pairing", label: "Pairing", description: "Requires approval for new contacts" },
-    { value: "allowlist", label: "Allowlist", description: "Only specific numbers can message" },
-    { value: "open", label: "Open", description: "Anyone can message (public)" },
-    { value: "disabled", label: "Disabled", description: "DMs are disabled" },
-  ];
-
   return (
-    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-      <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div class="flex items-center gap-2">
-            <MessageCircle size={16} class="text-gray-11" />
-            <div class="text-sm font-medium text-gray-12">Messaging Bridge</div>
-          </div>
-          <div class="text-xs text-gray-10 mt-1">Connect Slack, Telegram, and WhatsApp to chat with your AI.</div>
-        </div>
-        <div class={`text-xs px-2 py-1 rounded-full border ${bridgeStatusStyle()}`}>
-          {owpenbotStatus()?.running ? "Running" : "Offline"}
-        </div>
+    <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
+      <div class="flex items-center gap-2">
+        <MessageCircle size={16} class="text-gray-11" />
+        <div class="text-sm font-medium text-gray-12">Messaging</div>
       </div>
-
-      {/* Telegram Section */}
-      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full bg-blue-7/20 flex items-center justify-center">
-              <span class="text-xs">T</span>
-            </div>
-            <span class="text-sm font-medium text-gray-12">Telegram</span>
-          </div>
-          <span class={`text-xs ${telegramStatusStyle()}`}>
-            {owpenbotStatus()?.telegram.configured ? "Configured" : "Not configured"}
-          </span>
-        </div>
-
-        <div class="space-y-2">
-          <div class="text-xs font-medium text-gray-11">Bot Token</div>
-          <div class="flex gap-2">
-            <div class="flex-1 flex items-center gap-2">
-              <input
-                type={telegramTokenVisible() ? "text" : "password"}
-                value={telegramToken()}
-                onInput={(e) => {
-                  setTelegramToken(e.currentTarget.value);
-                  if (telegramCheckState() !== "idle") {
-                    resetTelegramFeedback();
-                  }
-                }}
-                placeholder="Paste token from @BotFather"
-                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-                disabled={props.busy || savingTelegram()}
-              />
-              <Button
-                variant="outline"
-                class="text-xs h-9 px-3 shrink-0"
-                onClick={() => setTelegramTokenVisible((prev) => !prev)}
-              >
-                {telegramTokenVisible() ? "Hide" : "Show"}
-              </Button>
-            </div>
-            <Button
-              variant="secondary"
-              class="text-xs h-9 px-3"
-              onClick={handleSaveTelegramToken}
-              disabled={props.busy || savingTelegram() || !telegramToken().trim()}
-            >
-              {savingTelegram() ? "Saving..." : "Save"}
-            </Button>
-          </div>
-          <Show when={telegramCheckState() !== "idle"}>
-            <div class={`text-[11px] px-2 py-1 rounded-lg border ${telegramCheckStyle()}`}>
-              {telegramCheckMessage()}
-            </div>
-            <Show when={telegramCheckDetail()}>
-              <div class="text-[11px] text-gray-9">{telegramCheckDetail()}</div>
-            </Show>
-          </Show>
-          <div class="text-[11px] text-gray-8">
-            Create a bot with <span class="font-mono">@BotFather</span> on Telegram and paste the token here.
-          </div>
-        </div>
-
-        <Show when={owpenbotStatus()?.telegram.configured}>
-          <div class="flex items-center justify-between bg-gray-2/50 rounded-lg p-3">
-            <div class="text-xs text-gray-11">
-              Bot is {owpenbotStatus()?.telegram.enabled ? "enabled" : "disabled"}
-            </div>
-          </div>
-        </Show>
-      </div>
-
-      {/* Slack Section */}
-      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full bg-rose-7/20 flex items-center justify-center">
-              <span class="text-xs">S</span>
-            </div>
-            <span class="text-sm font-medium text-gray-12">Slack</span>
-          </div>
-          <span class={`text-xs ${slackStatusStyle()}`}>
-            {owpenbotStatus()?.slack.configured ? "Configured" : "Not configured"}
-          </span>
-        </div>
-
-        <div class="space-y-2">
-          <div class="text-xs font-medium text-gray-11">Bot Token</div>
-          <div class="flex gap-2">
-            <div class="flex-1 flex items-center gap-2">
-              <input
-                type={slackTokensVisible() ? "text" : "password"}
-                value={slackBotToken()}
-                onInput={(e) => {
-                  setSlackBotToken(e.currentTarget.value);
-                  if (slackCheckState() !== "idle") {
-                    resetSlackFeedback();
-                  }
-                }}
-                placeholder="xoxb-..."
-                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-                disabled={props.busy || savingSlack()}
-              />
-              <Button
-                variant="outline"
-                class="text-xs h-9 px-3 shrink-0"
-                onClick={() => setSlackTokensVisible((prev) => !prev)}
-              >
-                {slackTokensVisible() ? "Hide" : "Show"}
-              </Button>
-            </div>
-          </div>
-
-          <div class="text-xs font-medium text-gray-11">App Token</div>
-          <div class="flex gap-2">
-            <input
-              type={slackTokensVisible() ? "text" : "password"}
-              value={slackAppToken()}
-              onInput={(e) => {
-                setSlackAppToken(e.currentTarget.value);
-                if (slackCheckState() !== "idle") {
-                  resetSlackFeedback();
-                }
-              }}
-              placeholder="xapp-..."
-              class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-              disabled={props.busy || savingSlack()}
-            />
-            <Button
-              variant="secondary"
-              class="text-xs h-9 px-3"
-              onClick={handleSaveSlackTokens}
-              disabled={props.busy || savingSlack() || !slackBotToken().trim() || !slackAppToken().trim()}
-            >
-              {savingSlack() ? "Saving..." : "Save"}
-            </Button>
-          </div>
-
-          <Show when={slackCheckState() !== "idle"}>
-            <div class={`text-[11px] px-2 py-1 rounded-lg border ${slackCheckStyle()}`}>
-              {slackCheckMessage()}
-            </div>
-            <Show when={slackCheckDetail()}>
-              <div class="text-[11px] text-gray-9">{slackCheckDetail()}</div>
-            </Show>
-          </Show>
-
-          <div class="text-[11px] text-gray-8">
-            Enable Socket Mode in your Slack app and paste <span class="font-mono">xoxb-</span> and{' '}
-            <span class="font-mono">xapp-</span> tokens here.
-          </div>
-        </div>
-
-        <Show when={owpenbotStatus()?.slack.configured}>
-          <div class="flex items-center justify-between bg-gray-2/50 rounded-lg p-3">
-            <div class="text-xs text-gray-11">
-              Bot is {owpenbotStatus()?.slack.enabled ? "enabled" : "disabled"}
-            </div>
-          </div>
-        </Show>
-      </div>
-
-      {/* WhatsApp Section */}
-      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-4">
-        <div class="flex items-center justify-between">
-          <div class="flex items-center gap-2">
-            <div class="w-6 h-6 rounded-full bg-green-7/20 flex items-center justify-center">
-              <span class="text-xs">W</span>
-            </div>
-            <span class="text-sm font-medium text-gray-12">WhatsApp</span>
-            <span class="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-7/10 text-amber-11 border border-amber-7/30">
-              Alpha
-            </span>
-          </div>
-          <span class={`text-xs ${whatsappStatusStyle()}`}>
-            {owpenbotStatus()?.whatsapp.linked ? "Linked" : "Not linked"}
-          </span>
-        </div>
-
-        <div class="text-[11px] text-amber-11">
-          Help wanted: WhatsApp linking is unstable right now. Contributors welcome.
-        </div>
-
-        {/* QR Code Section */}
-        <Show when={!owpenbotStatus()?.whatsapp.linked}>
-          <div class="space-y-3">
-            <Show
-              when={qrCode()}
-              fallback={
-                <Button
-                  variant="secondary"
-                  class="w-full"
-                  onClick={showQrCode}
-                  disabled={props.busy || qrLoading()}
-                >
-                  {qrLoading() ? "Loading QR..." : "Show QR Code to Link"}
-                </Button>
-              }
-            >
-              <div class="relative">
-                <div class="flex justify-center p-4 bg-dls-surface rounded-lg">
-                  <img
-                    src={`data:image/png;base64,${qrCode()}`}
-                    alt="WhatsApp QR Code"
-                    class="w-48 h-48"
-                  />
-                </div>
-                <button
-                  class="absolute top-2 right-2 p-1 rounded-full bg-gray-12/80 text-gray-1 hover:bg-gray-12"
-                  onClick={hideQrCode}
-                >
-                  <X size={14} />
-                </button>
-                <div class="text-xs text-gray-10 text-center mt-2">
-                  Scan with WhatsApp to link your account
-                </div>
-              </div>
-            </Show>
-          </div>
-        </Show>
-
-        {/* DM Policy */}
-        <div class="space-y-2">
-          <div class="text-xs font-medium text-gray-11">DM Policy</div>
-          <div class="grid grid-cols-2 gap-2">
-            <For each={dmPolicyOptions}>
-              {(option) => (
-                <button
-                  class={`px-3 py-2 rounded-lg text-left transition-colors ${
-                    owpenbotStatus()?.whatsapp.dmPolicy === option.value
-                      ? "bg-gray-4 border border-gray-7"
-                      : "bg-gray-2/60 border border-gray-6/50 hover:bg-gray-3"
-                  }`}
-                  onClick={() => handleDmPolicyChange(option.value)}
-                  disabled={props.busy || savingPolicy()}
-                >
-                  <div class="text-xs font-medium text-gray-12">{option.label}</div>
-                  <div class="text-[11px] text-gray-10">{option.description}</div>
-                </button>
-              )}
-            </For>
-          </div>
-        </div>
-
-        {/* Allowlist Editor */}
-        <Show when={owpenbotStatus()?.whatsapp.dmPolicy === "allowlist"}>
-          <div class="space-y-2">
-            <div class="text-xs font-medium text-gray-11">Allowed Numbers</div>
-            <div class="flex gap-2">
-              <input
-                type="text"
-                value={newAllowlistEntry()}
-                onInput={(e) => setNewAllowlistEntry(e.currentTarget.value)}
-                placeholder="+1234567890"
-                class="flex-1 rounded-lg bg-gray-2/60 px-3 py-2 text-sm text-gray-12 placeholder:text-gray-10 shadow-[0_0_0_1px_rgba(255,255,255,0.08)] focus:outline-none focus:ring-2 focus:ring-gray-6/20"
-                disabled={props.busy || savingAllowlist()}
-              />
-              <Button
-                variant="secondary"
-                class="text-xs h-9 px-3"
-                onClick={handleAddAllowlistEntry}
-                disabled={props.busy || savingAllowlist() || !newAllowlistEntry().trim()}
-              >
-                Add
-              </Button>
-            </div>
-            <Show when={(owpenbotStatus()?.whatsapp.allowFrom || []).length > 0}>
-              <div class="flex flex-wrap gap-2 mt-2">
-                <For each={owpenbotStatus()?.whatsapp.allowFrom || []}>
-                  {(entry) => (
-                    <span class="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-gray-3 border border-gray-6 text-xs text-gray-12">
-                      {entry}
-                      <button
-                        class="p-0.5 rounded hover:bg-gray-4"
-                        onClick={() => handleRemoveAllowlistEntry(entry)}
-                        disabled={props.busy || savingAllowlist()}
-                      >
-                        <X size={12} class="text-gray-10" />
-                      </button>
-                    </span>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </div>
-        </Show>
-      </div>
-
-      {/* Groups Settings */}
-      <div class="bg-gray-1 rounded-xl border border-gray-6 p-4 space-y-3">
-        <div class="flex items-center justify-between">
-          <div>
-            <div class="text-sm font-medium text-gray-12">Group @Mentions</div>
-            <div class="text-xs text-gray-10">Respond when @mentioned in Telegram groups</div>
-          </div>
-          <Button
-            variant={groupsEnabled() ? "secondary" : "outline"}
-            class="text-xs h-8 py-0 px-3"
-            onClick={handleGroupsToggle}
-            disabled={props.busy || savingGroups() || groupsEnabled() === null}
-          >
-            {savingGroups() ? "Saving..." : groupsEnabled() ? "Enabled" : "Disabled"}
-          </Button>
-        </div>
-      </div>
-
-      {/* Pairing Requests */}
-      <Show when={pairingRequests().length > 0}>
-        <div class="bg-gray-1 rounded-xl border border-amber-7/30 p-4 space-y-3">
-          <div class="flex items-center gap-2">
-            <div class="w-2 h-2 rounded-full bg-amber-9 animate-pulse" />
-            <span class="text-sm font-medium text-gray-12">Pending Pairing Requests</span>
-          </div>
-          <div class="divide-y divide-gray-6/50">
-            <For each={pairingRequests()}>
-              {(request) => (
-                <div class="flex items-center justify-between py-3 first:pt-0 last:pb-0">
-                  <div class="min-w-0">
-                    <div class="text-sm text-gray-12 truncate">{request.peerId}</div>
-                    <div class="text-[11px] text-gray-9">
-                      {request.platform === "whatsapp" ? "WhatsApp" : "Telegram"} · {formatRelativeTime(request.timestamp)}
-                    </div>
-                  </div>
-                  <div class="flex items-center gap-2 shrink-0">
-                    <Button
-                      variant="secondary"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={() => handleApprovePairing(request.code)}
-                      disabled={props.busy}
-                    >
-                      Approve
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      class="text-xs h-8 py-0 px-3"
-                      onClick={() => handleDenyPairing(request.code)}
-                      disabled={props.busy}
-                    >
-                      Deny
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </For>
-          </div>
-        </div>
-      </Show>
-
-      {/* Info Note */}
-      <div class="text-[11px] text-gray-8">
-        Messaging bridge connects your Slack, WhatsApp, and Telegram to OpenCode. Messages are processed locally.
+      <div class="text-xs text-gray-10">
+        Manage Telegram/Slack identities and bindings in the <span class="font-medium text-gray-12">Identities</span> tab.
       </div>
     </div>
   );
 }
 
+
 export default function SettingsView(props: SettingsViewProps) {
+  const [buildInfo, setBuildInfo] = createSignal<AppBuildInfo | null>(null);
   const updateState = () => props.updateStatus?.state ?? "idle";
   const updateNotes = () => props.updateStatus?.notes ?? null;
   const updateVersion = () => props.updateStatus?.version ?? null;
@@ -1528,6 +536,11 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const appVersionLabel = () => (props.appVersion ? `v${props.appVersion}` : "—");
+  const appCommitLabel = () => {
+    const sha = buildInfo()?.gitSha?.trim();
+    if (!sha) return "—";
+    return sha.length > 12 ? sha.slice(0, 12) : sha;
+  };
   const opencodeVersionLabel = () => {
     const fromOpenwrk = formatOpenwrkBinaryVersion(props.openwrkStatus?.binaries?.opencode ?? null);
     if (fromOpenwrk !== "—") return fromOpenwrk;
@@ -1536,6 +549,11 @@ export default function SettingsView(props: SettingsViewProps) {
   const openworkServerVersionLabel = () => props.openworkServerDiagnostics?.version ?? "—";
   const owpenbotVersionLabel = () => props.owpenbotInfo?.version ?? "—";
   const openwrkVersionLabel = () => props.openwrkStatus?.cliVersion ?? "—";
+
+  onMount(() => {
+    if (!isTauriRuntime()) return;
+    void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
+  });
 
   const formatUptime = (uptimeMs?: number | null) => {
     if (!uptimeMs) return "—";
@@ -2080,15 +1098,16 @@ export default function SettingsView(props: SettingsViewProps) {
                         <div class="text-sm font-medium text-gray-12">Versions</div>
                         <div class="text-xs text-gray-10">Sidecar + desktop build info.</div>
                       </div>
-                      <div class="space-y-1">
-                        <div class="text-[11px] text-gray-7 font-mono truncate">Desktop app: {appVersionLabel()}</div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">Openwrk: {openwrkVersionLabel()}</div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">
-                          OpenWork server: {openworkServerVersionLabel()}
+                        <div class="space-y-1">
+                          <div class="text-[11px] text-gray-7 font-mono truncate">Desktop app: {appVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">Commit: {appCommitLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">Openwrk: {openwrkVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">
+                            OpenWork server: {openworkServerVersionLabel()}
+                          </div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">Owpenbot: {owpenbotVersionLabel()}</div>
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate">Owpenbot: {owpenbotVersionLabel()}</div>
-                      </div>
                     </div>
 
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
@@ -2191,6 +1210,29 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                         <Show when={props.opencodeConnectStatus?.reason}>
                           <div class="text-[11px] text-gray-7">Reason: {props.opencodeConnectStatus?.reason}</div>
+                        </Show>
+                        <Show when={props.opencodeConnectStatus?.metrics}>
+                          {(metrics) => (
+                            <div class="pt-1 space-y-1 text-[11px] text-gray-7">
+                              <Show when={metrics().healthyMs != null}>
+                                <div>Healthy: {Math.round(metrics().healthyMs as number)}ms</div>
+                              </Show>
+                              <Show when={metrics().loadSessionsMs != null}>
+                                <div>Load sessions: {Math.round(metrics().loadSessionsMs as number)}ms</div>
+                              </Show>
+                              <Show when={metrics().pendingPermissionsMs != null}>
+                                <div>
+                                  Pending permissions: {Math.round(metrics().pendingPermissionsMs as number)}ms
+                                </div>
+                              </Show>
+                              <Show when={metrics().providersMs != null}>
+                                <div>Providers: {Math.round(metrics().providersMs as number)}ms</div>
+                              </Show>
+                              <Show when={metrics().totalMs != null}>
+                                <div>Total: {Math.round(metrics().totalMs as number)}ms</div>
+                              </Show>
+                            </div>
+                          )}
                         </Show>
                       </div>
                       <Show when={props.opencodeConnectStatus?.error}>
@@ -2341,7 +1383,32 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div>Skills: {formatCapability(caps().skills)}</div>
                           <div>Plugins: {formatCapability(caps().plugins)}</div>
                           <div>MCP: {formatCapability(caps().mcp)}</div>
+                          <div>Commands: {formatCapability(caps().commands)}</div>
                           <div>Config: {formatCapability(caps().config)}</div>
+                          <div>Proxy (Owpenbot): {caps().proxy?.owpenbot ? "enabled" : "disabled"}</div>
+                          <div>
+                            Browser tools: {(() => {
+                              const browser = caps().toolProviders?.browser;
+                              if (!browser?.enabled) return "disabled";
+                              return `${browser.mode} · ${browser.placement}`;
+                            })()}
+                          </div>
+                          <div>
+                            File tools: {(() => {
+                              const files = caps().toolProviders?.files;
+                              if (!files) return "Unavailable";
+                              const parts = [files.injection ? "inbox on" : "inbox off", files.outbox ? "outbox on" : "outbox off"];
+                              return parts.join(" · ");
+                            })()}
+                          </div>
+                          <div>
+                            Sandbox: {(() => {
+                              const sandbox = caps().sandbox;
+                              return sandbox
+                                ? `${sandbox.backend} (${sandbox.enabled ? "on" : "off"})`
+                                : "Unavailable";
+                            })()}
+                          </div>
                         </div>
                       )}
                     </Show>
@@ -2360,6 +1427,23 @@ export default function SettingsView(props: SettingsViewProps) {
                         {props.safeStringify(props.events)}
                       </pre>
                     </div>
+                  </div>
+
+                  <div class="bg-gray-1 border border-gray-6 rounded-xl p-4">
+                    <div class="flex items-center justify-between gap-3 mb-2">
+                      <div class="text-xs text-gray-10">Workspace debug events</div>
+                      <Button
+                        variant="outline"
+                        class="text-xs h-7 py-0 px-2 shrink-0"
+                        onClick={props.clearWorkspaceDebugEvents}
+                        disabled={props.busy}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                    <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto">
+                      {props.safeStringify(props.workspaceDebugEvents)}
+                    </pre>
                   </div>
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">

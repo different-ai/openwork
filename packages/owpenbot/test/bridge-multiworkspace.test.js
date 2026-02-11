@@ -32,7 +32,9 @@ test("bridge: routes sessions per peer directory binding", async () => {
   const prompted = [];
 
   const slackAdapter = {
+    key: "slack:default",
     name: "slack",
+    identityId: "default",
     maxTextLength: 39_000,
     async start() {},
     async stop() {},
@@ -66,45 +68,35 @@ test("bridge: routes sessions per peer directory binding", async () => {
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: wsA,
-      telegramEnabled: false,
-      whatsappEnabled: false,
-      slackEnabled: false,
-      whatsappAuthDir: dir,
-      whatsappAccountId: "default",
-      whatsappDmPolicy: "disabled",
-      whatsappAllowFrom: new Set(),
-      whatsappSelfChatMode: false,
+      telegramBots: [],
+      slackApps: [],
       dataDir: dir,
       dbPath,
       logFile: path.join(dir, "owpenbot.log"),
-      allowlist: {
-        telegram: new Set(),
-        whatsapp: new Set(),
-        slack: new Set(),
-      },
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",
       toolOutputLimit: 1200,
+      healthPort: undefined,
       logLevel: "silent",
     },
     createLoggerStub(),
     undefined,
     {
       clientFactory,
-      adapters: new Map([["slack", slackAdapter]]),
+      adapters: new Map([["slack:default", slackAdapter]]),
       disableEventStream: true,
       disableHealthServer: true,
     },
   );
 
   // Bind peer A to ws-a
-  await bridge.dispatchInbound({ channel: "slack", peerId: "D-A", text: `/dir ${wsA}`, raw: {} });
-  await bridge.dispatchInbound({ channel: "slack", peerId: "D-A", text: "ping", raw: {} });
+  await bridge.dispatchInbound({ channel: "slack", identityId: "default", peerId: "D-A", text: `/dir ${wsA}`, raw: {} });
+  await bridge.dispatchInbound({ channel: "slack", identityId: "default", peerId: "D-A", text: "ping", raw: {} });
 
   // Bind peer B to ws-b
-  await bridge.dispatchInbound({ channel: "slack", peerId: "D-B", text: `/dir ${wsB}`, raw: {} });
-  await bridge.dispatchInbound({ channel: "slack", peerId: "D-B", text: "ping", raw: {} });
+  await bridge.dispatchInbound({ channel: "slack", identityId: "default", peerId: "D-B", text: `/dir ${wsB}`, raw: {} });
+  await bridge.dispatchInbound({ channel: "slack", identityId: "default", peerId: "D-B", text: "ping", raw: {} });
 
   // Ensure prompts were routed to different directories
   assert.ok(prompted.includes(wsA));

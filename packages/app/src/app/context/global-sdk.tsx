@@ -36,22 +36,41 @@ export function GlobalSDKProvider(props: ParentProps) {
 
   createEffect(() => {
     const baseUrl = server.url;
+    const isHealthy = server.healthy() === true;
+
+    const token = (() => {
+      if (typeof window === "undefined") return "";
+      try {
+        return (window.localStorage.getItem("openwork.server.token") ?? "").trim();
+      } catch {
+        return "";
+      }
+    })();
+    const headers = token && baseUrl.includes("/opencode") ? { Authorization: `Bearer ${token}` } : undefined;
     setUrl(baseUrl);
 
-    const abort = new AbortController();
-    const eventClient = createOpencodeClient({
-      baseUrl,
-      signal: abort.signal,
-      fetch: platform.fetch,
-    });
-
+    // Always keep the request client in sync with the active URL.
     setClient(
       createOpencodeClient({
         baseUrl,
+        headers,
         fetch: platform.fetch,
         throwOnError: true,
       }),
     );
+
+    // Avoid silent retry loops (SSE reconnects) when the dependency is unavailable.
+    if (!baseUrl || !isHealthy) {
+      return;
+    }
+
+    const abort = new AbortController();
+    const eventClient = createOpencodeClient({
+      baseUrl,
+      headers,
+      signal: abort.signal,
+      fetch: platform.fetch,
+    });
 
     type Queued = { directory: string; payload: Event };
 
