@@ -620,6 +620,17 @@ if (existsSync(openwrkBuildPath)) {
       copyFileSync(openwrkBuildPath, openwrkTargetPath);
     }
   }
+
+  if (openwrkTargetPath && !existsSync(openwrkTargetPath)) {
+    const fallbackSource = existsSync(openwrkBuildPath) ? openwrkBuildPath : openwrkPath;
+    if (fallbackSource && existsSync(fallbackSource)) {
+      try {
+        copyFileSync(fallbackSource, openwrkTargetPath);
+      } catch {
+        // ignore
+      }
+    }
+  }
 }
 
 const openworkServerVersion = (() => {

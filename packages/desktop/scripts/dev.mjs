@@ -21,7 +21,7 @@ const useSystemOpencode = process.env.USE_SYSTEM_OPENCODE === 'true' || process.
 
 // Check if sidecars are already prepared
 const sidecarsDir = join(projectRoot, 'src-tauri', 'sidecars');
-const requiredSidecars = ['openwork-server.exe'];
+const requiredSidecars = ['openwork-server.exe', 'openwrk-x86_64-pc-windows-msvc.exe'];
 const missingSidecars = requiredSidecars.filter(name => !existsSync(join(sidecarsDir, name)));
 
 if (useSystemOpencode) {
@@ -33,7 +33,7 @@ if (useSystemOpencode) {
   console.log(`Missing sidecars: ${missingSidecars.join(', ')}`);
   console.log('Please run "pnpm run prepare:sidecar" manually to build all sidecars.');
   console.log('Or set USE_SYSTEM_OPENCODE=true to use system-installed opencode.');
-  console.log('Continuing with available sidecars...');
+  process.exit(1);
 } else {
   console.log('Required sidecars are present.');
 }
