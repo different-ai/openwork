@@ -978,6 +978,16 @@ export default function App() {
           writeSessionByWorkspace(next);
         }
       }
+
+      // Avoid the router effect re-selecting a now-deleted session from the URL.
+      try {
+        const path = location.pathname.toLowerCase();
+        if (path === `/session/${trimmed.toLowerCase()}`) {
+          navigate("/session", { replace: true });
+        }
+      } catch {
+        // ignore
+      }
     }
 
     const nextStatus = { ...sessionStatusById() };
