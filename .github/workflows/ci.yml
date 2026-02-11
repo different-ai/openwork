@@ -72,7 +72,4 @@ jobs:
       - name: Validate compiled binary
         run: |
           ./packages/headless/dist/bin/openwrk --version
-          if strings ./packages/headless/dist/bin/openwrk | grep -q "React is not defined"; then
-            echo "Compiled openwrk binary still contains a React runtime error string"
-            exit 1
-          fi
+          ./packages/headless/dist/bin/openwrk --help >/dev/null
