@@ -91,6 +91,21 @@ owpenbot bindings set --channel telegram --identity default --peer <chatId> --di
 owpenbot bindings list
 ```
 
+## Health Server (Local HTTP)
+
+Owpenbot can expose a small local HTTP server for health/config and simple message dispatch.
+
+- `OWPENBOT_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
+- `OWPENBOT_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
+
+Send a message to all peers bound to a directory:
+
+```bash
+curl -sS "http://127.0.0.1:${OWPENBOT_HEALTH_PORT:-3005}/send" \
+  -H 'Content-Type: application/json' \
+  -d '{"channel":"telegram","directory":"/path/to/workdir","text":"hello"}'
+```
+
 ## Commands
 
 ```bash

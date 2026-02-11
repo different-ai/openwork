@@ -1810,6 +1810,66 @@ function workspaceIdForRemote(baseUrl: string, directory?: string | null): strin
   return `ws-${createHash("sha1").update(key).digest("hex").slice(0, 12)}`;
 }
 
+function owpenbotSendToolSource(): string {
+  return [
+    'import { tool } from "@opencode-ai/plugin"',
+    "",
+    "export default tool({",
+    '  description: "Send a message via owpenbot to peers bound to a directory (Telegram/Slack).",',
+    "  args: {",
+    '    text: tool.schema.string().describe("Message text to send"),',
+    '    channel: tool.schema.enum(["telegram", "slack"]).optional().describe("Channel to send on (default: telegram)"),',
+    '    identityId: tool.schema.string().optional().describe("Owpenbot identity id (default: all identities)"),',
+    '    directory: tool.schema.string().optional().describe("Directory to target (default: current session directory)"),',
+    "  },",
+    "  async execute(args, context) {",
+    '    const rawPort = (process.env.OWPENBOT_HEALTH_PORT || "3005").trim()',
+    "    const port = Number(rawPort)",
+    "    if (!Number.isFinite(port) || port <= 0) {",
+    '      throw new Error(`Invalid OWPENBOT_HEALTH_PORT: ${rawPort}`)',
+    "    }",
+    '    const channel = (args.channel || "telegram").trim()',
+    '    if (channel !== "telegram" && channel !== "slack") {',
+    '      throw new Error("channel must be telegram or slack")',
+    "    }",
+    '    const directory = (args.directory || context.directory || "").trim()',
+    '    if (!directory) throw new Error("No directory resolved")',
+    "    const payload = {",
+    "      channel,",
+    "      directory,",
+    "      text: args.text,",
+    "      ...(args.identityId ? { identityId: String(args.identityId) } : {}),",
+    "    }",
+    "    const response = await fetch(`http://127.0.0.1:${port}/send`, {",
+    "      method: \"POST\",",
+    '      headers: { "Content-Type": "application/json" },',
+    "      body: JSON.stringify(payload),",
+    "    })",
+    "    const body = await response.text()",
+    "    if (!response.ok) {",
+    '      throw new Error(`owpenbot /send failed (${response.status}): ${body}`)',
+    "    }",
+    "    return body",
+    "  },",
+    "})",
+    "",
+  ].join("\n");
+}
+
+async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
+  const toolsDir = join(configDir, "tools");
+  await mkdir(toolsDir, { recursive: true });
+  const toolPath = join(toolsDir, "owpenbot_send.ts");
+  const content = `${owpenbotSendToolSource()}\n`;
+  try {
+    const existing = await readFile(toolPath, "utf8");
+    if (existing === content) return;
+  } catch {
+    // ignore
+  }
+  await writeFile(toolPath, content, "utf8");
+}
+
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
   const trimmed = input.trim();
   if (!trimmed) return undefined;
@@ -2077,6 +2137,7 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
 async function startOpencode(options: {
   bin: string;
   workspace: string;
+  configDir?: string;
   bindHost: string;
   port: number;
   username?: string;
@@ -2085,6 +2146,7 @@ async function startOpencode(options: {
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
+  owpenbotHealthPort?: number;
 }) {
   const args = ["serve", "--hostname", options.bindHost, "--port", String(options.port)];
   for (const origin of options.corsOrigins) {
@@ -2109,6 +2171,8 @@ async function startOpencode(options: {
       ),
       ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
       ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
+      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+      ...(options.owpenbotHealthPort ? { OWPENBOT_HEALTH_PORT: String(options.owpenbotHealthPort) } : {}),
     },
   });
 
@@ -2375,6 +2439,10 @@ async function stageSandboxRuntime(options: {
 }> {
   const baseDir = join(options.persistDir, "openwrk-sandbox", options.containerName);
   await mkdir(baseDir, { recursive: true });
+
+  const opencodeConfigDir = join(baseDir, "opencode-config");
+  await ensureOpencodeManagedTools(opencodeConfigDir);
+
   const sidecarsDir = join(baseDir, "sidecars");
   await mkdir(sidecarsDir, { recursive: true });
   const entrypointHostPath = join(baseDir, "entrypoint.sh");
@@ -2433,6 +2501,7 @@ async function writeSandboxEntrypoint(options: {
   const openworkBin = `${options.rootInContainer}/sidecars/openwork-server`;
   const owpenbotBin = `${options.rootInContainer}/sidecars/owpenbot`;
   const workspaceDir = "/workspace";
+  const opencodeConfigDir = `${options.rootInContainer}/opencode-config`;
 
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
@@ -2468,6 +2537,7 @@ async function writeSandboxEntrypoint(options: {
     "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\"",
     `cd ${shQuote(workspaceDir)}`,
     `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
+    `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `export OPENCODE_CLIENT=openwrk`,
     `export OPENWORK=1`,
@@ -3504,6 +3574,8 @@ async function runRouterDaemon(args: ParsedArgs) {
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
+  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
+  await ensureOpencodeManagedTools(opencodeConfigDir);
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
@@ -3582,6 +3654,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     const child = await startOpencode({
       bin: opencodeBinary.bin,
       workspace: resolvedWorkdir,
+      configDir: opencodeConfigDir,
       bindHost: opencodeHost,
       port: opencodePort,
       username: opencodePassword ? opencodeUsername : undefined,
@@ -4021,6 +4094,8 @@ async function runStart(args: ParsedArgs) {
     readFlag(args.flags, "sandbox-image") ?? process.env.OPENWRK_SANDBOX_IMAGE ?? "debian:bookworm-slim";
   const sandboxPersistOverride = readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWRK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
+  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  await ensureOpencodeManagedTools(opencodeConfigDir);
   const owpenbotDataDir =
     sandboxMode === "none" ? join(dataDir, "owpenbot", workspaceIdForLocal(resolvedWorkspace)) : null;
   if (owpenbotDataDir) {
@@ -4497,6 +4572,7 @@ async function runStart(args: ParsedArgs) {
       const opencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
+        configDir: opencodeConfigDir,
         bindHost: opencodeBindHost,
         port: opencodePort,
         username: opencodeUsername,
@@ -4505,6 +4581,7 @@ async function runStart(args: ParsedArgs) {
         logger,
         runId,
         logFormat,
+        owpenbotHealthPort: owpenbotEnabled ? owpenbotHealthPort : undefined,
       });
       children.push({ name: "opencode", child: opencodeChild });
       tui?.updateService("opencode", {

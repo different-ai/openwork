@@ -785,6 +785,70 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           store.deleteBinding(channel as ChannelName, identityId, peerKey);
           store.deleteSession(channel as ChannelName, identityId, peerKey);
         },
+
+        sendMessage: async (input: { channel: string; identityId?: string; directory: string; text: string }) => {
+          const channelRaw = input.channel.trim().toLowerCase();
+          if (channelRaw !== "telegram" && channelRaw !== "slack") {
+            throw new Error("Invalid channel");
+          }
+          const channel = channelRaw as ChannelName;
+          const identityId = input.identityId?.trim() ? normalizeIdentityId(input.identityId) : undefined;
+          const directory = input.directory.trim();
+          const text = input.text ?? "";
+          if (!directory) {
+            throw new Error("directory is required");
+          }
+          if (!text.trim()) {
+            throw new Error("text is required");
+          }
+
+          const normalizedDir = normalizeDirectory(directory);
+          const bindings = store.listBindings({
+            channel,
+            ...(identityId ? { identityId } : {}),
+            directory: normalizedDir,
+          });
+          if (bindings.length === 0) {
+            const err = new Error(`No bindings for ${channel}${identityId ? `/${identityId}` : ""} at directory ${normalizedDir}`) as any;
+            err.status = 404;
+            throw err;
+          }
+
+          const failures: Array<{ identityId: string; peerId: string; error: string }> = [];
+          let attempted = 0;
+          let sent = 0;
+          for (const binding of bindings) {
+            attempted += 1;
+            const adapter = adapters.get(adapterKey(channel, binding.identity_id));
+            if (!adapter) {
+              failures.push({
+                identityId: binding.identity_id,
+                peerId: binding.peer_id,
+                error: "Adapter not running",
+              });
+              continue;
+            }
+            try {
+              await sendText(channel, binding.identity_id, binding.peer_id, text, { kind: "system", display: false });
+              sent += 1;
+            } catch (error) {
+              failures.push({
+                identityId: binding.identity_id,
+                peerId: binding.peer_id,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+
+          return {
+            channel,
+            directory: normalizedDir,
+            ...(identityId ? { identityId } : {}),
+            attempted,
+            sent,
+            ...(failures.length ? { failures } : {}),
+          };
+        },
       },
     );
   }

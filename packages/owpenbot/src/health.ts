@@ -86,6 +86,22 @@ export type BindingsListResult = {
   items: BindingItem[];
 };
 
+export type SendMessageInput = {
+  channel: string;
+  identityId?: string;
+  directory: string;
+  text: string;
+};
+
+export type SendMessageResult = {
+  channel: string;
+  directory: string;
+  identityId?: string;
+  attempted: number;
+  sent: number;
+  failures?: Array<{ identityId: string; peerId: string; error: string }>;
+};
+
 export type HealthHandlers = {
   setGroupsEnabled?: (enabled: boolean) => Promise<GroupsConfigResult>;
   getGroupsEnabled?: () => boolean;
@@ -98,6 +114,7 @@ export type HealthHandlers = {
   listBindings?: (filters?: { channel?: string; identityId?: string }) => Promise<BindingsListResult>;
   setBinding?: (input: { channel: string; identityId?: string; peerId: string; directory: string }) => Promise<void>;
   clearBinding?: (input: { channel: string; identityId?: string; peerId: string }) => Promise<void>;
+  sendMessage?: (input: SendMessageInput) => Promise<SendMessageResult>;
 };
 
 export function startHealthServer(
@@ -178,8 +195,10 @@ export function startHealthServer(
           res.end(JSON.stringify({ ok: true, telegram: result }));
           return;
         } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }
@@ -216,8 +235,10 @@ export function startHealthServer(
           res.end(JSON.stringify({ ok: true, slack: result }));
           return;
         } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }
@@ -235,8 +256,10 @@ export function startHealthServer(
           res.end(JSON.stringify({ ok: true, ...result }));
           return;
         } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }
@@ -528,6 +551,53 @@ export function startHealthServer(
         }
       }
 
+      if (pathname === "/send" && req.method === "POST") {
+        if (!handlers.sendMessage) {
+          res.writeHead(404, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: "Not supported" }));
+          return;
+        }
+
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk.toString();
+          if (raw.length > 1024 * 1024) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "Payload too large" }));
+            return;
+          }
+        }
+
+        try {
+          const payload = JSON.parse(raw || "{}");
+          const channel = typeof payload.channel === "string" ? payload.channel.trim() : "";
+          const identityId = typeof payload.identityId === "string" ? payload.identityId.trim() : "";
+          const directory = typeof payload.directory === "string" ? payload.directory.trim() : "";
+          const text = typeof payload.text === "string" ? payload.text : "";
+          if (!channel || !directory || !text.trim()) {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ ok: false, error: "channel, directory, and text are required" }));
+            return;
+          }
+
+          const result = await handlers.sendMessage({
+            channel,
+            ...(identityId ? { identityId } : {}),
+            directory,
+            text,
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true, ...result }));
+          return;
+        } catch (error) {
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
+          return;
+        }
+      }
+
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: false, error: "Not found" }));
     })().catch((error) => {
@@ -537,8 +607,9 @@ export function startHealthServer(
     });
   });
 
-  server.listen(port, "0.0.0.0", () => {
-    logger.info({ port }, "health server listening");
+  const host = (process.env.OWPENBOT_HEALTH_HOST ?? "").trim() || "127.0.0.1";
+  server.listen(port, host, () => {
+    logger.info({ host, port }, "health server listening");
   });
 
   return () => {

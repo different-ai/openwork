@@ -186,30 +186,27 @@ export class BridgeStore {
     return result.changes > 0;
   }
 
-  listBindings(filters: { channel?: ChannelName; identityId?: string } = {}): BindingRow[] {
-    const { channel, identityId } = filters;
-    if (channel && identityId) {
-      const stmt = this.db.prepare(
-        "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? AND identity_id = ? ORDER BY updated_at DESC",
-      );
-      return stmt.all(channel, identityId) as BindingRow[];
+  listBindings(filters: { channel?: ChannelName; identityId?: string; directory?: string } = {}): BindingRow[] {
+    const where: string[] = [];
+    const args: Array<string> = [];
+    if (filters.channel) {
+      where.push("channel = ?");
+      args.push(filters.channel);
     }
-    if (channel) {
-      const stmt = this.db.prepare(
-        "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings WHERE channel = ? ORDER BY updated_at DESC",
-      );
-      return stmt.all(channel) as BindingRow[];
+    if (filters.identityId) {
+      where.push("identity_id = ?");
+      args.push(filters.identityId);
     }
-    if (identityId) {
-      const stmt = this.db.prepare(
-        "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings WHERE identity_id = ? ORDER BY updated_at DESC",
-      );
-      return stmt.all(identityId) as BindingRow[];
+    if (filters.directory) {
+      where.push("directory = ?");
+      args.push(filters.directory);
     }
+
+    const clause = where.length ? ` WHERE ${where.join(" AND ")}` : "";
     const stmt = this.db.prepare(
-      "SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings ORDER BY updated_at DESC",
+      `SELECT channel, identity_id, peer_id, directory, created_at, updated_at FROM bindings${clause} ORDER BY updated_at DESC`,
     );
-    return stmt.all() as BindingRow[];
+    return stmt.all(...args) as BindingRow[];
   }
 
   isAllowed(channel: ChannelName, peerId: string): boolean {
