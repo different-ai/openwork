@@ -82,6 +82,24 @@ function countSteps(partsGroups: Part[][]): number {
   return partsGroups.reduce((sum, parts) => sum + parts.length, 0);
 }
 
+function latestStepPart(partsGroups: Part[][]): Part | undefined {
+  for (let groupIndex = partsGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+    const parts = partsGroups[groupIndex] ?? [];
+    for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = parts[partIndex];
+      if (
+        part.type === "tool" ||
+        part.type === "reasoning" ||
+        part.type === "step-start" ||
+        part.type === "step-finish"
+      ) {
+        return part;
+      }
+    }
+  }
+  return undefined;
+}
+
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
   let copyTimeout: number | undefined;
@@ -142,18 +160,14 @@ export default function MessageList(props: MessageListProps) {
     return "";
   };
 
-  // Note: expandedStepIds now tracks COLLAPSED steps (inverted logic for default-expanded behavior)
   const toggleSteps = (id: string, relatedIds: string[] = []) => {
     props.setExpandedStepIds((current) => {
       const next = new Set(current);
-      // Inverted: if in set = collapsed, so check if collapsed to expand (remove from set)
-      const isCollapsed = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
-      if (isCollapsed) {
-        // Currently collapsed -> expand by removing from set
+      const isExpanded = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
+      if (isExpanded) {
         next.delete(id);
         relatedIds.forEach((relatedId) => next.delete(relatedId));
       } else {
-        // Currently expanded -> collapse by adding to set
         next.add(id);
         relatedIds.forEach((relatedId) => next.add(relatedId));
       }
@@ -161,10 +175,9 @@ export default function MessageList(props: MessageListProps) {
     });
   };
 
-  // Inverted: steps are expanded by default (when NOT in the set)
   const isStepsExpanded = (id: string, relatedIds: string[] = []) =>
-    !props.expandedStepIds.has(id) &&
-    !relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
+    props.expandedStepIds.has(id) ||
+    relatedIds.some((relatedId) => props.expandedStepIds.has(relatedId));
 
   const renderablePartsForMessage = (message: MessageWithParts) =>
     message.parts.filter((part) => {
@@ -313,6 +326,7 @@ export default function MessageList(props: MessageListProps) {
     const relatedIds = () => containerProps.relatedIds ?? [];
     const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
     const totalSteps = () => countSteps(containerProps.partsGroups);
+    const latestStep = () => latestStepPart(containerProps.partsGroups);
     const hasRunning = () =>
       containerProps.partsGroups.some((parts) =>
         parts.some((part) => {
@@ -338,7 +352,7 @@ export default function MessageList(props: MessageListProps) {
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
           <span class="font-medium">
-            {expanded() ? "Hide steps" : `${totalSteps()} step${totalSteps() === 1 ? "" : "s"}`}
+            {expanded() ? "Hide steps" : `Show ${totalSteps()} step${totalSteps() === 1 ? "" : "s"}`}
           </span>
           <Show when={hasRunning()}>
             <span class="flex items-center gap-1.5 text-[11px] text-blue-11">
@@ -347,6 +361,18 @@ export default function MessageList(props: MessageListProps) {
             </span>
           </Show>
         </button>
+
+        <Show when={!expanded()}>
+          <div
+            class={`mt-1 ml-1 pl-3 border-l-2 ${
+              containerProps.isUser ? "border-gray-6" : "border-gray-6/60"
+            }`}
+          >
+            <Show when={latestStep()}>
+              {(part) => <StepRow part={part()} isUser={containerProps.isUser} />}
+            </Show>
+          </div>
+        </Show>
 
         {/* Expanded content */}
         <Show when={expanded()}>
