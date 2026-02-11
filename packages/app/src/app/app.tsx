@@ -4345,7 +4345,7 @@ export default function App() {
       taskCenterSyncing: taskCenterStore.syncing(),
       taskCenterLastUpdatedAt: taskCenterStore.lastUpdatedAt(),
       refreshTaskCenter: (options?: { force?: boolean }) =>
-        taskCenterStore.syncTasks({...options,client}).catch((error) => {
+        taskCenterStore.syncTasks(options).catch((error) => {
           console.error("Failed to refresh task center:", error);
         }),
       startTaskCenterAutomation: taskCenterStore.startAutomation,

@@ -36,6 +36,8 @@ import {
   engineInstall,
   engineStart,
   engineStop,
+  installBuiltinSkills,
+  type BuiltinSkillsInstallResult,
   openwrkInstanceDispose,
   openwrkWorkspaceActivate,
   pickFile,
@@ -1996,6 +1998,22 @@ export function createWorkspaceStore(options: {
     await refreshEngine();
     await refreshEngineDoctor();
 
+    // Install OpenWork builtin skills to global directory on startup
+    // This ensures skills like tfs2018-integration are available across all projects
+    if (isTauriRuntime()) {
+      try {
+        const result = await installBuiltinSkills();
+        if (!result.ok) {
+          console.warn("[workspace] Builtin skills installation issue:", result.message);
+        } else if (result.installed.length > 0) {
+          console.log("[workspace] Installed builtin skills:", result.installed.join(", "));
+        }
+      } catch (err) {
+        console.warn("[workspace] Failed to install builtin skills:", err);
+        // Non-fatal: don't block startup if skills installation fails
+      }
+    }
+
     if (isTauriRuntime()) {
       const active = workspaces().find((w) => w.id === activeWorkspaceId()) ?? null;
       if (active) {
@@ -2218,5 +2236,8 @@ export function createWorkspaceStore(options: {
     removeAuthorizedDirAtIndex,
     persistReloadSettings,
     setEngineInstallLogs,
+    installBuiltinSkills: async (openworkDir?: string): Promise<BuiltinSkillsInstallResult> => {
+      return installBuiltinSkills(openworkDir);
+    },
   };
 }

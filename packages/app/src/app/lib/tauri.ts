@@ -515,6 +515,25 @@ export async function uninstallSkill(projectDir: string, name: string): Promise<
   return invoke<ExecResult>("uninstall_skill", { projectDir, name });
 }
 
+export type BuiltinSkillsInstallResult = {
+  ok: boolean;
+  installed: string[];
+  skipped: string[];
+  failed: string[];
+  message: string;
+};
+
+/**
+ * Install OpenWork's builtin skills to global skills directory.
+ * This ensures all projects can access bundled skills.
+ * @param openworkDir Optional path to OpenWork's directory (auto-detected if not provided)
+ */
+export async function installBuiltinSkills(
+  openworkDir?: string,
+): Promise<BuiltinSkillsInstallResult> {
+  return invoke<BuiltinSkillsInstallResult>("install_builtin_skills", { openworkDir });
+}
+
 export type OpencodeConfigFile = {
   path: string;
   exists: boolean;

@@ -6,18 +6,26 @@ import { Persist, persisted } from "../utils/persist";
 import { unwrap } from "../lib/opencode";
 import { parseTasks, updateTaskStatus, type ParsedTask } from "../lib/tasks-parser";
 
+// Use Record instead of Map for JSON serialization compatibility
+export type AutomationStateMap = Record<number, TaskCenterAutomationState>;
+
+// Helper to safely get value from Record
+export function getAutomationState(record: AutomationStateMap, tfsId: number): TaskCenterAutomationState | undefined {
+  return record[tfsId];
+}
+
 // Merge automation state with TFS items
 // Merge TFS items with automation state - preserves automation items not in TFS query
 export function mergeTfsItemsWithAutomation(
   tfsItems: TaskCenterItem[],
-  automation: Map<number, TaskCenterAutomationState>
+  automation: AutomationStateMap
 ): TaskCenterItem[] {
   const result: TaskCenterItem[] = [];
   const processedTfsIds = new Set<number>();
 
   // First, process all TFS items and merge with automation
   for (const item of tfsItems) {
-    const autoState = automation.get(item.tfsId);
+    const autoState = getAutomationState(automation, item.tfsId);
     if (autoState) {
       // Merge automation state into TFS item
       result.push({
@@ -33,8 +41,9 @@ export function mergeTfsItemsWithAutomation(
   }
 
   // Then, add automation items that are not in TFS query result
-  for (const [tfsId, autoState] of automation.entries()) {
-    if (!processedTfsIds.has(tfsId)) {
+  for (const [key, autoState] of Object.entries(automation)) {
+    const tfsId = Number(key);
+    if (!Number.isNaN(tfsId) && !processedTfsIds.has(tfsId) && autoState) {
       // Create a TaskCenterItem from automation state
       result.push({
         id: `tfs-${tfsId}`,
@@ -52,29 +61,29 @@ export function mergeTfsItemsWithAutomation(
 
 export function mergeAutomationState(
   tfsItems: Array<{ tfsId: number; status: TaskCenterStatus }>,
-  automation: Map<number, TaskCenterAutomationState>
-): Map<number, TaskCenterAutomationState> {
-  const result = new Map<number, TaskCenterAutomationState>();
+  automation: AutomationStateMap
+): AutomationStateMap {
+  const result: AutomationStateMap = {};
 
   for (const item of tfsItems) {
-    const existing = automation.get(item.tfsId);
-    
+    const existing = getAutomationState(automation, item.tfsId);
+
     if (existing) {
       // Check if TFS is in a final state (done/archived) - use TFS state
       const isTfsFinal = item.status === "done" || item.status === "archived";
-      
-      result.set(item.tfsId, {
+
+      result[item.tfsId] = {
         ...existing,
         status: isTfsFinal ? item.status : existing.status,
         updatedAt: Date.now()
-      });
+      };
     } else {
       // No automation state: create from TFS item
-      result.set(item.tfsId, {
+      result[item.tfsId] = {
         status: item.status,
         stage: "idle" as TaskCenterStage,
         updatedAt: Date.now()
-      });
+      };
     }
   }
 
@@ -206,13 +215,18 @@ export function createTaskCenterStore(options: {
   const [executing, setExecuting] = createSignal(false);
 
   // Automation state store - persists automation progress
+  // Using Record instead of Map for JSON serialization compatibility
   const automationStore = (() => {
-    const initialState = new Map<number, TaskCenterAutomationState>();
-    const store = createStore<Map<number, TaskCenterAutomationState>>(initialState);
+    const initialState: AutomationStateMap = {};
+    const store = createStore<AutomationStateMap>(initialState);
     return persisted(Persist.global("task-center.automation"), store);
   })();
   const automationState = automationStore[0];
-  const setAutomationState = automationStore[1];
+  const setAutomationState = (tfsId: number, state: TaskCenterAutomationState) => {
+    const updater: Partial<AutomationStateMap> = {};
+    updater[tfsId] = state;
+    automationStore[1](updater);
+  };
 
   const uiStore = (() => {
     const store = createStore<TaskCenterUiState>({
@@ -321,7 +335,7 @@ export function createTaskCenterStore(options: {
       }));
       
       // Merge with automation state to preserve items not in TFS query
-      const mergedItems = mergeTfsItemsWithAutomation(tfsItems, automationState ?? new Map());
+      const mergedItems = mergeTfsItemsWithAutomation(tfsItems, automationState ?? {});
       setItems(mergedItems);
       setLastUpdatedAt(Date.now());
       setStatus("idle");
@@ -702,7 +716,7 @@ EOF`,
     startAutomation,
     setSyncSessionId,
     syncSessionId,
-    automationState: automationState ?? new Map(),
+    automationState,
     setAutomationState,
     // Task execution
     selectedItem,

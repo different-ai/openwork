@@ -30,7 +30,8 @@ use commands::owpenbot::{
     owpenbot_pairing_list, owpenbot_qr, owpenbot_start, owpenbot_status, owpenbot_stop,
 };
 use commands::skills::{
-    install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
+    install_builtin_skills, install_skill_template, list_local_skills, read_local_skill, uninstall_skill,
+    write_local_skill,
 };
 use commands::updater::updater_environment;
 use commands::window::set_window_decorations;
@@ -99,6 +100,7 @@ pub fn run() {
             workspace_openwork_write,
             opkg_install,
             import_skill,
+            install_builtin_skills,
             install_skill_template,
             list_local_skills,
             read_local_skill,

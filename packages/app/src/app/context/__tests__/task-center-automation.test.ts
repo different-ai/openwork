@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeAutomationState, mergeTfsItemsWithAutomation } from "../task-center";
+import { mergeAutomationState, mergeTfsItemsWithAutomation, type AutomationStateMap, getAutomationState } from "../task-center";
 import type { TaskCenterAutomationState, TaskCenterStatus, TaskCenterItem } from "../../types";
 
 // Test mapStateToStatus behavior indirectly through item processing
@@ -8,7 +8,7 @@ describe("TFS State Mapping (Task 3)", () => {
     // This will be tested when we have items with different TFS states
     const item: TaskCenterItem = {
       id: "tfs-1",
-      tfsId: 1,
+      tfsId:1,
       title: "Test",
       status: "todo",
       stage: "idle",
@@ -20,7 +20,7 @@ describe("TFS State Mapping (Task 3)", () => {
   it("maps 活动 to progress", () => {
     const item: TaskCenterItem = {
       id: "tfs-1",
-      tfsId: 1,
+      tfsId:1,
       title: "Test",
       status: "progress",
       stage: "idle",
@@ -32,7 +32,7 @@ describe("TFS State Mapping (Task 3)", () => {
   it("maps 已解决 to done", () => {
     const item: TaskCenterItem = {
       id: "tfs-1",
-      tfsId: 1,
+      tfsId:1,
       title: "Test",
       status: "done",
       stage: "idle",
@@ -44,7 +44,7 @@ describe("TFS State Mapping (Task 3)", () => {
   it("maps 已关闭 to archived", () => {
     const item: TaskCenterItem = {
       id: "tfs-1",
-      tfsId: 1,
+      tfsId:1,
       title: "Test",
       status: "archived",
       stage: "idle",
@@ -57,70 +57,70 @@ describe("TFS State Mapping (Task 3)", () => {
 describe("mergeAutomationState", () => {
   it("overrides TFS status with automation state", () => {
     const tfsItems = [{ tfsId: 1, status: "todo" as TaskCenterStatus }];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [1, { status: "progress", stage: "analyzing", updatedAt: Date.now() }]
-    ]);
-    
+    const automation: AutomationStateMap = {
+      1: { status: "progress", stage: "analyzing", updatedAt: Date.now() }
+    };
+
     const merged = mergeAutomationState(tfsItems, automation);
-    
-    expect(merged.get(1)?.status).toBe("progress");
-    expect(merged.get(1)?.stage).toBe("analyzing");
+
+    expect(getAutomationState(merged, 1)?.status).toBe("progress");
+    expect(getAutomationState(merged, 1)?.stage).toBe("analyzing");
   });
 
   it("creates new automation state for new TFS items", () => {
     const tfsItems = [{ tfsId: 1, status: "todo" as TaskCenterStatus }];
-    const automation = new Map<number, TaskCenterAutomationState>();
-    
+    const automation: AutomationStateMap = {};
+
     const merged = mergeAutomationState(tfsItems, automation);
-    
-    expect(merged.get(1)?.status).toBe("todo");
-    expect(merged.get(1)?.stage).toBe("idle");
-    expect(merged.get(1)?.updatedAt).toBeGreaterThan(0);
+
+    expect(getAutomationState(merged, 1)?.status).toBe("todo");
+    expect(getAutomationState(merged, 1)?.stage).toBe("idle");
+    expect(getAutomationState(merged, 1)?.updatedAt).toBeGreaterThan(0);
   });
 
   it("preserves existing automation fields when merging", () => {
     const now = Date.now();
     const tfsItems = [{ tfsId: 1, status: "todo" as TaskCenterStatus }];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [1, { 
-        status: "progress", 
-        stage: "implementing", 
+    const automation: AutomationStateMap = {
+      1: {
+        status: "progress",
+        stage: "implementing",
         subStage: "workspace-prep",
         sessionId: "session-123",
         blockedReason: null,
-        updatedAt: now 
-      }]
-    ]);
-    
+        updatedAt: now
+      }
+    };
+
     const merged = mergeAutomationState(tfsItems, automation);
-    
-    expect(merged.get(1)?.stage).toBe("implementing");
-    expect(merged.get(1)?.subStage).toBe("workspace-prep");
-    expect(merged.get(1)?.sessionId).toBe("session-123");
+
+    expect(getAutomationState(merged, 1)?.stage).toBe("implementing");
+    expect(getAutomationState(merged, 1)?.subStage).toBe("workspace-prep");
+    expect(getAutomationState(merged, 1)?.sessionId).toBe("session-123");
   });
 
   it("updates status when TFS status differs from automation", () => {
     const tfsItems = [{ tfsId: 1, status: "done" as TaskCenterStatus }];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [1, { status: "progress", stage: "analyzing", updatedAt: Date.now() }]
-    ]);
-    
+    const automation: AutomationStateMap = {
+      1: { status: "progress", stage: "analyzing", updatedAt: Date.now() }
+    };
+
     const merged = mergeAutomationState(tfsItems, automation);
-    
-    expect(merged.get(1)?.status).toBe("done");
-    expect(merged.get(1)?.stage).toBe("analyzing"); // stage preserved
+
+    expect(getAutomationState(merged, 1)?.status).toBe("done");
+    expect(getAutomationState(merged, 1)?.stage).toBe("analyzing"); // stage preserved
   });
 });
 
 describe("mergeTfsItemsWithAutomation", () => {
   it("keeps automation items not returned by TFS query", () => {
     const tfsItems: TaskCenterItem[] = [];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [9, { status: "done", stage: "reviewing", updatedAt: Date.now() }]
-    ]);
-    
+    const automation: AutomationStateMap = {
+      9: { status: "done", stage: "reviewing", updatedAt: Date.now() }
+    };
+
     const merged = mergeTfsItemsWithAutomation(tfsItems, automation);
-    
+
     expect(merged.length).toBe(1);
     expect(merged[0].tfsId).toBe(9);
     expect(merged[0].status).toBe("done");
@@ -129,20 +129,20 @@ describe("mergeTfsItemsWithAutomation", () => {
 
   it("merges TFS items with automation state", () => {
     const tfsItems: TaskCenterItem[] = [
-      { 
-        id: "tfs-1", 
-        tfsId: 1, 
-        title: "Test", 
+      {
+        id: "tfs-1",
+        tfsId: 1,
+        title: "Test",
         status: "todo",
         stage: "idle"
       }
     ];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [1, { status: "progress", stage: "analyzing", updatedAt: Date.now() }]
-    ]);
-    
+    const automation: AutomationStateMap = {
+      1: { status: "progress", stage: "analyzing", updatedAt: Date.now() }
+    };
+
     const merged = mergeTfsItemsWithAutomation(tfsItems, automation);
-    
+
     expect(merged.length).toBe(1);
     expect(merged[0].status).toBe("progress");
     expect(merged[0].stage).toBe("analyzing");
@@ -152,13 +152,13 @@ describe("mergeTfsItemsWithAutomation", () => {
     const tfsItems: TaskCenterItem[] = [
       { id: "tfs-1", tfsId: 1, title: "Item 1", status: "todo", stage: "idle" }
     ];
-    const automation = new Map<number, TaskCenterAutomationState>([
-      [1, { status: "progress", stage: "analyzing", updatedAt: Date.now() }],
-      [2, { status: "done", stage: "reviewing", updatedAt: Date.now() }]
-    ]);
-    
+    const automation: AutomationStateMap = {
+      1: { status: "progress", stage: "analyzing", updatedAt: Date.now() },
+      2: { status: "done", stage: "reviewing", updatedAt: Date.now() }
+    };
+
     const merged = mergeTfsItemsWithAutomation(tfsItems, automation);
-    
+
     expect(merged.length).toBe(2);
     // Item 1 should be merged with automation
     const item1 = merged.find(i => i.tfsId === 1);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTasks, updateTaskStatus, getNextPendingTaskIndex, areAllTasksCompleted } from "../tasks-parser";
+import { parseTasks, updateTaskStatus, getNextPendingTaskIndex, areAllTasksCompleted, type ParsedTask } from "../tasks-parser";
 
 describe("tasks-parser", () => {
   describe("parseTasks", () => {
@@ -83,7 +83,7 @@ describe("tasks-parser", () => {
 
   describe("getNextPendingTaskIndex", () => {
     it("returns first pending task index", () => {
-      const tasks = [
+      const tasks: ParsedTask[] = [
         { index: 0, title: "Task 1", status: "completed", description: "" },
         { index: 1, title: "Task 2", status: "pending", description: "" },
         { index: 2, title: "Task 3", status: "pending", description: "" },
@@ -92,14 +92,14 @@ describe("tasks-parser", () => {
     });
 
     it("returns -1 when no pending tasks", () => {
-      const tasks = [
+      const tasks: ParsedTask[] = [
         { index: 0, title: "Task 1", status: "completed", description: "" },
       ];
       expect(getNextPendingTaskIndex(tasks)).toBe(-1);
     });
 
     it("returns in-progress task", () => {
-      const tasks = [
+      const tasks: ParsedTask[] = [
         { index: 0, title: "Task 1", status: "completed", description: "" },
         { index: 1, title: "Task 2", status: "in-progress", description: "" },
       ];
@@ -109,7 +109,7 @@ describe("tasks-parser", () => {
 
   describe("areAllTasksCompleted", () => {
     it("returns true when all tasks completed", () => {
-      const tasks = [
+      const tasks: ParsedTask[] = [
         { index: 0, title: "Task 1", status: "completed", description: "" },
         { index: 1, title: "Task 2", status: "completed", description: "" },
       ];
@@ -117,7 +117,7 @@ describe("tasks-parser", () => {
     });
 
     it("returns false when some tasks pending", () => {
-      const tasks = [
+      const tasks: ParsedTask[] = [
         { index: 0, title: "Task 1", status: "completed", description: "" },
         { index: 1, title: "Task 2", status: "pending", description: "" },
       ];

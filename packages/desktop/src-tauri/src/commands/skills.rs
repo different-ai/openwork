@@ -487,3 +487,186 @@ pub fn uninstall_skill(project_dir: String, name: String) -> Result<ExecResult, 
         stderr: String::new(),
     })
 }
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct BuiltinSkillsInstallResult {
+    pub ok: bool,
+    pub installed: Vec<String>,
+    pub skipped: Vec<String>,
+    pub failed: Vec<String>,
+    pub message: String,
+}
+
+/// Install OpenWork's builtin skills to the global skills directory
+/// This ensures that all projects can access the bundled skills
+#[tauri::command]
+pub fn install_builtin_skills(openwork_dir: Option<String>) -> Result<BuiltinSkillsInstallResult, String> {
+    // Resolve global skills directory
+    let global_roots = collect_global_skill_roots();
+    let global_opencode = global_roots
+        .iter()
+        .find(|p| p.to_string_lossy().contains("opencode"))
+        .cloned();
+
+    let global_skills_dir = if let Some(ref path) = global_opencode {
+        path
+    } else {
+        // Fallback to XDG config path
+        let xdg_config = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+            home.join(".config")
+        });
+        return Err(format!(
+            "Global skills directory not found. Please create: {}/opencode/skills/",
+            xdg_config.display()
+        ));
+    };
+
+    // Resolve OpenWork's builtin skills directory
+    // This is where OpenWork bundles its skills
+    let builtin_source = if let Some(dir) = openwork_dir {
+        // Use provided directory (usually the OpenWork app directory)
+        PathBuf::from(dir).join(".opencode").join("skills")
+    } else {
+        // Try to detect from current executable or environment
+        let exe_path = std::env::current_exe()
+            .unwrap_or_else(|_| PathBuf::from("."));
+        let exe_dir = exe_path.parent().unwrap_or(&exe_path);
+        
+        // Check if we're in development mode (running from openwork/packages/desktop/)
+        let dev_check = exe_dir.join("src-tauri");
+        if dev_check.exists() {
+            // Development: go up to openwork root
+            let openwork_root = exe_dir.parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .unwrap_or(exe_dir);
+            openwork_root.join(".opencode").join("skills")
+        } else {
+            // Production: skills might be in a resources folder
+            let resources = exe_dir.join("resources").join(".opencode").join("skills");
+            if resources.exists() {
+                resources
+            } else {
+                // Try direct path (might work if openwork_dir is passed)
+                PathBuf::from(".opencode").join("skills")
+            }
+        }
+    };
+
+    if !builtin_source.exists() {
+        return Ok(BuiltinSkillsInstallResult {
+            ok: true,
+            installed: vec![],
+            skipped: vec![],
+            failed: vec![],
+            message: format!("OpenWork builtin skills directory not found at: {}", builtin_source.display()),
+        });
+    }
+
+    // Ensure global skills directory exists
+    fs::create_dir_all(global_skills_dir)
+        .map_err(|e| format!("Failed to create global skills directory: {e}"))?;
+
+    let mut installed = Vec::new();
+    let mut skipped = Vec::new();
+    let mut failed = Vec::new();
+
+    // Read builtin skills
+    let entries = match fs::read_dir(&builtin_source) {
+        Ok(e) => e,
+        Err(e) => {
+            return Ok(BuiltinSkillsInstallResult {
+                ok: false,
+                installed: vec![],
+                skipped: vec![],
+                failed: vec![],
+                message: format!("Failed to read builtin skills directory: {e}"),
+            });
+        }
+    };
+
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        let skill_path = entry.path();
+        let skill_name = match skill_path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n,
+            None => continue,
+        };
+
+        // Check if it's a valid skill directory (has SKILL.md)
+        if !skill_path.join("SKILL.md").exists() {
+            continue;
+        }
+
+        let dest_path = global_skills_dir.join(skill_name);
+
+        // Check if already installed
+        if dest_path.exists() {
+            skipped.push(skill_name.to_string());
+            continue;
+        }
+
+        // Copy skill directory
+        match copy_dir_recursive(&skill_path, &dest_path) {
+            Ok(_) => installed.push(skill_name.to_string()),
+            Err(e) => failed.push(format!("{}: {}", skill_name, e)),
+        }
+    }
+
+    let ok = failed.is_empty();
+    let message = if ok {
+        if installed.is_empty() {
+            "All builtin skills already installed.".to_string()
+        } else {
+            format!("Installed {} builtin skills to: {}", installed.len(), global_skills_dir.display())
+        }
+    } else {
+        format!("Installed {} skills, {} failed", installed.len(), failed.len())
+    };
+
+    Ok(BuiltinSkillsInstallResult {
+        ok,
+        installed,
+        skipped,
+        failed,
+        message,
+    })
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    if !src.is_dir() {
+        return Err(format!("Source is not a directory: {}", src.display()));
+    }
+
+    // Create destination directory
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create directory {}: {e}", dst.display()))?;
+
+    for entry in fs::read_dir(src)
+        .map_err(|e| format!("Failed to read directory {}: {e}", src.display()))?
+    {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let src_path = entry.path();
+        let file_name = match src_path.file_name() {
+            Some(n) => n,
+            None => continue,
+        };
+        let dst_path = dst.join(file_name);
+
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)
+                .map_err(|e| format!("Failed to copy {} to {}: {e}", src_path.display(), dst_path.display()))?;
+        }
+    }
+
+    Ok(())
+}
