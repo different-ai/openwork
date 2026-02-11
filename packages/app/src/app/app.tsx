@@ -966,6 +966,20 @@ export default function App() {
     await loadSessions(root || undefined).catch(() => undefined);
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
 
+    // If the deleted session was selected, clear selection so routing can fall back cleanly.
+    if (selectedSessionId() === trimmed) {
+      setSelectedSessionId(null);
+      const activeWorkspace = workspaceStore.activeWorkspaceId().trim();
+      if (activeWorkspace) {
+        const map = readSessionByWorkspace();
+        if (map[activeWorkspace] === trimmed) {
+          const next = { ...map };
+          delete next[activeWorkspace];
+          writeSessionByWorkspace(next);
+        }
+      }
+    }
+
     const nextStatus = { ...sessionStatusById() };
     if (nextStatus[trimmed]) {
       delete nextStatus[trimmed];
