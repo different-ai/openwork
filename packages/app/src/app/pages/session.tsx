@@ -27,6 +27,8 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Cpu,
+  FileText,
   HardDrive,
   History,
   ListTodo,
@@ -63,6 +65,7 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { SidebarSectionState } from "../components/session/sidebar";
+import ScratchpadPanel from "../components/session/scratchpad-panel";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
@@ -237,6 +240,78 @@ export default function SessionView(props: SessionViewProps) {
 
   const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
   const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
+
+  const SCRATCHPAD_OPEN_KEY = "openwork.scratchpad.open.v1";
+  const SCRATCHPAD_VALUE_PREFIX = "openwork.scratchpad.value.v1";
+  const readBool = (key: string, fallback: boolean) => {
+    if (typeof window === "undefined") return fallback;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return fallback;
+      if (raw === "true") return true;
+      if (raw === "false") return false;
+      return fallback;
+    } catch {
+      return fallback;
+    }
+  };
+  const writeBool = (key: string, value: boolean) => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(key, value ? "true" : "false");
+    } catch {
+      // ignore
+    }
+  };
+  const readString = (key: string) => {
+    if (typeof window === "undefined") return "";
+    try {
+      return window.localStorage.getItem(key) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const writeString = (key: string, value: string) => {
+    if (typeof window === "undefined") return;
+    try {
+      const trimmed = value ?? "";
+      if (!trimmed.trim()) {
+        window.localStorage.removeItem(key);
+      } else {
+        window.localStorage.setItem(key, trimmed);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const [scratchpadOpen, setScratchpadOpen] = createSignal(readBool(SCRATCHPAD_OPEN_KEY, true));
+  createEffect(() => writeBool(SCRATCHPAD_OPEN_KEY, scratchpadOpen()));
+
+  const scratchpadStorageKey = createMemo(() => {
+    const workspaceId = props.activeWorkspaceId || "workspace";
+    const sessionId = props.selectedSessionId || "draft";
+    return `${SCRATCHPAD_VALUE_PREFIX}.${workspaceId}.${sessionId}`;
+  });
+  const [scratchpadValue, setScratchpadValue] = createSignal("");
+
+  createEffect(
+    on(scratchpadStorageKey, (key) => {
+      setScratchpadValue(readString(key));
+    })
+  );
+
+  createEffect(() => {
+    const key = scratchpadStorageKey();
+    const value = scratchpadValue();
+    let timer: number | undefined;
+    if (typeof window !== "undefined") {
+      timer = window.setTimeout(() => writeString(key, value), 150);
+    }
+    onCleanup(() => {
+      if (typeof window !== "undefined" && timer) window.clearTimeout(timer);
+    });
+  });
 
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
@@ -2024,7 +2099,7 @@ export default function SessionView(props: SessionViewProps) {
 
       <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
         <header class="h-14 border-b border-dls-border flex items-center justify-between px-6 bg-dls-surface z-10 shrink-0">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 min-w-0">
             <Show when={showUpdatePill()}>
               <button
                 type="button"
@@ -2053,9 +2128,8 @@ export default function SessionView(props: SessionViewProps) {
                 </Show>
               </button>
             </Show>
-            <h1 class="text-sm font-semibold text-dls-text">
-              {selectedSessionTitle() || "New task"}
-            </h1>
+
+            <h1 class="text-sm font-semibold text-dls-text truncate">{selectedSessionTitle() || "New task"}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
@@ -2065,6 +2139,20 @@ export default function SessionView(props: SessionViewProps) {
           </div>
 
           <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class={`hidden lg:flex h-9 items-center gap-2 rounded-xl border border-dls-border px-3 text-xs font-medium transition-colors ${scratchpadOpen()
+                ? "bg-dls-active text-dls-text"
+                : "bg-dls-hover text-dls-secondary hover:text-dls-text hover:bg-dls-active"
+                }`}
+              onClick={() => setScratchpadOpen((v) => !v)}
+              title="Toggle notes"
+              aria-label="Toggle notes"
+            >
+              <FileText size={14} class="shrink-0" />
+              <span>Notes</span>
+            </button>
+
             <button
               type="button"
               class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
@@ -2215,17 +2303,18 @@ export default function SessionView(props: SessionViewProps) {
         </div>
       </Show>
 
-      <div class="flex-1 flex overflow-hidden relative">
-        <div
-          class="flex-1 overflow-y-auto px-12 py-10 scroll-smooth bg-dls-surface"
-          ref={(el) => (chatContainerEl = el)}
-        >
-          <div class="max-w-5xl mx-auto w-full">
-          <Show when={props.messages.length === 0}>
-            <div class="text-center py-16 px-6 space-y-6">
-              <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
-                <Zap class="text-dls-secondary" />
-              </div>
+       <div class="flex-1 flex overflow-hidden">
+         <div class="flex-1 min-w-0 relative overflow-hidden">
+           <div
+             class="h-full overflow-y-auto px-12 py-10 scroll-smooth bg-dls-surface"
+             ref={(el) => (chatContainerEl = el)}
+           >
+             <div class="max-w-5xl mx-auto w-full">
+           <Show when={props.messages.length === 0}>
+             <div class="text-center py-16 px-6 space-y-6">
+               <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
+                 <Zap class="text-dls-secondary" />
+               </div>
               <div class="space-y-2">
                 <h3 class="text-xl font-medium">What do you want to do?</h3>
                 <p class="text-dls-secondary text-sm max-w-sm mx-auto">
@@ -2295,22 +2384,34 @@ export default function SessionView(props: SessionViewProps) {
             }
           />
 
-          <div ref={(el) => (messagesEndEl = el)} />
-          </div>
-        </div>
+           <div ref={(el) => (messagesEndEl = el)} />
+           </div>
+           </div>
 
-        <Show when={!autoScrollEnabled() && props.messages.length > 0}>
-          <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
-            <button
-              type="button"
-              class="pointer-events-auto rounded-full border border-gray-6 bg-gray-1/90 px-4 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/5 backdrop-blur-md hover:bg-gray-2 transition-colors"
-              onClick={() => scrollToLatest("smooth")}
-            >
-              Jump to latest
-            </button>
-          </div>
-        </Show>
-      </div>
+           <Show when={!autoScrollEnabled() && props.messages.length > 0}>
+             <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
+               <button
+                 type="button"
+                 class="pointer-events-auto rounded-full border border-gray-6 bg-gray-1/90 px-4 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/5 backdrop-blur-md hover:bg-gray-2 transition-colors"
+                 onClick={() => scrollToLatest("smooth")}
+               >
+                 Jump to latest
+               </button>
+             </div>
+           </Show>
+         </div>
+
+         <Show when={scratchpadOpen()}>
+           <aside class="hidden lg:flex w-[420px] shrink-0 border-l border-dls-border bg-dls-sidebar">
+             <ScratchpadPanel
+               value={scratchpadValue()}
+               onChange={setScratchpadValue}
+               onClose={() => setScratchpadOpen(false)}
+               onClear={() => setScratchpadValue("")}
+             />
+           </aside>
+         </Show>
+       </div>
 
       <Show when={todoCount() > 0}>
         <div class="mx-auto w-full max-w-[68ch] px-4">

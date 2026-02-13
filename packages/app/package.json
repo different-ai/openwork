@@ -27,6 +27,11 @@
     "bump:set": "node scripts/bump-version.mjs --set"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.8.0",
+    "@codemirror/lang-markdown": "^6.3.3",
+    "@codemirror/language": "^6.11.0",
+    "@codemirror/state": "^6.5.2",
+    "@codemirror/view": "^6.38.0",
     "@opencode-ai/sdk": "^1.1.31",
     "@radix-ui/colors": "^3.0.0",
     "@solid-primitives/event-bus": "^1.1.2",
