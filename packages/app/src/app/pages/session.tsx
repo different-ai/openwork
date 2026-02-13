@@ -28,7 +28,6 @@ import {
   ChevronDown,
   ChevronRight,
   Cpu,
-  FileText,
   HardDrive,
   History,
   ListTodo,
@@ -65,11 +64,10 @@ import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
 import type { SidebarSectionState } from "../components/session/sidebar";
-import ScratchpadPanel from "../components/session/scratchpad-panel";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
-import MarkdownEditorSidebar from "../components/session/markdown-editor-sidebar";
+import ArtifactMarkdownEditor from "../components/session/artifact-markdown-editor";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -240,78 +238,6 @@ export default function SessionView(props: SessionViewProps) {
 
   const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
   const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
-
-  const SCRATCHPAD_OPEN_KEY = "openwork.scratchpad.open.v1";
-  const SCRATCHPAD_VALUE_PREFIX = "openwork.scratchpad.value.v1";
-  const readBool = (key: string, fallback: boolean) => {
-    if (typeof window === "undefined") return fallback;
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return fallback;
-      if (raw === "true") return true;
-      if (raw === "false") return false;
-      return fallback;
-    } catch {
-      return fallback;
-    }
-  };
-  const writeBool = (key: string, value: boolean) => {
-    if (typeof window === "undefined") return;
-    try {
-      window.localStorage.setItem(key, value ? "true" : "false");
-    } catch {
-      // ignore
-    }
-  };
-  const readString = (key: string) => {
-    if (typeof window === "undefined") return "";
-    try {
-      return window.localStorage.getItem(key) ?? "";
-    } catch {
-      return "";
-    }
-  };
-  const writeString = (key: string, value: string) => {
-    if (typeof window === "undefined") return;
-    try {
-      const trimmed = value ?? "";
-      if (!trimmed.trim()) {
-        window.localStorage.removeItem(key);
-      } else {
-        window.localStorage.setItem(key, trimmed);
-      }
-    } catch {
-      // ignore
-    }
-  };
-
-  const [scratchpadOpen, setScratchpadOpen] = createSignal(readBool(SCRATCHPAD_OPEN_KEY, true));
-  createEffect(() => writeBool(SCRATCHPAD_OPEN_KEY, scratchpadOpen()));
-
-  const scratchpadStorageKey = createMemo(() => {
-    const workspaceId = props.activeWorkspaceId || "workspace";
-    const sessionId = props.selectedSessionId || "draft";
-    return `${SCRATCHPAD_VALUE_PREFIX}.${workspaceId}.${sessionId}`;
-  });
-  const [scratchpadValue, setScratchpadValue] = createSignal("");
-
-  createEffect(
-    on(scratchpadStorageKey, (key) => {
-      setScratchpadValue(readString(key));
-    })
-  );
-
-  createEffect(() => {
-    const key = scratchpadStorageKey();
-    const value = scratchpadValue();
-    let timer: number | undefined;
-    if (typeof window !== "undefined") {
-      timer = window.setTimeout(() => writeString(key, value), 150);
-    }
-    onCleanup(() => {
-      if (typeof window !== "undefined" && timer) window.clearTimeout(timer);
-    });
-  });
 
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
@@ -2141,20 +2067,6 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex items-center gap-2">
             <button
               type="button"
-              class={`hidden lg:flex h-9 items-center gap-2 rounded-xl border border-dls-border px-3 text-xs font-medium transition-colors ${scratchpadOpen()
-                ? "bg-dls-active text-dls-text"
-                : "bg-dls-hover text-dls-secondary hover:text-dls-text hover:bg-dls-active"
-                }`}
-              onClick={() => setScratchpadOpen((v) => !v)}
-              title="Toggle notes"
-              aria-label="Toggle notes"
-            >
-              <FileText size={14} class="shrink-0" />
-              <span>Notes</span>
-            </button>
-
-            <button
-              type="button"
               class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
                 searchOpen()
                   ? "bg-dls-active text-dls-text"
@@ -2401,17 +2313,19 @@ export default function SessionView(props: SessionViewProps) {
            </Show>
          </div>
 
-         <Show when={scratchpadOpen()}>
-           <aside class="hidden lg:flex w-[420px] shrink-0 border-l border-dls-border bg-dls-sidebar">
-             <ScratchpadPanel
-               value={scratchpadValue()}
-               onChange={setScratchpadValue}
-               onClose={() => setScratchpadOpen(false)}
-               onClear={() => setScratchpadValue("")}
-             />
-           </aside>
-         </Show>
-       </div>
+          <Show when={markdownEditorOpen()}>
+            <aside class="hidden lg:flex w-[520px] shrink-0 border-l border-dls-border bg-dls-sidebar">
+              <ArtifactMarkdownEditor
+                open={markdownEditorOpen()}
+                path={markdownEditorPath()}
+                workspaceId={props.openworkServerWorkspaceId}
+                client={props.openworkServerClient}
+                onClose={closeMarkdownEditor}
+                onToast={(message) => setToastMessage(message)}
+              />
+            </aside>
+          </Show>
+        </div>
 
       <Show when={todoCount() > 0}>
         <div class="mx-auto w-full max-w-[68ch] px-4">
@@ -2673,15 +2587,6 @@ export default function SessionView(props: SessionViewProps) {
         }
         exportDisabledReason={exportDisabledReason()}
         onOpenBots={openConfig}
-      />
-
-      <MarkdownEditorSidebar
-        open={markdownEditorOpen()}
-        path={markdownEditorPath()}
-        workspaceId={props.openworkServerWorkspaceId}
-        client={props.openworkServerClient}
-        onClose={closeMarkdownEditor}
-        onToast={(message) => setToastMessage(message)}
       />
 
       <Show when={props.activePermission}>
