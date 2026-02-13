@@ -28,8 +28,7 @@ import type {
 import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
-import McpView from "./mcp";
-import PluginsView from "./plugins";
+import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
 import ConfigView from "./config";
 import SettingsView from "./settings";
@@ -42,7 +41,6 @@ import {
   Box,
   ChevronDown,
   ChevronRight,
-  Cpu,
   History,
   Loader2,
   MessageCircle,
@@ -268,9 +266,9 @@ export default function DashboardView(props: DashboardViewProps) {
       case "skills":
         return "Skills";
       case "plugins":
-        return "Plugins";
+        return "Extensions";
       case "mcp":
-        return "Apps";
+        return "Extensions";
       case "identities":
         return "Identities";
       case "config":
@@ -467,11 +465,8 @@ export default function DashboardView(props: DashboardViewProps) {
         if (currentTab === "skills" && !cancelled) {
           await props.refreshSkills();
         }
-        if (currentTab === "plugins" && !cancelled) {
-          await props.refreshPlugins();
-        }
-        if (currentTab === "mcp" && !cancelled) {
-          await props.refreshMcpServers();
+        if ((currentTab === "plugins" || currentTab === "mcp") && !cancelled) {
+          await Promise.all([props.refreshPlugins(), props.refreshMcpServers()]);
         }
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
@@ -494,7 +489,7 @@ export default function DashboardView(props: DashboardViewProps) {
   });
 
   const navItem = (t: DashboardTab, label: any, icon: any) => {
-    const active = () => props.tab === t;
+    const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
     return (
       <button
         class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
@@ -1183,10 +1178,26 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "plugins"}>
-              <PluginsView
+            <Match when={props.tab === "plugins" || props.tab === "mcp"}>
+              <ExtensionsView
+                initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
+                refreshMcpServers={props.refreshMcpServers}
+                mcpServers={props.mcpServers}
+                mcpStatus={props.mcpStatus}
+                mcpLastUpdatedAt={props.mcpLastUpdatedAt}
+                mcpStatuses={props.mcpStatuses}
+                mcpConnectingName={props.mcpConnectingName}
+                selectedMcp={props.selectedMcp}
+                setSelectedMcp={props.setSelectedMcp}
+                quickConnect={props.quickConnect}
+                connectMcp={props.connectMcp}
+                logoutMcpAuth={props.logoutMcpAuth}
+                removeMcp={props.removeMcp}
+                showMcpReloadBanner={props.showMcpReloadBanner}
+                reloadBlocked={props.mcpReloadBlocked}
+                reloadMcpEngine={props.reloadMcpEngine}
                 canEditPlugins={props.canEditPlugins}
                 canUseGlobalScope={props.canUseGlobalPluginScope}
                 accessHint={props.pluginsAccessHint}
@@ -1203,27 +1214,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 suggestedPlugins={props.suggestedPlugins}
                 refreshPlugins={props.refreshPlugins}
                 addPlugin={props.addPlugin}
-              />
-            </Match>
-
-            <Match when={props.tab === "mcp"}>
-              <McpView
-                busy={props.busy}
-                activeWorkspaceRoot={props.activeWorkspaceRoot}
-                mcpServers={props.mcpServers}
-                mcpStatus={props.mcpStatus}
-                mcpLastUpdatedAt={props.mcpLastUpdatedAt}
-                mcpStatuses={props.mcpStatuses}
-                mcpConnectingName={props.mcpConnectingName}
-                selectedMcp={props.selectedMcp}
-                setSelectedMcp={props.setSelectedMcp}
-                quickConnect={props.quickConnect}
-                connectMcp={props.connectMcp}
-                logoutMcpAuth={props.logoutMcpAuth}
-                removeMcp={props.removeMcp}
-                showMcpReloadBanner={props.showMcpReloadBanner}
-                reloadBlocked={props.mcpReloadBlocked}
-                reloadMcpEngine={props.reloadMcpEngine}
               />
             </Match>
 
@@ -1428,7 +1418,7 @@ export default function DashboardView(props: DashboardViewProps) {
           mcpStatuses={props.mcpStatuses}
         />
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-6 gap-2">
+          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-5 gap-2">
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1449,21 +1439,12 @@ export default function DashboardView(props: DashboardViewProps) {
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("plugins")}
-            >
-              <Cpu size={18} />
-              Plugins
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "mcp" ? "text-gray-12" : "text-gray-10"
+                props.tab === "mcp" || props.tab === "plugins" ? "text-gray-12" : "text-gray-10"
               }`}
               onClick={() => props.setTab("mcp")}
             >
               <Box size={18} />
-              Apps
+              Extensions
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1491,8 +1472,7 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class="space-y-1 pt-2">
           {navItem("scheduled", "Automations", <History size={18} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
-          {navItem("plugins", "Plugins", <Cpu size={18} />)}
-          {navItem("mcp", "Apps", <Box size={18} />)}
+          {navItem("mcp", "Extensions", <Box size={18} />)}
           {navItem("identities", "Identities", <MessageCircle size={18} />)}
           {navItem("config", "Advanced", <SlidersHorizontal size={18} />)}
         </div>

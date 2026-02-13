@@ -27,7 +27,6 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  Cpu,
   HardDrive,
   History,
   ListTodo,
@@ -2467,22 +2466,7 @@ export default function SessionView(props: SessionViewProps) {
           <button
             type="button"
             class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "plugins"
-                ? "bg-dls-active text-dls-text"
-                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-            }`}
-            onClick={() => {
-              props.setTab("plugins");
-              props.setView("dashboard");
-            }}
-          >
-            <Cpu size={18} />
-            Plugins
-          </button>
-          <button
-            type="button"
-            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "mcp"
+              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
                 ? "bg-dls-active text-dls-text"
                 : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
             }`}
@@ -2492,7 +2476,7 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <Box size={18} />
-            Apps
+            Extensions
           </button>
           <button
             type="button"

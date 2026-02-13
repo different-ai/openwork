@@ -51,7 +51,7 @@ services:
 
         # --- Install deps ---
         echo "[headless] Installing dependencies..."
-        pnpm install --no-frozen-lockfile
+        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
         # --- Build Linux binaries into container-local path ---
         # Avoids overwriting macOS-native binaries on the host mount.

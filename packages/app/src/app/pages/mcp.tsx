@@ -33,6 +33,7 @@ import { currentLocale, t, type Language } from "../../i18n";
 export type McpViewProps = {
   busy: boolean;
   activeWorkspaceRoot: string;
+  showHeader?: boolean;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
   mcpLastUpdatedAt: number | null;
@@ -129,6 +130,7 @@ const serviceIconBg = (name: string) => {
 export default function McpView(props: McpViewProps) {
   const locale = () => currentLocale();
   const tr = (key: string) => t(key, locale());
+  const showHeader = () => props.showHeader !== false;
 
   const [logoutOpen, setLogoutOpen] = createSignal(false);
   const [logoutTarget, setLogoutTarget] = createSignal<string | null>(null);
@@ -267,20 +269,22 @@ export default function McpView(props: McpViewProps) {
   return (
     <section class="space-y-8 animate-in fade-in duration-300">
       {/* ── Header ───────────────────────────────────── */}
-      <div>
-        <h2 class="text-3xl font-bold text-dls-text">{tr("mcp.apps_title")}</h2>
-        <p class="text-sm text-dls-secondary mt-1.5">
-          {tr("mcp.apps_subtitle")}
-        </p>
-        <Show when={connectedCount() > 0}>
-          <div class="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
-            <div class="w-2 h-2 rounded-full bg-green-9" />
-            <span class="text-xs font-medium text-green-11">
-              {connectedCount()} {connectedCount() === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
-            </span>
-          </div>
-        </Show>
-      </div>
+      <Show when={showHeader()}>
+        <div>
+          <h2 class="text-3xl font-bold text-dls-text">{tr("mcp.apps_title")}</h2>
+          <p class="text-sm text-dls-secondary mt-1.5">
+            {tr("mcp.apps_subtitle")}
+          </p>
+          <Show when={connectedCount() > 0}>
+            <div class="mt-3 inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
+              <div class="w-2 h-2 rounded-full bg-green-9" />
+              <span class="text-xs font-medium text-green-11">
+                {connectedCount()} {connectedCount() === 1 ? tr("mcp.app_connected") : tr("mcp.apps_connected")}
+              </span>
+            </div>
+          </Show>
+        </div>
+      </Show>
 
       {/* ── Reload banner ────────────────────────────── */}
       <Show when={props.showMcpReloadBanner}>
