@@ -956,37 +956,6 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
 
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
-              <div class="text-sm font-medium text-gray-12">Startup</div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
-                <div class="flex items-center gap-3">
-                  <div
-                    class={`p-2 rounded-lg ${
-                      isLocalPreference() ? "bg-indigo-7/10 text-indigo-11" : "bg-green-7/10 text-green-11"
-                    }`}
-                  >
-                    <Show when={isLocalPreference()} fallback={<Smartphone size={18} />}>
-                      <HardDrive size={18} />
-                    </Show>
-                  </div>
-                  <span class="text-sm font-medium text-gray-12">{startupLabel()}</span>
-                </div>
-                <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={props.stopHost} disabled={props.busy}>
-                  Switch
-                </Button>
-              </div>
-
-              <Button variant="secondary" class="w-full justify-between group" onClick={props.onResetStartupPreference}>
-                <span>Reset startup preference</span>
-                <RefreshCcw size={14} class="opacity-80 group-hover:rotate-180 transition-transform" />
-              </Button>
-
-              <p class="text-xs text-gray-7">
-                This clears your saved preference and shows the connection choice on next launch.
-              </p>
-            </div>
-
             <Show when={isTauriRuntime()}>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
@@ -1013,146 +982,6 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </Show>
 
-            <Show when={isTauriRuntime() && isLocalPreference()}>
-              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-                <div>
-                  <div class="text-sm font-medium text-gray-12">Engine</div>
-                  <div class="text-xs text-gray-10">Choose how OpenCode runs locally.</div>
-                </div>
-
-                <div class="space-y-3">
-                  <div class="text-xs text-gray-10">Engine source</div>
-                  <div class={props.developerMode ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
-                    <Button
-                      variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
-                      onClick={() => props.setEngineSource("sidecar")}
-                      disabled={props.busy}
-                    >
-                      Bundled (recommended)
-                    </Button>
-                    <Button
-                      variant={props.engineSource === "path" ? "secondary" : "outline"}
-                      onClick={() => props.setEngineSource("path")}
-                      disabled={props.busy}
-                    >
-                      System install (PATH)
-                    </Button>
-                    <Show when={props.developerMode}>
-                      <Button
-                        variant={props.engineSource === "custom" ? "secondary" : "outline"}
-                        onClick={() => props.setEngineSource("custom")}
-                        disabled={props.busy}
-                      >
-                        Custom binary
-                      </Button>
-                    </Show>
-                  </div>
-                  <div class="text-[11px] text-gray-7">
-                    Bundled engine is the most reliable option. Use System install only if you manage OpenCode yourself.
-                  </div>
-                </div>
-
-                <Show when={props.developerMode && props.engineSource === "custom"}>
-                  <div class="space-y-2">
-                    <div class="text-xs text-gray-10">Custom OpenCode binary</div>
-                    <div class="flex items-center gap-2">
-                      <div
-                        class="flex-1 min-w-0 text-[11px] text-gray-7 font-mono truncate bg-gray-1 p-3 rounded-xl border border-gray-6"
-                        title={engineCustomBinPathLabel()}
-                      >
-                        {engineCustomBinPathLabel()}
-                      </div>
-                      <Button
-                        variant="outline"
-                        class="text-xs h-10 px-3 shrink-0"
-                        onClick={handlePickEngineBinary}
-                        disabled={props.busy}
-                      >
-                        Choose
-                      </Button>
-                      <Button
-                        variant="outline"
-                        class="text-xs h-10 px-3 shrink-0"
-                        onClick={() => props.setEngineCustomBinPath("")}
-                        disabled={props.busy || !props.engineCustomBinPath.trim()}
-                        title={!props.engineCustomBinPath.trim() ? "No custom path set" : "Clear"}
-                      >
-                        Clear
-                      </Button>
-                    </div>
-                    <div class="text-[11px] text-gray-7">
-                      Use this to point OpenWork at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
-                    </div>
-                  </div>
-                </Show>
-
-                <Show when={props.developerMode}>
-                  <div class="space-y-3">
-                    <div class="text-xs text-gray-10">Engine runtime</div>
-                    <div class="grid grid-cols-2 gap-2">
-                      <Button
-                        variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
-                        onClick={() => props.setEngineRuntime("direct")}
-                        disabled={props.busy}
-                      >
-                        Direct (OpenCode)
-                      </Button>
-                      <Button
-                        variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
-                        onClick={() => props.setEngineRuntime("openwrk")}
-                        disabled={props.busy}
-                      >
-                        Openwrk orchestrator
-                      </Button>
-                    </div>
-                    <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
-                  </div>
-                </Show>
-              </div>
-            </Show>
-
-            <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
-              <div>
-                <div class="text-sm font-medium text-gray-12">Reset & Recovery</div>
-                <div class="text-xs text-gray-10">Clear data or restart the setup flow.</div>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Reset onboarding</div>
-                  <div class="text-xs text-gray-7">Clears OpenWork preferences and restarts the app.</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={() => props.openResetModal("onboarding")}
-                  disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                  title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
-                >
-                  Reset
-                </Button>
-              </div>
-
-              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
-                <div class="min-w-0">
-                  <div class="text-sm text-gray-12">Reset app data</div>
-                  <div class="text-xs text-gray-7">More aggressive. Clears OpenWork cache + app data.</div>
-                </div>
-                <Button
-                  variant="danger"
-                  class="text-xs h-8 py-0 px-3 shrink-0"
-                  onClick={() => props.openResetModal("all")}
-                  disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
-                  title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
-                >
-                  Reset
-                </Button>
-              </div>
-
-              <div class="text-xs text-gray-7">
-                Requires typing <span class="font-mono text-gray-11">RESET</span> and will restart the app.
-              </div>
-            </div>
           </div>
         </Match>
 
@@ -1181,6 +1010,187 @@ export default function SettingsView(props: SettingsViewProps) {
                   >
                     {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
                   </Button>
+                </div>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="text-sm font-medium text-gray-12">Startup</div>
+
+                  <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
+                    <div class="flex items-center gap-3">
+                      <div
+                        class={`p-2 rounded-lg ${
+                          isLocalPreference() ? "bg-indigo-7/10 text-indigo-11" : "bg-green-7/10 text-green-11"
+                        }`}
+                      >
+                        <Show when={isLocalPreference()} fallback={<Smartphone size={18} />}>
+                          <HardDrive size={18} />
+                        </Show>
+                      </div>
+                      <span class="text-sm font-medium text-gray-12">{startupLabel()}</span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={props.stopHost}
+                      disabled={props.busy}
+                    >
+                      Switch
+                    </Button>
+                  </div>
+
+                  <Button
+                    variant="secondary"
+                    class="w-full justify-between group"
+                    onClick={props.onResetStartupPreference}
+                  >
+                    <span>Reset startup preference</span>
+                    <RefreshCcw size={14} class="opacity-80 group-hover:rotate-180 transition-transform" />
+                  </Button>
+
+                  <p class="text-xs text-gray-7">
+                    This clears your saved preference and shows the connection choice on next launch.
+                  </p>
+                </div>
+
+                <Show when={isTauriRuntime() && isLocalPreference()}>
+                  <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">Engine</div>
+                      <div class="text-xs text-gray-10">Choose how OpenCode runs locally.</div>
+                    </div>
+
+                    <div class="space-y-3">
+                      <div class="text-xs text-gray-10">Engine source</div>
+                      <div class={props.developerMode ? "grid grid-cols-3 gap-2" : "grid grid-cols-2 gap-2"}>
+                        <Button
+                          variant={props.engineSource === "sidecar" ? "secondary" : "outline"}
+                          onClick={() => props.setEngineSource("sidecar")}
+                          disabled={props.busy}
+                        >
+                          Bundled (recommended)
+                        </Button>
+                        <Button
+                          variant={props.engineSource === "path" ? "secondary" : "outline"}
+                          onClick={() => props.setEngineSource("path")}
+                          disabled={props.busy}
+                        >
+                          System install (PATH)
+                        </Button>
+                        <Show when={props.developerMode}>
+                          <Button
+                            variant={props.engineSource === "custom" ? "secondary" : "outline"}
+                            onClick={() => props.setEngineSource("custom")}
+                            disabled={props.busy}
+                          >
+                            Custom binary
+                          </Button>
+                        </Show>
+                      </div>
+                      <div class="text-[11px] text-gray-7">
+                        Bundled engine is the most reliable option. Use System install only if you manage OpenCode yourself.
+                      </div>
+                    </div>
+
+                    <Show when={props.developerMode && props.engineSource === "custom"}>
+                      <div class="space-y-2">
+                        <div class="text-xs text-gray-10">Custom OpenCode binary</div>
+                        <div class="flex items-center gap-2">
+                          <div
+                            class="flex-1 min-w-0 text-[11px] text-gray-7 font-mono truncate bg-gray-1 p-3 rounded-xl border border-gray-6"
+                            title={engineCustomBinPathLabel()}
+                          >
+                            {engineCustomBinPathLabel()}
+                          </div>
+                          <Button
+                            variant="outline"
+                            class="text-xs h-10 px-3 shrink-0"
+                            onClick={handlePickEngineBinary}
+                            disabled={props.busy}
+                          >
+                            Choose
+                          </Button>
+                          <Button
+                            variant="outline"
+                            class="text-xs h-10 px-3 shrink-0"
+                            onClick={() => props.setEngineCustomBinPath("")}
+                            disabled={props.busy || !props.engineCustomBinPath.trim()}
+                            title={!props.engineCustomBinPath.trim() ? "No custom path set" : "Clear"}
+                          >
+                            Clear
+                          </Button>
+                        </div>
+                        <div class="text-[11px] text-gray-7">
+                          Use this to point OpenWork at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={props.developerMode}>
+                      <div class="space-y-3">
+                        <div class="text-xs text-gray-10">Engine runtime</div>
+                        <div class="grid grid-cols-2 gap-2">
+                          <Button
+                            variant={props.engineRuntime === "direct" ? "secondary" : "outline"}
+                            onClick={() => props.setEngineRuntime("direct")}
+                            disabled={props.busy}
+                          >
+                            Direct (OpenCode)
+                          </Button>
+                          <Button
+                            variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
+                            onClick={() => props.setEngineRuntime("openwrk")}
+                            disabled={props.busy}
+                          >
+                            Openwrk orchestrator
+                          </Button>
+                        </div>
+                        <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
+                      </div>
+                    </Show>
+                  </div>
+                </Show>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
+                  <div>
+                    <div class="text-sm font-medium text-gray-12">Reset & Recovery</div>
+                    <div class="text-xs text-gray-10">Clear data or restart the setup flow.</div>
+                  </div>
+
+                  <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm text-gray-12">Reset onboarding</div>
+                      <div class="text-xs text-gray-7">Clears OpenWork preferences and restarts the app.</div>
+                    </div>
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3 shrink-0"
+                      onClick={() => props.openResetModal("onboarding")}
+                      disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
+                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+
+                  <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                    <div class="min-w-0">
+                      <div class="text-sm text-gray-12">Reset app data</div>
+                      <div class="text-xs text-gray-7">More aggressive. Clears OpenWork cache + app data.</div>
+                    </div>
+                    <Button
+                      variant="danger"
+                      class="text-xs h-8 py-0 px-3 shrink-0"
+                      onClick={() => props.openResetModal("all")}
+                      disabled={props.busy || props.resetModalBusy || props.anyActiveRuns}
+                      title={props.anyActiveRuns ? "Stop active runs to reset" : ""}
+                    >
+                      Reset
+                    </Button>
+                  </div>
+
+                  <div class="text-xs text-gray-7">
+                    Requires typing <span class="font-mono text-gray-11">RESET</span> and will restart the app.
+                  </div>
                 </div>
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
