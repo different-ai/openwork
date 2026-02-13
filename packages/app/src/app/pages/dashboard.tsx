@@ -274,7 +274,7 @@ export default function DashboardView(props: DashboardViewProps) {
       case "identities":
         return "Identities";
       case "config":
-        return "Config";
+        return "Advanced";
       case "settings":
         return "Settings";
       default:
@@ -642,7 +642,7 @@ export default function DashboardView(props: DashboardViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Config",
+          placeholder: token ? undefined : "Set token in Advanced",
           hint: "This token grants access to the worker on that host.",
         },
       ];
@@ -1481,7 +1481,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("config")}
             >
               <SlidersHorizontal size={18} />
-              Config
+              Advanced
             </button>
           </div>
         </nav>
@@ -1494,7 +1494,7 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("plugins", "Plugins", <Cpu size={18} />)}
           {navItem("mcp", "Apps", <Box size={18} />)}
           {navItem("identities", "Identities", <MessageCircle size={18} />)}
-          {navItem("config", "Config", <SlidersHorizontal size={18} />)}
+          {navItem("config", "Advanced", <SlidersHorizontal size={18} />)}
         </div>
       </aside>
     </div>

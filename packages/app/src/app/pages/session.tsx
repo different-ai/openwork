@@ -1431,7 +1431,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Config",
+          placeholder: token ? undefined : "Set token in Advanced",
           hint: "This token grants access to the worker on that host.",
         },
       ];
@@ -2526,7 +2526,7 @@ export default function SessionView(props: SessionViewProps) {
             onClick={openConfig}
           >
             <SlidersHorizontal size={18} />
-            Config
+            Advanced
           </button>
           </div>
         </div>
