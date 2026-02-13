@@ -165,6 +165,14 @@ export default function SettingsView(props: SettingsViewProps) {
   const updateTotalBytes = () => props.updateStatus?.totalBytes ?? null;
   const updateErrorMessage = () => props.updateStatus?.message ?? null;
 
+  const updateDownloadPercent = createMemo<number | null>(() => {
+    const total = updateTotalBytes();
+    if (total == null || total <= 0) return null;
+    const downloaded = updateDownloadedBytes() ?? 0;
+    const clamped = Math.max(0, Math.min(1, downloaded / total));
+    return Math.floor(clamped * 100);
+  });
+
   const isMacToolbar = createMemo(() => {
     if (props.isWindows) return false;
     if (typeof navigator === "undefined") return false;
@@ -213,9 +221,9 @@ export default function SettingsView(props: SettingsViewProps) {
     }
     if (state === "downloading") {
       const downloaded = updateDownloadedBytes() ?? 0;
-      const total = updateTotalBytes();
-      const progress = total != null ? `${formatBytes(downloaded)} / ${formatBytes(total)}` : formatBytes(downloaded);
-      return `Downloading ${progress}`;
+      const percent = updateDownloadPercent();
+      if (percent != null) return `Downloading ${percent}%`;
+      return `Downloading ${formatBytes(downloaded)}`;
     }
     if (state === "checking") {
       return "Checking for updates";
@@ -224,6 +232,22 @@ export default function SettingsView(props: SettingsViewProps) {
       return "Update check failed";
     }
     return "Up to date";
+  });
+
+  const updateToolbarTitle = createMemo(() => {
+    const state = updateState();
+    const version = updateVersion();
+    if (state !== "downloading") return updateToolbarLabel();
+
+    const downloaded = updateDownloadedBytes() ?? 0;
+    const total = updateTotalBytes();
+    const percent = updateDownloadPercent();
+
+    if (total != null && percent != null) {
+      return `Downloading ${formatBytes(downloaded)} / ${formatBytes(total)} (${percent}%)${version ? ` · v${version}` : ""}`;
+    }
+
+    return `Downloading ${formatBytes(downloaded)}${version ? ` · v${version}` : ""}`;
   });
 
   const updateToolbarActionLabel = createMemo(() => {
@@ -623,12 +647,12 @@ export default function SettingsView(props: SettingsViewProps) {
           <div class="flex flex-wrap items-center gap-2">
             <div
               class={`text-xs px-2 py-1 rounded-full border flex items-center gap-2 ${updateToolbarTone()}`}
-              title={updateToolbarLabel()}
+              title={updateToolbarTitle()}
             >
               <Show when={updateToolbarSpinning()}>
                 <RefreshCcw size={12} class="animate-spin" />
               </Show>
-              <span>{updateToolbarLabel()}</span>
+              <span class="tabular-nums whitespace-nowrap">{updateToolbarLabel()}</span>
             </div>
             <Show when={updateToolbarActionLabel()}>
               <Button
