@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { File } from "lucide-solid";
-import { safeStringify } from "../utils";
+import { classifyTool, safeStringify } from "../utils";
 
 type Props = {
   part: Part;
@@ -15,6 +15,32 @@ type Props = {
 function clampText(text: string, max = 800) {
   if (text.length <= max) return text;
   return `${text.slice(0, max)}\n\n… (truncated)`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function splitWithHighlights(text: string, query: string) {
+  const q = query.trim();
+  if (!q) return [{ text, match: false }];
+  const re = new RegExp(escapeRegExp(q), "gi");
+  const parts: { text: string; match: boolean }[] = [];
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  // Safety guard against pathological regex behavior.
+  let iterations = 0;
+  while ((m = re.exec(text)) && iterations < 500) {
+    iterations += 1;
+    const start = m.index;
+    const end = start + m[0].length;
+    if (start > lastIndex) parts.push({ text: text.slice(lastIndex, start), match: false });
+    if (end > start) parts.push({ text: text.slice(start, end), match: true });
+    lastIndex = end;
+    if (m[0].length === 0) re.lastIndex += 1;
+  }
+  if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex), match: false });
+  return parts.length ? parts : [{ text, match: false }];
 }
 
 function useThrottledValue<T>(value: () => T, delayMs = 80) {
@@ -237,6 +263,52 @@ export default function PartView(props: Props) {
   };
 
   const toolOutput = () => normalizeToolText(toolState()?.output);
+
+  const toolCategory = createMemo(() => classifyTool(toolName()));
+  const isSearchTool = createMemo(() => toolCategory() === "search");
+  const searchQuery = createMemo(() => {
+    const state = toolState();
+    const raw = state?.pattern ?? state?.query ?? state?.search ?? state?.text ?? state?.term;
+    if (typeof raw === "string" && raw.trim()) return raw.trim();
+    // Some tools set `state.title` to the query/pattern (e.g. grep).
+    const title = toolTitle();
+    if (typeof title === "string") {
+      const trimmed = title.trim();
+      if (trimmed && trimmed.toLowerCase() !== toolName().toLowerCase() && trimmed.length <= 120) {
+        return trimmed;
+      }
+    }
+    return "";
+  });
+
+  const searchLines = createMemo(() => {
+    if (!isSearchTool()) return [] as string[];
+    const raw = toolOutput();
+    if (!raw.trim()) return [];
+    const lines = raw.split("\n");
+    return lines
+      .map((line) => line.replace(/\r$/, ""))
+      .filter((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return false;
+        // Hide generic summaries so the list focuses on found items.
+        if (/^Found\s+\d+\s+matches?/i.test(trimmed)) return false;
+        if (/^No\s+(matches|files)\s+found/i.test(trimmed)) return false;
+        return true;
+      });
+  });
+
+  const [expandedSearch, setExpandedSearch] = createSignal(false);
+  const isSearchCompleted = createMemo(() => {
+    const status = toolStatus().toLowerCase();
+    return status === "completed" || status === "done" || status === "success";
+  });
+  const searchPreviewMax = 12;
+  const visibleSearchLines = createMemo(() => {
+    const lines = searchLines();
+    if (expandedSearch()) return lines;
+    return lines.slice(0, searchPreviewMax);
+  });
 
   const toolError = () => {
     const error = toolState()?.error;
@@ -501,6 +573,51 @@ export default function PartView(props: Props) {
             <Show when={toolError()}>
               <div class="rounded-lg bg-red-1/40 p-2 text-xs text-red-12">
                 {toolError()}
+              </div>
+            </Show>
+
+            <Show when={isSearchTool() && isSearchCompleted() && searchLines().length > 0}>
+              <div class={`rounded-lg border ${panelBgClass()} p-2`.trim()}>
+                <div class="flex items-center justify-between gap-3">
+                  <div class={`text-[11px] font-medium ${subtleTextClass()}`.trim()}>
+                    Results
+                    <Show when={searchQuery()}>
+                      <span class="ml-2 inline-flex items-center rounded-md border border-amber-7/20 bg-amber-1/30 px-1.5 py-0.5 text-[10px] font-mono text-amber-12">
+                        {searchQuery()}
+                      </span>
+                    </Show>
+                  </div>
+                  <Show when={searchLines().length > searchPreviewMax}>
+                    <button
+                      type="button"
+                      class={`text-[11px] ${subtleTextClass()} hover:text-gray-12 transition-colors`}
+                      onClick={() => setExpandedSearch((current) => !current)}
+                    >
+                      {expandedSearch() ? "Show less" : `Show all (${searchLines().length})`}
+                    </button>
+                  </Show>
+                </div>
+
+                <div class="mt-2 grid gap-1">
+                  <For each={visibleSearchLines()}>
+                    {(line) => (
+                      <div class="rounded-md border border-gray-6/30 bg-gray-1/40 px-2 py-1 text-[11px] leading-relaxed font-mono text-gray-12 whitespace-pre-wrap break-words">
+                        <For each={splitWithHighlights(line, searchQuery())}>
+                          {(part) => (
+                            <Show
+                              when={part.match}
+                              fallback={<span>{part.text}</span>}
+                            >
+                              <span class="rounded-sm bg-amber-3/60 px-0.5 text-amber-12">
+                                {part.text}
+                              </span>
+                            </Show>
+                          )}
+                        </For>
+                      </div>
+                    )}
+                  </For>
+                </div>
               </div>
             </Show>
 

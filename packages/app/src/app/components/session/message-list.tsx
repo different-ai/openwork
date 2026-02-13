@@ -301,7 +301,17 @@ export default function MessageList(props: MessageListProps) {
         {(part) => (
           <div>
             <StepRow part={part} isUser={listProps.isUser} />
-            <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
+            <Show
+              when={(() => {
+                if (props.developerMode && (part.type !== "tool" || props.showThinking)) return true;
+                if (part.type !== "tool") return false;
+                const toolName = (part as any).tool ? String((part as any).tool) : "";
+                if (classifyTool(toolName) !== "search") return false;
+                const state = (part as any).state ?? {};
+                const output = typeof state?.output === "string" ? state.output.trim() : "";
+                return Boolean(output);
+              })()}
+            >
               <div class="pl-6 pb-2 text-xs text-gray-10">
                 <PartView
                   part={part}
