@@ -1,11 +1,11 @@
 import { createEffect, onCleanup, onMount } from "solid-js";
 
-import { EditorState, RangeSetBuilder } from "@codemirror/state";
+import { EditorState, StateField } from "@codemirror/state";
 import {
   Decoration,
   type DecorationSet,
   EditorView,
-  ViewPlugin,
+  WidgetType,
   keymap,
   placeholder as cmPlaceholder,
 } from "@codemirror/view";
@@ -105,18 +105,33 @@ const findEmphasisRanges = (line: string): EmphasisRange[] => {
   return ranges;
 };
 
+class HiddenMarkerWidget extends WidgetType {
+  toDOM() {
+    // Zero-width widget that collapses the marker range.
+    const el = document.createElement("span");
+    el.setAttribute("aria-hidden", "true");
+    el.style.display = "inline-block";
+    el.style.width = "0";
+    el.style.overflow = "hidden";
+    return el;
+  }
+}
+
 const obsidianishLivePreview = () => {
   const headingLine = (level: number) =>
-    Decoration.line({ class: `cm-ow-heading cm-ow-heading-${level}` });
-  const hide = Decoration.replace({});
+    Decoration.line({ attributes: { class: `cm-ow-heading cm-ow-heading-${level}` } });
+  const hide = Decoration.replace({ widget: new HiddenMarkerWidget() });
   const emMark = Decoration.mark({ class: "cm-ow-em" });
   const strongMark = Decoration.mark({ class: "cm-ow-strong" });
 
-  const compute = (view: EditorView): DecorationSet => {
-    const builder = new RangeSetBuilder<Decoration>();
+  const compute = (state: EditorState): DecorationSet => {
+    const ranges: any[] = [];
+    const add = (from: number, to: number, deco: any) => {
+      ranges.push(deco.range(from, to));
+    };
 
-    const doc = view.state.doc;
-    const selections = view.state.selection.ranges;
+    const doc = state.doc;
+    const selections = state.selection.ranges;
     const activeLines = new Set<number>();
     for (const r of selections) {
       const fromLine = doc.lineAt(r.from).number;
@@ -125,10 +140,9 @@ const obsidianishLivePreview = () => {
       if (r.empty) activeLines.add(doc.lineAt(r.head).number);
     }
 
-    const cursorPos = view.state.selection.main.head;
-    let pos = view.viewport.from;
-    while (pos <= view.viewport.to) {
-      const line = doc.lineAt(pos);
+    const cursorPos = state.selection.main.head;
+    for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
+      const line = doc.line(lineNumber);
       const lineText = line.text;
       const lineActive = activeLines.has(line.number);
 
@@ -136,11 +150,11 @@ const obsidianishLivePreview = () => {
       const headingMatch = /^(#{1,6})\s+/.exec(lineText);
       if (headingMatch) {
         const level = headingMatch[1]?.length ?? 1;
-        builder.add(line.from, line.from, headingLine(level));
+        add(line.from, line.from, headingLine(level));
 
         if (!lineActive) {
           const markerLen = (headingMatch[0] ?? "").length;
-          builder.add(line.from, line.from + markerLen, hide);
+          add(line.from, line.from + markerLen, hide);
         }
       }
 
@@ -156,36 +170,35 @@ const obsidianishLivePreview = () => {
 
         const cursorInside = cursorPos >= absOpenFrom && cursorPos <= absCloseTo;
         const mark = r.kind === "strong" ? strongMark : emMark;
-        builder.add(absContentFrom, absContentTo, mark);
 
         if (!cursorInside) {
-          builder.add(absOpenFrom, absOpenTo, hide);
-          builder.add(absCloseFrom, absCloseTo, hide);
+          add(absOpenFrom, absOpenTo, hide);
+        }
+
+        add(absContentFrom, absContentTo, mark);
+
+        if (!cursorInside) {
+          add(absCloseFrom, absCloseTo, hide);
         }
       }
 
-      pos = line.to + 1;
     }
 
-    return builder.finish();
+    return Decoration.set(ranges, true);
   };
 
-  return ViewPlugin.fromClass(
-    class {
-      decorations: DecorationSet;
-      constructor(view: EditorView) {
-        this.decorations = compute(view);
-      }
-      update(update: any) {
-        if (update.docChanged || update.selectionSet || update.viewportChanged) {
-          this.decorations = compute(update.view);
-        }
-      }
+  const field = StateField.define<DecorationSet>({
+    create(state) {
+      return compute(state);
     },
-    {
-      decorations: (v: any) => v.decorations,
-    }
-  );
+    update(value, tr) {
+      if (tr.docChanged || tr.selection) return compute(tr.state);
+      return value;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+
+  return field;
 };
 
 const editorTheme = EditorView.theme({
