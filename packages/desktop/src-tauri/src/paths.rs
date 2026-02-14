@@ -125,6 +125,89 @@ pub fn sidecar_path_candidates(
     unique
 }
 
+/// Returns common paths where user-installed tools are typically located.
+/// On macOS, GUI apps don't inherit shell profile modifications (.zshrc, .bashrc),
+/// so tools installed via Homebrew, nvm, volta, etc. won't be found unless we
+/// explicitly include these common locations.
+fn common_tool_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    #[cfg(target_os = "macos")]
+    {
+        // Homebrew paths (Apple Silicon and Intel)
+        paths.push(PathBuf::from("/opt/homebrew/bin"));
+        paths.push(PathBuf::from("/opt/homebrew/sbin"));
+        paths.push(PathBuf::from("/usr/local/bin"));
+        paths.push(PathBuf::from("/usr/local/sbin"));
+
+        // User-specific paths for common version managers
+        if let Some(home) = home_dir() {
+            // nvm, fnm (Node version managers)
+            paths.push(home.join(".nvm/current/bin"));
+            paths.push(home.join(".fnm/current/bin"));
+            // volta
+            paths.push(home.join(".volta/bin"));
+            // pnpm
+            paths.push(home.join("Library/pnpm"));
+            // bun
+            paths.push(home.join(".bun/bin"));
+            // cargo/rustup
+            paths.push(home.join(".cargo/bin"));
+            // pyenv
+            paths.push(home.join(".pyenv/shims"));
+            // local bin
+            paths.push(home.join(".local/bin"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        paths.push(PathBuf::from("/usr/local/bin"));
+        paths.push(PathBuf::from("/usr/local/sbin"));
+
+        if let Some(home) = home_dir() {
+            // nvm, fnm
+            paths.push(home.join(".nvm/current/bin"));
+            paths.push(home.join(".fnm/current/bin"));
+            // volta
+            paths.push(home.join(".volta/bin"));
+            // pnpm
+            paths.push(home.join(".local/share/pnpm"));
+            // bun
+            paths.push(home.join(".bun/bin"));
+            // cargo
+            paths.push(home.join(".cargo/bin"));
+            // pyenv
+            paths.push(home.join(".pyenv/shims"));
+            // local bin
+            paths.push(home.join(".local/bin"));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        if let Some(home) = home_dir() {
+            // volta
+            paths.push(home.join(".volta/bin"));
+            // pnpm
+            if let Some(local) = env::var_os("LOCALAPPDATA") {
+                paths.push(PathBuf::from(local).join("pnpm"));
+            }
+            // bun
+            paths.push(home.join(".bun/bin"));
+            // cargo
+            paths.push(home.join(".cargo/bin"));
+        }
+
+        // npm global
+        if let Some(app_data) = env::var_os("APPDATA") {
+            paths.push(PathBuf::from(app_data).join("npm"));
+        }
+    }
+
+    paths
+}
+
 pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {
     let mut entries = Vec::<PathBuf>::new();
 
@@ -134,8 +217,19 @@ pub fn prepended_path_env(prefixes: &[PathBuf]) -> Option<std::ffi::OsString> {
         }
     }
 
+    // Add common tool paths that may not be in the GUI app's inherited PATH
+    for path in common_tool_paths() {
+        if path.is_dir() && !entries.contains(&path) {
+            entries.push(path);
+        }
+    }
+
     if let Some(existing) = env::var_os("PATH") {
-        entries.extend(env::split_paths(&existing));
+        for path in env::split_paths(&existing) {
+            if !entries.contains(&path) {
+                entries.push(path);
+            }
+        }
     }
 
     if entries.is_empty() {
