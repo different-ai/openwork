@@ -993,9 +993,10 @@ export default function App() {
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
-    if (selectedSessionStatus() !== "idle") {
-      await (c.session as any).abort({ sessionID }).catch(() => undefined);
-    }
+    // Revert is rejected while the session is busy. We *usually* have an accurate
+    // session status via SSE, but to be resilient to transient desync we attempt
+    // an abort even when we think we're idle.
+    await (c.session as any).abort({ sessionID }).catch(() => undefined);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     const users = messages().filter((message) => {
@@ -1027,6 +1028,8 @@ export default function App() {
     const c = client();
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
+
+    await (c.session as any).abort({ sessionID }).catch(() => undefined);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     if (!revertMessageID) return;
