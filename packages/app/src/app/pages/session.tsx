@@ -1259,7 +1259,7 @@ export default function SessionView(props: SessionViewProps) {
     let sessionId = props.selectedSessionId;
     if (!sessionId) {
       // Auto-create a session when none is selected (same pattern as sendPrompt)
-      sessionId = await props.createSessionAndOpen();
+      sessionId = (await props.createSessionAndOpen()) ?? null;
       if (!sessionId) return;
     }
     props.setSessionAgent(sessionId, agent);
