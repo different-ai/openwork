@@ -114,7 +114,7 @@ export type SessionViewProps = {
   updateEnv: { supported?: boolean; reason?: string | null } | null;
   anyActiveRuns: boolean;
   installUpdateAndRestart: () => void;
-  createSessionAndOpen: () => void;
+  createSessionAndOpen: () => Promise<string | undefined>;
   sendPromptAsync: (draft: ComposerDraft) => Promise<void>;
   abortSession: (sessionId?: string) => Promise<void>;
   sessionRevertMessageId: string | null;
@@ -1255,9 +1255,13 @@ export default function SessionView(props: SessionViewProps) {
     }
   };
 
-  const applySessionAgent = (agent: string | null) => {
-    const sessionId = requireSessionId();
-    if (!sessionId) return;
+  const applySessionAgent = async (agent: string | null) => {
+    let sessionId = props.selectedSessionId;
+    if (!sessionId) {
+      // Auto-create a session when none is selected (same pattern as sendPrompt)
+      sessionId = await props.createSessionAndOpen();
+      if (!sessionId) return;
+    }
     props.setSessionAgent(sessionId, agent);
   };
 

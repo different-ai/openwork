@@ -325,6 +325,7 @@ if (shouldBuildOpenworkServer) {
   const buildResult = spawnSync("bun", openworkServerArgs, {
     cwd: openworkServerDir,
     stdio: "inherit",
+    shell: true,
   });
 
   if (buildResult.status !== 0) {
@@ -542,7 +543,7 @@ if (shouldBuildOwpenbot) {
   if (bunTarget) {
     owpenbotArgs.push("--target", bunTarget);
   }
-  const result = spawnSync("bun", owpenbotArgs, { cwd: owpenbotDir, stdio: "inherit" });
+  const result = spawnSync("bun", owpenbotArgs, { cwd: owpenbotDir, stdio: "inherit", shell: true });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -604,6 +605,7 @@ if (shouldBuildOpenwrk) {
   const result = spawnSync("bun", openwrkArgs, {
     cwd: openwrkDir,
     stdio: "inherit",
+    shell: true,
     env: {
       ...process.env,
       NODE_ENV: "production",
@@ -674,6 +676,7 @@ if (shouldBuildChromeDevtools) {
   const result = spawnSync("bun", chromeDevtoolsArgs, {
     cwd: __dirname,
     stdio: "inherit",
+    shell: true,
     env: {
       ...process.env,
       NODE_ENV: "production",

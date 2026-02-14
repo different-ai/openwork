@@ -891,9 +891,6 @@ export default function App() {
           }),
         );
 
-        await loadSessionsWithReady(workspaceStore.activeWorkspaceRoot().trim()).catch(
-          () => undefined
-        );
       } else {
         const result = await c.session.promptAsync({
           sessionID,
@@ -915,10 +912,6 @@ export default function App() {
           delete copy[sessionID];
           return copy;
         });
-
-        await loadSessionsWithReady(workspaceStore.activeWorkspaceRoot().trim()).catch(
-          () => undefined
-        );
       }
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
@@ -1069,8 +1062,16 @@ export default function App() {
     const root = workspaceStore.activeWorkspaceRoot().trim();
     const params = root ? { sessionID: trimmed, directory: root } : { sessionID: trimmed };
     unwrap(await c.session.delete(params));
-    await loadSessions(root || undefined).catch(() => undefined);
-    await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
+
+    // Remove the deleted session from the store and sidebar locally.
+    // SSE will handle any further sync — calling loadSessions/refreshSidebarWorkspaceSessions
+    // here races with SSE and can wipe unrelated sessions from the store.
+    setSessions(sessions().filter((s) => s.id !== trimmed));
+    const activeWsId = workspaceStore.activeWorkspaceId();
+    setSidebarSessionsByWorkspaceId((prev) => ({
+      ...prev,
+      [activeWsId]: (prev[activeWsId] ?? []).filter((s) => s.id !== trimmed),
+    }));
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -1873,6 +1874,27 @@ export default function App() {
     // If a remote is offline, repeated retries here can create an endless refresh loop.
     if (status !== "idle") return;
     refreshSidebarWorkspaceSessions(id).catch(() => undefined);
+  });
+
+  createEffect(() => {
+    const allSessions = sessions(); // reactive dependency on session store
+    const wsId = workspaceStore.activeWorkspaceId();
+    const status = sidebarSessionStatusByWorkspaceId()[wsId];
+
+    // Only sync if sidebar is already in 'ready' state (not during initial load)
+    if (status === "ready") {
+      const sorted = sortSessionsByActivity(allSessions);
+      setSidebarSessionsByWorkspaceId((prev) => ({
+        ...prev,
+        [wsId]: sorted.map((s) => ({
+          id: s.id,
+          title: s.title,
+          slug: s.slug,
+          time: s.time,
+          directory: s.directory,
+        })),
+      }));
+    }
   });
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
@@ -3442,49 +3464,59 @@ export default function App() {
       mark("raw result received");
       const session = unwrap(rawResult);
       mark("session unwrapped");
-      // Set selectedSessionId BEFORE switching view to avoid "No session selected" flash
+      // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
-      await withTimeout(
-        loadSessionsWithReady(workspaceStore.activeWorkspaceRoot().trim()),
-        12_000,
-        "session.list"
-      );
-      mark("sessions loaded");
-
-      // Keep the dashboard/sidebar session lists in sync with the active workspace.
-      // (Sidebar sessions are fetched per-workspace and won't automatically update when
-      // we create a new session through the active client.)
-      try {
-        const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
-        if (activeWorkspaceId) {
-          const list = sessions();
-          setSidebarSessionsByWorkspaceId((prev) => ({
-            ...prev,
-            [activeWorkspaceId]: sortSessionsByActivity(list),
-          }));
-          setSidebarSessionStatusByWorkspaceId((prev) => ({
-            ...prev,
-            [activeWorkspaceId]: "ready",
-          }));
-          setSidebarSessionErrorByWorkspaceId((prev) => ({
-            ...prev,
-            [activeWorkspaceId]: null,
-          }));
-        }
-      } catch {
-        // ignore sidebar sync failures
-      }
-
       await selectSession(session.id);
+      mark("selectSession (immediate)");
       mark("session selected");
-      // Now switch view AFTER session is selected
+
+      // Inject the new session into the reactive sessions() store so
+      // the createEffect bridge (sessions → sidebar) will always include it,
+      // even if the background loadSessionsWithReady hasn't returned yet.
+      const currentStoreSessions = sessions();
+      if (!currentStoreSessions.some((s) => s.id === session.id)) {
+        setSessions([session, ...currentStoreSessions]);
+      }
+      mark("session injected into store");
+
+      const newItem: SidebarSessionItem = {
+        id: session.id,
+        title: session.title,
+        slug: session.slug,
+        time: session.time,
+        directory: session.directory,
+      };
+      const wsId = workspaceStore.activeWorkspaceId().trim();
+      if (wsId) {
+        const currentSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
+        setSidebarSessionsByWorkspaceId((prev) => ({
+          ...prev,
+          [wsId]: [newItem, ...currentSessions],
+        }));
+        setSidebarSessionStatusByWorkspaceId((prev) => ({
+          ...prev,
+          [wsId]: "ready",
+        }));
+      }
+      mark("sidebar injected");
+
       mark("view set to session");
       // setSessionViewLockUntil(Date.now() + 1200);
       goToSession(session.id);
+
+      // The new session is already in the sessions() store (injected above)
+      // and in the sidebar signal. SSE session.created events will handle
+      // any further syncing. Calling loadSessionsWithReady() here would
+      // race with the store injection — the server may not have indexed the
+      // session yet, so reconcile() would wipe it from the store, causing
+      // the sidebar to flash and the route guard to bounce back.
+      mark("done (SSE will sync)");
+      return session.id;
     } catch (e) {
       mark("error caught", e);
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       setError(addOpencodeCacheHint(message));
+      return undefined;
     } finally {
       setCreatingSession(false);
       setBusy(false);
