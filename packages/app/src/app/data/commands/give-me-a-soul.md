@@ -79,12 +79,14 @@ Use minimal permissions such as:
   - `mkdir *opencode/soul*` (optional hardening)
   - `cat *heartbeat.jsonl*` (used ONLY to append a JSONL line via heredoc)
 - `read` allow patterns for:
-  - `*/.opencode/soul.md`
+  - `.opencode/soul.md`
+- `edit` allow patterns for:
+  - `.opencode/soul.md` (narrowly allow Soul to update its memory)
 - `glob` allow patterns for:
   - `.opencode/skills/*/SKILL.md`
   - `.opencode/commands/*.md`
 
-Do NOT grant broad edit permissions.
+Do NOT grant broad edit permissions. If Soul needs to self-improve, allow `edit` only for `.opencode/soul.md`.
 
 Suggested agent file:
 
@@ -99,7 +101,9 @@ permission:
     "mkdir *opencode/soul*": allow
     "cat *heartbeat.jsonl*": allow
   read:
-    "*/.opencode/soul.md": allow
+    ".opencode/soul.md": allow
+  edit:
+    ".opencode/soul.md": allow
   glob:
     ".opencode/skills/*/SKILL.md": allow
     ".opencode/commands/*.md": allow
