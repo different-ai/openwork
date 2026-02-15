@@ -5,7 +5,7 @@
 
 
   
-## Core Philos
+## Core Philosophy
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
 - Composable: desktop app, WhatsApp/Slack/Telegram connector, or server. Use what fits, no lock-in.
 - Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
@@ -25,7 +25,9 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/opencode-router/dev/install.sh | bash`
   - run `opencode-router setup`, then `opencode-router whatsapp login`, then `opencode-router start`
   - full setup: https://github.com/different-ai/opencode-router/blob/dev/README.md
-- **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwork-orchestrator`.
+- **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
+  - install: `npm install -g openwork-orchestrator`
+  - run: `openwork start --workspace /path/to/workspace --approval auto`
   - docs: [packages/orchestrator/README.md](./packages/orchestrator/README.md)
 
 
@@ -102,12 +104,12 @@ yay -s opencode # Releases version
 
 ## Architecture (high-level)
 
-- In **Host mode**, OpenWork spawns:
-  - `opencode serve --hostname 127.0.0.1 --port <free-port>`
-  - with your selected project folder as the process working directory.
-In Host mode, OpenWork starts an OpenCode server directly on your own computer in the background.
-When you select a project folder, OpenWork runs OpenCode locally using that folder and connects the desktop UI to it.
-This allows you to run agentic workflows, send prompts, and see progress entirely on your machine without relying on a remote server.
+- In **Host mode**, OpenWork runs a local host stack and connects the UI to it.
+  - Default runtime: `openwork` (installed from `openwork-orchestrator`), which orchestrates `opencode`, `openwork-server`, and optionally `opencode-router`.
+  - Fallback runtime: `direct`, where the desktop app spawns `opencode serve --hostname 127.0.0.1 --port <free-port>` directly.
+
+When you select a project folder, OpenWork runs the host stack locally using that folder and connects the desktop UI.
+This lets you run agentic workflows, send prompts, and see progress entirely on your machine without a remote server.
 
 - The UI uses `@opencode-ai/sdk/v2/client` to:
   - connect to the server
