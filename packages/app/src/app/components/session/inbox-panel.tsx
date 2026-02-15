@@ -45,6 +45,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
+  const helperText = "This is remote. Sandboxes are remote too. You need to share files with them. This is where you can do it.";
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -219,8 +220,9 @@ export default function InboxPanel(props: InboxPanelProps) {
               <div class="text-xs font-medium text-dls-text">
                 {uploading() ? "Uploading..." : "Drop files or click to upload"}
               </div>
-              <div class="mt-0.5 text-[11px] text-dls-secondary">
-                Files land in <span class="font-mono">{INBOX_PREFIX}</span>
+              <div class="mt-0.5 text-[11px] text-dls-secondary">{helperText}</div>
+              <div class="mt-1 text-[11px] text-dls-secondary">
+                <div class="font-mono break-all text-dls-secondary/90">{INBOX_PREFIX}</div>
               </div>
             </div>
           </div>
@@ -250,7 +252,7 @@ export default function InboxPanel(props: InboxPanelProps) {
               const updatedAt = () => (typeof item.updatedAt === "number" ? item.updatedAt : null);
 
               return (
-                <div class="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-dls-active">
+                <div class="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-dls-active">
                   <button
                     type="button"
                     class="min-w-0 flex-1 text-left"
@@ -260,7 +262,7 @@ export default function InboxPanel(props: InboxPanelProps) {
                     disabled={!connected()}
                   >
                     <div class="truncate text-xs font-medium text-dls-text">{name()}</div>
-                    <div class="mt-0.5 flex items-center gap-2 text-[11px] text-dls-secondary">
+                    <div class="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-dls-secondary">
                       <Show when={bytes() != null}>
                         <span class="font-mono">{formatBytes(bytes() as number)}</span>
                       </Show>
@@ -268,7 +270,7 @@ export default function InboxPanel(props: InboxPanelProps) {
                         <span>{formatRelativeTime(updatedAt() as number)}</span>
                       </Show>
                       <Show when={rel()}>
-                        <span class="truncate font-mono">{rel()}</span>
+                        <span class="min-w-0 truncate font-mono">{rel()}</span>
                       </Show>
                     </div>
                   </button>

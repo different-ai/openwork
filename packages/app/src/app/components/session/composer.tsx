@@ -1049,7 +1049,9 @@ export default function Composer(props: ComposerProps) {
       const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
-        props.onToast("This worker can't access local file paths. Upload the file to the worker inbox instead.");
+        props.onToast(
+          "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Inbox in the sidebar.",
+        );
         setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }
     }
