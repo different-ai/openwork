@@ -22,6 +22,7 @@ fi
 SUFFIX="${SOUL_PROOF_SUFFIX:-$(date +%s)-$$}"
 # The official bash image is Alpine-based and keeps the harness simple.
 IMAGE="${SOUL_PROOF_IMAGE:-bash:5.2}"
+INTERVAL_SECONDS="${SOUL_PROOF_INTERVAL_SECONDS:-30}"
 
 WS_VOL="openwork-soul-proof-ws-$SUFFIX"
 DATA_VOL="openwork-soul-proof-data-$SUFFIX"
@@ -46,6 +47,7 @@ run_container() {
 
 echo "[proof] volumes: $WS_VOL (workspace), $DATA_VOL (opencode data)" >&2
 echo "[proof] image: $IMAGE" >&2
+echo "[proof] interval: ${INTERVAL_SECONDS}s" >&2
 
 payload_bootstrap_and_tick() {
   cat <<'EOF'
@@ -208,7 +210,7 @@ heartbeat() {
     2>/dev/null | while IFS=$'\t' read -r content; do
       [ -n "$content" ] || continue
       bullet="- TODO: $content"
-      if ! grep -Fq "$bullet" .opencode/soul.md; then
+      if ! grep -Fq -- "$bullet" .opencode/soul.md; then
         printf '%s\n' "$bullet" >> "$tmp_new"
       fi
     done
@@ -360,16 +362,16 @@ echo "[proof] container run #1 (bootstrap + heartbeat + db mutation)" >&2
 run_container "$(payload_bootstrap_and_tick)"
 
 echo ""
-echo "[proof] sleep 30s" >&2
-sleep 30
+echo "[proof] sleep ${INTERVAL_SECONDS}s" >&2
+sleep "$INTERVAL_SECONDS"
 
 echo ""
 echo "[proof] container run #2 (heartbeat reads persisted memory + db)" >&2
 run_container "$(payload_tick_only)"
 
 echo ""
-echo "[proof] sleep 30s" >&2
-sleep 30
+echo "[proof] sleep ${INTERVAL_SECONDS}s" >&2
+sleep "$INTERVAL_SECONDS"
 
 echo ""
 echo "[proof] container run #3 (heartbeat again, then show final artifacts)" >&2
