@@ -2546,9 +2546,6 @@ async function stageSandboxRuntime(options: {
   const baseDir = join(options.persistDir, "openwrk-sandbox", options.containerName);
   await mkdir(baseDir, { recursive: true });
 
-  const opencodeConfigDir = join(baseDir, "opencode-config");
-  await ensureOpencodeManagedTools(opencodeConfigDir);
-
   const sidecarsDir = join(baseDir, "sidecars");
   await mkdir(sidecarsDir, { recursive: true });
   const entrypointHostPath = join(baseDir, "entrypoint.sh");
@@ -2582,6 +2579,7 @@ async function stageSandboxRuntime(options: {
 async function writeSandboxEntrypoint(options: {
   entrypointHostPath: string;
   rootInContainer: string;
+  opencodeConfigDirInContainer: string;
   backend: "docker" | "container";
   opencode: {
     corsOrigins: string[];
@@ -2608,7 +2606,7 @@ async function writeSandboxEntrypoint(options: {
   const openworkBin = `${options.rootInContainer}/sidecars/openwork-server`;
   const opencodeRouterBin = `${options.rootInContainer}/sidecars/opencode-router`;
   const workspaceDir = "/workspace";
-  const opencodeConfigDir = `${options.rootInContainer}/opencode-config`;
+  const opencodeConfigDir = options.opencodeConfigDirInContainer;
 
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
@@ -2642,9 +2640,12 @@ async function writeSandboxEntrypoint(options: {
     "export XDG_CONFIG_HOME=\"$HOME/.config\"",
     "export XDG_CACHE_HOME=\"$HOME/.cache\"",
     "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\"",
-    `cd ${shQuote(workspaceDir)}`,
+    // Do not `cd` into the mounted workspace: bun-compiled sidecars read bunfig.toml
+    // from cwd, and user workspaces may include preloads that break startup.
+    `cd ${shQuote("/persist")}`,
     `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
     `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
+    `mkdir -p ${shQuote(opencodeConfigDir)}`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `export OPENCODE_CLIENT=openwrk`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
@@ -2692,6 +2693,7 @@ async function startDockerSandbox(options: {
   containerName: string;
   workspace: string;
   persistDir: string;
+  opencodeConfigDir: string;
   extraMounts: SandboxMount[];
   sidecars: { opencode: string; openworkServer: string; opencodeRouter?: string | null };
   ports: { openwork: number; opencodeRouterHealth?: number | null };
@@ -2727,6 +2729,7 @@ async function startDockerSandbox(options: {
   await writeSandboxEntrypoint({
     entrypointHostPath: staged.entrypointHostPath,
     rootInContainer: staged.rootInContainer,
+    opencodeConfigDirInContainer: "/opencode-config",
     backend: "docker",
     opencode: options.opencode,
     openwork: {
@@ -2756,6 +2759,8 @@ async function startDockerSandbox(options: {
     `${options.workspace}:/workspace`,
     "-v",
     `${options.persistDir}:/persist`,
+    "-v",
+    `${options.opencodeConfigDir}:/opencode-config`,
   ];
 
   const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
@@ -2798,6 +2803,7 @@ async function startAppleContainerSandbox(options: {
   containerName: string;
   workspace: string;
   persistDir: string;
+  opencodeConfigDir: string;
   extraMounts: SandboxMount[];
   sidecars: { opencode: string; openworkServer: string; opencodeRouter?: string | null };
   ports: { openwork: number; opencodeRouterHealth?: number | null };
@@ -2835,6 +2841,7 @@ async function startAppleContainerSandbox(options: {
   await writeSandboxEntrypoint({
     entrypointHostPath: staged.entrypointHostPath,
     rootInContainer: staged.rootInContainer,
+    opencodeConfigDirInContainer: "/opencode-config",
     backend: "container",
     opencode: options.opencode,
     openwork: {
@@ -2864,6 +2871,8 @@ async function startAppleContainerSandbox(options: {
     `${options.workspace}:/workspace`,
     "-v",
     `${options.persistDir}:/persist`,
+    "-v",
+    `${options.opencodeConfigDir}:/opencode-config`,
   ];
 
   const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
@@ -4760,6 +4769,7 @@ async function runStart(args: ParsedArgs) {
         containerName,
         workspace: resolvedWorkspace,
         persistDir: sandboxPersistDir,
+        opencodeConfigDir,
         extraMounts: sandboxExtraMounts,
         sidecars: {
           opencode: opencodeBinary.bin,
