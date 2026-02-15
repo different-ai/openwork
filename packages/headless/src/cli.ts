@@ -92,6 +92,8 @@ const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
 // port to avoid collisions.
 const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
 
+const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH = "/persist/.config/opencode";
+
 type ParsedArgs = {
   positionals: string[];
   flags: Map<string, string | boolean>;
@@ -495,6 +497,42 @@ function expandTildePath(input: string): string {
   if (trimmed === "~") return homedir();
   if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
   return trimmed;
+}
+
+async function isDir(input: string): Promise<boolean> {
+  try {
+    return (await stat(input)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
+  const enabled = (process.env.OPENWRK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  if (!enabled) return null;
+
+  const candidates: string[] = [];
+  const xdg = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdg) candidates.push(join(xdg, "opencode"));
+  candidates.push(join(homedir(), ".config", "opencode"));
+  if (process.platform === "darwin") {
+    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
+  }
+
+  const files = ["opencode.jsonc", "opencode.json", "config.json", "AGENTS.md"];
+  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
+    if (!(await isDir(candidate))) continue;
+    for (const file of files) {
+      try {
+        await access(join(candidate, file));
+        return candidate;
+      } catch {
+        // keep looking
+      }
+    }
+  }
+
+  return null;
 }
 
 async function realpathOrNull(input: string): Promise<string | null> {
@@ -2720,6 +2758,18 @@ async function startDockerSandbox(options: {
     `${options.persistDir}:/persist`,
   ];
 
+  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
+  const hasOpencodeConfigMount = options.extraMounts.some(
+    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+  );
+  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
+    args.push("-v", `${hostOpencodeConfig}:${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH}:ro`);
+    options.logger.debug("sandbox: mounted host opencode config", {
+      hostPath: hostOpencodeConfig,
+      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+    });
+  }
+
   if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
     args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
   }
@@ -2815,6 +2865,21 @@ async function startAppleContainerSandbox(options: {
     "-v",
     `${options.persistDir}:/persist`,
   ];
+
+  const hostOpencodeConfig = await resolveHostOpencodeGlobalConfigDir();
+  const hasOpencodeConfigMount = options.extraMounts.some(
+    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+  );
+  if (hostOpencodeConfig && !hasOpencodeConfigMount) {
+    args.push(
+      "--mount",
+      `type=bind,source=${hostOpencodeConfig},target=${SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH},readonly`,
+    );
+    options.logger.debug("sandbox: mounted host opencode config", {
+      hostPath: hostOpencodeConfig,
+      containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+    });
+  }
 
   if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
     args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
