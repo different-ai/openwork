@@ -61,22 +61,31 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
         run: |
           set -euo pipefail
 
+          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
           version="${OPENCODE_VERSION:-}"
+
+          if [ -z "$version" ]; then
+            version="$(node -p "require('./packages/desktop/package.json').opencodeVersion || ''" 2>/dev/null || true)"
+          fi
+
+          version="$(echo "$version" | tr -d '\r\n' | sed 's/^v//')"
           if [ -z "$version" ] || [ "$version" = "latest" ]; then
             latest=""
             if [ -n "${GITHUB_TOKEN:-}" ]; then
               latest=$(curl -fsSL \
                 -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                https://api.github.com/repos/anomalyco/opencode/releases/latest \
+                "https://api.github.com/repos/${repo}/releases/latest" \
                 | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
             else
               latest=$(curl -fsSL \
                 -H "X-GitHub-Api-Version: 2022-11-28" \
-                https://api.github.com/repos/anomalyco/opencode/releases/latest \
+                "https://api.github.com/repos/${repo}/releases/latest" \
                 | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p')
             fi
             if [ -n "$latest" ]; then
@@ -93,12 +102,17 @@ jobs:
           echo "OPENCODE_VERSION=$version" >> "$GITHUB_ENV"
 
           opencode_asset="opencode-linux-x64-baseline.tar.gz"
-          url="https://github.com/anomalyco/opencode/releases/download/v${version}/${opencode_asset}"
+          url="https://github.com/${repo}/releases/download/v${version}/${opencode_asset}"
           tmp_dir="$RUNNER_TEMP/opencode"
           extract_dir="$tmp_dir/extracted"
           rm -rf "$tmp_dir"
           mkdir -p "$extract_dir"
-          curl -fsSL -o "$tmp_dir/$opencode_asset" "$url"
+
+          curl_headers=()
+          if [ -n "${GITHUB_TOKEN:-}" ]; then
+            curl_headers+=( -H "Authorization: Bearer ${GITHUB_TOKEN}" )
+          fi
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 "${curl_headers[@]}" -o "$tmp_dir/$opencode_asset" "$url"
           tar -xzf "$tmp_dir/$opencode_asset" -C "$extract_dir"
 
           if [ -f "$extract_dir/opencode" ]; then

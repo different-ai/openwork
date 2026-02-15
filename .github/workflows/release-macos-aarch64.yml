@@ -321,9 +321,12 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
         run: |
           node <<'NODE' >> "$GITHUB_OUTPUT"
           const fs = require('fs');
+          const repo = (process.env.OPENCODE_GITHUB_REPO || 'anomalyco/opencode').trim() || 'anomalyco/opencode';
 
           async function resolveLatest() {
             const token = (process.env.GITHUB_TOKEN || '').trim();
@@ -336,7 +339,7 @@ jobs:
 
             // Prefer API, but fall back to the web "latest" redirect if rate-limited (403) or otherwise blocked.
             try {
-              const res = await fetch('https://api.github.com/repos/anomalyco/opencode/releases/latest', { headers });
+              const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
               if (res.ok) {
                 const data = await res.json();
                 const tag = (typeof data.tag_name === 'string' ? data.tag_name : '').trim();
@@ -351,7 +354,7 @@ jobs:
               // continue to fallback
             }
 
-            const web = await fetch('https://github.com/anomalyco/opencode/releases/latest', {
+            const web = await fetch(`https://github.com/${repo}/releases/latest`, {
               headers: { 'User-Agent': 'openwork-ci' },
               redirect: 'follow',
             });
@@ -390,6 +393,7 @@ jobs:
         shell: bash
         env:
           OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
         run: |
           set -euo pipefail
 
@@ -412,7 +416,8 @@ jobs:
               ;;
           esac
 
-          url="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
+          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
+          url="https://github.com/${repo}/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
           tmp_dir="$RUNNER_TEMP/opencode"
           extract_dir="$tmp_dir/extracted"
           rm -rf "$tmp_dir"
