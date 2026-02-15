@@ -606,8 +606,8 @@ export default function SettingsView(props: SettingsViewProps) {
     return sha.length > 12 ? sha.slice(0, 12) : sha;
   };
   const opencodeVersionLabel = () => {
-    const fromOrchestrator = formatOrchestratorBinaryVersion(props.orchestratorStatus?.binaries?.opencode ?? null);
-    if (fromOrchestrator !== "—") return fromOrchestrator;
+    const binary = props.orchestratorStatus?.binaries?.opencode ?? null;
+    if (binary) return formatOrchestratorBinary(binary);
     return props.engineDoctorVersion ?? "—";
   };
   const openworkServerVersionLabel = () => props.openworkServerDiagnostics?.version ?? "—";
