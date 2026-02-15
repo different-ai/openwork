@@ -20,13 +20,13 @@ function createLoggerStub() {
 }
 
 test("bridge: routes sessions per peer directory binding within workspace", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-multiws-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-multiws-"));
   const wsA = path.join(dir, "ws-a");
   const wsB = path.join(wsA, "project-b");
   fs.mkdirSync(wsA, { recursive: true });
   fs.mkdirSync(wsB, { recursive: true });
 
-  const dbPath = path.join(dir, "owpenbot.db");
+  const dbPath = path.join(dir, "opencode-router.db");
   const sent = [];
   const created = [];
   const prompted = [];
@@ -64,7 +64,7 @@ test("bridge: routes sessions per peer directory binding within workspace", asyn
 
   const bridge = await startBridge(
     {
-      configPath: path.join(dir, "owpenbot.json"),
+      configPath: path.join(dir, "opencode-router.json"),
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: wsA,
@@ -72,7 +72,7 @@ test("bridge: routes sessions per peer directory binding within workspace", asyn
       slackApps: [],
       dataDir: dir,
       dbPath,
-      logFile: path.join(dir, "owpenbot.log"),
+      logFile: path.join(dir, "opencode-router.log"),
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",
@@ -111,13 +111,13 @@ test("bridge: routes sessions per peer directory binding within workspace", asyn
 });
 
 test("bridge: rejects /dir outside workspace root", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-multiws-"));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-multiws-"));
   const wsA = path.join(dir, "ws-a");
   const outside = path.join(dir, "outside");
   fs.mkdirSync(wsA, { recursive: true });
   fs.mkdirSync(outside, { recursive: true });
 
-  const dbPath = path.join(dir, "owpenbot.db");
+  const dbPath = path.join(dir, "opencode-router.db");
   const prompted = [];
   const sent = [];
 
@@ -146,7 +146,7 @@ test("bridge: rejects /dir outside workspace root", async () => {
 
   const bridge = await startBridge(
     {
-      configPath: path.join(dir, "owpenbot.json"),
+      configPath: path.join(dir, "opencode-router.json"),
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: wsA,
@@ -154,7 +154,7 @@ test("bridge: rejects /dir outside workspace root", async () => {
       slackApps: [],
       dataDir: dir,
       dbPath,
-      logFile: path.join(dir, "owpenbot.log"),
+      logFile: path.join(dir, "opencode-router.log"),
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",

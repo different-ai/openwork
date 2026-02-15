@@ -104,7 +104,7 @@ copyFileSync(postinstallSrc, join(meta, basename(postinstallSrc)))
 writeJson(join(meta, "package.json"), {
   name: "openwrk",
   version,
-  description: "Headless OpenWork host orchestrator for OpenCode + OpenWork server + Owpenbot",
+  description: "Headless OpenWork host orchestrator for OpenCode + OpenWork server + OpenCodeRouter",
   license: "MIT",
   bin: {
     openwrk: "./bin/openwrk",

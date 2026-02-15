@@ -31,7 +31,7 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 4. Publish the package:
    - `pnpm --filter openwrk publish --access public`
 
-## openwork-server + owpenbot (if version changed)
+## openwork-server + opencode-router (if version changed)
 
 - `pnpm --filter openwork-server publish --access public`
 - `pnpm --filter owpenwork publish --access public`

@@ -2,7 +2,7 @@
   "name": "openwrk",
   "version": "0.11.68",
   "opencodeVersion": "1.1.60",
-  "description": "Headless OpenWork host orchestrator for OpenCode + OpenWork server + OpenCode Router (owpenbot)",
+  "description": "Headless OpenWork host orchestrator for OpenCode + OpenWork server + OpenCode Router (opencodeRouter)",
   "private": true,
   "type": "module",
   "scripts": {

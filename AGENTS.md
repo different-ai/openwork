@@ -22,7 +22,7 @@ Read INFRASTRUCTURE.md
 ## Why OpenWork Exists
 
 **Cowork is closed-source and locked to Claude Max.** We need an open alternative.
-**Mobile-first matters.** People want to run tasks from their phones, including via messaging surfaces like WhatsApp and Telegram through owpenbot.
+**Mobile-first matters.** People want to run tasks from their phones, including via messaging surfaces like WhatsApp and Telegram through OpenCode Router.
 **Slick UI is non-negotiable.** The experience must feel premium, not utilitarian.
 
 ## Agent Guidelines for development

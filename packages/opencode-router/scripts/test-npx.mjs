@@ -31,7 +31,7 @@ function run(cmd, args, options = {}) {
   });
 }
 
-const tempCache = await fs.mkdtemp(path.join(os.tmpdir(), "owpenbot-npx-"));
+const tempCache = await fs.mkdtemp(path.join(os.tmpdir(), "opencodeRouter-npx-"));
 const env = {
   ...process.env,
   npm_config_yes: "true",

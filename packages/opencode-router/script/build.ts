@@ -26,7 +26,7 @@ function readArgs(argv: string[]): BuildOptions {
   const options: BuildOptions = {
     targets: [],
     outdir: resolve("dist", "bin"),
-    filename: "owpenbot",
+    filename: "opencode-router",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -97,7 +97,7 @@ async function buildOnce(entrypoint: string, outdir: string, filename: string, t
   try {
     const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string };
     if (typeof pkg.version === "string" && pkg.version.trim()) {
-      args.push("--define", `__OWPENBOT_VERSION__=\"${pkg.version.trim()}\"`);
+      args.push("--define", `__OPENCODE_ROUTER_VERSION__=\"${pkg.version.trim()}\"`);
     }
   } catch {
     // ignore

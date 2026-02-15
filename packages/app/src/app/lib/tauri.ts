@@ -651,31 +651,31 @@ export async function schedulerDeleteJob(name: string, scopeRoot?: string): Prom
   return invoke<ScheduledJob>("scheduler_delete_job", { name, scopeRoot });
 }
 
-// Owpenbot types
-export type OwpenbotIdentityItem = {
+// OpenCodeRouter types
+export type OpenCodeRouterIdentityItem = {
   id: string;
   enabled: boolean;
   running?: boolean;
 };
 
-export type OwpenbotChannelStatus = {
-  items: OwpenbotIdentityItem[];
+export type OpenCodeRouterChannelStatus = {
+  items: OpenCodeRouterIdentityItem[];
 };
 
-export type OwpenbotStatus = {
+export type OpenCodeRouterStatus = {
   running: boolean;
   config: string;
   healthPort?: number | null;
-  telegram: OwpenbotChannelStatus;
-  slack: OwpenbotChannelStatus;
+  telegram: OpenCodeRouterChannelStatus;
+  slack: OpenCodeRouterChannelStatus;
   opencode: { url: string; directory?: string };
 };
 
-export type OwpenbotStatusResult =
-  | { ok: true; status: OwpenbotStatus }
+export type OpenCodeRouterStatusResult =
+  | { ok: true; status: OpenCodeRouterStatus }
   | { ok: false; error: string };
 
-export type OwpenbotInfo = {
+export type OpenCodeRouterInfo = {
   running: boolean;
   version: string | null;
   workspacePath: string | null;
@@ -685,31 +685,31 @@ export type OwpenbotInfo = {
   lastStderr: string | null;
 };
 
-// Owpenbot functions - call Tauri commands that wrap owpenbot CLI
-export async function getOwpenbotStatus(): Promise<OwpenbotStatus | null> {
+// OpenCodeRouter functions - call Tauri commands that wrap opencodeRouter CLI
+export async function getOpenCodeRouterStatus(): Promise<OpenCodeRouterStatus | null> {
   try {
-    return await invoke<OwpenbotStatus>("owpenbot_status");
+    return await invoke<OpenCodeRouterStatus>("opencodeRouter_status");
   } catch {
     return null;
   }
 }
 
-export async function getOwpenbotStatusDetailed(): Promise<OwpenbotStatusResult> {
+export async function getOpenCodeRouterStatusDetailed(): Promise<OpenCodeRouterStatusResult> {
   try {
-    const status = await invoke<OwpenbotStatus>("owpenbot_status");
+    const status = await invoke<OpenCodeRouterStatus>("opencodeRouter_status");
     return { ok: true, status };
   } catch (error) {
     return { ok: false, error: String(error) };
   }
 }
 
-export async function owpenbotInfo(): Promise<OwpenbotInfo> {
-  return invoke<OwpenbotInfo>("owpenbot_info");
+export async function opencodeRouterInfo(): Promise<OpenCodeRouterInfo> {
+  return invoke<OpenCodeRouterInfo>("opencodeRouter_info");
 }
 
-export async function getOwpenbotGroupsEnabled(): Promise<boolean | null> {
+export async function getOpenCodeRouterGroupsEnabled(): Promise<boolean | null> {
   try {
-    const status = await getOwpenbotStatus();
+    const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
     const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "GET",
@@ -725,9 +725,9 @@ export async function getOwpenbotGroupsEnabled(): Promise<boolean | null> {
   }
 }
 
-export async function setOwpenbotGroupsEnabled(enabled: boolean): Promise<ExecResult> {
+export async function setOpenCodeRouterGroupsEnabled(enabled: boolean): Promise<ExecResult> {
   try {
-    const status = await getOwpenbotStatus();
+    const status = await getOpenCodeRouterStatus();
     const healthPort = status?.healthPort ?? 3005;
     const response = await (isTauriRuntime() ? tauriFetch : fetch)(`http://127.0.0.1:${healthPort}/config/groups`, {
       method: "POST",
@@ -761,18 +761,18 @@ export async function opencodeMcpAuth(
   });
 }
 
-export async function owpenbotStop(): Promise<OwpenbotInfo> {
-  return invoke<OwpenbotInfo>("owpenbot_stop");
+export async function opencodeRouterStop(): Promise<OpenCodeRouterInfo> {
+  return invoke<OpenCodeRouterInfo>("opencodeRouter_stop");
 }
 
-export async function owpenbotStart(options: {
+export async function opencodeRouterStart(options: {
   workspacePath: string;
   opencodeUrl?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   healthPort?: number;
-}): Promise<OwpenbotInfo> {
-  return invoke<OwpenbotInfo>("owpenbot_start", {
+}): Promise<OpenCodeRouterInfo> {
+  return invoke<OpenCodeRouterInfo>("opencodeRouter_start", {
     workspacePath: options.workspacePath,
     opencodeUrl: options.opencodeUrl ?? null,
     opencodeUsername: options.opencodeUsername ?? null,
@@ -781,15 +781,15 @@ export async function owpenbotStart(options: {
   });
 }
 
-export async function owpenbotRestart(options: {
+export async function opencodeRouterRestart(options: {
   workspacePath: string;
   opencodeUrl?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
   healthPort?: number;
-}): Promise<OwpenbotInfo> {
-  await owpenbotStop();
-  return owpenbotStart(options);
+}): Promise<OpenCodeRouterInfo> {
+  await opencodeRouterStop();
+  return opencodeRouterStart(options);
 }
 
 /**

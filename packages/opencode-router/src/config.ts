@@ -17,7 +17,7 @@ export type TelegramIdentity = {
   token: string;
   enabled?: boolean;
   // Optional default workspace directory to route peers into.
-  // When set, owpenbot will auto-bind new peerIds to this directory.
+  // When set, opencodeRouter will auto-bind new peerIds to this directory.
   directory?: string;
 };
 
@@ -29,7 +29,7 @@ export type SlackIdentity = {
   directory?: string;
 };
 
-export type OwpenbotConfigFile = {
+export type OpenCodeRouterConfigFile = {
   version: number;
   opencodeUrl?: string;
   opencodeDirectory?: string;
@@ -60,7 +60,7 @@ export type ModelRef = {
 
 export type Config = {
   configPath: string;
-  configFile: OwpenbotConfigFile;
+  configFile: OpenCodeRouterConfigFile;
   opencodeUrl: string;
   opencodeDirectory: string;
   opencodeUsername?: string;
@@ -116,15 +116,15 @@ function expandHome(value: string): string {
 }
 
 function resolveConfigPath(dataDir: string, env: EnvLike): string {
-  const override = env.OWPENBOT_CONFIG_PATH?.trim();
+  const override = env.OPENCODE_ROUTER_CONFIG_PATH?.trim();
   if (override) return expandHome(override);
-  return path.join(dataDir, "owpenbot.json");
+  return path.join(dataDir, "opencode-router.json");
 }
 
-export function readConfigFile(configPath: string): { exists: boolean; config: OwpenbotConfigFile } {
+export function readConfigFile(configPath: string): { exists: boolean; config: OpenCodeRouterConfigFile } {
   try {
     const raw = fs.readFileSync(configPath, "utf-8");
-    const parsed = JSON.parse(raw) as OwpenbotConfigFile;
+    const parsed = JSON.parse(raw) as OpenCodeRouterConfigFile;
     return { exists: true, config: parsed };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -134,7 +134,7 @@ export function readConfigFile(configPath: string): { exists: boolean; config: O
   }
 }
 
-export function writeConfigFile(configPath: string, config: OwpenbotConfigFile) {
+export function writeConfigFile(configPath: string, config: OpenCodeRouterConfigFile) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n", "utf-8");
 }
@@ -146,7 +146,7 @@ function normalizeId(value: string): string {
   return safe.replace(/^-+|-+$/g, "").slice(0, 48) || "default";
 }
 
-function coerceTelegramBots(file: OwpenbotConfigFile): TelegramIdentity[] {
+function coerceTelegramBots(file: OpenCodeRouterConfigFile): TelegramIdentity[] {
   const telegram = file.channels?.telegram;
   const bots = Array.isArray((telegram as any)?.bots) ? ((telegram as any).bots as unknown[]) : [];
   const normalized: TelegramIdentity[] = [];
@@ -174,7 +174,7 @@ function coerceTelegramBots(file: OwpenbotConfigFile): TelegramIdentity[] {
   return [];
 }
 
-function coerceSlackApps(file: OwpenbotConfigFile): SlackIdentity[] {
+function coerceSlackApps(file: OpenCodeRouterConfigFile): SlackIdentity[] {
   const slack = file.channels?.slack;
   const apps = Array.isArray((slack as any)?.apps) ? ((slack as any).apps as unknown[]) : [];
   const normalized: SlackIdentity[] = [];
@@ -211,10 +211,10 @@ export function loadConfig(
 ): Config {
   const requireOpencode = options.requireOpencode ?? false;
 
-  const defaultDataDir = path.join(os.homedir(), ".openwork", "owpenbot");
-  const dataDir = expandHome(env.OWPENBOT_DATA_DIR ?? defaultDataDir);
-  const dbPath = expandHome(env.OWPENBOT_DB_PATH ?? path.join(dataDir, "owpenbot.db"));
-  const logFile = expandHome(env.OWPENBOT_LOG_FILE ?? path.join(dataDir, "logs", "owpenbot.log"));
+  const defaultDataDir = path.join(os.homedir(), ".openwork", "opencode-router");
+  const dataDir = expandHome(env.OPENCODE_ROUTER_DATA_DIR ?? defaultDataDir);
+  const dbPath = expandHome(env.OPENCODE_ROUTER_DB_PATH ?? path.join(dataDir, "opencode-router.db"));
+  const logFile = expandHome(env.OPENCODE_ROUTER_LOG_FILE ?? path.join(dataDir, "logs", "opencode-router.log"));
   const configPath = resolveConfigPath(dataDir, env);
   let { config: configFile } = readConfigFile(configPath);
   const opencodeDirectory = env.OPENCODE_DIRECTORY?.trim() || configFile.opencodeDirectory || "";
@@ -242,11 +242,10 @@ export function loadConfig(
   }
   const healthPort =
     parseInteger(env.OPENCODE_ROUTER_HEALTH_PORT) ??
-    parseInteger(env.OWPENBOT_HEALTH_PORT) ??
     // Convenience alias (common on PaaS / local experiments)
     parseInteger(env.PORT) ??
     3005;
-  const model = parseModel(env.OWPENBOT_MODEL);
+  const model = parseModel(env.OPENCODE_ROUTER_MODEL);
 
   const telegramEnabledDefault = configFile.channels?.telegram?.enabled ?? true;
   const slackEnabledDefault = configFile.channels?.slack?.enabled ?? true;

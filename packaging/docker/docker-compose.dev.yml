@@ -56,7 +56,7 @@ services:
         # --- Build Linux binaries into container-local path ---
         # Avoids overwriting macOS-native binaries on the host mount.
         export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
-        export OWPENBOT_BIN="/tmp/openwork-bins/owpenbot"
+        export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
         mkdir -p /tmp/openwork-bins
 
         # --- Compile sidecars for the container architecture ---
@@ -76,10 +76,10 @@ services:
         echo "[headless] Building openwork-server binary (linux)..."
         cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
 
-        echo "[headless] Building owpenbot binary (linux)..."
-        OWPENBOT_VERSION=$$(node -p "require('/app/packages/owpenbot/package.json').version")
-        cd /app/packages/owpenbot && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
-          --define "__OWPENBOT_VERSION__=\"$${OWPENBOT_VERSION}\"" --outfile "$$OWPENBOT_BIN"
+        echo "[headless] Building opencode-router binary (linux)..."
+        OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
+        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
+          --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
 
         cd /app
 
@@ -115,7 +115,7 @@ services:
           --openwork-token "$$OPENWORK_TOKEN" \
           --openwork-host-token "$$OPENWORK_HOST_TOKEN" \
           --openwork-server-bin "$$OPENWORK_SERVER_BIN" \
-          --owpenbot-bin "$$OWPENBOT_BIN" \
+          --opencode-router-bin "$$OPENCODE_ROUTER_BIN" \
           --approval auto \
           --allow-external \
           --no-opencode-auth \

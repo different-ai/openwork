@@ -629,7 +629,7 @@ export async function startHealthServer(
     });
   });
 
-  const host = (process.env.OWPENBOT_HEALTH_HOST ?? "").trim() || "127.0.0.1";
+  const host = (process.env.OPENCODE_ROUTER_HEALTH_HOST ?? "").trim() || "127.0.0.1";
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -650,7 +650,7 @@ export async function startHealthServer(
     if (code === "EADDRINUSE") {
       throw new Error(
         `Failed to start health server on ${host}:${port}. Port is in use. ` +
-          `Set OPENCODE_ROUTER_HEALTH_PORT, OWPENBOT_HEALTH_PORT, or PORT to a free port.`,
+          `Set OPENCODE_ROUTER_HEALTH_PORT, OPENCODE_ROUTER_HEALTH_PORT, or PORT to a free port.`,
       );
     }
     throw error;

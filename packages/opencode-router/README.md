@@ -1,4 +1,4 @@
-# OpenCode Router (formerly Owpenbot)
+# OpenCode Router
 
 Simple Slack + Telegram bridge + directory router for a running OpenCode server.
 
@@ -7,7 +7,7 @@ Simple Slack + Telegram bridge + directory router for a running OpenCode server.
 One-command install (recommended):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/opencode-router/install.sh | bash
 ```
 
 Or install from npm (package name is still `owpenwork`):
@@ -16,7 +16,7 @@ Or install from npm (package name is still `owpenwork`):
 npm install -g owpenwork
 ```
 
-Quick run without install (runs the legacy `owpenwork` alias):
+Quick run without install:
 
 ```bash
 npx owpenwork
@@ -27,10 +27,10 @@ Then follow the guided setup (choose what to configure, start).
 1) One-command setup (installs deps, builds, creates `.env` if missing):
 
 ```bash
-pnpm -C packages/owpenbot setup
+pnpm -C packages/opencode-router setup
 ```
 
-2) (Optional) Fill in `packages/owpenbot/.env` (see `.env.example`).
+2) (Optional) Fill in `packages/opencode-router/.env` (see `.env.example`).
 
 Required:
 - `OPENCODE_URL`
@@ -44,17 +44,13 @@ Recommended:
 
 ```bash
 opencode-router
-
-# (legacy aliases)
-owpenwork
-owpenbot
 ```
 
 ## Telegram
 
 Telegram support is configured via identities. You can either:
 - Use env vars for a single bot: `TELEGRAM_BOT_TOKEN=...`
-- Or add multiple bots to the config file (`owpenbot.json`) using the CLI:
+ - Or add multiple bots to the config file (`opencode-router.json`) using the CLI:
 
 ```bash
 opencode-router telegram add <token> --id default
@@ -99,14 +95,14 @@ opencode-router bindings list
 
 The router can expose a small local HTTP server for health/config and simple message dispatch.
 
-- `OPENCODE_ROUTER_HEALTH_PORT` or `OWPENBOT_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
+- `OPENCODE_ROUTER_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
 - `PORT` is also accepted as a convenience if the above are unset.
-- `OWPENBOT_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
+- `OPENCODE_ROUTER_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
 
 Send a message to all peers bound to a directory:
 
 ```bash
-curl -sS "http://127.0.0.1:${OWPENBOT_HEALTH_PORT:-3005}/send" \
+curl -sS "http://127.0.0.1:${OPENCODE_ROUTER_HEALTH_PORT:-3005}/send" \
   -H 'Content-Type: application/json' \
   -d '{"channel":"telegram","directory":"/path/to/workdir","text":"hello"}'
 ```
@@ -129,15 +125,15 @@ opencode-router bindings set --channel telegram --identity default --peer <chatI
 
 ## Defaults
 
-- SQLite at `~/.openwork/owpenbot/owpenbot.db` unless overridden.
-- Config stored at `~/.openwork/owpenbot/owpenbot.json` (created by `owpenwork` or `owpenwork setup`).
+- SQLite at `~/.openwork/opencode-router/opencode-router.db` unless overridden.
+- Config stored at `~/.openwork/opencode-router/opencode-router.json` (created by `opencode-router` or `pnpm -C packages/opencode-router setup`).
 - Group chats are disabled unless `GROUPS_ENABLED=true`.
 
 ## Tests
 
 ```bash
-pnpm -C packages/owpenbot test:unit
-pnpm -C packages/owpenbot test:smoke
-pnpm -C packages/owpenbot test:cli
-pnpm -C packages/owpenbot test:npx
+pnpm -C packages/opencode-router test:unit
+pnpm -C packages/opencode-router test:smoke
+pnpm -C packages/opencode-router test:cli
+pnpm -C packages/opencode-router test:npx
 ```

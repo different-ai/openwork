@@ -5,7 +5,7 @@ pub mod misc;
 pub mod openwrk;
 pub mod openwork_server;
 pub mod opkg;
-pub mod owpenbot;
+pub mod opencodeRouter;
 pub mod scheduler;
 pub mod skills;
 pub mod updater;

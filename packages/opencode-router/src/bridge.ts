@@ -5,7 +5,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { Logger } from "pino";
 
-import type { Config, ChannelName, OwpenbotConfigFile } from "./config.js";
+import type { Config, ChannelName, OpenCodeRouterConfigFile } from "./config.js";
 import { readConfigFile, writeConfigFile } from "./config.js";
 import { BridgeStore } from "./db.js";
 import { normalizeEvent } from "./events.js";
@@ -136,8 +136,8 @@ const CHANNEL_LABELS: Record<ChannelName, string> = {
 };
 
 const TYPING_INTERVAL_MS = 6000;
-const OWPENBOT_AGENT_FILE_RELATIVE_PATH = ".opencode/agents/owpenbot.md";
-const OWPENBOT_AGENT_MAX_CHARS = 16_000;
+const OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH = ".opencode/agents/opencode-router.md";
+const OPENCODE_ROUTER_AGENT_MAX_CHARS = 16_000;
 
 type MessagingAgentConfig = {
   filePath: string;
@@ -190,7 +190,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   const clients = new Map<string, ReturnType<typeof createClient>>();
   const defaultDirectory = config.opencodeDirectory;
   const workspaceRoot = resolve(defaultDirectory || process.cwd());
-  const workspaceAgentFilePath = join(workspaceRoot, OWPENBOT_AGENT_FILE_RELATIVE_PATH);
+  const workspaceAgentFilePath = join(workspaceRoot, OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH);
   const agentPromptCache = new Map<string, { mtimeMs: number; config: MessagingAgentConfig }>();
   let latestAgentConfig: MessagingAgentConfig = {
     filePath: workspaceAgentFilePath,
@@ -243,7 +243,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         return next;
       }
 
-      const truncated = raw.length > OWPENBOT_AGENT_MAX_CHARS ? raw.slice(0, OWPENBOT_AGENT_MAX_CHARS) : raw;
+      const truncated = raw.length > OPENCODE_ROUTER_AGENT_MAX_CHARS ? raw.slice(0, OPENCODE_ROUTER_AGENT_MAX_CHARS) : raw;
       const parsed = parseMessagingAgentFile(truncated);
       const next: MessagingAgentConfig = {
         filePath,
@@ -261,7 +261,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         latestAgentConfig = { filePath, loaded: false, instructions: "" };
         return latestAgentConfig;
       }
-      logger.warn({ error, filePath }, "failed to load owpenbot agent file");
+      logger.warn({ error, filePath }, "failed to load opencode-router agent file");
       latestAgentConfig = { filePath, loaded: false, instructions: "" };
       return latestAgentConfig;
     }
@@ -567,7 +567,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           
           // Persist to config file
           const { config: current } = readConfigFile(config.configPath);
-          const next: OwpenbotConfigFile = {
+          const next: OpenCodeRouterConfigFile = {
             ...current,
             groupsEnabled: enabled,
           };
@@ -619,7 +619,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             nextBots.push({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
           }
 
-          const next: OwpenbotConfigFile = {
+          const next: OpenCodeRouterConfigFile = {
             ...current,
             channels: {
               ...current.channels,
@@ -706,7 +706,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             nextBots.push(entry);
           }
-          const next: OwpenbotConfigFile = {
+          const next: OpenCodeRouterConfigFile = {
             ...current,
             channels: {
               ...current.channels,
@@ -779,7 +779,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             nextApps.push({ id, botToken, appToken, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
           }
 
-          const next: OwpenbotConfigFile = {
+          const next: OpenCodeRouterConfigFile = {
             ...current,
             channels: {
               ...current.channels,
@@ -875,7 +875,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             nextApps.push(entry);
           }
-          const next: OwpenbotConfigFile = {
+          const next: OpenCodeRouterConfigFile = {
             ...current,
             channels: {
               ...current.channels,
@@ -1588,7 +1588,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     peerKey: string;
     directory: string;
   }): Promise<string> {
-    const title = `owpenbot ${input.channel}/${input.identityId} ${input.peerId}`;
+    const title = `opencode-router ${input.channel}/${input.identityId} ${input.peerId}`;
     const session = await getClient(input.directory).session.create({
       title,
       permission: buildPermissionRules(config.permissionMode),

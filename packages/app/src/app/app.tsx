@@ -124,11 +124,11 @@ import {
   schedulerListJobs,
   openworkServerInfo,
   openwrkStatus,
-  owpenbotInfo,
+  opencodeRouterInfo,
   setWindowDecorations,
   type OpenwrkStatus,
   type OpenworkServerInfo,
-  type OwpenbotInfo,
+  type OpenCodeRouterInfo,
 } from "./lib/tauri";
 import {
   parseOpenworkWorkspaceIdFromUrl,
@@ -268,7 +268,7 @@ export default function App() {
   const [openworkServerHostInfo, setOpenworkServerHostInfo] = createSignal<OpenworkServerInfo | null>(null);
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
-  const [owpenbotInfoState, setOwpenbotInfoState] = createSignal<OwpenbotInfo | null>(null);
+  const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
   const [openwrkStatusState, setOpenwrkStatusState] = createSignal<OpenwrkStatus | null>(null);
   const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
@@ -511,7 +511,7 @@ export default function App() {
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (!developerMode()) {
-      setOwpenbotInfoState(null);
+      setOpenCodeRouterInfoState(null);
       return;
     }
     if (!documentVisible()) return;
@@ -520,10 +520,10 @@ export default function App() {
 
     const run = async () => {
       try {
-        const info = await owpenbotInfo();
-        if (active) setOwpenbotInfoState(info);
+        const info = await opencodeRouterInfo();
+        if (active) setOpenCodeRouterInfoState(info);
       } catch {
-        if (active) setOwpenbotInfoState(null);
+        if (active) setOpenCodeRouterInfoState(null);
       }
     };
 
@@ -4335,7 +4335,7 @@ export default function App() {
       opencodeConnectStatus: opencodeConnectStatus(),
       engineInfo: workspaceStore.engine(),
       openwrkStatus: openwrkStatusState(),
-      owpenbotInfo: owpenbotInfoState(),
+      opencodeRouterInfo: opencodeRouterInfoState(),
       engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
       updateOpenworkServerSettings,
       resetOpenworkServerSettings,

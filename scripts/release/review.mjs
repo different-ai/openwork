@@ -20,7 +20,7 @@ const appPkg = readJson(resolve(root, "packages", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "packages", "desktop", "package.json"));
 const headlessPkg = readJson(resolve(root, "packages", "headless", "package.json"));
 const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
-const owpenbotPkg = readJson(resolve(root, "packages", "owpenbot", "package.json"));
+const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
 const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
 const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
 
@@ -31,12 +31,12 @@ const versions = {
   cargo: cargoVersion ?? null,
   server: serverPkg.version ?? null,
   headless: headlessPkg.version ?? null,
-  owpenbot: owpenbotPkg.version ?? null,
+  opencodeRouter: opencodeRouterPkg.version ?? null,
   opencode: {
     desktop: desktopPkg.opencodeVersion ?? null,
     headless: headlessPkg.opencodeVersion ?? null,
   },
-  owpenbotVersionPinned: desktopPkg.owpenbotVersion ?? null,
+  opencodeRouterVersionPinned: desktopPkg.opencodeRouterVersion ?? null,
   headlessOpenworkServerRange: headlessPkg.dependencies?.["openwork-server"] ?? null,
 };
 
@@ -67,9 +67,9 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.server ?? "?"}`,
 );
 addCheck(
-  "App/owpenbot versions match",
-  versions.app && versions.owpenbot && versions.app === versions.owpenbot,
-  `${versions.app ?? "?"} vs ${versions.owpenbot ?? "?"}`,
+  "App/opencode-router versions match",
+  versions.app && versions.opencodeRouter && versions.app === versions.opencodeRouter,
+  `${versions.app ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 addCheck(
   "Desktop/Tauri versions match",
@@ -82,9 +82,9 @@ addCheck(
   `${versions.desktop ?? "?"} vs ${versions.cargo ?? "?"}`,
 );
 addCheck(
-  "Owpenbot version pinned in desktop",
-  versions.owpenbot && versions.owpenbotVersionPinned && versions.owpenbot === versions.owpenbotVersionPinned,
-  `${versions.owpenbotVersionPinned ?? "?"} vs ${versions.owpenbot ?? "?"}`,
+  "OpenCodeRouter version pinned in desktop",
+  versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,
+  `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 if (versions.opencode.desktop || versions.opencode.headless) {
   addCheck(
@@ -121,7 +121,7 @@ if (existsSync(sidecarManifestPath)) {
     `${manifest.version ?? "?"} vs ${versions.headless ?? "?"}`,
   );
   const serverEntry = manifest.entries?.["openwork-server"]?.version;
-  const owpenbotEntry = manifest.entries?.owpenbot?.version;
+  const routerEntry = manifest.entries?.["opencode-router"]?.version;
   if (serverEntry) {
     addCheck(
       "Sidecar manifest openwork-server version matches",
@@ -129,11 +129,11 @@ if (existsSync(sidecarManifestPath)) {
       `${serverEntry ?? "?"} vs ${versions.server ?? "?"}`,
     );
   }
-  if (owpenbotEntry) {
+  if (routerEntry) {
     addCheck(
-      "Sidecar manifest owpenbot version matches",
-      versions.owpenbot && owpenbotEntry === versions.owpenbot,
-      `${owpenbotEntry ?? "?"} vs ${versions.owpenbot ?? "?"}`,
+      "Sidecar manifest opencode-router version matches",
+      versions.opencodeRouter && routerEntry === versions.opencodeRouter,
+      `${routerEntry ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
     );
   }
 } else {

@@ -27,10 +27,12 @@ if (!serverVersion) {
   throw new Error("openwork-server version missing in packages/server/package.json");
 }
 
-const owpenbotPkg = JSON.parse(readFileSync(resolve(repoRoot, "packages", "owpenbot", "package.json"), "utf8"));
-const owpenbotVersion = String(owpenbotPkg.version ?? "").trim();
-if (!owpenbotVersion) {
-  throw new Error("owpenbot version missing in packages/owpenbot/package.json");
+const routerPkg = JSON.parse(
+  readFileSync(resolve(repoRoot, "packages", "opencode-router", "package.json"), "utf8"),
+);
+const routerVersion = String(routerPkg.version ?? "").trim();
+if (!routerVersion) {
+  throw new Error("opencode-router version missing in packages/opencode-router/package.json");
 }
 
 const run = (command, args, cwd) => {
@@ -57,13 +59,13 @@ const sha256File = (path) => {
 };
 
 const serverDir = resolve(repoRoot, "packages", "server", "dist", "bin");
-const owpenbotDir = resolve(repoRoot, "packages", "owpenbot", "dist", "bin");
+const routerDir = resolve(repoRoot, "packages", "opencode-router", "dist", "bin");
 
 mkdirSync(outdir, { recursive: true });
 
 const entries = {
   "openwork-server": { version: serverVersion, targets: {} },
-  owpenbot: { version: owpenbotVersion, targets: {} },
+  "opencode-router": { version: routerVersion, targets: {} },
 };
 
 for (const target of targets) {
@@ -75,22 +77,22 @@ for (const target of targets) {
   const serverDest = join(outdir, `openwork-server-${target.id}${ext}`);
   copyFileSync(serverSrc, serverDest);
 
-  const owpenbotSrc = join(owpenbotDir, `owpenbot-${target.bun}${ext}`);
-  if (!existsSync(owpenbotSrc)) {
-    throw new Error(`Missing owpenbot binary at ${owpenbotSrc}`);
+  const routerSrc = join(routerDir, `opencode-router-${target.bun}${ext}`);
+  if (!existsSync(routerSrc)) {
+    throw new Error(`Missing opencode-router binary at ${routerSrc}`);
   }
-  const owpenbotDest = join(outdir, `owpenbot-${target.id}${ext}`);
-  copyFileSync(owpenbotSrc, owpenbotDest);
+  const routerDest = join(outdir, `opencode-router-${target.id}${ext}`);
+  copyFileSync(routerSrc, routerDest);
 
   entries["openwork-server"].targets[target.id] = {
     asset: basename(serverDest),
     sha256: sha256File(serverDest),
     size: statSync(serverDest).size,
   };
-  entries.owpenbot.targets[target.id] = {
-    asset: basename(owpenbotDest),
-    sha256: sha256File(owpenbotDest),
-    size: statSync(owpenbotDest).size,
+  entries["opencode-router"].targets[target.id] = {
+    asset: basename(routerDest),
+    sha256: sha256File(routerDest),
+    size: statSync(routerDest).size,
   };
 }
 

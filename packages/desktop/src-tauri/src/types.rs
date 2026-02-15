@@ -183,7 +183,7 @@ pub struct OpenwrkStatus {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
-pub struct OwpenbotInfo {
+pub struct OpenCodeRouterInfo {
     pub running: bool,
     pub version: Option<String>,
     pub workspace_path: Option<String>,

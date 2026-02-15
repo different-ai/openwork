@@ -21,10 +21,10 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 
 ## Alternate UIs
 
-- **Owpenbot (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
-  - `curl -fsSL https://raw.githubusercontent.com/different-ai/owpenbot/dev/install.sh | bash`
-  - run `owpenbot setup`, then `owpenbot whatsapp login`, then `owpenbot start`
-  - full setup: https://github.com/different-ai/owpenbot/blob/dev/README.md
+- **OpenCode Router (WhatsApp bot)**: a lightweight WhatsApp bridge for a running OpenCode server. Install with:
+  - `curl -fsSL https://raw.githubusercontent.com/different-ai/opencode-router/dev/install.sh | bash`
+  - run `opencode-router setup`, then `opencode-router whatsapp login`, then `opencode-router start`
+  - full setup: https://github.com/different-ai/opencode-router/blob/dev/README.md
 - **Openwrk (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwrk`.
   - docs: [packages/headless/README.md](./packages/headless/README.md)
 

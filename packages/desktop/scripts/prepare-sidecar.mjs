@@ -76,12 +76,12 @@ const fetchLatestOpencodeVersion = async () => {
   }
 };
 const opencodeAssetOverride = process.env.OPENCODE_ASSET?.trim() || null;
-const owpenbotVersion = (() => {
-  if (process.env.OWPENBOT_VERSION?.trim()) return process.env.OWPENBOT_VERSION.trim();
+const opencodeRouterVersion = (() => {
+  if (process.env.OPENCODE_ROUTER_VERSION?.trim()) return process.env.OPENCODE_ROUTER_VERSION.trim();
   try {
     const raw = readFileSync(packageJsonPath, "utf8");
     const pkg = JSON.parse(raw);
-    if (pkg.owpenbotVersion) return String(pkg.owpenbotVersion).trim();
+    if (pkg.opencodeRouterVersion) return String(pkg.opencodeRouterVersion).trim();
   } catch {
     // ignore
   }
@@ -162,20 +162,20 @@ const resolveBuildScript = (dir) => {
   return scriptPath;
 };
 
-// owpenbot paths
-const owpenbotBaseName = "owpenbot";
-const owpenbotName = process.platform === "win32" ? `${owpenbotBaseName}.exe` : owpenbotBaseName;
-const owpenbotPath = join(sidecarDir, owpenbotName);
-const owpenbotBuildName = bunTarget
-  ? `${owpenbotBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : owpenbotName;
-const owpenbotBuildPath = join(sidecarDir, owpenbotBuildName);
-const owpenbotTargetTriple = resolvedTargetTriple;
-const owpenbotTargetName = owpenbotTargetTriple
-  ? `${owpenbotBaseName}-${owpenbotTargetTriple}${owpenbotTargetTriple.includes("windows") ? ".exe" : ""}`
+// opencode-router paths
+const opencodeRouterBaseName = "opencode-router";
+const opencodeRouterName = process.platform === "win32" ? `${opencodeRouterBaseName}.exe` : opencodeRouterBaseName;
+const opencodeRouterPath = join(sidecarDir, opencodeRouterName);
+const opencodeRouterBuildName = bunTarget
+  ? `${opencodeRouterBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : opencodeRouterName;
+const opencodeRouterBuildPath = join(sidecarDir, opencodeRouterBuildName);
+const opencodeRouterTargetTriple = resolvedTargetTriple;
+const opencodeRouterTargetName = opencodeRouterTargetTriple
+  ? `${opencodeRouterBaseName}-${opencodeRouterTargetTriple}${opencodeRouterTargetTriple.includes("windows") ? ".exe" : ""}`
   : null;
-const owpenbotTargetPath = owpenbotTargetName ? join(sidecarDir, owpenbotTargetName) : null;
-const owpenbotDir = resolve(__dirname, "..", "..", "owpenbot");
+const opencodeRouterTargetPath = opencodeRouterTargetName ? join(sidecarDir, opencodeRouterTargetName) : null;
+const opencodeRouterDir = resolve(__dirname, "..", "..", "opencode-router");
 
 // openwrk paths
 const openwrkBaseName = "openwrk";
@@ -261,11 +261,11 @@ const findOpencodeBinary = (dir) => {
   );
 };
 
-const findOwpenbotBinary = (dir) => {
+const findOpenCodeRouterBinary = (dir) => {
   const candidates = readDirectory(dir);
   return (
-    candidates.find((file) => file.endsWith(`/${owpenbotName}`) || file.endsWith(`\\${owpenbotName}`)) ??
-    candidates.find((file) => file.endsWith("/owpenbot") || file.endsWith("\\owpenbot")) ??
+    candidates.find((file) => file.endsWith(`/${opencodeRouterName}`) || file.endsWith(`\\${opencodeRouterName}`)) ??
+    candidates.find((file) => file.endsWith("/opencode-router") || file.endsWith("\\opencodeRouter")) ??
     null
   );
 };
@@ -505,72 +505,72 @@ if (shouldDownloadOpencode) {
   console.log(`OpenCode sidecar updated to ${normalizedOpencodeVersion}.`);
 }
 
-const owpenbotPkgRaw = readFileSync(resolve(owpenbotDir, "package.json"), "utf8");
-const owpenbotPkg = JSON.parse(owpenbotPkgRaw);
-const owpenbotPkgVersion = String(owpenbotPkg.version ?? "").trim();
-const normalizedOwpenbotVersion = owpenbotVersion?.startsWith("v")
-  ? owpenbotVersion.slice(1)
-  : owpenbotVersion;
-const expectedOwpenbotVersion = normalizedOwpenbotVersion || owpenbotPkgVersion;
+const opencodeRouterPkgRaw = readFileSync(resolve(opencodeRouterDir, "package.json"), "utf8");
+const opencodeRouterPkg = JSON.parse(opencodeRouterPkgRaw);
+const opencodeRouterPkgVersion = String(opencodeRouterPkg.version ?? "").trim();
+const normalizedOpenCodeRouterVersion = opencodeRouterVersion?.startsWith("v")
+  ? opencodeRouterVersion.slice(1)
+  : opencodeRouterVersion;
+const expectedOpenCodeRouterVersion = normalizedOpenCodeRouterVersion || opencodeRouterPkgVersion;
 
-if (!expectedOwpenbotVersion) {
-  console.error("Owpenbot version missing. Set owpenbotVersion or ensure package.json has version.");
+if (!expectedOpenCodeRouterVersion) {
+  console.error("OpenCodeRouter version missing. Set opencodeRouterVersion or ensure package.json has version.");
   process.exit(1);
 }
 
-if (normalizedOwpenbotVersion && owpenbotPkgVersion && normalizedOwpenbotVersion !== owpenbotPkgVersion) {
-  console.error(`Owpenbot version mismatch: desktop=${normalizedOwpenbotVersion}, package=${owpenbotPkgVersion}`);
+if (normalizedOpenCodeRouterVersion && opencodeRouterPkgVersion && normalizedOpenCodeRouterVersion !== opencodeRouterPkgVersion) {
+  console.error(`OpenCodeRouter version mismatch: desktop=${normalizedOpenCodeRouterVersion}, package=${opencodeRouterPkgVersion}`);
   process.exit(1);
 }
 
-let didBuildOwpenbot = false;
-const shouldBuildOwpenbot = forceBuild || !existsSync(owpenbotBuildPath) || isStubBinary(owpenbotBuildPath);
-if (shouldBuildOwpenbot) {
+let didBuildOpenCodeRouter = false;
+const shouldBuildOpenCodeRouter = forceBuild || !existsSync(opencodeRouterBuildPath) || isStubBinary(opencodeRouterBuildPath);
+if (shouldBuildOpenCodeRouter) {
   mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(owpenbotBuildPath)) {
+  if (existsSync(opencodeRouterBuildPath)) {
     try {
-      unlinkSync(owpenbotBuildPath);
+      unlinkSync(opencodeRouterBuildPath);
     } catch {
       // ignore
     }
   }
-  const owpenbotScript = resolveBuildScript(owpenbotDir);
-  if (!existsSync(owpenbotScript)) {
-    console.error(`Owpenbot build script not found at ${owpenbotScript}`);
+  const opencodeRouterScript = resolveBuildScript(opencodeRouterDir);
+  if (!existsSync(opencodeRouterScript)) {
+    console.error(`OpenCodeRouter build script not found at ${opencodeRouterScript}`);
     process.exit(1);
   }
-  const owpenbotArgs = [owpenbotScript, "--outdir", sidecarDir, "--filename", "owpenbot"];
+  const opencodeRouterArgs = [opencodeRouterScript, "--outdir", sidecarDir, "--filename", "opencode-router"];
   if (bunTarget) {
-    owpenbotArgs.push("--target", bunTarget);
+    opencodeRouterArgs.push("--target", bunTarget);
   }
-  const result = spawnSync("bun", owpenbotArgs, { cwd: owpenbotDir, stdio: "inherit", shell: true });
+  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit", shell: true });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
 
-  didBuildOwpenbot = true;
+  didBuildOpenCodeRouter = true;
 }
 
-if (existsSync(owpenbotBuildPath)) {
-  const shouldCopyCanonical = didBuildOwpenbot || !existsSync(owpenbotPath) || isStubBinary(owpenbotPath);
-  if (shouldCopyCanonical && owpenbotBuildPath !== owpenbotPath) {
+if (existsSync(opencodeRouterBuildPath)) {
+  const shouldCopyCanonical = didBuildOpenCodeRouter || !existsSync(opencodeRouterPath) || isStubBinary(opencodeRouterPath);
+  if (shouldCopyCanonical && opencodeRouterBuildPath !== opencodeRouterPath) {
     try {
-      if (existsSync(owpenbotPath)) unlinkSync(owpenbotPath);
+      if (existsSync(opencodeRouterPath)) unlinkSync(opencodeRouterPath);
     } catch {
       // ignore
     }
-    copyFileSync(owpenbotBuildPath, owpenbotPath);
+    copyFileSync(opencodeRouterBuildPath, opencodeRouterPath);
   }
 
-  if (owpenbotTargetPath) {
-    const shouldCopyTarget = didBuildOwpenbot || !existsSync(owpenbotTargetPath) || isStubBinary(owpenbotTargetPath);
-    if (shouldCopyTarget && owpenbotBuildPath !== owpenbotTargetPath) {
+  if (opencodeRouterTargetPath) {
+    const shouldCopyTarget = didBuildOpenCodeRouter || !existsSync(opencodeRouterTargetPath) || isStubBinary(opencodeRouterTargetPath);
+    if (shouldCopyTarget && opencodeRouterBuildPath !== opencodeRouterTargetPath) {
       try {
-        if (existsSync(owpenbotTargetPath)) unlinkSync(owpenbotTargetPath);
+        if (existsSync(opencodeRouterTargetPath)) unlinkSync(opencodeRouterTargetPath);
       } catch {
         // ignore
       }
-      copyFileSync(owpenbotBuildPath, owpenbotTargetPath);
+      copyFileSync(opencodeRouterBuildPath, opencodeRouterTargetPath);
     }
   }
 }
@@ -745,9 +745,9 @@ const versions = {
     version: openworkServerVersion,
     sha256: existsSync(openworkServerPath) ? sha256File(openworkServerPath) : null,
   },
-  owpenbot: {
-    version: expectedOwpenbotVersion,
-    sha256: existsSync(owpenbotPath) ? sha256File(owpenbotPath) : null,
+  opencodeRouter: {
+    version: expectedOpenCodeRouterVersion,
+    sha256: existsSync(opencodeRouterPath) ? sha256File(opencodeRouterPath) : null,
   },
   openwrk: {
     version: openwrkVersion,

@@ -14,20 +14,20 @@ const repoRoot = resolve(root, "..", "..");
 const targetDir = resolve(root, "dist");
 
 const serverBin = resolve(root, "..", "server", "dist", "bin", "openwork-server");
-const owpenbotRepo = process.env.OWPENBOT_DIR?.trim() || resolve(repoRoot, "packages", "owpenbot");
-if (!existsSync(resolve(owpenbotRepo, "package.json"))) {
-  throw new Error("Owpenbot package not found. Expected packages/owpenbot in the monorepo.");
+const routerRepo = process.env.OPENCODE_ROUTER_DIR?.trim() || resolve(repoRoot, "packages", "opencode-router");
+if (!existsSync(resolve(routerRepo, "package.json"))) {
+  throw new Error("OpenCodeRouter package not found. Expected packages/opencode-router in the monorepo.");
 }
-const owpenbotBin = resolve(owpenbotRepo, "dist", "bin", "owpenbot");
+const routerBin = resolve(routerRepo, "dist", "bin", "opencode-router");
 
 const serverPkg = JSON.parse(
   await readFile(resolve(root, "..", "server", "package.json"), "utf8"),
 ) as { version: string };
-const owpenbotPkg = JSON.parse(await readFile(resolve(owpenbotRepo, "package.json"), "utf8")) as { version: string };
+const routerPkg = JSON.parse(await readFile(resolve(routerRepo, "package.json"), "utf8")) as { version: string };
 
 await mkdir(targetDir, { recursive: true });
 await copyFile(serverBin, resolve(targetDir, "openwork-server"));
-await copyFile(owpenbotBin, resolve(targetDir, "owpenbot"));
+await copyFile(routerBin, resolve(targetDir, "opencode-router"));
 
 const sha256 = async (path: string) => {
   const data = await readFile(path);
@@ -39,9 +39,9 @@ const versions = {
     version: serverPkg.version,
     sha256: await sha256(resolve(targetDir, "openwork-server")),
   },
-  owpenbot: {
-    version: owpenbotPkg.version,
-    sha256: await sha256(resolve(targetDir, "owpenbot")),
+  "opencode-router": {
+    version: routerPkg.version,
+    sha256: await sha256(resolve(targetDir, "opencode-router")),
   },
 } as Record<string, VersionInfo>;
 

@@ -620,7 +620,7 @@ jobs:
         id: sidecar-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const headless=JSON.parse(fs.readFileSync('packages/headless/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const owpenbot=JSON.parse(fs.readFileSync('packages/owpenbot/package.json','utf8')); console.log('openwrk=' + headless.version); console.log('server=' + server.version); console.log('owpenbot=' + owpenbot.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const headless=JSON.parse(fs.readFileSync('packages/headless/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('openwrk=' + headless.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
 
       - name: Resolve SOURCE_DATE_EPOCH
         id: source-date
@@ -660,7 +660,7 @@ jobs:
         run: |
           version="${{ steps.sidecar-versions.outputs.openwrk }}"
           tag="openwrk-v${version}"
-          notes="Sidecar bundle for openwrk v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nowpenbot: ${{ steps.sidecar-versions.outputs.owpenbot }}"
+          notes="Sidecar bundle for openwrk v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nopencodeRouter: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "openwrk v${version}" \
@@ -729,7 +729,7 @@ jobs:
         id: package-versions
         shell: bash
         run: |
-          node -e "const fs=require('fs'); const headless=JSON.parse(fs.readFileSync('packages/headless/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const owpenbot=JSON.parse(fs.readFileSync('packages/owpenbot/package.json','utf8')); console.log('openwrk=' + headless.version); console.log('server=' + server.version); console.log('owpenbot=' + owpenbot.version);" >> "$GITHUB_OUTPUT"
+          node -e "const fs=require('fs'); const headless=JSON.parse(fs.readFileSync('packages/headless/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('openwrk=' + headless.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
 
       - name: Check npm versions
         id: npm-versions
@@ -737,12 +737,12 @@ jobs:
         env:
           OPENWRK_VERSION: ${{ steps.package-versions.outputs.openwrk }}
           SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
-          OWPENBOT_VERSION: ${{ steps.package-versions.outputs.owpenbot }}
+          OPENCODE_ROUTER_VERSION: ${{ steps.package-versions.outputs.opencodeRouter }}
         run: |
           set -euo pipefail
           openwrk_current=$(npm view openwrk version)
           server_current=$(npm view openwork-server version)
-          owpenbot_current=$(npm view owpenwork version)
+          opencodeRouter_current=$(npm view owpenwork version)
 
           if [ "$openwrk_current" = "$OPENWRK_VERSION" ]; then
             echo "publish_openwrk=false" >> "$GITHUB_OUTPUT"
@@ -756,14 +756,14 @@ jobs:
             echo "publish_server=true" >> "$GITHUB_OUTPUT"
           fi
 
-          if [ "$owpenbot_current" = "$OWPENBOT_VERSION" ]; then
-            echo "publish_owpenbot=false" >> "$GITHUB_OUTPUT"
+          if [ "$opencodeRouter_current" = "$OPENCODE_ROUTER_VERSION" ]; then
+            echo "publish_opencodeRouter=false" >> "$GITHUB_OUTPUT"
           else
-            echo "publish_owpenbot=true" >> "$GITHUB_OUTPUT"
+            echo "publish_opencodeRouter=true" >> "$GITHUB_OUTPUT"
           fi
 
           publish_any=false
-          if [ "$openwrk_current" != "$OPENWRK_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ] || [ "$owpenbot_current" != "$OWPENBOT_VERSION" ]; then
+          if [ "$openwrk_current" != "$OPENWRK_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ] || [ "$opencodeRouter_current" != "$OPENCODE_ROUTER_VERSION" ]; then
             publish_any=true
           fi
           echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
@@ -796,7 +796,7 @@ jobs:
         run: pnpm --filter openwork-server publish --access public --no-git-checks
 
       - name: Publish owpenwork
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_owpenbot == 'true'
+        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
         run: pnpm --filter owpenwork publish --access public --no-git-checks
 
       - name: Publish openwrk

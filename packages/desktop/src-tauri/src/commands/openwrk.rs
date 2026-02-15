@@ -334,7 +334,7 @@ pub fn openwrk_start_detached(
             "--approval".to_string(),
             "auto".to_string(),
             "--no-opencode-auth".to_string(),
-            "--owpenbot".to_string(),
+            "--opencode-router".to_string(),
             "true".to_string(),
             "--detach".to_string(),
             "--openwork-host".to_string(),

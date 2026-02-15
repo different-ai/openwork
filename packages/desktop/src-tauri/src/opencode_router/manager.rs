@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
-use crate::types::OwpenbotInfo;
+use crate::types::OpenCodeRouterInfo;
 
 #[derive(Default)]
-pub struct OwpenbotManager {
-    pub inner: Arc<Mutex<OwpenbotState>>,
+pub struct OpenCodeRouterManager {
+    pub inner: Arc<Mutex<OpenCodeRouterState>>,
 }
 
 #[derive(Default)]
-pub struct OwpenbotState {
+pub struct OpenCodeRouterState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub version: Option<String>,
@@ -21,8 +21,8 @@ pub struct OwpenbotState {
     pub last_stderr: Option<String>,
 }
 
-impl OwpenbotManager {
-    pub fn snapshot_locked(state: &mut OwpenbotState) -> OwpenbotInfo {
+impl OpenCodeRouterManager {
+    pub fn snapshot_locked(state: &mut OpenCodeRouterState) -> OpenCodeRouterInfo {
         let (running, pid) = match state.child.as_ref() {
             None => (false, None),
             Some(_child) if state.child_exited => {
@@ -32,7 +32,7 @@ impl OwpenbotManager {
             Some(child) => (true, Some(child.pid())),
         };
 
-        OwpenbotInfo {
+        OpenCodeRouterInfo {
             running,
             version: state.version.clone(),
             workspace_path: state.workspace_path.clone(),
@@ -43,7 +43,7 @@ impl OwpenbotManager {
         }
     }
 
-    pub fn stop_locked(state: &mut OwpenbotState) {
+    pub fn stop_locked(state: &mut OpenCodeRouterState) {
         if let Some(child) = state.child.take() {
             let _ = child.kill();
         }

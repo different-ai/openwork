@@ -74,7 +74,7 @@ But what you can do is:
 * Provides filesystem-backed config surfaces (skills, plugins, MCP, commands).
 * Sidecar lifecycle is described in `packages/app/pr/openwork-server.md`.
 
-### Owpenbot
+### OpenCode Router
 
 * Runs standalone via `owpenwork` CLI.
 * Must be able to use OpenWork server for config and approvals.

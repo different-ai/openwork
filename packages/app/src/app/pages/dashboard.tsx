@@ -25,7 +25,7 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
-import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OwpenbotInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
@@ -94,7 +94,7 @@ export type DashboardViewProps = {
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
   openwrkStatus: OpenwrkStatus | null;
-  owpenbotInfo: OwpenbotInfo | null;
+  opencodeRouterInfo: OpenCodeRouterInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
   testOpenworkServerConnection: (next: OpenworkServerSettings) => Promise<boolean>;
@@ -1283,7 +1283,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
                   openwrkStatus={props.openwrkStatus}
-                  owpenbotInfo={props.owpenbotInfo}
+                  opencodeRouterInfo={props.opencodeRouterInfo}
                   engineDoctorVersion={props.engineDoctorVersion}
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}

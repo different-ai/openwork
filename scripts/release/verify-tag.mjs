@@ -28,7 +28,7 @@ const appVersion = readJson(resolve(root, "packages", "app", "package.json")).ve
 const desktopVersion = readJson(resolve(root, "packages", "desktop", "package.json")).version ?? null;
 const headlessVersion = readJson(resolve(root, "packages", "headless", "package.json")).version ?? null;
 const serverVersion = readJson(resolve(root, "packages", "server", "package.json")).version ?? null;
-const owpenbotVersion = readJson(resolve(root, "packages", "owpenbot", "package.json")).version ?? null;
+const opencodeRouterVersion = readJson(resolve(root, "packages", "opencode-router", "package.json")).version ?? null;
 const tauriVersion = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json")).version ?? null;
 const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
 
@@ -47,7 +47,7 @@ check("app", appVersion);
 check("desktop", desktopVersion);
 check("openwrk", headlessVersion);
 check("openwork-server", serverVersion);
-check("owpenbot", owpenbotVersion);
+check("opencode-router", opencodeRouterVersion);
 check("tauri", tauriVersion);
 check("cargo", cargoVersion);
 

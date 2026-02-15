@@ -1,12 +1,12 @@
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::process::CommandEvent;
 
-use crate::owpenbot::manager::OwpenbotManager;
-use crate::owpenbot::spawn::{resolve_owpenbot_health_port, spawn_owpenbot, DEFAULT_OWPENBOT_HEALTH_PORT};
-use crate::types::OwpenbotInfo;
+use crate::opencodeRouter::manager::OpenCodeRouterManager;
+use crate::opencodeRouter::spawn::{resolve_opencodeRouter_health_port, spawn_opencodeRouter, DEFAULT_OPENCODE_ROUTER_HEALTH_PORT};
+use crate::types::OpenCodeRouterInfo;
 use crate::utils::truncate_output;
 
-/// Check if owpenbot health endpoint is responding on given port
+/// Check if opencodeRouter health endpoint is responding on given port
 fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
     let url = format!("http://127.0.0.1:{}/health", port);
     let agent = ureq::AgentBuilder::new()
@@ -21,24 +21,24 @@ fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
 }
 
 #[tauri::command]
-pub async fn owpenbot_info(
+pub async fn opencodeRouter_info(
     app: AppHandle,
-    manager: State<'_, OwpenbotManager>,
-) -> Result<OwpenbotInfo, String> {
+    manager: State<'_, OpenCodeRouterManager>,
+) -> Result<OpenCodeRouterInfo, String> {
     let mut info = {
         let mut state = manager
             .inner
             .lock()
-            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
-        OwpenbotManager::snapshot_locked(&mut state)
+            .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
+        OpenCodeRouterManager::snapshot_locked(&mut state)
     };
 
-    // If manager doesn't think owpenbot is running, check health endpoint as fallback
-    // This handles cases where owpenbot was started externally or by a previous app instance
+    // If manager doesn't think opencodeRouter is running, check health endpoint as fallback
+    // This handles cases where opencodeRouter was started externally or by a previous app instance
     if !info.running {
         let health_port = {
             manager.inner.lock().ok().and_then(|s| s.health_port)
-        }.unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
+        }.unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
         
         if let Some(health) = check_health_endpoint(health_port) {
             info.running = true;
@@ -51,7 +51,7 @@ pub async fn owpenbot_info(
     }
 
     if info.version.is_none() {
-        if let Some(version) = owpenbot_version(&app).await {
+        if let Some(version) = opencodeRouter_version(&app).await {
             info.version = Some(version.clone());
             if let Ok(mut state) = manager.inner.lock() {
                 state.version = Some(version);
@@ -61,7 +61,7 @@ pub async fn owpenbot_info(
 
     // Only fetch from CLI status if manager doesn't have values (fallback for when sidecar isn't started)
     if info.opencode_url.is_none() || info.workspace_path.is_none() {
-        if let Ok(status) = owpenbot_json(&app, &["status", "--json"], "get status").await {
+        if let Ok(status) = opencodeRouter_json(&app, &["status", "--json"], "get status").await {
             if let Some(opencode) = status.get("opencode") {
                 if info.opencode_url.is_none() {
                     if let Some(url) = opencode.get("url").and_then(|value| value.as_str()) {
@@ -87,26 +87,26 @@ pub async fn owpenbot_info(
 }
 
 #[tauri::command]
-pub fn owpenbot_start(
+pub fn opencodeRouter_start(
     app: AppHandle,
-    manager: State<OwpenbotManager>,
+    manager: State<OpenCodeRouterManager>,
     workspace_path: String,
     opencode_url: Option<String>,
     opencode_username: Option<String>,
     opencode_password: Option<String>,
     health_port: Option<u16>,
-) -> Result<OwpenbotInfo, String> {
+) -> Result<OpenCodeRouterInfo, String> {
     let mut state = manager
         .inner
         .lock()
-        .map_err(|_| "owpenbot mutex poisoned".to_string())?;
-    OwpenbotManager::stop_locked(&mut state);
+        .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
+    OpenCodeRouterManager::stop_locked(&mut state);
 
     let resolved_health_port = match health_port {
         Some(port) => port,
-        None => resolve_owpenbot_health_port()?,
+        None => resolve_opencodeRouter_health_port()?,
     };
-    let (mut rx, child) = spawn_owpenbot(
+    let (mut rx, child) = spawn_opencodeRouter(
         &app,
         &workspace_path,
         opencode_url.as_deref(),
@@ -156,7 +156,7 @@ pub fn owpenbot_start(
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
                         if let Some(code) = payload.code {
-                            let next = format!("Owpenbot exited (code {code}).");
+                            let next = format!("OpenCodeRouter exited (code {code}).");
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
                     }
@@ -178,39 +178,39 @@ pub fn owpenbot_start(
         }
     });
 
-    Ok(OwpenbotManager::snapshot_locked(&mut state))
+    Ok(OpenCodeRouterManager::snapshot_locked(&mut state))
 }
 
 #[tauri::command]
-pub fn owpenbot_stop(manager: State<OwpenbotManager>) -> Result<OwpenbotInfo, String> {
+pub fn opencodeRouter_stop(manager: State<OpenCodeRouterManager>) -> Result<OpenCodeRouterInfo, String> {
     let mut state = manager
         .inner
         .lock()
-        .map_err(|_| "owpenbot mutex poisoned".to_string())?;
-    OwpenbotManager::stop_locked(&mut state);
-    Ok(OwpenbotManager::snapshot_locked(&mut state))
+        .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
+    OpenCodeRouterManager::stop_locked(&mut state);
+    Ok(OpenCodeRouterManager::snapshot_locked(&mut state))
 }
 
 #[tauri::command]
-pub async fn owpenbot_status(
+pub async fn opencodeRouter_status(
     app: AppHandle,
-    manager: State<'_, OwpenbotManager>,
+    manager: State<'_, OpenCodeRouterManager>,
 ) -> Result<serde_json::Value, String> {
-    let status = owpenbot_json(&app, &["status", "--json"], "get status").await?;
+    let status = opencodeRouter_json(&app, &["status", "--json"], "get status").await?;
 
     let mut running = {
         let mut state = manager
             .inner
             .lock()
-            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
-        OwpenbotManager::snapshot_locked(&mut state).running
+            .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
+        OpenCodeRouterManager::snapshot_locked(&mut state).running
     };
 
     if !running {
         let check_port = {
             manager.inner.lock().ok().and_then(|s| s.health_port)
         }
-        .unwrap_or(DEFAULT_OWPENBOT_HEALTH_PORT);
+        .unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
 
         if check_health_endpoint(check_port).is_some() {
             running = true;
@@ -228,7 +228,7 @@ pub async fn owpenbot_status(
         let state = manager
             .inner
             .lock()
-            .map_err(|_| "owpenbot mutex poisoned".to_string())?;
+            .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
         state.health_port
     };
     let health_port = manager_health_port
@@ -284,16 +284,16 @@ pub async fn owpenbot_status(
 }
 
 #[tauri::command]
-pub async fn owpenbot_config_set(
+pub async fn opencodeRouter_config_set(
     app: AppHandle,
     key: String,
     value: String,
 ) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
 
-    let command = match app.shell().sidecar("owpenbot") {
+    let command = match app.shell().sidecar("opencode-router") {
         Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
+        Err(_) => app.shell().command("opencode-router"),
     };
 
     let output = command
@@ -310,16 +310,16 @@ pub async fn owpenbot_config_set(
     Ok(())
 }
 
-async fn owpenbot_json(
+async fn opencodeRouter_json(
     app: &AppHandle,
     args: &[&str],
     context: &str,
 ) -> Result<serde_json::Value, String> {
     use tauri_plugin_shell::ShellExt;
 
-    let command = match app.shell().sidecar("owpenbot") {
+    let command = match app.shell().sidecar("opencode-router") {
         Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
+        Err(_) => app.shell().command("opencode-router"),
     };
 
     let output = command
@@ -337,12 +337,12 @@ async fn owpenbot_json(
     serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse {context}: {e}"))
 }
 
-async fn owpenbot_version(app: &AppHandle) -> Option<String> {
+async fn opencodeRouter_version(app: &AppHandle) -> Option<String> {
     use tauri_plugin_shell::ShellExt;
 
-    let command = match app.shell().sidecar("owpenbot") {
+    let command = match app.shell().sidecar("opencode-router") {
         Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
+        Err(_) => app.shell().command("opencode-router"),
     };
 
     let output = command.args(["--version"]).output().await.ok()?;

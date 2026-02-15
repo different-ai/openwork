@@ -2,9 +2,9 @@ import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from
 import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
 
 import type { OpenworkServerStatus } from "../lib/openwork-server";
-import type { OwpenbotStatus } from "../lib/tauri";
+import type { OpenCodeRouterStatus } from "../lib/tauri";
 import type { McpStatusMap } from "../types";
-import { getOwpenbotStatus } from "../lib/tauri";
+import { getOpenCodeRouterStatus } from "../lib/tauri";
 
 import Button from "./button";
 
@@ -21,7 +21,7 @@ type StatusBarProps = {
 };
 
 export default function StatusBar(props: StatusBarProps) {
-  const [owpenbotStatus, setOwpenbotStatus] = createSignal<OwpenbotStatus | null>(null);
+  const [opencodeRouterStatus, setOpenCodeRouterStatus] = createSignal<OpenCodeRouterStatus | null>(null);
   const [documentVisible, setDocumentVisible] = createSignal(true);
 
   const opencodeStatusMeta = createMemo(() => ({
@@ -42,7 +42,7 @@ export default function StatusBar(props: StatusBarProps) {
   });
 
   const messagingMeta = createMemo(() => {
-    const status = owpenbotStatus();
+    const status = opencodeRouterStatus();
     if (!status) {
       return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge unavailable" };
     }
@@ -81,7 +81,7 @@ export default function StatusBar(props: StatusBarProps) {
       id: "slack",
       label: "Connect Slack",
       enabled: () => {
-        const status = owpenbotStatus();
+        const status = opencodeRouterStatus();
         return Boolean(status && (status.slack.items?.length ?? 0) === 0);
       },
       action: () => runAction(props.onOpenMessaging),
@@ -90,7 +90,7 @@ export default function StatusBar(props: StatusBarProps) {
       id: "telegram",
       label: "Connect Telegram",
       enabled: () => {
-        const status = owpenbotStatus();
+        const status = opencodeRouterStatus();
         return Boolean(status && (status.telegram.items?.length ?? 0) === 0);
       },
       action: () => runAction(props.onOpenMessaging),
@@ -159,9 +159,9 @@ export default function StatusBar(props: StatusBarProps) {
     setTipCursor(1);
   });
 
-  const refreshOwpenbot = async () => {
-    const next = await getOwpenbotStatus();
-    setOwpenbotStatus(next);
+  const refreshOpenCodeRouter = async () => {
+    const next = await getOpenCodeRouterStatus();
+    setOpenCodeRouterStatus(next);
   };
 
   createEffect(() => {
@@ -174,8 +174,8 @@ export default function StatusBar(props: StatusBarProps) {
 
   createEffect(() => {
     if (!documentVisible()) return;
-    refreshOwpenbot();
-    const interval = window.setInterval(refreshOwpenbot, 15_000);
+    refreshOpenCodeRouter();
+    const interval = window.setInterval(refreshOpenCodeRouter, 15_000);
     onCleanup(() => window.clearInterval(interval));
   });
 

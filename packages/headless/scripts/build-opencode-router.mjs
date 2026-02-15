@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..");
 
-function resolveOwpenbotRepo() {
-  const envPath = process.env.OWPENBOT_DIR?.trim();
-  const candidates = [envPath, resolve(repoRoot, "packages", "owpenbot")].filter(Boolean);
+function resolveOpencodeRouterRepo() {
+  const envPath = process.env.OPENCODE_ROUTER_DIR?.trim();
+  const candidates = [envPath, resolve(repoRoot, "packages", "opencode-router")].filter(Boolean);
 
   for (const candidate of candidates) {
     if (candidate && existsSync(resolve(candidate, "package.json"))) {
@@ -16,7 +16,7 @@ function resolveOwpenbotRepo() {
     }
   }
 
-  throw new Error("Owpenbot package not found. Expected packages/owpenbot in the monorepo.");
+  throw new Error("OpenCodeRouter package not found. Expected packages/opencode-router in the monorepo.");
 }
 
 function run(command, args, cwd) {
@@ -26,14 +26,14 @@ function run(command, args, cwd) {
   }
 }
 
-const owpenbotRepo = resolveOwpenbotRepo();
+const routerRepo = resolveOpencodeRouterRepo();
 run("pnpm", ["install"], repoRoot);
-const pkg = JSON.parse(readFileSync(resolve(owpenbotRepo, "package.json"), "utf8"));
+const pkg = JSON.parse(readFileSync(resolve(routerRepo, "package.json"), "utf8"));
 const scripts = pkg?.scripts ?? {};
 if (scripts["build:bin"]) {
   run("pnpm", ["--filter", "owpenwork", "build:bin"], repoRoot);
 } else if (scripts["build:binary"]) {
   run("pnpm", ["--filter", "owpenwork", "build:binary"], repoRoot);
 } else {
-  run("bun", ["build", "--compile", "src/cli.ts", "--outfile", "dist/bin/owpenbot"], owpenbotRepo);
+  run("bun", ["build", "--compile", "src/cli.ts", "--outfile", "dist/bin/opencode-router"], routerRepo);
 }

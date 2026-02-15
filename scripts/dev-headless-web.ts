@@ -106,7 +106,7 @@ const webPort = await resolvePort(process.env.OPENWORK_WEB_PORT, "127.0.0.1");
 const openworkToken = process.env.OPENWORK_TOKEN ?? randomUUID();
 const openworkHostToken = process.env.OPENWORK_HOST_TOKEN ?? randomUUID();
 const openworkServerBin = path.join(cwd, "packages/server/dist/bin/openwork-server");
-const owpenbotBin = path.join(cwd, "packages/owpenbot/dist/bin/owpenbot");
+const opencodeRouterBin = path.join(cwd, "packages/opencode-router/dist/bin/opencode-router");
 
 const ensureOpenworkServer = async () => {
   try {
@@ -132,23 +132,23 @@ const ensureOpenworkServer = async () => {
   }
 };
 
-const ensureOwpenbot = async () => {
+const ensureOpencodeRouter = async () => {
   try {
-    await access(owpenbotBin);
+    await access(opencodeRouterBin);
   } catch {
     if (!autoBuildEnabled) {
-      logLine(`[dev:headless-web] Missing owpenbot binary at ${owpenbotBin}`);
+      logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
       logLine("[dev:headless-web] Auto-build disabled (OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD=0)");
       logLine("[dev:headless-web] Run: pnpm --filter owpenwork build:bin");
       logLine("[dev:headless-web] Or unset/enable OPENWORK_DEV_HEADLESS_WEB_AUTOBUILD to auto-build.");
       process.exit(1);
     }
 
-    logLine(`[dev:headless-web] Missing owpenbot binary at ${owpenbotBin}`);
+    logLine(`[dev:headless-web] Missing opencode-router binary at ${opencodeRouterBin}`);
     logLine("[dev:headless-web] Auto-building: pnpm --filter owpenwork build:bin");
     try {
       await runCommand("pnpm", ["--filter", "owpenwork", "build:bin"]);
-      await access(owpenbotBin);
+      await access(opencodeRouterBin);
     } catch (error) {
       logLine(`[dev:headless-web] Auto-build failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exit(1);
@@ -158,12 +158,12 @@ const ensureOwpenbot = async () => {
 
 const openworkUrl = `http://${clientHost}:${openworkPort}`;
 const webUrl = `http://${clientHost}:${webPort}`;
-// In practice we want owpenbot on for end-to-end messaging tests.
-// Allow opt-out via OPENWORK_DEV_OWPENBOT=0.
-const owpenbotEnabled = process.env.OPENWORK_DEV_OWPENBOT == null
+// In practice we want opencode-router on for end-to-end messaging tests.
+// Allow opt-out via OPENWORK_DEV_OPENCODE_ROUTER=0.
+const opencodeRouterEnabled = process.env.OPENWORK_DEV_OPENCODE_ROUTER == null
   ? true
-  : readBool(process.env.OPENWORK_DEV_OWPENBOT);
-const owpenbotRequired = readBool(process.env.OPENWORK_DEV_OWPENBOT_REQUIRED);
+  : readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER);
+const opencodeRouterRequired = readBool(process.env.OPENWORK_DEV_OPENCODE_ROUTER_REQUIRED);
 const viteEnv = {
   ...process.env,
   HOST: viteHost,
@@ -181,12 +181,12 @@ const headlessEnv = {
   OPENWORK_HOST_TOKEN: openworkHostToken,
   OPENWORK_SERVER_BIN: openworkServerBin,
   OPENWRK_SIDECAR_SOURCE: process.env.OPENWRK_SIDECAR_SOURCE ?? "external",
-  OWPENBOT_BIN: process.env.OWPENBOT_BIN ?? owpenbotBin,
+  OPENCODE_ROUTER_BIN: process.env.OPENCODE_ROUTER_BIN ?? opencodeRouterBin,
 };
 
 await ensureOpenworkServer();
-if (owpenbotEnabled) {
-  await ensureOwpenbot();
+if (opencodeRouterEnabled) {
+  await ensureOpencodeRouter();
 }
 
 logLine("[dev:headless-web] Starting services");
@@ -196,7 +196,7 @@ logLine(`[dev:headless-web] Web host: ${viteHost}`);
 logLine(`[dev:headless-web] Web port: ${webPort}`);
 logLine(`[dev:headless-web] Web URL: ${webUrl}`);
 logLine(
-  `[dev:headless-web] Owpenbot: ${owpenbotEnabled ? "on" : "off"} (set OPENWORK_DEV_OWPENBOT=0 to disable)`,
+  `[dev:headless-web] OpenCodeRouter: ${opencodeRouterEnabled ? "on" : "off"} (set OPENWORK_DEV_OPENCODE_ROUTER=0 to disable)`,
 );
 logLine(`[dev:headless-web] OPENWORK_TOKEN: ${openworkToken}`);
 logLine(`[dev:headless-web] OPENWORK_HOST_TOKEN: ${openworkHostToken}`);
@@ -234,9 +234,9 @@ const headlessProcess = spawnLogged(
     "auto",
     "--allow-external",
     "--no-opencode-auth",
-    "--owpenbot",
-    owpenbotEnabled ? "true" : "false",
-    ...(owpenbotRequired ? ["--owpenbot-required"] : []),
+    "--opencode-router",
+    opencodeRouterEnabled ? "true" : "false",
+    ...(opencodeRouterRequired ? ["--opencode-router-required"] : []),
     "--openwork-host",
     host,
     "--openwork-port",

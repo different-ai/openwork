@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.11.68",
   "opencodeVersion": "1.1.60",
-  "owpenbotVersion": "0.11.68",
+  "opencodeRouterVersion": "0.11.68",
   "type": "module",
   "scripts": {
     "dev": "OPENWRK_DATA_DIR=\"$HOME/.openwork/openwrk-dev\" OPENWORK_DATA_DIR=\"$HOME/.openwork/openwrk-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",

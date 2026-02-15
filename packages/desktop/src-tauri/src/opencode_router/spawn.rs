@@ -7,18 +7,18 @@ use tauri::AppHandle;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-pub const DEFAULT_OWPENBOT_HEALTH_PORT: u16 = 3005;
+pub const DEFAULT_OPENCODE_ROUTER_HEALTH_PORT: u16 = 3005;
 
-pub fn resolve_owpenbot_health_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_OWPENBOT_HEALTH_PORT)).is_ok() {
-        return Ok(DEFAULT_OWPENBOT_HEALTH_PORT);
+pub fn resolve_opencodeRouter_health_port() -> Result<u16, String> {
+    if TcpListener::bind(("0.0.0.0", DEFAULT_OPENCODE_ROUTER_HEALTH_PORT)).is_ok() {
+        return Ok(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
     }
     let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
 }
 
-pub fn build_owpenbot_args(workspace_path: &str, opencode_url: Option<&str>) -> Vec<String> {
+pub fn build_opencodeRouter_args(workspace_path: &str, opencode_url: Option<&str>) -> Vec<String> {
     let mut args = vec!["serve".to_string(), workspace_path.to_string()];
 
     if let Some(url) = opencode_url {
@@ -32,7 +32,7 @@ pub fn build_owpenbot_args(workspace_path: &str, opencode_url: Option<&str>) -> 
     args
 }
 
-pub fn spawn_owpenbot(
+pub fn spawn_opencodeRouter(
     app: &AppHandle,
     workspace_path: &str,
     opencode_url: Option<&str>,
@@ -40,17 +40,17 @@ pub fn spawn_owpenbot(
     opencode_password: Option<&str>,
     health_port: u16,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("owpenbot") {
+    let command = match app.shell().sidecar("opencode-router") {
         Ok(command) => command,
-        Err(_) => app.shell().command("owpenbot"),
+        Err(_) => app.shell().command("opencode-router"),
     };
 
-    let args = build_owpenbot_args(workspace_path, opencode_url);
+    let args = build_opencodeRouter_args(workspace_path, opencode_url);
 
     let mut command = command
         .args(args)
         .current_dir(Path::new(workspace_path))
-        .env("OWPENBOT_HEALTH_PORT", health_port.to_string());
+        .env("OPENCODE_ROUTER_HEALTH_PORT", health_port.to_string());
 
     if let Some(username) = opencode_username {
         if !username.trim().is_empty() {
@@ -66,5 +66,5 @@ pub fn spawn_owpenbot(
 
     command
         .spawn()
-        .map_err(|e| format!("Failed to start owpenbot: {e}"))
+        .map_err(|e| format!("Failed to start opencodeRouter: {e}"))
 }

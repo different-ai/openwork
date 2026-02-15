@@ -31,8 +31,8 @@ async function freePort() {
 }
 
 test("health /send delivers to directory bindings", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-health-send-"));
-  const dbPath = path.join(dir, "owpenbot.db");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
   const store = new BridgeStore(dbPath);
   const healthPort = await freePort();
 
@@ -53,7 +53,7 @@ test("health /send delivers to directory bindings", async () => {
 
   const bridge = await startBridge(
     {
-      configPath: path.join(dir, "owpenbot.json"),
+      configPath: path.join(dir, "opencode-router.json"),
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: dir,
@@ -61,7 +61,7 @@ test("health /send delivers to directory bindings", async () => {
       slackApps: [],
       dataDir: dir,
       dbPath,
-      logFile: path.join(dir, "owpenbot.log"),
+      logFile: path.join(dir, "opencode-router.log"),
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",
@@ -101,14 +101,14 @@ test("health /send delivers to directory bindings", async () => {
 });
 
 test("health /send reports no-op when no bindings exist", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-health-send-"));
-  const dbPath = path.join(dir, "owpenbot.db");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
   const store = new BridgeStore(dbPath);
   const healthPort = await freePort();
 
   const bridge = await startBridge(
     {
-      configPath: path.join(dir, "owpenbot.json"),
+      configPath: path.join(dir, "opencode-router.json"),
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: dir,
@@ -116,7 +116,7 @@ test("health /send reports no-op when no bindings exist", async () => {
       slackApps: [],
       dataDir: dir,
       dbPath,
-      logFile: path.join(dir, "owpenbot.log"),
+      logFile: path.join(dir, "opencode-router.log"),
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",
@@ -155,8 +155,8 @@ test("health /send reports no-op when no bindings exist", async () => {
 });
 
 test("health /send can deliver directly with peerId", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "owpenbot-health-send-"));
-  const dbPath = path.join(dir, "owpenbot.db");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencodeRouter-health-send-"));
+  const dbPath = path.join(dir, "opencode-router.db");
   const store = new BridgeStore(dbPath);
   const healthPort = await freePort();
 
@@ -175,7 +175,7 @@ test("health /send can deliver directly with peerId", async () => {
 
   const bridge = await startBridge(
     {
-      configPath: path.join(dir, "owpenbot.json"),
+      configPath: path.join(dir, "opencode-router.json"),
       configFile: { version: 1 },
       opencodeUrl: "http://127.0.0.1:4096",
       opencodeDirectory: dir,
@@ -183,7 +183,7 @@ test("health /send can deliver directly with peerId", async () => {
       slackApps: [],
       dataDir: dir,
       dbPath,
-      logFile: path.join(dir, "owpenbot.log"),
+      logFile: path.join(dir, "opencode-router.log"),
       toolUpdatesEnabled: false,
       groupsEnabled: false,
       permissionMode: "allow",

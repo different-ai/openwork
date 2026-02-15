@@ -56,12 +56,12 @@ async function runHelp() {
 }
 
 async function runConfigCommands() {
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "owpenbot-"));
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "opencodeRouter-"));
   const env = {
     ...process.env,
-    OWPENBOT_DATA_DIR: tempDir,
-    OWPENBOT_DB_PATH: path.join(tempDir, "owpenbot.db"),
-    OWPENBOT_CONFIG_PATH: path.join(tempDir, "owpenbot.json"),
+    OPENCODE_ROUTER_DATA_DIR: tempDir,
+    OPENCODE_ROUTER_DB_PATH: path.join(tempDir, "opencode-router.db"),
+    OPENCODE_ROUTER_CONFIG_PATH: path.join(tempDir, "opencode-router.json"),
     OPENCODE_DIRECTORY: tempDir,
   };
 

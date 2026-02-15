@@ -598,7 +598,7 @@ async function runOpenwrkStart(options: {
     options.hostToken,
     "--approval",
     options.approval,
-    "--no-owpenbot",
+    "--no-opencode-router",
   ];
 
   return await new Promise((resolveResult, reject) => {

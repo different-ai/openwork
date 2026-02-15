@@ -129,7 +129,7 @@ importers:
         version: link:../server
       owpenwork:
         specifier: 0.11.68
-        version: link:../owpenbot
+        version: link:../opencode-router
       solid-js:
         specifier: 1.9.9
         version: 1.9.9
@@ -193,7 +193,7 @@ importers:
         specifier: 5.4.5
         version: 5.4.5
 
-  packages/owpenbot:
+  packages/opencode-router:
     dependencies:
       '@opencode-ai/sdk':
         specifier: ^1.1.31

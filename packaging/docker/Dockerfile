@@ -23,7 +23,7 @@ ENV OPENWORK_WORKSPACE=/workspace
 # OpenWork host contract surface.
 EXPOSE 8787
 
-# Optional: owpenbot health (only relevant if you enable owpenbot).
+# Optional: opencode-router health (only relevant if you enable the router).
 EXPOSE 3005
 
 VOLUME ["/workspace", "/data"]
@@ -32,7 +32,7 @@ VOLUME ["/workspace", "/data"]
 # - OpenWork server is public (0.0.0.0:8787)
 # - OpenCode stays internal (127.0.0.1:4096)
 # - OpenWork server proxies OpenCode via localhost
-# - Owpenbot disabled by default
+# - OpenCode Router disabled by default
 CMD [
   "openwrk",
   "serve",
@@ -44,5 +44,5 @@ CMD [
   "--connect-host", "127.0.0.1",
   "--cors", "*",
   "--approval", "manual",
-  "--no-owpenbot"
+  "--no-opencode-router"
 ]

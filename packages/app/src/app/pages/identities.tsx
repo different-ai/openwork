@@ -16,9 +16,9 @@ import {
 } from "../lib/openwork-server";
 import type {
   OpenworkServerClient,
-  OpenworkOwpenbotHealthSnapshot,
-  OpenworkOwpenbotIdentityItem,
-  OpenworkOwpenbotSendResult,
+  OpenworkOpenCodeRouterHealthSnapshot,
+  OpenworkOpenCodeRouterIdentityItem,
+  OpenworkOpenCodeRouterSendResult,
   OpenworkServerStatus,
   OpenworkWorkspaceFileContent,
 } from "../lib/openwork-server";
@@ -35,8 +35,8 @@ export type IdentitiesViewProps = {
   developerMode: boolean;
 };
 
-const OWPENBOT_AGENT_FILE_PATH = ".opencode/agents/owpenbot.md";
-const OWPENBOT_AGENT_FILE_TEMPLATE = `# Owpenbot Messaging Agent
+const OPENCODE_ROUTER_AGENT_FILE_PATH = ".opencode/agents/opencode-router.md";
+const OPENCODE_ROUTER_AGENT_FILE_TEMPLATE = `# OpenCodeRouter Messaging Agent
 
 Use this file to define how the assistant responds in Slack/Telegram for this workspace.
 
@@ -53,7 +53,7 @@ function formatRequestError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isOwpenbotSnapshot(value: unknown): value is OpenworkOwpenbotHealthSnapshot {
+function isOpenCodeRouterSnapshot(value: unknown): value is OpenworkOpenCodeRouterHealthSnapshot {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return (
@@ -64,7 +64,7 @@ function isOwpenbotSnapshot(value: unknown): value is OpenworkOwpenbotHealthSnap
   );
 }
 
-function isOwpenbotIdentities(value: unknown): value is { ok: boolean; items: OpenworkOwpenbotIdentityItem[] } {
+function isOpenCodeRouterIdentities(value: unknown): value is { ok: boolean; items: OpenworkOpenCodeRouterIdentityItem[] } {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return typeof record.ok === "boolean" && Array.isArray(record.items);
@@ -126,13 +126,13 @@ function StatusPill(props: { label: string; value: string; ok: boolean }) {
 export default function IdentitiesView(props: IdentitiesViewProps) {
   const [refreshing, setRefreshing] = createSignal(false);
 
-  const [health, setHealth] = createSignal<OpenworkOwpenbotHealthSnapshot | null>(null);
+  const [health, setHealth] = createSignal<OpenworkOpenCodeRouterHealthSnapshot | null>(null);
   const [healthError, setHealthError] = createSignal<string | null>(null);
 
-  const [telegramIdentities, setTelegramIdentities] = createSignal<OpenworkOwpenbotIdentityItem[]>([]);
+  const [telegramIdentities, setTelegramIdentities] = createSignal<OpenworkOpenCodeRouterIdentityItem[]>([]);
   const [telegramIdentitiesError, setTelegramIdentitiesError] = createSignal<string | null>(null);
 
-  const [slackIdentities, setSlackIdentities] = createSignal<OpenworkOwpenbotIdentityItem[]>([]);
+  const [slackIdentities, setSlackIdentities] = createSignal<OpenworkOpenCodeRouterIdentityItem[]>([]);
   const [slackIdentitiesError, setSlackIdentitiesError] = createSignal<string | null>(null);
 
   const [telegramToken, setTelegramToken] = createSignal("");
@@ -169,7 +169,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [sendBusy, setSendBusy] = createSignal(false);
   const [sendStatus, setSendStatus] = createSignal<string | null>(null);
   const [sendError, setSendError] = createSignal<string | null>(null);
-  const [sendResult, setSendResult] = createSignal<OpenworkOwpenbotSendResult | null>(null);
+  const [sendResult, setSendResult] = createSignal<OpenworkOpenCodeRouterSendResult | null>(null);
 
   const [reconnectStatus, setReconnectStatus] = createSignal<string | null>(null);
   const [reconnectError, setReconnectError] = createSignal<string | null>(null);
@@ -284,7 +284,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setAgentLoading(true);
     setAgentError(null);
     try {
-      const result = (await client.readWorkspaceFile(id, OWPENBOT_AGENT_FILE_PATH)) as OpenworkWorkspaceFileContent;
+      const result = (await client.readWorkspaceFile(id, OPENCODE_ROUTER_AGENT_FILE_PATH)) as OpenworkWorkspaceFileContent;
       const nextContent = result.content ?? "";
       setAgentExists(true);
       setAgentContent(nextContent);
@@ -317,12 +317,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setAgentError(null);
     try {
       const result = await client.writeWorkspaceFile(id, {
-        path: OWPENBOT_AGENT_FILE_PATH,
-        content: OWPENBOT_AGENT_FILE_TEMPLATE,
+        path: OPENCODE_ROUTER_AGENT_FILE_PATH,
+        content: OPENCODE_ROUTER_AGENT_FILE_TEMPLATE,
       });
       setAgentExists(true);
-      setAgentContent(OWPENBOT_AGENT_FILE_TEMPLATE);
-      setAgentDraft(OWPENBOT_AGENT_FILE_TEMPLATE);
+      setAgentContent(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
+      setAgentDraft(OPENCODE_ROUTER_AGENT_FILE_TEMPLATE);
       setAgentBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
       setAgentStatus("Created default messaging agent file.");
     } catch (error) {
@@ -345,7 +345,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setAgentError(null);
     try {
       const result = await client.writeWorkspaceFile(id, {
-        path: OWPENBOT_AGENT_FILE_PATH,
+        path: OPENCODE_ROUTER_AGENT_FILE_PATH,
         content: agentDraft(),
         baseUpdatedAt: agentBaseUpdatedAt(),
       });
@@ -379,7 +379,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSendError(null);
     setSendResult(null);
     try {
-      const result = await client.sendOwpenbotMessage(id, {
+      const result = await client.sendOpenCodeRouterMessage(id, {
         channel: sendChannel(),
         text,
         ...(sendDirectory().trim() ? { directory: sendDirectory().trim() } : {}),
@@ -425,15 +425,15 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       }
 
       const [healthRes, tgRes, slackRes, telegramInfo] = await Promise.all([
-        client.owpenbotHealth(),
-        client.getOwpenbotTelegramIdentities(id),
-        client.getOwpenbotSlackIdentities(id),
-        client.getOwpenbotTelegram(id).catch(() => null),
+        client.opencodeRouterHealth(),
+        client.getOpenCodeRouterTelegramIdentities(id),
+        client.getOpenCodeRouterSlackIdentities(id),
+        client.getOpenCodeRouterTelegram(id).catch(() => null),
       ]);
 
       setTelegramBotUsername(getTelegramUsernameFromResult(telegramInfo));
 
-      if (isOwpenbotSnapshot(healthRes.json)) {
+      if (isOpenCodeRouterSnapshot(healthRes.json)) {
         setHealth(healthRes.json);
       } else {
         setHealth(null);
@@ -441,19 +441,19 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           const message =
             (healthRes.json && typeof (healthRes.json as any).message === "string")
               ? String((healthRes.json as any).message)
-              : `Owpenbot health unavailable (${healthRes.status})`;
+              : `OpenCodeRouter health unavailable (${healthRes.status})`;
           setHealthError(message);
         }
       }
 
-      if (isOwpenbotIdentities(tgRes)) {
+      if (isOpenCodeRouterIdentities(tgRes)) {
         setTelegramIdentities(tgRes.items ?? []);
       } else {
         setTelegramIdentities([]);
         setTelegramIdentitiesError("Telegram identities unavailable.");
       }
 
-      if (isOwpenbotIdentities(slackRes)) {
+      if (isOpenCodeRouterIdentities(slackRes)) {
         setSlackIdentities(slackRes.items ?? []);
       } else {
         setSlackIdentities([]);
@@ -508,7 +508,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.upsertOwpenbotTelegramIdentity(id, { token, enabled: telegramEnabled() });
+      const result = await client.upsertOpenCodeRouterTelegramIdentity(id, { token, enabled: telegramEnabled() });
       if (result.ok) {
         const username = (result.telegram as any)?.bot?.username;
         if (username) {
@@ -546,7 +546,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.deleteOwpenbotTelegramIdentity(id, identityId);
+      const result = await client.deleteOpenCodeRouterTelegramIdentity(id, identityId);
       if (result.ok) {
         setTelegramBotUsername(null);
         setTelegramStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
@@ -580,7 +580,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.upsertOwpenbotSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
+      const result = await client.upsertOpenCodeRouterSlackIdentity(id, { botToken, appToken, enabled: slackEnabled() });
       if (result.ok) {
         setSlackStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
       } else {
@@ -612,7 +612,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setSlackStatus(null);
     setSlackError(null);
     try {
-      const result = await client.deleteOwpenbotSlackIdentity(id, identityId);
+      const result = await client.deleteOpenCodeRouterSlackIdentity(id, identityId);
       if (result.ok) {
         setSlackStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
       } else {
@@ -1244,7 +1244,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
               </div>
             </div>
             <span class="rounded-md border border-gray-4 bg-gray-2/50 px-2 py-1 text-[11px] font-mono text-gray-10">
-              {OWPENBOT_AGENT_FILE_PATH}
+              {OPENCODE_ROUTER_AGENT_FILE_PATH}
             </span>
           </div>
 
@@ -1268,7 +1268,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
           <textarea
             class="min-h-[220px] w-full rounded-lg border border-gray-4 bg-gray-1 px-3 py-2.5 text-[13px] font-mono text-gray-12 placeholder:text-gray-8"
-            placeholder="Add messaging behavior instructions for owpenbot here..."
+            placeholder="Add messaging behavior instructions for opencodeRouter here..."
             value={agentDraft()}
             onInput={(e) => setAgentDraft(e.currentTarget.value)}
           />

@@ -28,7 +28,7 @@ const client = createOpencodeClient({
 const health = await client.global.health();
 assert.equal(health.healthy, true);
 
-const session = await client.session.create({ title: "owpenbot smoke" });
+const session = await client.session.create({ title: "opencodeRouter smoke" });
 assert.ok(session?.id);
 
 await client.session.prompt({

@@ -60,16 +60,16 @@ const updatePackageJson = async (nextVersion) => {
   const tauriPath = path.join(REPO_ROOT, "packages", "desktop", "package.json");
   const headlessPath = path.join(REPO_ROOT, "packages", "headless", "package.json");
   const serverPath = path.join(REPO_ROOT, "packages", "server", "package.json");
-  const owpenbotPath = path.join(REPO_ROOT, "packages", "owpenbot", "package.json");
+  const opencodeRouterPath = path.join(REPO_ROOT, "packages", "opencode-router", "package.json");
   const uiData = await readJson(uiPath);
   const tauriData = await readJson(tauriPath);
   const headlessData = await readJson(headlessPath);
   const serverData = await readJson(serverPath);
-  const owpenbotData = await readJson(owpenbotPath);
+  const opencodeRouterData = await readJson(opencodeRouterPath);
   uiData.version = nextVersion;
   tauriData.version = nextVersion;
-  // Desktop pins owpenbotVersion for sidecar bundling; keep it aligned.
-  tauriData.owpenbotVersion = nextVersion;
+  // Desktop pins opencodeRouterVersion for sidecar bundling; keep it aligned.
+  tauriData.opencodeRouterVersion = nextVersion;
   headlessData.version = nextVersion;
 
   // Ensure openwrk uses the same openwork-server/owpenwork versions.
@@ -78,13 +78,13 @@ const updatePackageJson = async (nextVersion) => {
   headlessData.dependencies.owpenwork = nextVersion;
 
   serverData.version = nextVersion;
-  owpenbotData.version = nextVersion;
+  opencodeRouterData.version = nextVersion;
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
     await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
     await writeFile(headlessPath, JSON.stringify(headlessData, null, 2) + "\n");
     await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
-    await writeFile(owpenbotPath, JSON.stringify(owpenbotData, null, 2) + "\n");
+    await writeFile(opencodeRouterPath, JSON.stringify(opencodeRouterData, null, 2) + "\n");
   }
 };
 
@@ -140,7 +140,7 @@ const main = async () => {
           "packages/desktop/package.json",
           "packages/headless/package.json",
           "packages/server/package.json",
-          "packages/owpenbot/package.json",
+          "packages/opencode-router/package.json",
           "packages/desktop/src-tauri/Cargo.toml",
           "packages/desktop/src-tauri/tauri.conf.json",
         ],

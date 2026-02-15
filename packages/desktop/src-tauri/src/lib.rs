@@ -5,7 +5,7 @@ mod fs;
 mod opkg;
 mod openwrk;
 mod openwork_server;
-mod owpenbot;
+mod opencodeRouter;
 mod paths;
 mod platform;
 mod types;
@@ -28,8 +28,8 @@ use commands::openwrk::{
 use commands::openwork_server::openwork_server_info;
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::opkg::{import_skill, opkg_install};
-use commands::owpenbot::{
-    owpenbot_config_set, owpenbot_info, owpenbot_start, owpenbot_status, owpenbot_stop,
+use commands::opencodeRouter::{
+    opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status, opencodeRouter_stop,
 };
 use commands::skills::{
     install_skill_template, list_local_skills, read_local_skill, uninstall_skill, write_local_skill,
@@ -44,7 +44,7 @@ use commands::workspace::{
 use engine::manager::EngineManager;
 use openwrk::manager::OpenwrkManager;
 use openwork_server::manager::OpenworkServerManager;
-use owpenbot::manager::OwpenbotManager;
+use opencodeRouter::manager::OpenCodeRouterManager;
 use tauri::Manager;
 use workspace::watch::WorkspaceWatchState;
 
@@ -64,7 +64,7 @@ pub fn run() {
         .manage(EngineManager::default())
         .manage(OpenwrkManager::default())
         .manage(OpenworkServerManager::default())
-        .manage(OwpenbotManager::default())
+        .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
         .invoke_handler(tauri::generate_handler![
             engine_start,
@@ -79,11 +79,11 @@ pub fn run() {
             sandbox_doctor,
             sandbox_stop,
             openwork_server_info,
-            owpenbot_info,
-            owpenbot_start,
-            owpenbot_stop,
-            owpenbot_status,
-            owpenbot_config_set,
+            opencodeRouter_info,
+            opencodeRouter_start,
+            opencodeRouter_stop,
+            opencodeRouter_status,
+            opencodeRouter_config_set,
             workspace_bootstrap,
             workspace_set_active,
             workspace_create,
@@ -134,8 +134,8 @@ pub fn run() {
             if let Ok(mut openwork_server) = app_handle.state::<OpenworkServerManager>().inner.lock() {
                 OpenworkServerManager::stop_locked(&mut openwork_server);
             }
-            if let Ok(mut owpenbot) = app_handle.state::<OwpenbotManager>().inner.lock() {
-                OwpenbotManager::stop_locked(&mut owpenbot);
+            if let Ok(mut opencodeRouter) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
+                OpenCodeRouterManager::stop_locked(&mut opencodeRouter);
             }
         }
     });

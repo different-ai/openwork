@@ -1,6 +1,6 @@
 # Openwrk
 
-Headless host orchestrator for OpenCode + OpenWork server + Owpenbot. This is a CLI-first way to run host mode without the desktop UI.
+Headless host orchestrator for OpenCode + OpenWork server + OpenCode Router. This is a CLI-first way to run host mode without the desktop UI.
 
 ## Quick start
 
@@ -18,11 +18,11 @@ openwrk serve --workspace /path/to/workspace
 
 `openwrk` ships as a compiled binary, so Bun is not required at runtime.
 
-`openwrk` downloads and caches the `openwork-server`, `owpenbot`, and `opencode` sidecars on
+`openwrk` downloads and caches the `openwork-server`, `opencode-router`, and `opencode` sidecars on
 first run using a SHA-256 manifest. Use `--sidecar-dir` or `OPENWRK_SIDECAR_DIR` to control the
 cache location, and `--sidecar-base-url` / `--sidecar-manifest` to point at a custom host.
 
-Use `--sidecar-source` to control where `openwork-server` and `owpenbot` are resolved
+Use `--sidecar-source` to control where `openwork-server` and `opencode-router` are resolved
 (`auto` | `bundled` | `downloaded` | `external`), and `--opencode-source` to control
 `opencode` resolution. Set `OPENWRK_SIDECAR_SOURCE` / `OPENWRK_OPENCODE_SOURCE` to
 apply the same policies via env vars.
@@ -30,11 +30,11 @@ apply the same policies via env vars.
 By default the manifest is fetched from
 `https://github.com/different-ai/openwork/releases/download/openwrk-v<openwrk-version>/openwrk-sidecars.json`.
 
-Owpenbot is optional. If it exits, `openwrk` continues running unless you pass
-`--owpenbot-required` or set `OPENWRK_OWPENBOT_REQUIRED=1`.
+OpenCode Router is optional. If it exits, `openwrk` continues running unless you pass
+`--opencode-router-required` or set `OPENWRK_OPENCODE_ROUTER_REQUIRED=1`.
 
 For development overrides only, set `OPENWRK_ALLOW_EXTERNAL=1` or pass `--allow-external` to use
-locally installed `openwork-server` or `owpenbot` binaries.
+locally installed `openwork-server` or `opencode-router` binaries.
 
 Add `--verbose` (or `OPENWRK_VERBOSE=1`) to print extra diagnostics about resolved binaries.
 
@@ -107,7 +107,7 @@ Override with `OPENWRK_SANDBOX_MOUNT_ALLOWLIST`.
 
 ## Logging
 
-`openwrk` emits a unified log stream from OpenCode, OpenWork server, and Owpenbot. Use JSON format for
+`openwrk` emits a unified log stream from OpenCode, OpenWork server, and OpenCode Router. Use JSON format for
 structured, OpenTelemetry-friendly logs and a stable run id for correlation.
 
 ```bash
@@ -176,5 +176,5 @@ openwrk start \
   --workspace /path/to/workspace \
   --allow-external \
   --openwork-server-bin packages/server/src/cli.ts \
-  --owpenbot-bin ../owpenbot/dist/cli.js
+  --opencode-router-bin ../opencode-router/dist/cli.js
 ```

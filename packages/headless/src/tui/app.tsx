@@ -46,8 +46,8 @@ export type TuiRouterHealth = {
   };
 };
 
-// Backward-compatible name (older logs + code paths still say owpenbot).
-export type TuiOwpenbotHealth = TuiRouterHealth;
+// Backward-compatible name (older logs + code paths still say opencodeRouter).
+export type TuiOpenCodeRouterHealth = TuiRouterHealth;
 
 export type TuiRouterIdentityItem = {
   id: string;

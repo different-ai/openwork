@@ -12,7 +12,7 @@ import {
   readConfigFile,
   writeConfigFile,
   type ChannelName,
-  type OwpenbotConfigFile,
+  type OpenCodeRouterConfigFile,
   type SlackIdentity,
   type TelegramIdentity,
 } from "./config.js";
@@ -22,11 +22,11 @@ import { createClient } from "./opencode.js";
 import { parseSlackPeerId } from "./slack.js";
 import { truncateText } from "./text.js";
 
-declare const __OWPENBOT_VERSION__: string | undefined;
+declare const __OPENCODE_ROUTER_VERSION__: string | undefined;
 
 const VERSION = (() => {
-  if (typeof __OWPENBOT_VERSION__ === "string" && __OWPENBOT_VERSION__.trim()) {
-    return __OWPENBOT_VERSION__.trim();
+  if (typeof __OPENCODE_ROUTER_VERSION__ === "string" && __OPENCODE_ROUTER_VERSION__.trim()) {
+    return __OPENCODE_ROUTER_VERSION__.trim();
   }
   try {
     const pkgPath = new URL("../package.json", import.meta.url);
@@ -89,7 +89,7 @@ function createConsoleReporter(): BridgeReporter {
   };
 }
 
-function updateConfig(configPath: string, updater: (cfg: OwpenbotConfigFile) => OwpenbotConfigFile) {
+function updateConfig(configPath: string, updater: (cfg: OpenCodeRouterConfigFile) => OpenCodeRouterConfigFile) {
   const { config } = readConfigFile(configPath);
   const base = config ?? { version: 1 };
   const next = updater(base);
@@ -106,7 +106,7 @@ function normalizeIdentityId(value: string | undefined): string {
   return cleaned || "default";
 }
 
-function upsertTelegramBot(cfg: OwpenbotConfigFile, identity: TelegramIdentity): OwpenbotConfigFile {
+function upsertTelegramBot(cfg: OpenCodeRouterConfigFile, identity: TelegramIdentity): OpenCodeRouterConfigFile {
   const next = { ...cfg };
   next.channels = next.channels ?? {};
   const existing = next.channels.telegram ?? {};
@@ -118,7 +118,7 @@ function upsertTelegramBot(cfg: OwpenbotConfigFile, identity: TelegramIdentity):
   return next;
 }
 
-function deleteTelegramBot(cfg: OwpenbotConfigFile, idRaw: string): { next: OwpenbotConfigFile; deleted: boolean } {
+function deleteTelegramBot(cfg: OpenCodeRouterConfigFile, idRaw: string): { next: OpenCodeRouterConfigFile; deleted: boolean } {
   const id = normalizeIdentityId(idRaw);
   const next = { ...cfg };
   next.channels = next.channels ?? {};
@@ -130,7 +130,7 @@ function deleteTelegramBot(cfg: OwpenbotConfigFile, idRaw: string): { next: Owpe
   return { next, deleted };
 }
 
-function upsertSlackApp(cfg: OwpenbotConfigFile, identity: SlackIdentity): OwpenbotConfigFile {
+function upsertSlackApp(cfg: OpenCodeRouterConfigFile, identity: SlackIdentity): OpenCodeRouterConfigFile {
   const next = { ...cfg };
   next.channels = next.channels ?? {};
   const existing = next.channels.slack ?? {};
@@ -142,7 +142,7 @@ function upsertSlackApp(cfg: OwpenbotConfigFile, identity: SlackIdentity): Owpen
   return next;
 }
 
-function deleteSlackApp(cfg: OwpenbotConfigFile, idRaw: string): { next: OwpenbotConfigFile; deleted: boolean } {
+function deleteSlackApp(cfg: OpenCodeRouterConfigFile, idRaw: string): { next: OpenCodeRouterConfigFile; deleted: boolean } {
   const id = normalizeIdentityId(idRaw);
   const next = { ...cfg };
   next.channels = next.channels ?? {};
@@ -187,7 +187,7 @@ const program = new Command();
 program
   .name("opencode-router")
   .version(VERSION)
-  .description("OpenCode Router (formerly owpenbot): Slack + Telegram bridge + directory routing")
+  .description("OpenCode Router: Slack + Telegram bridge + directory routing")
   .option("--json", "Output in JSON format", false);
 
 program
@@ -328,7 +328,7 @@ configCmd
         cur = cur[k];
       }
       cur[keys[keys.length - 1]] = parsed;
-      return next as OwpenbotConfigFile;
+      return next as OpenCodeRouterConfigFile;
     });
 
     if (useJson) outputJson({ success: true, key, value: parsed, config: updated });

@@ -10,7 +10,7 @@ fn main() {
     emit_build_info();
     ensure_opencode_sidecar();
     ensure_openwork_server_sidecar();
-    ensure_owpenbot_sidecar();
+    ensure_opencodeRouter_sidecar();
     ensure_openwrk_sidecar();
     tauri_build::build();
 }
@@ -348,7 +348,7 @@ fn ensure_openwork_server_sidecar() {
     }
 }
 
-fn ensure_owpenbot_sidecar() {
+fn ensure_opencodeRouter_sidecar() {
     let target = env::var("CARGO_CFG_TARGET_TRIPLE")
         .or_else(|_| env::var("TARGET"))
         .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
@@ -363,12 +363,12 @@ fn ensure_owpenbot_sidecar() {
     let sidecar_dir = manifest_dir.join("sidecars");
 
     let canonical_name = if target.contains("windows") {
-        "owpenbot.exe"
+        "opencode-router.exe"
     } else {
-        "owpenbot"
+        "opencode-router"
     };
 
-    let mut target_name = format!("owpenbot-{target}");
+    let mut target_name = format!("opencode-router-{target}");
     if target.contains("windows") {
         target_name.push_str(".exe");
     }
@@ -386,15 +386,15 @@ fn ensure_owpenbot_sidecar() {
         }
     }
 
-    let source_path = env::var("OWPENBOT_BIN_PATH")
+    let source_path = env::var("OPENCODE_ROUTER_BIN_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
             find_in_path(if target.contains("windows") {
-                "owpenbot.exe"
+                "opencode-router.exe"
             } else {
-                "owpenbot"
+                "opencode-router"
             })
         });
 
@@ -402,7 +402,7 @@ fn ensure_owpenbot_sidecar() {
 
     let Some(source_path) = source_path else {
         println!(
-      "cargo:warning=Owpenbot sidecar missing at {} (set OWPENBOT_BIN_PATH or install owpenbot)",
+      "cargo:warning=OpenCodeRouter sidecar missing at {} (set OPENCODE_ROUTER_BIN_PATH or install opencode-router)",
       dest_path.display()
     );
 
@@ -425,7 +425,7 @@ fn ensure_owpenbot_sidecar() {
         let _ = copy_sidecar(&dest_path, &target_dest_path, &target);
     } else {
         println!(
-            "cargo:warning=Failed to copy Owpenbot sidecar from {} to {}",
+            "cargo:warning=Failed to copy OpenCodeRouter sidecar from {} to {}",
             source_path.display(),
             dest_path.display()
         );
