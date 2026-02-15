@@ -12,7 +12,7 @@ import { createRequire } from "node:module";
 import { once } from "node:events";
 
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { startOpenwrkTui, type TuiHandle } from "./tui/app.js";
+import type { TuiHandle } from "./tui/app.js";
 
 type ApprovalMode = "manual" | "auto";
 
@@ -4177,10 +4177,11 @@ async function runStart(args: ParsedArgs) {
     onLog: (event: LogEvent) => {
       if (!tui) return;
       const component = event.component ?? "openwrk";
+      const tuiComponent = component === "owpenbot" ? "router" : component;
       tui.pushLog({
         time: event.time,
         level: event.level,
-        component,
+        component: tuiComponent,
         message: event.message,
       });
     },
@@ -4544,6 +4545,7 @@ async function runStart(args: ParsedArgs) {
       };
     }
     try {
+      const { startOpenwrkTui } = await import("./tui/app.js");
       tui = startOpenwrkTui({
         version: cliVersion,
         connect: {
@@ -4561,8 +4563,8 @@ async function runStart(args: ParsedArgs) {
           { name: "opencode", label: "opencode", status: "starting", port: opencodePort },
           { name: "openwork-server", label: "openwork-server", status: "starting", port: openworkPort },
           {
-            name: "owpenbot",
-            label: "owpenbot",
+            name: "router",
+            label: "opencode-router",
             status: owpenbotEnabled ? "starting" : "disabled",
             port: sandboxMode !== "none" ? undefined : owpenbotHealthPort,
           },
@@ -4574,30 +4576,69 @@ async function runStart(args: ParsedArgs) {
           return { command: attachCommand, ...result };
         },
         onCopySelection: async (text) => copyToClipboard(text),
-        onOwpenbotHealth: async () => fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken),
-        onOwpenbotQr: async () => {
-          const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/whatsapp/qr?format=ascii`;
+        onRouterHealth: async () => fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken),
+        onRouterTelegramIdentities: async () => {
+          const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/identities/telegram`;
           const result = await fetchJson(url, {
             headers: {
               "X-OpenWork-Host-Token": openworkHostToken,
             },
           });
-          const qr = typeof result?.qr === "string" ? result.qr : "";
-          if (!qr.trim()) {
-            throw new Error("No QR output received");
-          }
-          return qr;
+          const items = Array.isArray(result?.items) ? result.items : [];
+          return { items };
         },
-        onOwpenbotSetTelegramToken: async (token) => {
+        onRouterSlackIdentities: async () => {
+          const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/identities/slack`;
+          const result = await fetchJson(url, {
+            headers: {
+              "X-OpenWork-Host-Token": openworkHostToken,
+            },
+          });
+          const items = Array.isArray(result?.items) ? result.items : [];
+          return { items };
+        },
+        onRouterSetGroupsEnabled: async (enabled) => {
           try {
-            const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/config/telegram-token`;
+            const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/config/groups`;
             await fetchJson(url, {
               method: "POST",
               headers: {
                 "Content-Type": "application/json",
                 "X-OpenWork-Host-Token": openworkHostToken,
               },
-              body: JSON.stringify({ token }),
+              body: JSON.stringify({ enabled }),
+            });
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+        onRouterSetTelegramToken: async (token) => {
+          try {
+            const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/identities/telegram`;
+            await fetchJson(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-OpenWork-Host-Token": openworkHostToken,
+              },
+              body: JSON.stringify({ id: "default", token, enabled: true }),
+            });
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+        onRouterSetSlackTokens: async (botToken, appToken) => {
+          try {
+            const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/identities/slack`;
+            await fetchJson(url, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-OpenWork-Host-Token": openworkHostToken,
+              },
+              body: JSON.stringify({ id: "default", botToken, appToken, enabled: true }),
             });
             return { ok: true };
           } catch (error) {
@@ -4611,10 +4652,15 @@ async function runStart(args: ParsedArgs) {
     }
   }
 
+  const tuiServiceName = (name: string) => (name === "owpenbot" ? "router" : name);
+
   const handleExit = (name: string, code: number | null, signal: NodeJS.Signals | null) => {
     if (shuttingDown || detached) return;
     const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
-    const services = name === "sandbox" ? ["opencode", "openwork-server", "owpenbot"] : [name];
+    const services =
+      name === "sandbox"
+        ? ["opencode", "openwork-server", "router"]
+        : [tuiServiceName(name)];
     for (const service of services) {
       tui?.updateService(service, { status: "stopped", message: reason });
     }
@@ -4624,7 +4670,7 @@ async function runStart(args: ParsedArgs) {
 
   const handleSpawnError = (name: string, error: unknown) => {
     if (shuttingDown || detached) return;
-    tui?.updateService(name, { status: "error", message: String(error) });
+    tui?.updateService(tuiServiceName(name), { status: "error", message: String(error) });
     logger.error("Process failed to start", { error: String(error) }, name);
     void shutdown().then(() => process.exit(1));
   };
@@ -4688,7 +4734,7 @@ async function runStart(args: ParsedArgs) {
       tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
       tui?.updateService("openwork-server", { status: "running", port: openworkPort });
       if (owpenbotEnabled) {
-        tui?.updateService("owpenbot", { status: "running", port: undefined });
+        tui?.updateService("router", { status: "running", port: undefined });
       }
 
       if (!detachRequested) {
@@ -4805,7 +4851,7 @@ async function runStart(args: ParsedArgs) {
             logFormat,
           });
           children.push({ name: "owpenbot", child: owpenbotChild });
-          tui?.updateService("owpenbot", {
+          tui?.updateService("router", {
             status: "running",
             pid: owpenbotChild.pid ?? undefined,
             port: owpenbotHealthPort,
@@ -4817,7 +4863,7 @@ async function runStart(args: ParsedArgs) {
               return;
             }
             const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
-            tui?.updateService("owpenbot", { status: "stopped", message: reason });
+            tui?.updateService("router", { status: "stopped", message: reason });
             logger.warn("Process exited, continuing without owpenbot", { reason, code, signal }, "owpenbot");
           });
           owpenbotChild.on("error", (error) => handleSpawnError("owpenbot", error));
@@ -4825,8 +4871,8 @@ async function runStart(args: ParsedArgs) {
           const healthBaseUrl = `http://127.0.0.1:${owpenbotHealthPort}`;
           logger.info("Waiting for health", { url: healthBaseUrl }, "owpenbot");
           const health = await waitForOwpenbotHealthy(healthBaseUrl, 10_000, 400);
-          tui?.setOwpenbotHealth(health);
-          tui?.updateService("owpenbot", { status: health.ok ? "healthy" : "running" });
+          tui?.setRouterHealth(health);
+          tui?.updateService("router", { status: health.ok ? "healthy" : "running" });
           logger.info("Healthy", { url: healthBaseUrl, ok: health.ok }, "owpenbot");
           owpenbotReady = true;
         } catch (error) {
@@ -4835,7 +4881,7 @@ async function runStart(args: ParsedArgs) {
           }
           const message = error instanceof Error ? error.message : String(error);
           logger.warn("Owpenbot failed to start, continuing without it", { error: message }, "owpenbot");
-          tui?.updateService("owpenbot", { status: "stopped", message });
+          tui?.updateService("router", { status: "stopped", message });
           if (owpenbotChild) {
             try {
               owpenbotChild.kill();
@@ -4901,9 +4947,9 @@ async function runStart(args: ParsedArgs) {
         owpenbotHealthInterval = setInterval(() => {
           fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken)
             .then((health) => {
-              tui?.setOwpenbotHealth(health);
+              tui?.setRouterHealth(health);
               if (health.ok) {
-                tui?.updateService("owpenbot", { status: "healthy" });
+                tui?.updateService("router", { status: "healthy" });
               }
             })
             .catch(() => undefined);
@@ -4920,20 +4966,20 @@ async function runStart(args: ParsedArgs) {
           const url = `${openworkBaseUrl.replace(/\/$/, "")}/owpenbot/health`;
           logger.info("Waiting for health", { url }, "owpenbot");
           const health = await waitForOwpenbotHealthyViaOpenwork(openworkBaseUrl, openworkToken);
-          tui?.setOwpenbotHealth(health);
-          tui?.updateService("owpenbot", { status: health.ok ? "healthy" : "running" });
+          tui?.setRouterHealth(health);
+          tui?.updateService("router", { status: health.ok ? "healthy" : "running" });
           logger.info("Healthy", { url, ok: health.ok }, "owpenbot");
         } catch (error) {
           logger.warn("Owpenbot health check failed", { error: String(error) }, "owpenbot");
-          tui?.updateService("owpenbot", { status: "running", message: String(error) });
+          tui?.updateService("router", { status: "running", message: String(error) });
         }
         if (!owpenbotHealthInterval) {
           owpenbotHealthInterval = setInterval(() => {
             fetchOwpenbotHealthViaOpenwork(openworkBaseUrl, openworkToken)
               .then((health) => {
-                tui?.setOwpenbotHealth(health);
+                tui?.setRouterHealth(health);
                 if (health.ok) {
-                  tui?.updateService("owpenbot", { status: "healthy" });
+                  tui?.updateService("router", { status: "healthy" });
                 }
               })
               .catch(() => undefined);

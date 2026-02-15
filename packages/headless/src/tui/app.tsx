@@ -28,7 +28,7 @@ export type TuiConnectInfo = {
   attachCommand: string;
 };
 
-export type TuiOwpenbotHealth = {
+export type TuiRouterHealth = {
   ok: boolean;
   opencode: {
     url: string;
@@ -37,12 +37,26 @@ export type TuiOwpenbotHealth = {
   };
   channels: {
     telegram: boolean;
-    whatsapp: boolean;
     slack: boolean;
+    // Legacy field (kept for backward compatibility with older builds).
+    whatsapp?: boolean;
   };
   config: {
     groupsEnabled: boolean;
   };
+};
+
+// Backward-compatible name (older logs + code paths still say owpenbot).
+export type TuiOwpenbotHealth = TuiRouterHealth;
+
+export type TuiRouterIdentityItem = {
+  id: string;
+  enabled: boolean;
+  running: boolean;
+};
+
+export type TuiRouterIdentityList = {
+  items: TuiRouterIdentityItem[];
 };
 
 export type TuiLogEntry = {
@@ -55,7 +69,7 @@ export type TuiLogEntry = {
 export type TuiHandle = {
   updateService: (name: string, update: Partial<TuiService>) => void;
   setConnectInfo: (info: Partial<TuiConnectInfo>) => void;
-  setOwpenbotHealth: (health: TuiOwpenbotHealth | null) => void;
+  setRouterHealth: (health: TuiRouterHealth | null) => void;
   pushLog: (entry: TuiLogEntry) => void;
   setUptimeStart: (time: number) => void;
   stop: () => void;
@@ -69,12 +83,15 @@ type TuiOptions = {
   onDetach: () => void | Promise<void>;
   onCopyAttach: () => Promise<{ command: string; copied: boolean; error?: string }>;
   onCopySelection?: (text: string) => Promise<{ copied: boolean; error?: string }>;
-  onOwpenbotHealth: () => Promise<TuiOwpenbotHealth>;
-  onOwpenbotQr: () => Promise<string>;
-  onOwpenbotSetTelegramToken: (token: string) => Promise<{ ok: boolean; error?: string }>;
+  onRouterHealth: () => Promise<TuiRouterHealth>;
+  onRouterTelegramIdentities: () => Promise<TuiRouterIdentityList>;
+  onRouterSlackIdentities: () => Promise<TuiRouterIdentityList>;
+  onRouterSetGroupsEnabled: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
+  onRouterSetTelegramToken: (token: string) => Promise<{ ok: boolean; error?: string }>;
+  onRouterSetSlackTokens: (botToken: string, appToken: string) => Promise<{ ok: boolean; error?: string }>;
 };
 
-type ViewName = "overview" | "logs" | "help" | "owpenbot";
+type ViewName = "overview" | "logs" | "help" | "router";
 
 const MAX_LOGS = 800;
 
@@ -116,12 +133,12 @@ const levelColor: Record<TuiLogLevel, RGBA> = {
 
 const levelCycle: Array<"all" | TuiLogLevel> = ["all", "info", "warn", "error", "debug"];
 
-const serviceCycle = ["all", "openwrk", "opencode", "openwork-server", "owpenbot"];
+const serviceCycle = ["all", "openwrk", "opencode", "openwork-server", "router"];
 
 const viewTabs: Array<{ name: string; description: string; value: ViewName }> = [
   { name: "Overview", description: "Overview", value: "overview" },
   { name: "Logs", description: "Logs", value: "logs" },
-  { name: "Owpenbot", description: "Owpenbot", value: "owpenbot" },
+  { name: "Router", description: "opencode-router", value: "router" },
   { name: "Help", description: "Help", value: "help" },
 ];
 
@@ -152,7 +169,7 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
   const api: TuiHandle = {
     updateService: () => undefined,
     setConnectInfo: () => undefined,
-    setOwpenbotHealth: () => undefined,
+    setRouterHealth: () => undefined,
     pushLog: () => undefined,
     setUptimeStart: () => undefined,
     stop: () => stop?.(),
@@ -173,11 +190,14 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         logs: [] as TuiLogEntry[],
         services: options.services as TuiService[],
         connect: options.connect,
-        owpenbotHealth: null as TuiOwpenbotHealth | null,
-        owpenbotQr: "",
-        owpenbotQrError: "",
-        owpenbotToken: "",
-        owpenbotEditing: false,
+        routerHealth: null as TuiRouterHealth | null,
+        routerTelegramIdentities: null as TuiRouterIdentityList | null,
+        routerSlackIdentities: null as TuiRouterIdentityList | null,
+        routerTelegramToken: "",
+        routerSlackTokens: "",
+        routerTelegramEditing: false,
+        routerSlackEditing: false,
+        routerAutoLoaded: false,
         uptimeStart: Date.now(),
       });
 
@@ -191,8 +211,8 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         setState("connect", (prev) => ({ ...prev, ...info }));
       };
 
-      api.setOwpenbotHealth = (health) => {
-        setState("owpenbotHealth", health);
+      api.setRouterHealth = (health) => {
+        setState("routerHealth", health);
       };
 
       api.pushLog = (entry) => {
@@ -228,10 +248,56 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
 
       const setView = (view: ViewName) => {
         setState("view", view);
-        if (view !== "owpenbot") {
-          setState("owpenbotEditing", false);
+        if (view !== "router") {
+          setState("routerTelegramEditing", false);
+          setState("routerSlackEditing", false);
         }
       };
+
+      const refreshRouter = async (opts: { toastOnSuccess?: string } = {}) => {
+        const [health, telegram, slack] = await Promise.allSettled([
+          options.onRouterHealth(),
+          options.onRouterTelegramIdentities(),
+          options.onRouterSlackIdentities(),
+        ]);
+
+        const errors: string[] = [];
+        if (health.status === "fulfilled") {
+          api.setRouterHealth(health.value);
+        } else {
+          errors.push(`health: ${String(health.reason)}`);
+        }
+
+        if (telegram.status === "fulfilled") {
+          setState("routerTelegramIdentities", telegram.value);
+        } else {
+          setState("routerTelegramIdentities", null);
+          errors.push(`telegram: ${String(telegram.reason)}`);
+        }
+
+        if (slack.status === "fulfilled") {
+          setState("routerSlackIdentities", slack.value);
+        } else {
+          setState("routerSlackIdentities", null);
+          errors.push(`slack: ${String(slack.reason)}`);
+        }
+
+        if (errors.length) {
+          showToast(`Router refresh error: ${errors[0]}`);
+          return;
+        }
+
+        if (opts.toastOnSuccess) {
+          showToast(opts.toastOnSuccess);
+        }
+      };
+
+      createEffect(() => {
+        if (state.view !== "router") return;
+        if (state.routerAutoLoaded) return;
+        setState("routerAutoLoaded", true);
+        void refreshRouter();
+      });
 
       let tabSelect: TabSelectRenderable | undefined;
       const tabWidth = createMemo(() => {
@@ -287,7 +353,8 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         void copySelection(text);
       });
 
-      let tokenInput: InputRenderable | undefined;
+      let telegramTokenInput: InputRenderable | undefined;
+      let slackTokensInput: InputRenderable | undefined;
 
       const logHeight = createMemo(() => {
         const height = dimensions().height;
@@ -322,9 +389,9 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         return healthy ? "All green" : "Starting";
       });
 
-      const owpenbotStatus = createMemo(() => {
-        if (!state.owpenbotHealth) return "Pending";
-        return state.owpenbotHealth.ok ? "Healthy" : "Needs attention";
+      const routerStatus = createMemo(() => {
+        if (!state.routerHealth) return "Pending";
+        return state.routerHealth.ok ? "Healthy" : "Needs attention";
       });
 
       const actions = (view: ViewName) => {
@@ -334,10 +401,10 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         if (view === "help") {
           return "[B] Back  [D] Detach  [Q] Quit";
         }
-        if (view === "owpenbot") {
-          return "[B] Back  [G] QR  [T] Telegram token  [R] Refresh  [D] Detach  [Q] Quit";
+        if (view === "router") {
+          return "[B] Back  [R] Refresh  [T] Telegram token  [S] Slack tokens  [G] Toggle groups  [D] Detach  [Q] Quit";
         }
-        return "[L] Logs  [W] Owpenbot  [C] Copy attach command  [D] Detach  [Q] Quit";
+        return "[L] Logs  [W] Router  [C] Copy attach command  [D] Detach  [Q] Quit";
       };
 
       useKeyboard((evt: KeyEvent) => {
@@ -356,11 +423,13 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
           void options.onDetach();
           return;
         }
-        if (state.owpenbotEditing) {
+        if (state.routerTelegramEditing || state.routerSlackEditing) {
           if (evt.name === "escape") {
             evt.preventDefault();
-            setState("owpenbotEditing", false);
-            tokenInput?.blur();
+            setState("routerTelegramEditing", false);
+            setState("routerSlackEditing", false);
+            telegramTokenInput?.blur();
+            slackTokensInput?.blur();
           }
           return;
         }
@@ -371,7 +440,7 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         }
         if (evt.name === "w") {
           evt.preventDefault();
-          setView("owpenbot");
+          setView("router");
           return;
         }
         if (evt.name === "h" || evt.name === "?") {
@@ -399,45 +468,52 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
             });
           return;
         }
-        if (state.view === "owpenbot") {
+        if (state.view === "router") {
           if (evt.name === "b" || evt.name === "o") {
             evt.preventDefault();
             setView("overview");
             return;
           }
-          if (evt.name === "g") {
-            evt.preventDefault();
-            setState("owpenbotQr", "");
-            setState("owpenbotQrError", "");
-            options
-              .onOwpenbotQr()
-              .then((qr) => {
-                setState("owpenbotQr", qr.trim());
-                showToast("WhatsApp QR loaded");
-              })
-              .catch((error) => {
-                setState("owpenbotQrError", String(error));
-                showToast("WhatsApp QR failed");
-              });
-            return;
-          }
           if (evt.name === "r") {
             evt.preventDefault();
+            void refreshRouter({ toastOnSuccess: "Router refreshed" });
+            return;
+          }
+          if (evt.name === "g") {
+            evt.preventDefault();
+            const current = state.routerHealth?.config?.groupsEnabled;
+            if (typeof current !== "boolean") {
+              showToast("Refresh router first");
+              return;
+            }
+            const next = !current;
             options
-              .onOwpenbotHealth()
-              .then((health) => {
-                api.setOwpenbotHealth(health);
-                showToast("Owpenbot health refreshed");
+              .onRouterSetGroupsEnabled(next)
+              .then((result) => {
+                if (!result.ok) {
+                  showToast(result.error ? `Groups error: ${result.error}` : "Groups update failed");
+                  return;
+                }
+                showToast(next ? "Groups enabled" : "Groups disabled");
+                void refreshRouter();
               })
               .catch((error) => {
-                showToast(`Owpenbot health error: ${String(error)}`);
+                showToast(`Groups error: ${String(error)}`);
               });
             return;
           }
           if (evt.name === "t") {
             evt.preventDefault();
-            setState("owpenbotEditing", true);
-            setTimeout(() => tokenInput?.focus(), 1);
+            setState("routerSlackEditing", false);
+            setState("routerTelegramEditing", true);
+            setTimeout(() => telegramTokenInput?.focus(), 1);
+            return;
+          }
+          if (evt.name === "s") {
+            evt.preventDefault();
+            setState("routerTelegramEditing", false);
+            setState("routerSlackEditing", true);
+            setTimeout(() => slackTokensInput?.focus(), 1);
             return;
           }
         }
@@ -598,62 +674,88 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
             </box>
           </Show>
 
-          <Show when={state.view === "owpenbot"}>
+          <Show when={state.view === "router"}>
             <box flexDirection="column" paddingTop={1} gap={1}>
               <text fg={theme.text} attributes={TextAttributes.BOLD}>
-                Owpenbot
+                opencode-router
               </text>
-              <text fg={theme.textMuted}>Health: {owpenbotStatus()}</text>
-              <Show when={state.owpenbotHealth}>
+
+              <text fg={theme.textMuted}>Health: {routerStatus()}</text>
+              <Show when={state.routerHealth}>
                 <text fg={theme.textMuted}>
-                  OpenCode: {state.owpenbotHealth?.opencode.healthy ? "healthy" : "down"}
+                  OpenCode: {state.routerHealth?.opencode.healthy ? "healthy" : "down"}
+                  {state.routerHealth?.opencode.version ? ` (${state.routerHealth?.opencode.version})` : ""}
                 </text>
                 <text fg={theme.textMuted}>
-                  WhatsApp: {state.owpenbotHealth?.channels.whatsapp ? "connected" : "not connected"}
+                  Telegram: {state.routerHealth?.channels.telegram ? "enabled" : "not configured"}
                 </text>
+                <text fg={theme.textMuted}>Slack: {state.routerHealth?.channels.slack ? "enabled" : "not configured"}</text>
                 <text fg={theme.textMuted}>
-                  Telegram: {state.owpenbotHealth?.channels.telegram ? "enabled" : "not configured"}
-                </text>
-                <text fg={theme.textMuted}>
-                  Slack: {state.owpenbotHealth?.channels.slack ? "enabled" : "not configured"}
-                </text>
-                <text fg={theme.textMuted}>
-                  Groups enabled: {state.owpenbotHealth?.config.groupsEnabled ? "yes" : "no"}
+                  Groups enabled: {state.routerHealth?.config.groupsEnabled ? "yes" : "no"} (press [G] to toggle)
                 </text>
               </Show>
-              <Show when={!state.owpenbotHealth}>
-                <text fg={theme.textMuted}>Press [R] to refresh owpenbot health.</text>
+              <Show when={!state.routerHealth}>
+                <text fg={theme.textMuted}>Press [R] to refresh router status.</text>
               </Show>
 
               <box paddingTop={1}>
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
-                  WhatsApp QR
+                  Identities
                 </text>
               </box>
-              <Show when={state.owpenbotQr}>
-                <box flexDirection="column" gap={0}>
-                  <For each={state.owpenbotQr.split(/\r?\n/)}>
-                    {(line) => <text fg={theme.textMuted}>{line}</text>}
-                  </For>
+
+              <box flexDirection="row" gap={4}>
+                <box width={Math.floor(dimensions().width / 2) - 4} flexDirection="column" gap={0}>
+                  <text fg={theme.textMuted}>Telegram</text>
+                  <Show when={state.routerTelegramIdentities}>
+                    <For each={state.routerTelegramIdentities?.items ?? []}>
+                      {(item) => (
+                        <text fg={item.running ? theme.success : theme.textMuted}>
+                          {item.running ? "●" : "○"} {item.id} {item.enabled ? "" : "(disabled)"}
+                        </text>
+                      )}
+                    </For>
+                    <Show when={(state.routerTelegramIdentities?.items ?? []).length === 0}>
+                      <text fg={theme.textMuted}>(none)</text>
+                    </Show>
+                  </Show>
+                  <Show when={!state.routerTelegramIdentities}>
+                    <text fg={theme.textMuted}>Press [R] to load identities.</text>
+                  </Show>
                 </box>
-              </Show>
-              <Show when={!state.owpenbotQr && !state.owpenbotQrError}>
-                <text fg={theme.textMuted}>Press [G] to fetch a QR code.</text>
-              </Show>
-              <Show when={state.owpenbotQrError}>
-                <text fg={theme.error}>{state.owpenbotQrError}</text>
-              </Show>
+
+                <box width={Math.floor(dimensions().width / 2) - 4} flexDirection="column" gap={0}>
+                  <text fg={theme.textMuted}>Slack</text>
+                  <Show when={state.routerSlackIdentities}>
+                    <For each={state.routerSlackIdentities?.items ?? []}>
+                      {(item) => (
+                        <text fg={item.running ? theme.success : theme.textMuted}>
+                          {item.running ? "●" : "○"} {item.id} {item.enabled ? "" : "(disabled)"}
+                        </text>
+                      )}
+                    </For>
+                    <Show when={(state.routerSlackIdentities?.items ?? []).length === 0}>
+                      <text fg={theme.textMuted}>(none)</text>
+                    </Show>
+                  </Show>
+                  <Show when={!state.routerSlackIdentities}>
+                    <text fg={theme.textMuted}>Press [R] to load identities.</text>
+                  </Show>
+                </box>
+              </box>
 
               <box paddingTop={1}>
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
-                  Telegram token
+                  Configure
                 </text>
               </box>
+
+              <text fg={theme.textMuted}>Telegram token (default identity)</text>
               <input
-                value={state.owpenbotToken}
+                value={state.routerTelegramToken}
                 placeholder="Paste token and press enter"
-                focused={state.owpenbotEditing}
-                onInput={(value) => setState("owpenbotToken", value)}
+                focused={state.routerTelegramEditing}
+                onInput={(value) => setState("routerTelegramToken", value)}
                 onSubmit={(value) => {
                   const token = typeof value === "string" ? value.trim() : "";
                   if (!token) {
@@ -661,25 +763,72 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
                     return;
                   }
                   options
-                    .onOwpenbotSetTelegramToken(token)
+                    .onRouterSetTelegramToken(token)
                     .then((result) => {
                       if (!result.ok) {
                         showToast(result.error ? `Telegram error: ${result.error}` : "Telegram token failed");
                         return;
                       }
-                      setState("owpenbotToken", "");
-                      setState("owpenbotEditing", false);
-                      tokenInput?.blur();
-                      showToast("Telegram token saved");
+                      setState("routerTelegramToken", "");
+                      setState("routerTelegramEditing", false);
+                      telegramTokenInput?.blur();
+                      showToast("Telegram identity saved");
+                      void refreshRouter();
                     })
                     .catch((error) => {
                       showToast(`Telegram error: ${String(error)}`);
                     });
                 }}
                 ref={(node) => {
-                  tokenInput = node;
-                  if (state.owpenbotEditing) {
-                    setTimeout(() => tokenInput?.focus(), 1);
+                  telegramTokenInput = node;
+                  if (state.routerTelegramEditing) {
+                    setTimeout(() => telegramTokenInput?.focus(), 1);
+                  }
+                }}
+              />
+
+              <text fg={theme.textMuted}>Slack tokens (default identity)</text>
+              <input
+                value={state.routerSlackTokens}
+                placeholder="Paste xoxb-... xapp-... and press enter"
+                focused={state.routerSlackEditing}
+                onInput={(value) => setState("routerSlackTokens", value)}
+                onSubmit={(value) => {
+                  const raw = typeof value === "string" ? value.trim() : "";
+                  if (!raw) {
+                    showToast("Slack tokens required");
+                    return;
+                  }
+
+                  const parts = raw.split(/[\s,]+/).map((p) => p.trim()).filter(Boolean);
+                  const botToken = parts.find((p) => p.startsWith("xoxb-")) ?? parts[0];
+                  const appToken = parts.find((p) => p.startsWith("xapp-")) ?? parts[1];
+                  if (!botToken || !appToken) {
+                    showToast("Expected: xoxb-... xapp-...");
+                    return;
+                  }
+
+                  options
+                    .onRouterSetSlackTokens(botToken, appToken)
+                    .then((result) => {
+                      if (!result.ok) {
+                        showToast(result.error ? `Slack error: ${result.error}` : "Slack tokens failed");
+                        return;
+                      }
+                      setState("routerSlackTokens", "");
+                      setState("routerSlackEditing", false);
+                      slackTokensInput?.blur();
+                      showToast("Slack identity saved");
+                      void refreshRouter();
+                    })
+                    .catch((error) => {
+                      showToast(`Slack error: ${String(error)}`);
+                    });
+                }}
+                ref={(node) => {
+                  slackTokensInput = node;
+                  if (state.routerSlackEditing) {
+                    setTimeout(() => slackTokensInput?.focus(), 1);
                   }
                 }}
               />
@@ -692,10 +841,12 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
                 Shortcuts
               </text>
               <text fg={theme.textMuted}>L: Logs</text>
-              <text fg={theme.textMuted}>W: Owpenbot</text>
+              <text fg={theme.textMuted}>W: Router</text>
               <text fg={theme.textMuted}>C: Copy attach command</text>
-              <text fg={theme.textMuted}>G: WhatsApp QR (owpenbot)</text>
-              <text fg={theme.textMuted}>T: Telegram token (owpenbot)</text>
+              <text fg={theme.textMuted}>R: Refresh router</text>
+              <text fg={theme.textMuted}>G: Toggle groups (router)</text>
+              <text fg={theme.textMuted}>T: Telegram token (router)</text>
+              <text fg={theme.textMuted}>S: Slack tokens (router)</text>
               <text fg={theme.textMuted}>D: Detach</text>
               <text fg={theme.textMuted}>Q: Quit</text>
               <text fg={theme.textMuted}>Mouse: click tabs</text>
