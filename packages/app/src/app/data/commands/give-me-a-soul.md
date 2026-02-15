@@ -92,7 +92,7 @@ Suggested agent file:
 ---
 description: Soul Mode heartbeat (non-interactive)
 mode: primary
-  permission:
+permission:
   bash:
     "pwd *": allow
     "sqlite3 *opencode.db*": allow
