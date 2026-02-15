@@ -67,6 +67,7 @@ import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
+import InboxPanel from "../components/session/inbox-panel";
 import ArtifactMarkdownEditor from "../components/session/artifact-markdown-editor";
 
 export type SessionViewProps = {
@@ -2436,7 +2437,7 @@ export default function SessionView(props: SessionViewProps) {
         listCommands={props.listCommands}
         isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
         isSandboxWorkspace={isSandboxWorkspace()}
-        onUploadInboxFiles={isSandboxWorkspace() ? uploadInboxFiles : undefined}
+        onUploadInboxFiles={uploadInboxFiles}
         attachmentsEnabled={attachmentsEnabled()}
         attachmentsDisabledReason={attachmentsDisabledReason()}
       />
@@ -2530,6 +2531,13 @@ export default function SessionView(props: SessionViewProps) {
             Advanced
           </button>
           </div>
+
+          <InboxPanel
+            id="sidebar-inbox"
+            client={props.openworkServerClient}
+            workspaceId={props.openworkServerWorkspaceId}
+            onToast={(message) => setToastMessage(message)}
+          />
 
           <ArtifactsPanel
             id="sidebar-artifacts"

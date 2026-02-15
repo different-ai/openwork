@@ -347,6 +347,18 @@ export type OpenworkArtifactList = {
   items: OpenworkArtifactItem[];
 };
 
+export type OpenworkInboxItem = {
+  id: string;
+  name?: string;
+  path?: string;
+  size?: number;
+  updatedAt?: number;
+};
+
+export type OpenworkInboxList = {
+  items: OpenworkInboxItem[];
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1261,6 +1273,19 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
 
       return result.text;
     },
+
+    listInbox: (workspaceId: string) =>
+      requestJson<OpenworkInboxList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/inbox`, {
+        token,
+        hostToken,
+      }),
+
+    downloadInboxItem: (workspaceId: string, inboxId: string) =>
+      requestBinary(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/inbox/${encodeURIComponent(inboxId)}`,
+        { token, hostToken, timeoutMs: timeouts.binary },
+      ),
 
     readWorkspaceFile: (workspaceId: string, path: string) =>
       requestJson<OpenworkWorkspaceFileContent>(

@@ -1044,14 +1044,12 @@ export default function Composer(props: ComposerProps) {
 
     const plainForCheck = clipboard.getData("text/plain") ?? "";
     const trimmedForCheck = plainForCheck.trim();
-    if (trimmedForCheck && props.isSandboxWorkspace) {
+    if (trimmedForCheck && (props.isSandboxWorkspace || props.isRemoteWorkspace)) {
       const hasFileUrl = /file:\/\//i.test(trimmedForCheck);
       const hasAbsolutePosix = /(^|\s)\/(Users|home|var|etc|opt|tmp|private|Volumes|Applications)\//.test(trimmedForCheck);
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
-        props.onToast(
-          "Sandboxes can't access local file paths. Upload the file to the worker inbox instead."
-        );
+        props.onToast("This worker can't access local file paths. Upload the file to the worker inbox instead.");
         setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }
     }

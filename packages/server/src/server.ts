@@ -959,6 +959,18 @@ function decodeArtifactId(id: string): string {
   }
 }
 
+function encodeInboxId(path: string): string {
+  return encodeArtifactId(path);
+}
+
+function decodeInboxId(id: string): string {
+  try {
+    return decodeArtifactId(id);
+  } catch {
+    throw new ApiError(400, "invalid_inbox_item", "Inbox item id is invalid");
+  }
+}
+
 async function listArtifacts(outboxRoot: string): Promise<Array<{ id: string; path: string; size: number; updatedAt: number }>> {
   const rootResolved = resolve(outboxRoot);
   if (!(await exists(rootResolved))) return [];
@@ -992,6 +1004,15 @@ async function listArtifacts(outboxRoot: string): Promise<Array<{ id: string; pa
 
   items.sort((a, b) => b.updatedAt - a.updatedAt);
   return items;
+}
+
+async function listInbox(inboxRoot: string): Promise<Array<{ id: string; path: string; size: number; updatedAt: number; name: string }>> {
+  const items = await listArtifacts(inboxRoot);
+  return items.map((item) => ({
+    ...item,
+    id: encodeInboxId(item.path),
+    name: basename(item.path),
+  }));
 }
 
 function emitReloadEvent(
@@ -2145,6 +2166,39 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       workspaceId: workspace.id,
       guidance: "Use OpenCode hot reload instead",
     });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/inbox", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    if (!resolveInboxEnabled()) {
+      return jsonResponse({ items: [] });
+    }
+    const inboxRoot = resolveInboxDir(workspace.path);
+    const items = await listInbox(inboxRoot);
+    return jsonResponse({ items });
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/inbox/:inboxId", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    if (!resolveInboxEnabled()) {
+      throw new ApiError(404, "inbox_disabled", "Workspace inbox is disabled");
+    }
+    const inboxRoot = resolveInboxDir(workspace.path);
+    const relativePath = decodeInboxId(ctx.params.inboxId);
+    const absPath = resolveSafeChildPath(inboxRoot, relativePath);
+    if (!(await exists(absPath))) {
+      throw new ApiError(404, "inbox_item_not_found", "Inbox item not found");
+    }
+    const info = await stat(absPath);
+    if (!info.isFile()) {
+      throw new ApiError(404, "inbox_item_not_found", "Inbox item not found");
+    }
+
+    const headers = new Headers();
+    headers.set("Content-Type", "application/octet-stream");
+    headers.set("Content-Length", String(info.size));
+    headers.set("Content-Disposition", `attachment; filename=\"${basename(relativePath)}\"`);
+    return new Response((Bun as any).file(absPath), { status: 200, headers });
   });
 
   addRoute(routes, "POST", "/workspace/:id/inbox", "client", async (ctx) => {
