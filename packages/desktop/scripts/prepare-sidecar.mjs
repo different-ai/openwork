@@ -33,6 +33,21 @@ const forceBuild = hasFlag("--force") || process.env.OPENWORK_SIDECAR_FORCE_BUIL
 const sidecarOverride = process.env.OPENWORK_SIDECAR_DIR?.trim() || readArg("--outdir");
 const sidecarDir = sidecarOverride ? resolve(sidecarOverride) : join(__dirname, "..", "src-tauri", "sidecars");
 const packageJsonPath = resolve(__dirname, "..", "package.json");
+
+const opencodeGithubRepo = (() => {
+  const raw =
+    process.env.OPENCODE_GITHUB_REPO?.trim() ||
+    process.env.OPENWORK_OPENCODE_GITHUB_REPO?.trim() ||
+    "anomalyco/opencode";
+  const normalized = raw
+    .replace(/^https:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .trim();
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(normalized)) {
+    return "anomalyco/opencode";
+  }
+  return normalized;
+})();
 const opencodeVersion = (() => {
   if (process.env.OPENCODE_VERSION?.trim()) return process.env.OPENCODE_VERSION.trim();
   try {
@@ -58,7 +73,7 @@ const fetchLatestOpencodeVersion = async () => {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    const response = await fetch("https://api.github.com/repos/anomalyco/opencode/releases/latest", {
+    const response = await fetch(`https://api.github.com/repos/${opencodeGithubRepo}/releases/latest`, {
       headers: {
         Accept: "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
@@ -405,7 +420,7 @@ const opencodeAsset =
   opencodeAssetOverride ?? (resolvedTargetTriple ? opencodeAssetByTarget[resolvedTargetTriple] : null);
 
 const opencodeUrl = opencodeAsset
-  ? `https://github.com/anomalyco/opencode/releases/download/v${normalizedOpencodeVersion}/${opencodeAsset}`
+  ? `https://github.com/${opencodeGithubRepo}/releases/download/v${normalizedOpencodeVersion}/${opencodeAsset}`
   : null;
 
 const shouldDownloadOpencode =
