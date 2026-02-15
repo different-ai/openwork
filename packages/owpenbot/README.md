@@ -1,6 +1,6 @@
-# Owpenbot
+# OpenCode Router (formerly Owpenbot)
 
-Simple Slack + Telegram bridge for a running OpenCode server.
+Simple Slack + Telegram bridge + directory router for a running OpenCode server.
 
 ## Install + Run
 
@@ -10,13 +10,13 @@ One-command install (recommended):
 curl -fsSL https://raw.githubusercontent.com/different-ai/openwork/dev/packages/owpenbot/install.sh | bash
 ```
 
-Or install from npm:
+Or install from npm (package name is still `owpenwork`):
 
 ```bash
 npm install -g owpenwork
 ```
 
-Quick run without install:
+Quick run without install (runs the legacy `owpenwork` alias):
 
 ```bash
 npx owpenwork
@@ -40,10 +40,14 @@ Recommended:
 - `OPENCODE_SERVER_USERNAME`
 - `OPENCODE_SERVER_PASSWORD`
 
-3) Run owpenwork:
+3) Run the router:
 
 ```bash
+opencode-router
+
+# (legacy aliases)
 owpenwork
+owpenbot
 ```
 
 ## Telegram
@@ -53,8 +57,8 @@ Telegram support is configured via identities. You can either:
 - Or add multiple bots to the config file (`owpenbot.json`) using the CLI:
 
 ```bash
-owpenbot telegram add <token> --id default
-owpenbot telegram list
+opencode-router telegram add <token> --id default
+opencode-router telegram list
 ```
 
 ## Slack (Socket Mode)
@@ -70,7 +74,7 @@ Slack support uses Socket Mode and replies in threads when @mentioned in channel
 4) Subscribe to events (bot events):
    - `app_mention`
    - `message.im`
-5) Set env vars (or save via `owpenbot slack add ...`):
+5) Set env vars (or save via `opencode-router slack add ...`):
     - `SLACK_BOT_TOKEN=xoxb-...`
     - `SLACK_APP_TOKEN=xapp-...`
     - `SLACK_ENABLED=true`
@@ -78,24 +82,25 @@ Slack support uses Socket Mode and replies in threads when @mentioned in channel
 To add multiple Slack apps:
 
 ```bash
-owpenbot slack add <xoxb> <xapp> --id default
-owpenbot slack list
+opencode-router slack add <xoxb> <xapp> --id default
+opencode-router slack list
 ```
 
 ## Identity-Scoped Routing
 
-Owpenbot routes messages based on `(channel, identityId, peerId) -> directory` bindings.
+The router routes messages based on `(channel, identityId, peerId) -> directory` bindings.
 
 ```bash
-owpenbot bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
-owpenbot bindings list
+opencode-router bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
+opencode-router bindings list
 ```
 
 ## Health Server (Local HTTP)
 
-Owpenbot can expose a small local HTTP server for health/config and simple message dispatch.
+The router can expose a small local HTTP server for health/config and simple message dispatch.
 
-- `OWPENBOT_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
+- `OPENCODE_ROUTER_HEALTH_PORT` or `OWPENBOT_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwrk`).
+- `PORT` is also accepted as a convenience if the above are unset.
 - `OWPENBOT_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
 
 Send a message to all peers bound to a directory:
@@ -109,17 +114,17 @@ curl -sS "http://127.0.0.1:${OWPENBOT_HEALTH_PORT:-3005}/send" \
 ## Commands
 
 ```bash
-owpenbot start
-owpenbot status
+opencode-router start
+opencode-router status
 
-owpenbot telegram list
-owpenbot telegram add <token> --id default
+opencode-router telegram list
+opencode-router telegram add <token> --id default
 
-owpenbot slack list
-owpenbot slack add <xoxb> <xapp> --id default
+opencode-router slack list
+opencode-router slack add <xoxb> <xapp> --id default
 
-owpenbot bindings list
-owpenbot bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
+opencode-router bindings list
+opencode-router bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
 ```
 
 ## Defaults

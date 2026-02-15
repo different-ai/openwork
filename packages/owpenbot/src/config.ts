@@ -240,7 +240,12 @@ export function loadConfig(
   if (envSlackBot && envSlackApp && !slackApps.some((app) => app.botToken === envSlackBot && app.appToken === envSlackApp)) {
     slackApps.unshift({ id: "env", botToken: envSlackBot, appToken: envSlackApp, enabled: true });
   }
-  const healthPort = parseInteger(env.OWPENBOT_HEALTH_PORT) ?? 3005;
+  const healthPort =
+    parseInteger(env.OPENCODE_ROUTER_HEALTH_PORT) ??
+    parseInteger(env.OWPENBOT_HEALTH_PORT) ??
+    // Convenience alias (common on PaaS / local experiments)
+    parseInteger(env.PORT) ??
+    3005;
   const model = parseModel(env.OWPENBOT_MODEL);
 
   const telegramEnabledDefault = configFile.channels?.telegram?.enabled ?? true;

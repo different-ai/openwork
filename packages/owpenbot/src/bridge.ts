@@ -522,7 +522,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
   let stopHealthServer: (() => void) | null = null;
   if (!deps.disableHealthServer && config.healthPort) {
-    stopHealthServer = startHealthServer(
+    stopHealthServer = await startHealthServer(
       config.healthPort,
       (): HealthSnapshot => ({
         ok: opencodeHealthy,

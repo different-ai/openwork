@@ -1,10 +1,11 @@
 {
   "name": "owpenwork",
   "version": "0.11.67",
-  "description": "Slack + Telegram bridge for a running OpenCode server",
+  "description": "OpenCode Router (formerly owpenbot): Slack + Telegram bridge + directory routing for a running OpenCode server",
   "private": false,
   "type": "module",
   "bin": {
+    "opencode-router": "dist/cli.js",
     "owpenwork": "dist/cli.js",
     "owpenbot": "dist/cli.js"
   },
@@ -30,9 +31,9 @@
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "build:bin": "bun build --compile src/cli.ts --define __OWPENBOT_VERSION__=\\\"$npm_package_version\\\" --outfile dist/bin/owpenbot",
-    "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
-    "build:binary": "bun ./script/build.ts --outdir dist/bin",
+    "build:bin": "bun ./script/build.ts --outdir dist/bin --filename owpenbot && bun ./script/build.ts --outdir dist/bin --filename opencode-router",
+    "build:bin:all": "bun ./script/build.ts --outdir dist/bin --filename owpenbot --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64 && bun ./script/build.ts --outdir dist/bin --filename opencode-router --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
+    "build:binary": "bun ./script/build.ts --outdir dist/bin --filename owpenbot && bun ./script/build.ts --outdir dist/bin --filename opencode-router",
     "start": "bun dist/cli.js start",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "setup": "bun scripts/setup.mjs",

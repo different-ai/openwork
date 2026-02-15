@@ -9,13 +9,13 @@ OWPENBOT_INSTALL_METHOD="${OWPENBOT_INSTALL_METHOD:-npm}"
 
 usage() {
   cat <<'EOF'
-Owpenbot installer (WhatsApp-first)
+OpenCode Router installer (formerly owpenbot)
 
 Environment variables:
   OWPENBOT_INSTALL_DIR  Install directory (default: ~/.openwork/owpenbot/openwork)
   OWPENBOT_REPO         Git repo (default: https://github.com/different-ai/openwork.git)
   OWPENBOT_REF          Git ref/branch (default: dev)
-  OWPENBOT_BIN_DIR      Bin directory for owpenbot shim (default: ~/.local/bin)
+  OWPENBOT_BIN_DIR      Bin directory for shims (default: ~/.local/bin)
   OWPENBOT_INSTALL_METHOD  Install method: npm|git (default: npm)
 
 Example:
@@ -35,10 +35,10 @@ require_bin() {
   fi
 }
 
-require_bin node
+  require_bin node
 
 if [[ "$OWPENBOT_INSTALL_METHOD" == "npm" ]]; then
-  echo "Installing owpenwork via npm..."
+  echo "Installing owpenwork via npm (provides opencode-router)..."
   npm install -g owpenwork
 else
   require_bin git
@@ -89,7 +89,7 @@ else
   echo "Installing dependencies..."
   pnpm -C "$OWPENBOT_INSTALL_DIR" install
 
-  echo "Building owpenbot..."
+  echo "Building opencode-router..."
   pnpm -C "$OWPENBOT_INSTALL_DIR/packages/owpenbot" build
 
   ENV_PATH="$OWPENBOT_INSTALL_DIR/packages/owpenbot/.env"
@@ -117,6 +117,13 @@ set -euo pipefail
 node "$OWPENBOT_INSTALL_DIR/packages/owpenbot/dist/cli.js" "$@"
 EOF
   chmod 755 "$OWPENBOT_BIN_DIR/owpenbot"
+
+  cat <<EOF > "$OWPENBOT_BIN_DIR/opencode-router"
+#!/usr/bin/env bash
+set -euo pipefail
+node "$OWPENBOT_INSTALL_DIR/packages/owpenbot/dist/cli.js" "$@"
+EOF
+  chmod 755 "$OWPENBOT_BIN_DIR/opencode-router"
 fi
 
 if ! echo ":$PATH:" | grep -q ":$OWPENBOT_BIN_DIR:"; then
@@ -139,9 +146,12 @@ fi
 
 cat <<EOF
 
-Owpenbot installed.
+OpenCode Router installed.
 
 Next steps:
 1) Edit: $ENV_PATH
-2) Run: owpenbot start
+2) Run: opencode-router start
+
+Legacy alias:
+- owpenbot start
 EOF

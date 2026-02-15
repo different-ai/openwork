@@ -135,7 +135,7 @@ export type HealthHandlers = {
   sendMessage?: (input: SendMessageInput) => Promise<SendMessageResult>;
 };
 
-export function startHealthServer(
+export async function startHealthServer(
   port: number,
   getStatus: () => HealthSnapshot,
   logger: Logger,
@@ -630,9 +630,35 @@ export function startHealthServer(
   });
 
   const host = (process.env.OWPENBOT_HEALTH_HOST ?? "").trim() || "127.0.0.1";
-  server.listen(port, host, () => {
-    logger.info({ host, port }, "health server listening");
-  });
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: unknown) => {
+        server.removeListener("listening", onListening);
+        reject(error);
+      };
+      const onListening = () => {
+        server.removeListener("error", onError);
+        resolve();
+      };
+      server.once("error", onError);
+      server.once("listening", onListening);
+      server.listen(port, host);
+    });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EADDRINUSE") {
+      throw new Error(
+        `Failed to start health server on ${host}:${port}. Port is in use. ` +
+          `Set OPENCODE_ROUTER_HEALTH_PORT, OWPENBOT_HEALTH_PORT, or PORT to a free port.`,
+      );
+    }
+    throw error;
+  }
+
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  logger.info({ host, port: actualPort }, "health server listening");
 
   return () => {
     server.close();
