@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - dev
-      - fix/openwrk-react-shim
   pull_request:
     branches:
       - dev
@@ -37,8 +36,8 @@ jobs:
       - name: Build web
         run: pnpm --filter @different-ai/openwork build:web
 
-  build-openwrk-binary:
-    name: Build openwrk binary
+  build-orchestrator-binary:
+    name: Build openwork orchestrator binary
     runs-on: ubuntu-latest
 
     steps:
@@ -63,13 +62,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck openwrk
-        run: pnpm --filter openwrk typecheck
+      - name: Typecheck openwork-orchestrator
+        run: pnpm --filter openwork-orchestrator typecheck
 
-      - name: Build openwrk binary
-        run: pnpm --filter openwrk build:bin
+      - name: Build openwork orchestrator binary
+        run: pnpm --filter openwork-orchestrator build:bin
 
       - name: Validate compiled binary
         run: |
-          ./packages/headless/dist/bin/openwrk --version
-          ./packages/headless/dist/bin/openwrk --help >/dev/null
+          ./packages/orchestrator/dist/bin/openwork --version
+          ./packages/orchestrator/dist/bin/openwork --help >/dev/null

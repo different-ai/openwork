@@ -38,7 +38,7 @@
       "sidecars/opencode",
       "sidecars/openwork-server",
       "sidecars/opencode-router",
-      "sidecars/openwrk",
+      "sidecars/openwork-orchestrator",
       "sidecars/chrome-devtools-mcp",
       "sidecars/versions.json"
     ]

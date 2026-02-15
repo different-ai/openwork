@@ -129,7 +129,7 @@ export type View = "onboarding" | "dashboard" | "session" | "proto";
 
 export type StartupPreference = "local" | "server";
 
-export type EngineRuntime = "direct" | "openwrk";
+export type EngineRuntime = "direct" | "openwork-orchestrator";
 
 export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 

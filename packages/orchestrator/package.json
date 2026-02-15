@@ -1,20 +1,20 @@
 {
-  "name": "openwrk",
+  "name": "openwork-orchestrator",
   "version": "0.11.74",
   "opencodeVersion": "1.1.60",
-  "description": "Headless OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
+  "description": "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "build:bin": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwrk",
-    "build:bin:all": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwrk --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
-    "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun ./script/build.ts --outdir dist --filename openwrk && bun scripts/build-bin.ts",
+    "build:bin": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwork",
+    "build:bin:all": "node scripts/clean-dist.mjs && bun ./script/build.ts --outdir dist/bin --filename openwork --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
+    "build:bin:bundled": "node scripts/clean-dist.mjs && node ../desktop/scripts/prepare-sidecar.mjs --outdir dist && bun ./script/build.ts --outdir dist --filename openwork && bun scripts/build-bin.ts",
     "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test:router": "pnpm build && node scripts/router.mjs",
-    "prepublishOnly": "node -e \"console.error('openwrk is published via packages/headless/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
+    "prepublishOnly": "node -e \"console.error('openwork-orchestrator is published via packages/orchestrator/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
   },
   "files": [
     "dist",
@@ -26,16 +26,16 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/different-ai/openwork.git",
-    "directory": "packages/headless"
+    "directory": "packages/orchestrator"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/headless",
+  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/orchestrator",
   "bugs": {
     "url": "https://github.com/different-ai/openwork/issues"
   },
   "keywords": [
     "openwork",
     "opencode",
-    "headless",
+    "orchestrator",
     "cli",
     "agent"
   ],

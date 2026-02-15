@@ -133,7 +133,7 @@ const levelColor: Record<TuiLogLevel, RGBA> = {
 
 const levelCycle: Array<"all" | TuiLogLevel> = ["all", "info", "warn", "error", "debug"];
 
-const serviceCycle = ["all", "openwrk", "opencode", "openwork-server", "router"];
+const serviceCycle = ["all", "openwork-orchestrator", "opencode", "openwork-server", "router"];
 
 const viewTabs: Array<{ name: string; description: string; value: ViewName }> = [
   { name: "Overview", description: "Overview", value: "overview" },
@@ -164,7 +164,7 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
-export function startOpenwrkTui(options: TuiOptions): TuiHandle {
+export function startOrchestratorTui(options: TuiOptions): TuiHandle {
   let stop: (() => void) | undefined;
   const api: TuiHandle = {
     updateService: () => undefined,
@@ -567,7 +567,7 @@ export function startOpenwrkTui(options: TuiOptions): TuiHandle {
         <box flexDirection="column" width={dimensions().width} height={dimensions().height} paddingLeft={2} paddingRight={2}>
           <box flexDirection="row" justifyContent="space-between" paddingTop={1}>
             <text fg={theme.text} attributes={TextAttributes.BOLD}>
-              openwrk · {state.view}
+              openwork · {state.view}
             </text>
             <text fg={theme.textMuted}>v{options.version}</text>
           </box>

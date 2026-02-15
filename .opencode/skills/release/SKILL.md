@@ -10,7 +10,7 @@ Confirm the repo is on `main` and clean. Keep changes aligned with OpenCode prim
 ---
 
 ## Bump
-Update versions in `packages/app/package.json`, `packages/desktop/package.json`, `packages/headless/package.json` (publishes as `openwrk`), `packages/desktop/src-tauri/tauri.conf.json`, and `packages/desktop/src-tauri/Cargo.toml`. Use one of these commands.
+Update versions in `packages/app/package.json`, `packages/desktop/package.json`, `packages/orchestrator/package.json` (publishes as `openwork-orchestrator`), `packages/desktop/src-tauri/tauri.conf.json`, and `packages/desktop/src-tauri/Cargo.toml`. Use one of these commands.
 
 ```bash
 pnpm bump:patch

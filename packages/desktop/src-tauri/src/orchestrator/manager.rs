@@ -2,15 +2,15 @@ use std::sync::{Arc, Mutex};
 
 use tauri_plugin_shell::process::CommandChild;
 
-use crate::openwrk;
+use crate::orchestrator;
 
 #[derive(Default)]
-pub struct OpenwrkManager {
-    pub inner: Arc<Mutex<OpenwrkState>>,
+pub struct OrchestratorManager {
+    pub inner: Arc<Mutex<OrchestratorState>>,
 }
 
 #[derive(Default)]
-pub struct OpenwrkState {
+pub struct OrchestratorState {
     pub child: Option<CommandChild>,
     pub child_exited: bool,
     pub data_dir: Option<String>,
@@ -18,13 +18,13 @@ pub struct OpenwrkState {
     pub last_stderr: Option<String>,
 }
 
-impl OpenwrkManager {
-    pub fn stop_locked(state: &mut OpenwrkState) {
+impl OrchestratorManager {
+    pub fn stop_locked(state: &mut OrchestratorState) {
         if let Some(child) = state.child.take() {
             let _ = child.kill();
         }
         if let Some(dir) = state.data_dir.as_deref() {
-            openwrk::clear_openwrk_auth(dir);
+            orchestrator::clear_orchestrator_auth(dir);
         }
         state.child_exited = true;
         state.data_dir = None;

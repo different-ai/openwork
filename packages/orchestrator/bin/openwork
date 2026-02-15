@@ -16,7 +16,7 @@ function run(target) {
   process.exit(code)
 }
 
-const envPath = process.env.OPENWRK_BIN_PATH
+const envPath = process.env.OPENWORK_ORCHESTRATOR_BIN_PATH
 if (envPath) {
   run(envPath)
 }
@@ -43,15 +43,15 @@ if (!arch) {
   arch = os.arch()
 }
 
-const pkg = `openwrk-${platform}-${arch}`
-const binary = platform === "windows" ? "openwrk.exe" : "openwrk"
+const pkg = `openwork-orchestrator-${platform}-${arch}`
+const binary = platform === "windows" ? "openwork.exe" : "openwork"
 
 let pkgJsonPath
 try {
   pkgJsonPath = require.resolve(`${pkg}/package.json`)
 } catch {
   console.error(
-    `openwrk: no prebuilt binary package found for ${platform}/${arch}.\n` +
+    `openwork: no prebuilt binary package found for ${platform}/${arch}.\n` +
       `Try installing the platform package manually: ${pkg}`,
   )
   process.exit(1)

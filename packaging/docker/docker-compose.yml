@@ -4,8 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        # Keep this in sync with packages/headless/package.json if you want a pinned release.
-        OPENWRK_VERSION: 0.11.22
+        # Keep this in sync with packages/orchestrator/package.json if you want a pinned release.
+        OPENWORK_ORCHESTRATOR_VERSION: 0.11.22
     ports:
       - "8787:8787"
     environment:
@@ -14,8 +14,8 @@ services:
       # OPENWORK_HOST_TOKEN: "..."
       # Optional: OPENWORK_APPROVAL_MODE: "auto"
       # Optional: OPENWORK_APPROVAL_TIMEOUT_MS: "30000"
-      OPENWRK_DATA_DIR: /data/openwrk
-      OPENWRK_SIDECAR_DIR: /data/sidecars
+      OPENWORK_DATA_DIR: /data/openwork-orchestrator
+      OPENWORK_SIDECAR_DIR: /data/sidecars
     volumes:
       # Mount an existing project/workspace here.
       - ./workspace:/workspace

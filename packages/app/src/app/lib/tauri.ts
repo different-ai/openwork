@@ -5,7 +5,7 @@ import { validateMcpServerName } from "../mcp";
 
 export type EngineInfo = {
   running: boolean;
-  runtime: "direct" | "openwrk";
+  runtime: "direct" | "openwork-orchestrator";
   baseUrl: string | null;
   projectDir: string | null;
   hostname: string | null;
@@ -32,32 +32,32 @@ export type OpenworkServerInfo = {
   lastStderr: string | null;
 };
 
-export type OpenwrkDaemonState = {
+export type OrchestratorDaemonState = {
   pid: number;
   port: number;
   baseUrl: string;
   startedAt: number;
 };
 
-export type OpenwrkOpencodeState = {
+export type OrchestratorOpencodeState = {
   pid: number;
   port: number;
   baseUrl: string;
   startedAt: number;
 };
 
-export type OpenwrkBinaryInfo = {
+export type OrchestratorBinaryInfo = {
   path: string;
   source: string;
   expectedVersion?: string | null;
   actualVersion?: string | null;
 };
 
-export type OpenwrkBinaryState = {
-  opencode?: OpenwrkBinaryInfo | null;
+export type OrchestratorBinaryState = {
+  opencode?: OrchestratorBinaryInfo | null;
 };
 
-export type OpenwrkSidecarInfo = {
+export type OrchestratorSidecarInfo = {
   dir?: string | null;
   baseUrl?: string | null;
   manifestUrl?: string | null;
@@ -67,7 +67,7 @@ export type OpenwrkSidecarInfo = {
   allowExternal?: boolean | null;
 };
 
-export type OpenwrkWorkspace = {
+export type OrchestratorWorkspace = {
   id: string;
   name: string;
   path: string;
@@ -78,17 +78,17 @@ export type OpenwrkWorkspace = {
   lastUsedAt?: number | null;
 };
 
-export type OpenwrkStatus = {
+export type OrchestratorStatus = {
   running: boolean;
   dataDir: string;
-  daemon: OpenwrkDaemonState | null;
-  opencode: OpenwrkOpencodeState | null;
+  daemon: OrchestratorDaemonState | null;
+  opencode: OrchestratorOpencodeState | null;
   cliVersion?: string | null;
-  sidecar?: OpenwrkSidecarInfo | null;
-  binaries?: OpenwrkBinaryState | null;
+  sidecar?: OrchestratorSidecarInfo | null;
+  binaries?: OrchestratorBinaryState | null;
   activeId: string | null;
   workspaceCount: number;
-  workspaces: OpenwrkWorkspace[];
+  workspaces: OrchestratorWorkspace[];
   lastError: string | null;
 };
 
@@ -140,7 +140,7 @@ export async function engineStart(
   projectDir: string,
   options?: {
     preferSidecar?: boolean;
-    runtime?: "direct" | "openwrk";
+    runtime?: "direct" | "openwork-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
   },
@@ -361,22 +361,22 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
-export async function openwrkStatus(): Promise<OpenwrkStatus> {
-  return invoke<OpenwrkStatus>("openwrk_status");
+export async function orchestratorStatus(): Promise<OrchestratorStatus> {
+  return invoke<OrchestratorStatus>("orchestrator_status");
 }
 
-export async function openwrkWorkspaceActivate(input: {
+export async function orchestratorWorkspaceActivate(input: {
   workspacePath: string;
   name?: string | null;
-}): Promise<OpenwrkWorkspace> {
-  return invoke<OpenwrkWorkspace>("openwrk_workspace_activate", {
+}): Promise<OrchestratorWorkspace> {
+  return invoke<OrchestratorWorkspace>("orchestrator_workspace_activate", {
     workspacePath: input.workspacePath,
     name: input.name ?? null,
   });
 }
 
-export async function openwrkInstanceDispose(workspacePath: string): Promise<boolean> {
-  return invoke<boolean>("openwrk_instance_dispose", { workspacePath });
+export async function orchestratorInstanceDispose(workspacePath: string): Promise<boolean> {
+  return invoke<boolean>("orchestrator_instance_dispose", { workspacePath });
 }
 
 export type AppBuildInfo = {
@@ -389,7 +389,7 @@ export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
 }
 
-export type OpenwrkDetachedHost = {
+export type OrchestratorDetachedHost = {
   openworkUrl: string;
   token: string;
   hostToken: string;
@@ -399,12 +399,12 @@ export type OpenwrkDetachedHost = {
   sandboxContainerName?: string | null;
 };
 
-export async function openwrkStartDetached(input: {
+export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
-}): Promise<OpenwrkDetachedHost> {
-  return invoke<OpenwrkDetachedHost>("openwrk_start_detached", {
+}): Promise<OrchestratorDetachedHost> {
+  return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,

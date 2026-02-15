@@ -24,7 +24,7 @@ x-shared: &shared
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
 
 services:
-  headless:
+  orchestrator:
     <<: *shared
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -42,7 +42,7 @@ services:
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
         if ! command -v bun >/dev/null 2>&1; then
-          echo "[headless] Installing bun..."
+          echo "[orchestrator] Installing bun..."
           curl -fsSL https://bun.sh/install | bash
         fi
 
@@ -50,7 +50,7 @@ services:
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
         # --- Install deps ---
-        echo "[headless] Installing dependencies..."
+        echo "[orchestrator] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
         # --- Build Linux binaries into container-local path ---
@@ -73,10 +73,10 @@ services:
             ;;
         esac
 
-        echo "[headless] Building openwork-server binary (linux)..."
+        echo "[orchestrator] Building openwork-server binary (linux)..."
         cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
 
-        echo "[headless] Building opencode-router binary (linux)..."
+        echo "[orchestrator] Building opencode-router binary (linux)..."
         OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
         cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
           --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
@@ -100,7 +100,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork headless"
+        echo "  OpenWork orchestrator"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
         echo "  Token:      $$OPENWORK_TOKEN"
@@ -108,7 +108,7 @@ services:
         echo "============================================"
         echo ""
 
-        exec pnpm --filter openwrk dev -- start \
+        exec pnpm --filter openwork-orchestrator dev -- start \
           --workspace /workspace \
           --openwork-host 0.0.0.0 \
           --openwork-port 8787 \
@@ -133,12 +133,12 @@ services:
       OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
       OPENWORK_HOST_TOKEN: ${OPENWORK_HOST_TOKEN:-}
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
-      OPENWRK_SIDECAR_SOURCE: external
-
+      OPENWORK_SIDECAR_SOURCE: external
+ 
   web:
     <<: *shared
     depends_on:
-      headless:
+      orchestrator:
         condition: service_healthy
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -157,7 +157,7 @@ services:
         fi
         corepack enable && corepack prepare pnpm@10.27.0 --activate
 
-        # --- Read token written by headless ---
+        # --- Read token written by orchestrator ---
         if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
           . "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}"
           export VITE_OPENWORK_TOKEN="$$OPENWORK_TOKEN"
@@ -167,7 +167,7 @@ services:
         echo "============================================"
         echo "  OpenWork web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
-        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see headless logs>}"
+        echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
         echo "============================================"
         echo ""
 

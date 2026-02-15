@@ -1,6 +1,6 @@
 ---
-title: openwrk multi-workspace router
-description: Keep a single opencode process alive and switch workspaces JIT via openwrk daemon + CLI.
+title: openwork-orchestrator multi-workspace router
+description: Keep a single opencode process alive and switch workspaces JIT via openwork-orchestrator daemon + CLI.
 ---
 
 ## Set context
@@ -35,7 +35,7 @@ OpenWork currently restarts the OpenCode engine whenever a local workspace chang
 
 ## Proposed architecture
 
-### openwrk daemon
+### openwork-orchestrator daemon
 - Runs on localhost only.
 - Spawns a single `opencode serve` process and keeps it alive.
 - Exposes a small HTTP control plane to manage workspaces and report status.
@@ -48,7 +48,7 @@ OpenWork currently restarts the OpenCode engine whenever a local workspace chang
 - Tracks last used timestamps for future idle eviction.
 
 ### Request routing
-- openwrk never changes OpenCode internals.
+- openwork-orchestrator never changes OpenCode internals.
 - It passes `directory` to the OpenCode SDK client.
 - OpenCode `Instance.provide` creates or reuses per-directory instances.
 
@@ -62,21 +62,21 @@ OpenWork currently restarts the OpenCode engine whenever a local workspace chang
 ## CLI design
 
 ### Daemon
-- `openwrk daemon` (foreground)
-- `openwrk daemon start` (background)
-- `openwrk daemon stop`
-- `openwrk status` (includes opencode PID + baseUrl)
+- `openwork daemon` (foreground)
+- `openwork daemon start` (background)
+- `openwork daemon stop`
+- `openwork status` (includes opencode PID + baseUrl)
 
 ### Workspaces
-- `openwrk workspace add <path> [--name]`
-- `openwrk workspace add-remote <baseUrl> [--directory] [--name]`
-- `openwrk workspace list [--json]`
-- `openwrk workspace switch <id>`
-- `openwrk workspace info <id>`
-- `openwrk workspace path <id>` (calls OpenCode `/path` with directory)
+- `openwork workspace add <path> [--name]`
+- `openwork workspace add-remote <baseUrl> [--directory] [--name]`
+- `openwork workspace list [--json]`
+- `openwork workspace switch <id>`
+- `openwork workspace info <id>`
+- `openwork workspace path <id>` (calls OpenCode `/path` with directory)
 
 ### Instances
-- `openwrk instance dispose <id>` (calls OpenCode `/instance/dispose` for directory)
+- `openwork instance dispose <id>` (calls OpenCode `/instance/dispose` for directory)
 
 ### Programmatic output
 - All commands support `--json` for machine parsing.
@@ -180,8 +180,8 @@ Calls OpenCode `/instance/dispose` with the workspace directory.
 ---
 
 ## Rollout plan
-- Phase 0: openwrk daemon + CLI only, programmatic tests.
-- Phase 1: OpenWork desktop can read openwrk state and attach to baseUrl + directory.
+- Phase 0: openwork-orchestrator daemon + CLI only, programmatic tests.
+- Phase 1: OpenWork desktop can read openwork-orchestrator state and attach to baseUrl + directory.
 - Phase 2: Add idle eviction and remote workspace helpers.
 
 ---
@@ -194,6 +194,6 @@ Calls OpenCode `/instance/dispose` with the workspace directory.
 ---
 
 ## Open questions
-- Where should openwrk store its state on each platform (XDG vs OS app data)?
-- Should openwrk reuse OpenWork desktop workspace registry for compatibility?
+- Where should openwork-orchestrator store its state on each platform (XDG vs OS app data)?
+- Should openwork-orchestrator reuse OpenWork desktop workspace registry for compatibility?
 - Should we standardize a `workspaceId` format shared by desktop and CLI?

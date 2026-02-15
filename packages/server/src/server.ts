@@ -43,7 +43,7 @@ function toUnixNano(): string {
 }
 
 export function createServerLogger(config: ServerConfig): ServerLogger {
-  const runId = process.env.OPENWRK_RUN_ID ?? process.env.OPENWORK_RUN_ID ?? shortId();
+  const runId = process.env.OPENWORK_RUN_ID ?? shortId();
   const host = hostname().trim();
   const resource: Record<string, string> = {
     "service.name": "openwork-server",

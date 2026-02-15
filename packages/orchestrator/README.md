@@ -1,44 +1,46 @@
-# Openwrk
+# OpenWork Orchestrator
 
-Headless host orchestrator for OpenCode + OpenWork server + OpenCode Router. This is a CLI-first way to run host mode without the desktop UI.
+Host orchestrator for opencode + OpenWork server + opencode-router. This is a CLI-first way to run host mode without the desktop UI.
+
+Published on npm as `openwork-orchestrator` and installs the `openwork` command.
 
 ## Quick start
 
 ```bash
-npm install -g openwrk
-openwrk start --workspace /path/to/workspace --approval auto
+npm install -g openwork-orchestrator
+openwork start --workspace /path/to/workspace --approval auto
 ```
 
-When run in a TTY, `openwrk` shows an interactive status dashboard with service health, ports, and
-connection details. Use `openwrk serve` or `--no-tui` for log-only mode.
+When run in a TTY, `openwork` shows an interactive status dashboard with service health, ports, and
+connection details. Use `openwork serve` or `--no-tui` for log-only mode.
 
 ```bash
-openwrk serve --workspace /path/to/workspace
+openwork serve --workspace /path/to/workspace
 ```
 
-`openwrk` ships as a compiled binary, so Bun is not required at runtime.
+`openwork` ships as a compiled binary, so Bun is not required at runtime.
 
-`openwrk` downloads and caches the `openwork-server`, `opencode-router`, and `opencode` sidecars on
-first run using a SHA-256 manifest. Use `--sidecar-dir` or `OPENWRK_SIDECAR_DIR` to control the
+`openwork` downloads and caches the `openwork-server`, `opencode-router`, and `opencode` sidecars on
+first run using a SHA-256 manifest. Use `--sidecar-dir` or `OPENWORK_SIDECAR_DIR` to control the
 cache location, and `--sidecar-base-url` / `--sidecar-manifest` to point at a custom host.
 
 Use `--sidecar-source` to control where `openwork-server` and `opencode-router` are resolved
 (`auto` | `bundled` | `downloaded` | `external`), and `--opencode-source` to control
-`opencode` resolution. Set `OPENWRK_SIDECAR_SOURCE` / `OPENWRK_OPENCODE_SOURCE` to
+`opencode` resolution. Set `OPENWORK_SIDECAR_SOURCE` / `OPENWORK_OPENCODE_SOURCE` to
 apply the same policies via env vars.
 
 By default the manifest is fetched from
-`https://github.com/different-ai/openwork/releases/download/openwrk-v<openwrk-version>/openwrk-sidecars.json`.
+`https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v<version>/openwork-orchestrator-sidecars.json`.
 
-OpenCode Router is optional. If it exits, `openwrk` continues running unless you pass
-`--opencode-router-required` or set `OPENWRK_OPENCODE_ROUTER_REQUIRED=1`.
+OpenCode Router is optional. If it exits, `openwork` continues running unless you pass
+`--opencode-router-required` or set `OPENWORK_OPENCODE_ROUTER_REQUIRED=1`.
 
-For development overrides only, set `OPENWRK_ALLOW_EXTERNAL=1` or pass `--allow-external` to use
+For development overrides only, set `OPENWORK_ALLOW_EXTERNAL=1` or pass `--allow-external` to use
 locally installed `openwork-server` or `opencode-router` binaries.
 
-Add `--verbose` (or `OPENWRK_VERBOSE=1`) to print extra diagnostics about resolved binaries.
+Add `--verbose` (or `OPENWORK_VERBOSE=1`) to print extra diagnostics about resolved binaries.
 
-OpenCode hot reload is enabled by default when launched via `openwrk`.
+OpenCode hot reload is enabled by default when launched via `openwork`.
 Tune it with:
 
 - `--opencode-hot-reload` / `--no-opencode-hot-reload`
@@ -47,9 +49,9 @@ Tune it with:
 
 Equivalent env vars:
 
-- `OPENWRK_OPENCODE_HOT_RELOAD` (router mode)
-- `OPENWRK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS`
-- `OPENWRK_OPENCODE_HOT_RELOAD_COOLDOWN_MS`
+- `OPENWORK_OPENCODE_HOT_RELOAD` (router mode)
+- `OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS`
+- `OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS`
 - `OPENWORK_OPENCODE_HOT_RELOAD` (start/serve mode)
 - `OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS`
 - `OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS`
@@ -57,7 +59,7 @@ Equivalent env vars:
 Or from source:
 
 ```bash
-pnpm --filter openwrk dev -- \
+pnpm --filter openwork-orchestrator dev -- \
   start --workspace /path/to/workspace --approval auto --allow-external
 ```
 
@@ -68,16 +70,16 @@ OpenWork URL, tokens, and the `opencode attach` command.
 
 ## Sandbox mode (Docker / Apple container)
 
-`openwrk` can run the sidecars inside a Linux container boundary while still mounting your workspace
+`openwork` can run the sidecars inside a Linux container boundary while still mounting your workspace
 from the host.
 
 ```bash
 # Auto-pick sandbox backend (prefers Apple container on supported Macs)
-openwrk start --sandbox auto --workspace /path/to/workspace --approval auto
+openwork start --sandbox auto --workspace /path/to/workspace --approval auto
 
 # Explicit backends
-openwrk start --sandbox docker --workspace /path/to/workspace --approval auto
-openwrk start --sandbox container --workspace /path/to/workspace --approval auto
+openwork start --sandbox docker --workspace /path/to/workspace --approval auto
+openwork start --sandbox container --workspace /path/to/workspace --approval auto
 ```
 
 Notes:
@@ -96,25 +98,25 @@ Notes:
 You can add explicit, validated mounts into `/workspace/extra/*`:
 
 ```bash
-openwrk start --sandbox auto --sandbox-mount "/path/on/host:datasets:ro" --workspace /path/to/workspace
+openwork start --sandbox auto --sandbox-mount "/path/on/host:datasets:ro" --workspace /path/to/workspace
 ```
 
 Additional mounts are blocked unless you create an allowlist at:
 
 - `~/.config/openwork/sandbox-mount-allowlist.json`
 
-Override with `OPENWRK_SANDBOX_MOUNT_ALLOWLIST`.
+Override with `OPENWORK_SANDBOX_MOUNT_ALLOWLIST`.
 
 ## Logging
 
-`openwrk` emits a unified log stream from OpenCode, OpenWork server, and OpenCode Router. Use JSON format for
+`openwork` emits a unified log stream from OpenCode, OpenWork server, and opencode-router. Use JSON format for
 structured, OpenTelemetry-friendly logs and a stable run id for correlation.
 
 ```bash
-OPENWRK_LOG_FORMAT=json openwrk start --workspace /path/to/workspace
+OPENWORK_LOG_FORMAT=json openwork start --workspace /path/to/workspace
 ```
 
-Use `--run-id` or `OPENWRK_RUN_ID` to supply your own correlation id.
+Use `--run-id` or `OPENWORK_RUN_ID` to supply your own correlation id.
 
 OpenWork server logs every request with method, path, status, and duration. Disable this when running
 `openwork-server` directly by setting `OPENWORK_LOG_REQUESTS=0` or passing `--no-log-requests`.
@@ -124,15 +126,15 @@ OpenWork server logs every request with method, path, status, and duration. Disa
 The router keeps a single OpenCode process alive and switches workspaces JIT using the `directory` parameter.
 
 ```bash
-openwrk daemon start
-openwrk workspace add /path/to/workspace-a
-openwrk workspace add /path/to/workspace-b
-openwrk workspace list --json
-openwrk workspace path <id>
-openwrk instance dispose <id>
+openwork daemon start
+openwork workspace add /path/to/workspace-a
+openwork workspace add /path/to/workspace-b
+openwork workspace list --json
+openwork workspace path <id>
+openwork instance dispose <id>
 ```
 
-Use `OPENWRK_DATA_DIR` or `--data-dir` to isolate router state in tests.
+Use `OPENWORK_DATA_DIR` or `--data-dir` to isolate router state in tests.
 
 ## Pairing notes
 
@@ -142,11 +144,11 @@ Use `OPENWRK_DATA_DIR` or `--data-dir` to isolate router state in tests.
 ## Approvals (manual mode)
 
 ```bash
-openwrk approvals list \
+openwork approvals list \
   --openwork-url http://<host>:8787 \
   --host-token <token>
 
-openwrk approvals reply <id> --allow \
+openwork approvals reply <id> --allow \
   --openwork-url http://<host>:8787 \
   --host-token <token>
 ```
@@ -154,7 +156,7 @@ openwrk approvals reply <id> --allow \
 ## Health checks
 
 ```bash
-openwrk status \
+openwork status \
   --openwork-url http://<host>:8787 \
   --opencode-url http://<host>:4096
 ```
@@ -162,7 +164,7 @@ openwrk status \
 ## Smoke checks
 
 ```bash
-openwrk start --workspace /path/to/workspace --check --check-events
+openwork start --workspace /path/to/workspace --check --check-events
 ```
 
 This starts the services, verifies health + SSE events, then exits cleanly.
@@ -172,7 +174,7 @@ This starts the services, verifies health + SSE events, then exits cleanly.
 Point to source CLIs for fast iteration:
 
 ```bash
-openwrk start \
+openwork start \
   --workspace /path/to/workspace \
   --allow-external \
   --openwork-server-bin packages/server/src/cli.ts \

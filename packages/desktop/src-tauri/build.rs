@@ -11,8 +11,84 @@ fn main() {
     ensure_opencode_sidecar();
     ensure_openwork_server_sidecar();
     ensure_opencode_router_sidecar();
-    ensure_openwrk_sidecar();
+    ensure_orchestrator_sidecar();
+    ensure_chrome_devtools_mcp_sidecar();
+    ensure_versions_manifest();
     tauri_build::build();
+}
+
+fn ensure_chrome_devtools_mcp_sidecar() {
+    let target = env::var("CARGO_CFG_TARGET_TRIPLE")
+        .or_else(|_| env::var("TARGET"))
+        .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
+        .unwrap_or_default();
+    if target.is_empty() {
+        return;
+    }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let sidecar_dir = manifest_dir.join("sidecars");
+
+    let canonical_name = if target.contains("windows") {
+        "chrome-devtools-mcp.exe"
+    } else {
+        "chrome-devtools-mcp"
+    };
+
+    let mut target_name = format!("chrome-devtools-mcp-{target}");
+    if target.contains("windows") {
+        target_name.push_str(".exe");
+    }
+
+    let dest_path = sidecar_dir.join(canonical_name);
+    let target_dest_path = sidecar_dir.join(target_name);
+
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if !dest_path.exists() {
+        create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
+    }
+    if !target_dest_path.exists() {
+        create_debug_stub(&target_dest_path, &sidecar_dir, &profile, &target);
+    }
+}
+
+fn ensure_versions_manifest() {
+    let profile = env::var("PROFILE").unwrap_or_default();
+    if profile == "release" {
+        return;
+    }
+
+    let target = env::var("CARGO_CFG_TARGET_TRIPLE")
+        .or_else(|_| env::var("TARGET"))
+        .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
+        .unwrap_or_default();
+    if target.is_empty() {
+        return;
+    }
+
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."));
+    let sidecar_dir = manifest_dir.join("sidecars");
+    let canonical_path = sidecar_dir.join("versions.json");
+    let target_path = sidecar_dir.join(format!("versions.json-{target}"));
+
+    if canonical_path.exists() && target_path.exists() {
+        return;
+    }
+
+    if fs::create_dir_all(&sidecar_dir).is_err() {
+        return;
+    }
+
+    if !canonical_path.exists() {
+        let _ = fs::write(&canonical_path, "{}\n");
+    }
+    if !target_path.exists() {
+        let _ = fs::write(&target_path, "{}\n");
+    }
 }
 
 fn emit_build_info() {
@@ -69,7 +145,7 @@ fn emit_build_info() {
     }
 }
 
-fn ensure_openwrk_sidecar() {
+fn ensure_orchestrator_sidecar() {
     let target = env::var("CARGO_CFG_TARGET_TRIPLE")
         .or_else(|_| env::var("TARGET"))
         .or_else(|_| env::var("TAURI_ENV_TARGET_TRIPLE"))
@@ -84,11 +160,11 @@ fn ensure_openwrk_sidecar() {
     let sidecar_dir = manifest_dir.join("sidecars");
 
     let canonical_name = if target.contains("windows") {
-        "openwrk.exe"
+        "openwork-orchestrator.exe"
     } else {
-        "openwrk"
+        "openwork-orchestrator"
     };
-    let mut target_name = format!("openwrk-{target}");
+    let mut target_name = format!("openwork-orchestrator-{target}");
     if target.contains("windows") {
         target_name.push_str(".exe");
     }
@@ -114,21 +190,21 @@ fn ensure_openwrk_sidecar() {
         }
     }
 
-    let source_path = env::var("OPENWRK_BIN_PATH")
+    let source_path = env::var("OPENWORK_ORCHESTRATOR_BIN_PATH")
         .ok()
         .map(PathBuf::from)
         .filter(|path| path.is_file())
         .or_else(|| {
             find_in_path(if target.contains("windows") {
-                "openwrk.exe"
+                "openwork.exe"
             } else {
-                "openwrk"
+                "openwork"
             })
         });
 
     let Some(source_path) = source_path else {
         println!(
-            "cargo:warning=openwrk sidecar missing at {} (set OPENWRK_BIN_PATH or install openwrk)",
+            "cargo:warning=orchestrator sidecar missing at {} (set OPENWORK_ORCHESTRATOR_BIN_PATH or install openwork-orchestrator)",
             dest_path.display()
         );
         create_debug_stub(&dest_path, &sidecar_dir, &profile, &target);
@@ -149,7 +225,7 @@ fn ensure_openwrk_sidecar() {
         let _ = copy_sidecar(&dest_path, &target_dest_path, &target);
     } else {
         println!(
-            "cargo:warning=Failed to copy openwrk sidecar from {} to {}",
+            "cargo:warning=Failed to copy orchestrator sidecar from {} to {}",
             source_path.display(),
             dest_path.display()
         );

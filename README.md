@@ -25,8 +25,8 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/opencode-router/dev/install.sh | bash`
   - run `opencode-router setup`, then `opencode-router whatsapp login`, then `opencode-router start`
   - full setup: https://github.com/different-ai/opencode-router/blob/dev/README.md
-- **Openwrk (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwrk`.
-  - docs: [packages/headless/README.md](./packages/headless/README.md)
+- **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI. Install with `npm install -g openwork-orchestrator`.
+  - docs: [packages/orchestrator/README.md](./packages/orchestrator/README.md)
 
 
 ## Quick start

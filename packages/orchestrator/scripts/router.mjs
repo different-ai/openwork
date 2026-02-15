@@ -48,7 +48,7 @@ async function runCli(args, dataDir) {
   const child = spawn("node", [cliPath, ...args], {
     env: {
       ...process.env,
-      OPENWRK_DATA_DIR: dataDir,
+      OPENWORK_DATA_DIR: dataDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -66,13 +66,13 @@ async function runCli(args, dataDir) {
 
   const [code] = await once(child, "exit");
   if (code !== 0) {
-    throw new Error(stderr.trim() || `openwrk failed with code ${code}`);
+    throw new Error(stderr.trim() || `openwork failed with code ${code}`);
   }
   const trimmed = stdout.trim();
   return trimmed ? JSON.parse(trimmed) : null;
 }
 
-const root = await mkdtemp(join(tmpdir(), "openwrk-router-"));
+const root = await mkdtemp(join(tmpdir(), "openwork-orchestrator-router-"));
 const dataDir = join(root, "data");
 const workspaceA = join(root, "ws-a");
 const workspaceB = join(root, "ws-b");
@@ -101,7 +101,7 @@ const daemon = spawn(
   {
     env: {
       ...process.env,
-      OPENWRK_DATA_DIR: dataDir,
+      OPENWORK_DATA_DIR: dataDir,
     },
     stdio: ["ignore", "pipe", "pipe"],
   },

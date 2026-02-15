@@ -96,7 +96,7 @@ Design principles for hot reload:
 
 ## Dev Debugging
 
-* If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwrk` runs the compiled server, not the TS sources.
+* If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwork` (openwork-orchestrator) runs the compiled server, not the TS sources.
 
 ## Local Structure
 
@@ -164,7 +164,7 @@ This captures OpenWork’s preferred reactivity + UI state patterns (avoid globa
 ## Skill: Trigger a Release
 
 OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
-`Release App` can also publish openwrk sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
+`Release App` can also publish openwork-orchestrator sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
 
 ### Standard release (recommended)
 
@@ -173,7 +173,7 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 
 * `packages/app/package.json` (`version`)
 * `packages/desktop/package.json` (`version`)
-* `packages/headless/package.json` (`version`, publishes as `openwrk`)
+* `packages/orchestrator/package.json` (`version`, publishes as `openwork-orchestrator`)
 * `packages/desktop/src-tauri/tauri.conf.json` (`version`)
 * `packages/desktop/src-tauri/Cargo.toml` (`version`)
 
@@ -204,17 +204,17 @@ If the workflow needs to be re-run for an existing tag (e.g. notarization retry)
 
 Confirm the DMG assets are attached and versioned correctly.
 
-## Skill: Publish openwrk (npm)
+## Skill: Publish openwork-orchestrator (npm)
 
-This is usually covered by `Release App` when `publish_sidecars` + `publish_npm` are enabled. Use `.opencode/skills/openwrk-npm-publish/SKILL.md` for manual recovery or one-off publishing.
+This is usually covered by `Release App` when `publish_sidecars` + `publish_npm` are enabled. Use `.opencode/skills/openwork-orchestrator-npm-publish/SKILL.md` for manual recovery or one-off publishing.
 
 1.  Ensure the default branch is up to date and clean.
-2.  Bump `packages/headless/package.json` (`version`).
+2.  Bump `packages/orchestrator/package.json` (`version`).
 3.  Commit the bump.
 4.  Build and upload sidecar assets for the same version tag:
-    * `pnpm --filter openwrk build:sidecars`
-    * `gh release create openwrk-vX.Y.Z packages/headless/dist/sidecars/* --repo different-ai/openwork`
+    * `pnpm --filter openwork-orchestrator build:sidecars`
+    * `gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
 5.  Publish:
-    * `pnpm --filter openwrk publish --access public`
+    * `pnpm --filter openwork-orchestrator publish --access public`
 6.  Verify:
-    * `npm view openwrk version`
+    * `npm view openwork-orchestrator version`

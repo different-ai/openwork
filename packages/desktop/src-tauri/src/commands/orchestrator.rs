@@ -14,16 +14,16 @@ use tauri::State;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
-use crate::openwrk::manager::OpenwrkManager;
-use crate::openwrk::{resolve_openwrk_data_dir, resolve_openwrk_status};
+use crate::orchestrator::manager::OrchestratorManager;
+use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
-use crate::types::{ExecResult, OpenwrkStatus, OpenwrkWorkspace};
+use crate::types::{ExecResult, OrchestratorStatus, OrchestratorWorkspace};
 
 const SANDBOX_PROGRESS_EVENT: &str = "openwork://sandbox-create-progress";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkDetachedHost {
+pub struct OrchestratorDetachedHost {
     pub openwork_url: String,
     pub token: String,
     pub host_token: String,
@@ -218,9 +218,9 @@ fn parse_docker_server_version(stdout: &str) -> Option<String> {
     None
 }
 
-fn derive_openwrk_container_name(run_id: &str) -> String {
-    // Must match openwrk's docker naming scheme:
-    // `openwrk-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`
+fn derive_orchestrator_container_name(run_id: &str) -> String {
+    // Must match openwork-orchestrator's docker naming scheme:
+    // `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`
     let mut sanitized = String::new();
     for ch in run_id.chars() {
         let ok = ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' || ch == '-';
@@ -229,7 +229,7 @@ fn derive_openwrk_container_name(run_id: &str) -> String {
     if sanitized.len() > 24 {
         sanitized.truncate(24);
     }
-    format!("openwrk-{sanitized}")
+    format!("openwork-orchestrator-{sanitized}")
 }
 
 fn allocate_free_port() -> Result<u16, String> {
@@ -294,51 +294,51 @@ fn docker_container_state(container_name: &str) -> Result<Option<String>, String
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OpenwrkWorkspaceResponse {
-    pub workspace: OpenwrkWorkspace,
+struct OrchestratorWorkspaceResponse {
+    pub workspace: OrchestratorWorkspace,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OpenwrkDisposeResponse {
+struct OrchestratorDisposeResponse {
     pub disposed: bool,
 }
 
-fn resolve_data_dir(manager: &OpenwrkManager) -> String {
+fn resolve_data_dir(manager: &OrchestratorManager) -> String {
     manager
         .inner
         .lock()
         .ok()
         .and_then(|state| state.data_dir.clone())
-        .unwrap_or_else(resolve_openwrk_data_dir)
+        .unwrap_or_else(resolve_orchestrator_data_dir)
 }
 
-fn resolve_base_url(manager: &OpenwrkManager) -> Result<String, String> {
+fn resolve_base_url(manager: &OrchestratorManager) -> Result<String, String> {
     let data_dir = resolve_data_dir(manager);
-    let status = resolve_openwrk_status(&data_dir, None);
+    let status = resolve_orchestrator_status(&data_dir, None);
     status
         .daemon
         .map(|daemon| daemon.base_url)
-        .ok_or_else(|| "openwrk daemon is not running".to_string())
+        .ok_or_else(|| "orchestrator daemon is not running".to_string())
 }
 
 #[tauri::command]
-pub fn openwrk_status(manager: State<OpenwrkManager>) -> OpenwrkStatus {
+pub fn orchestrator_status(manager: State<OrchestratorManager>) -> OrchestratorStatus {
     let data_dir = resolve_data_dir(&manager);
     let last_error = manager
         .inner
         .lock()
         .ok()
         .and_then(|state| state.last_stderr.clone());
-    resolve_openwrk_status(&data_dir, last_error)
+    resolve_orchestrator_status(&data_dir, last_error)
 }
 
 #[tauri::command]
-pub fn openwrk_workspace_activate(
-    manager: State<OpenwrkManager>,
+pub fn orchestrator_workspace_activate(
+    manager: State<OrchestratorManager>,
     workspace_path: String,
     name: Option<String>,
-) -> Result<OpenwrkWorkspace, String> {
+) -> Result<OrchestratorWorkspace, String> {
     let base_url = resolve_base_url(&manager)?;
     let add_url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     let payload = json!({
@@ -350,9 +350,9 @@ pub fn openwrk_workspace_activate(
         .set("Content-Type", "application/json")
         .send_json(payload)
         .map_err(|e| format!("Failed to add workspace: {e}"))?;
-    let added: OpenwrkWorkspaceResponse = add_response
+    let added: OrchestratorWorkspaceResponse = add_response
         .into_json()
-        .map_err(|e| format!("Failed to parse openwrk response: {e}"))?;
+        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
 
     let id = added.workspace.id.clone();
     let activate_url = format!(
@@ -372,8 +372,8 @@ pub fn openwrk_workspace_activate(
 }
 
 #[tauri::command]
-pub fn openwrk_instance_dispose(
-    manager: State<OpenwrkManager>,
+pub fn orchestrator_instance_dispose(
+    manager: State<OrchestratorManager>,
     workspace_path: String,
 ) -> Result<bool, String> {
     let base_url = resolve_base_url(&manager)?;
@@ -386,9 +386,9 @@ pub fn openwrk_instance_dispose(
         .set("Content-Type", "application/json")
         .send_json(payload)
         .map_err(|e| format!("Failed to ensure workspace: {e}"))?;
-    let added: OpenwrkWorkspaceResponse = add_response
+    let added: OrchestratorWorkspaceResponse = add_response
         .into_json()
-        .map_err(|e| format!("Failed to parse openwrk response: {e}"))?;
+        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
 
     let id = added.workspace.id;
     let dispose_url = format!(
@@ -400,20 +400,20 @@ pub fn openwrk_instance_dispose(
         .set("Content-Type", "application/json")
         .send_string("")
         .map_err(|e| format!("Failed to dispose instance: {e}"))?;
-    let result: OpenwrkDisposeResponse = response
+    let result: OrchestratorDisposeResponse = response
         .into_json()
-        .map_err(|e| format!("Failed to parse openwrk response: {e}"))?;
+        .map_err(|e| format!("Failed to parse orchestrator response: {e}"))?;
 
     Ok(result.disposed)
 }
 
 #[tauri::command]
-pub fn openwrk_start_detached(
+pub fn orchestrator_start_detached(
     app: AppHandle,
     workspace_path: String,
     sandbox_backend: Option<String>,
     run_id: Option<String>,
-) -> Result<OpenwrkDetachedHost, String> {
+) -> Result<OrchestratorDetachedHost, String> {
     let workspace_path = workspace_path.trim().to_string();
     if workspace_path.is_empty() {
         return Err("workspacePath is required".to_string());
@@ -429,7 +429,7 @@ pub fn openwrk_start_detached(
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let sandbox_container_name = if wants_docker_sandbox {
-        Some(derive_openwrk_container_name(&sandbox_run_id))
+        Some(derive_orchestrator_container_name(&sandbox_run_id))
     } else {
         None
     };
@@ -453,9 +453,9 @@ pub fn openwrk_start_detached(
         }),
     );
 
-    let command = match app.shell().sidecar("openwrk") {
+    let command = match app.shell().sidecar("openwork-orchestrator") {
         Ok(command) => command,
-        Err(_) => app.shell().command("openwrk"),
+        Err(_) => app.shell().command("openwork"),
     };
 
     // Start a dedicated host stack for this workspace.
@@ -497,7 +497,7 @@ pub fn openwrk_start_detached(
         command
             .args(str_args)
             .spawn()
-            .map_err(|e| format!("Failed to start openwrk: {e}"))?;
+            .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
     }
 
     emit_sandbox_progress(
@@ -606,7 +606,7 @@ pub fn openwrk_start_detached(
         return Err(message);
     }
 
-    Ok(OpenwrkDetachedHost {
+    Ok(OrchestratorDetachedHost {
         openwork_url,
         token,
         host_token,
@@ -725,9 +725,10 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
     if name.is_empty() {
         return Err("containerName is required".to_string());
     }
-    if !name.starts_with("openwrk-") {
+    if !name.starts_with("openwork-orchestrator-") {
         return Err(
-            "Refusing to stop container: expected name starting with 'openwrk-'".to_string(),
+            "Refusing to stop container: expected name starting with 'openwork-orchestrator-'"
+                .to_string(),
         );
     }
     if !name

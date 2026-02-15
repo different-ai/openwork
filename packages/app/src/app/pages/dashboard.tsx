@@ -25,7 +25,7 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
-import type { EngineInfo, OpenwrkStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
 
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
@@ -93,7 +93,7 @@ export type DashboardViewProps = {
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
   engineDoctorVersion: string | null;
-  openwrkStatus: OpenwrkStatus | null;
+  orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   updateOpenworkServerSettings: (next: OpenworkServerSettings) => void;
   resetOpenworkServerSettings: () => void;
@@ -234,8 +234,8 @@ export type DashboardViewProps = {
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   engineCustomBinPath: string;
   setEngineCustomBinPath: (value: string) => void;
-  engineRuntime: "direct" | "openwrk";
-  setEngineRuntime: (value: "direct" | "openwrk") => void;
+  engineRuntime: "direct" | "openwork-orchestrator";
+  setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
   isWindows: boolean;
   toggleDeveloperMode: () => void;
   developerMode: boolean;
@@ -1282,7 +1282,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkAuditError={props.openworkAuditError}
                   opencodeConnectStatus={props.opencodeConnectStatus}
                   engineInfo={props.engineInfo}
-                  openwrkStatus={props.openwrkStatus}
+                  orchestratorStatus={props.orchestratorStatus}
                   opencodeRouterInfo={props.opencodeRouterInfo}
                   engineDoctorVersion={props.engineDoctorVersion}
                   developerMode={props.developerMode}

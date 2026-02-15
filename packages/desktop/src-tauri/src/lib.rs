@@ -3,7 +3,7 @@ mod config;
 mod engine;
 mod fs;
 mod opkg;
-mod openwrk;
+mod orchestrator;
 mod openwork_server;
 mod opencode_router;
 mod paths;
@@ -21,9 +21,9 @@ use commands::command_files::{
 use commands::config::{read_opencode_config, write_opencode_config};
 use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
 use commands::misc::{app_build_info, opencode_mcp_auth, reset_opencode_cache, reset_openwork_state};
-use commands::openwrk::{
-    openwrk_instance_dispose, openwrk_start_detached, openwrk_status, openwrk_workspace_activate,
-    sandbox_doctor, sandbox_stop,
+use commands::orchestrator::{
+    orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
+    orchestrator_workspace_activate, sandbox_doctor, sandbox_stop,
 };
 use commands::openwork_server::openwork_server_info;
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
@@ -42,7 +42,7 @@ use commands::workspace::{
     workspace_openwork_write, workspace_set_active, workspace_update_display_name, workspace_update_remote,
 };
 use engine::manager::EngineManager;
-use openwrk::manager::OpenwrkManager;
+use orchestrator::manager::OrchestratorManager;
 use openwork_server::manager::OpenworkServerManager;
 use opencode_router::manager::OpenCodeRouterManager;
 use tauri::Manager;
@@ -62,7 +62,7 @@ pub fn run() {
 
     let app = builder
         .manage(EngineManager::default())
-        .manage(OpenwrkManager::default())
+        .manage(OrchestratorManager::default())
         .manage(OpenworkServerManager::default())
         .manage(OpenCodeRouterManager::default())
         .manage(WorkspaceWatchState::default())
@@ -72,10 +72,10 @@ pub fn run() {
             engine_info,
             engine_doctor,
             engine_install,
-            openwrk_status,
-            openwrk_workspace_activate,
-            openwrk_instance_dispose,
-            openwrk_start_detached,
+            orchestrator_status,
+            orchestrator_workspace_activate,
+            orchestrator_instance_dispose,
+            orchestrator_start_detached,
             sandbox_doctor,
             sandbox_stop,
             openwork_server_info,
@@ -122,14 +122,14 @@ pub fn run() {
 
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
-    // openwrk/opencode/openwork-server processes and stale ports.
+    // orchestrator/opencode/openwork-server processes and stale ports.
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit) {
             if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
                 EngineManager::stop_locked(&mut engine);
             }
-            if let Ok(mut openwrk) = app_handle.state::<OpenwrkManager>().inner.lock() {
-                OpenwrkManager::stop_locked(&mut openwrk);
+            if let Ok(mut orchestrator) = app_handle.state::<OrchestratorManager>().inner.lock() {
+                OrchestratorManager::stop_locked(&mut orchestrator);
             }
             if let Ok(mut openwork_server) = app_handle.state::<OpenworkServerManager>().inner.lock() {
                 OpenworkServerManager::stop_locked(&mut openwork_server);

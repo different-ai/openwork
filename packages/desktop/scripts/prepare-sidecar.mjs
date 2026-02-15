@@ -177,20 +177,21 @@ const opencodeRouterTargetName = opencodeRouterTargetTriple
 const opencodeRouterTargetPath = opencodeRouterTargetName ? join(sidecarDir, opencodeRouterTargetName) : null;
 const opencodeRouterDir = resolve(__dirname, "..", "..", "opencode-router");
 
-// openwrk paths
-const openwrkBaseName = "openwrk";
-const openwrkName = process.platform === "win32" ? `${openwrkBaseName}.exe` : openwrkBaseName;
-const openwrkPath = join(sidecarDir, openwrkName);
-const openwrkBuildName = bunTarget
-  ? `${openwrkBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
-  : openwrkName;
-const openwrkBuildPath = join(sidecarDir, openwrkBuildName);
-const openwrkTargetTriple = resolvedTargetTriple;
-const openwrkTargetName = openwrkTargetTriple
-  ? `${openwrkBaseName}-${openwrkTargetTriple}${openwrkTargetTriple.includes("windows") ? ".exe" : ""}`
+// orchestrator paths
+const orchestratorBaseName = "openwork-orchestrator";
+const orchestratorName =
+  process.platform === "win32" ? `${orchestratorBaseName}.exe` : orchestratorBaseName;
+const orchestratorPath = join(sidecarDir, orchestratorName);
+const orchestratorBuildName = bunTarget
+  ? `${orchestratorBaseName}-${bunTarget}${bunTarget.includes("windows") ? ".exe" : ""}`
+  : orchestratorName;
+const orchestratorBuildPath = join(sidecarDir, orchestratorBuildName);
+const orchestratorTargetTriple = resolvedTargetTriple;
+const orchestratorTargetName = orchestratorTargetTriple
+  ? `${orchestratorBaseName}-${orchestratorTargetTriple}${orchestratorTargetTriple.includes("windows") ? ".exe" : ""}`
   : null;
-const openwrkTargetPath = openwrkTargetName ? join(sidecarDir, openwrkTargetName) : null;
-const openwrkDir = resolve(__dirname, "..", "..", "headless");
+const orchestratorTargetPath = orchestratorTargetName ? join(sidecarDir, orchestratorTargetName) : null;
+const orchestratorDir = resolve(__dirname, "..", "..", "orchestrator");
 
 // chrome-devtools-mcp shim sidecar
 const chromeDevtoolsBaseName = "chrome-devtools-mcp";
@@ -575,35 +576,36 @@ if (existsSync(opencodeRouterBuildPath)) {
   }
 }
 
-// Build openwrk sidecar
-let didBuildOpenwrk = false;
-const shouldBuildOpenwrk = forceBuild || !existsSync(openwrkBuildPath) || isStubBinary(openwrkBuildPath);
-if (shouldBuildOpenwrk) {
+// Build orchestrator sidecar
+let didBuildOrchestrator = false;
+const shouldBuildOrchestrator =
+  forceBuild || !existsSync(orchestratorBuildPath) || isStubBinary(orchestratorBuildPath);
+if (shouldBuildOrchestrator) {
   mkdirSync(sidecarDir, { recursive: true });
-  if (existsSync(openwrkBuildPath)) {
+  if (existsSync(orchestratorBuildPath)) {
     try {
-      unlinkSync(openwrkBuildPath);
+      unlinkSync(orchestratorBuildPath);
     } catch {
       // ignore
     }
   }
-  const openwrkBuildScript = resolveBuildScript(openwrkDir);
-  if (!existsSync(openwrkBuildScript)) {
-    console.error(`Openwrk build script not found at ${openwrkBuildScript}`);
+  const orchestratorBuildScript = resolveBuildScript(orchestratorDir);
+  if (!existsSync(orchestratorBuildScript)) {
+    console.error(`Orchestrator build script not found at ${orchestratorBuildScript}`);
     process.exit(1);
   }
-  const openwrkArgs = [
-    openwrkBuildScript,
+  const orchestratorArgs = [
+    orchestratorBuildScript,
     "--outdir",
     sidecarDir,
     "--filename",
-    "openwrk",
+    orchestratorBaseName,
   ];
   if (bunTarget) {
-    openwrkArgs.push("--target", bunTarget);
+    orchestratorArgs.push("--target", bunTarget);
   }
-  const result = spawnSync("bun", openwrkArgs, {
-    cwd: openwrkDir,
+  const result = spawnSync("bun", orchestratorArgs, {
+    cwd: orchestratorDir,
     stdio: "inherit",
     shell: true,
     env: {
@@ -616,29 +618,33 @@ if (shouldBuildOpenwrk) {
     process.exit(result.status ?? 1);
   }
 
-  didBuildOpenwrk = true;
+  didBuildOrchestrator = true;
 }
 
-if (existsSync(openwrkBuildPath)) {
-  const shouldCopyCanonical = didBuildOpenwrk || !existsSync(openwrkPath) || isStubBinary(openwrkPath);
-  if (shouldCopyCanonical && openwrkBuildPath !== openwrkPath) {
+if (existsSync(orchestratorBuildPath)) {
+  const shouldCopyCanonical =
+    didBuildOrchestrator || !existsSync(orchestratorPath) || isStubBinary(orchestratorPath);
+  if (shouldCopyCanonical && orchestratorBuildPath !== orchestratorPath) {
     try {
-      if (existsSync(openwrkPath)) unlinkSync(openwrkPath);
+      if (existsSync(orchestratorPath)) unlinkSync(orchestratorPath);
     } catch {
       // ignore
     }
-    copyFileSync(openwrkBuildPath, openwrkPath);
+    copyFileSync(orchestratorBuildPath, orchestratorPath);
   }
 
-  if (openwrkTargetPath) {
-    const shouldCopyTarget = didBuildOpenwrk || !existsSync(openwrkTargetPath) || isStubBinary(openwrkTargetPath);
-    if (shouldCopyTarget && openwrkBuildPath !== openwrkTargetPath) {
+  if (orchestratorTargetPath) {
+    const shouldCopyTarget =
+      didBuildOrchestrator ||
+      !existsSync(orchestratorTargetPath) ||
+      isStubBinary(orchestratorTargetPath);
+    if (shouldCopyTarget && orchestratorBuildPath !== orchestratorTargetPath) {
       try {
-        if (existsSync(openwrkTargetPath)) unlinkSync(openwrkTargetPath);
+        if (existsSync(orchestratorTargetPath)) unlinkSync(orchestratorTargetPath);
       } catch {
         // ignore
       }
-      copyFileSync(openwrkBuildPath, openwrkTargetPath);
+      copyFileSync(orchestratorBuildPath, orchestratorTargetPath);
     }
   }
 }
@@ -727,9 +733,9 @@ const openworkServerVersion = (() => {
   }
 })();
 
-const openwrkVersion = (() => {
+const orchestratorVersion = (() => {
   try {
-    const raw = readFileSync(resolve(openwrkDir, "package.json"), "utf8");
+    const raw = readFileSync(resolve(orchestratorDir, "package.json"), "utf8");
     return String(JSON.parse(raw).version ?? "").trim();
   } catch {
     return null;
@@ -749,9 +755,9 @@ const versions = {
     version: expectedOpenCodeRouterVersion,
     sha256: existsSync(opencodeRouterPath) ? sha256File(opencodeRouterPath) : null,
   },
-  openwrk: {
-    version: openwrkVersion,
-    sha256: existsSync(openwrkPath) ? sha256File(openwrkPath) : null,
+  "openwork-orchestrator": {
+    version: orchestratorVersion,
+    sha256: existsSync(orchestratorPath) ? sha256File(orchestratorPath) : null,
   },
   "chrome-devtools-mcp": {
     version: chromeDevtoolsMcpVersion,

@@ -123,10 +123,10 @@ import {
   schedulerDeleteJob,
   schedulerListJobs,
   openworkServerInfo,
-  openwrkStatus,
+  orchestratorStatus,
   opencodeRouterInfo,
   setWindowDecorations,
-  type OpenwrkStatus,
+  type OrchestratorStatus,
   type OpenworkServerInfo,
   type OpenCodeRouterInfo,
 } from "./lib/tauri";
@@ -254,7 +254,7 @@ export default function App() {
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
-  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwrk");
+  const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -269,7 +269,7 @@ export default function App() {
   const [openworkServerDiagnostics, setOpenworkServerDiagnostics] = createSignal<OpenworkServerDiagnostics | null>(null);
   const [openworkReconnectBusy, setOpenworkReconnectBusy] = createSignal(false);
   const [opencodeRouterInfoState, setOpenCodeRouterInfoState] = createSignal<OpenCodeRouterInfo | null>(null);
-  const [openwrkStatusState, setOpenwrkStatusState] = createSignal<OpenwrkStatus | null>(null);
+  const [orchestratorStatusState, setOrchestratorStatusState] = createSignal<OrchestratorStatus | null>(null);
   const [openworkAuditEntries, setOpenworkAuditEntries] = createSignal<OpenworkAuditEntry[]>([]);
   const [openworkAuditStatus, setOpenworkAuditStatus] = createSignal<"idle" | "loading" | "error">("idle");
   const [openworkAuditError, setOpenworkAuditError] = createSignal<string | null>(null);
@@ -538,7 +538,7 @@ export default function App() {
   createEffect(() => {
     if (!isTauriRuntime()) return;
     if (!developerMode()) {
-      setOpenwrkStatusState(null);
+      setOrchestratorStatusState(null);
       return;
     }
     if (!documentVisible()) return;
@@ -547,10 +547,10 @@ export default function App() {
 
     const run = async () => {
       try {
-        const status = await openwrkStatus();
-        if (active) setOpenwrkStatusState(status);
+        const status = await orchestratorStatus();
+        if (active) setOrchestratorStatusState(status);
       } catch {
-        if (active) setOpenwrkStatusState(null);
+        if (active) setOrchestratorStatusState(null);
       }
     };
 
@@ -3618,7 +3618,7 @@ export default function App() {
         const storedEngineRuntime = window.localStorage.getItem(
           "openwork.engineRuntime"
         );
-        if (storedEngineRuntime === "direct" || storedEngineRuntime === "openwrk") {
+        if (storedEngineRuntime === "direct" || storedEngineRuntime === "openwork-orchestrator") {
           setEngineRuntime(storedEngineRuntime);
         }
 
@@ -4334,7 +4334,7 @@ export default function App() {
       openworkAuditError: openworkAuditError(),
       opencodeConnectStatus: opencodeConnectStatus(),
       engineInfo: workspaceStore.engine(),
-      openwrkStatus: openwrkStatusState(),
+      orchestratorStatus: orchestratorStatusState(),
       opencodeRouterInfo: opencodeRouterInfoState(),
       engineDoctorVersion: workspaceStore.engineDoctorResult()?.version ?? null,
       updateOpenworkServerSettings,

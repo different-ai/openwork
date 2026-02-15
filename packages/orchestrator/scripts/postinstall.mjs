@@ -24,17 +24,17 @@ function detect() {
 
 function name() {
   const { platform, arch } = detect()
-  return `openwrk-${platform}-${arch}`
+  return `openwork-orchestrator-${platform}-${arch}`
 }
 
 try {
   const pkg = name()
   require.resolve(`${pkg}/package.json`)
-  console.log(`openwrk: verified platform package: ${pkg}`)
+  console.log(`openwork-orchestrator: verified platform package: ${pkg}`)
 } catch (error) {
   const pkg = name()
   console.error(
-    `openwrk: failed to locate platform binary package (${pkg}).\n` +
+    `openwork-orchestrator: failed to locate platform binary package (${pkg}).\n` +
       `Your package manager may have skipped optionalDependencies.\n` +
       `Try installing it manually: npm i -g ${pkg}`,
   )

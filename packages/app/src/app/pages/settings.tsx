@@ -14,8 +14,8 @@ import type {
 } from "../lib/openwork-server";
 import type {
   EngineInfo,
-  OpenwrkBinaryInfo,
-  OpenwrkStatus,
+  OrchestratorBinaryInfo,
+  OrchestratorStatus,
   OpenworkServerInfo,
   AppBuildInfo,
   OpenCodeRouterInfo,
@@ -51,7 +51,7 @@ export type SettingsViewProps = {
   openworkAuditError: string | null;
   opencodeConnectStatus: OpencodeConnectStatus | null;
   engineInfo: EngineInfo | null;
-  openwrkStatus: OpenwrkStatus | null;
+  orchestratorStatus: OrchestratorStatus | null;
   opencodeRouterInfo: OpenCodeRouterInfo | null;
   developerMode: boolean;
   toggleDeveloperMode: () => void;
@@ -60,8 +60,8 @@ export type SettingsViewProps = {
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   engineCustomBinPath: string;
   setEngineCustomBinPath: (value: string) => void;
-  engineRuntime: "direct" | "openwrk";
-  setEngineRuntime: (value: "direct" | "openwrk") => void;
+  engineRuntime: "direct" | "openwork-orchestrator";
+  setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
@@ -468,14 +468,14 @@ export default function SettingsView(props: SettingsViewProps) {
     }
   };
 
-  const openwrkStatusLabel = createMemo(() => {
-    if (!props.openwrkStatus) return "Unavailable";
-    return props.openwrkStatus.running ? "Running" : "Offline";
+  const orchestratorStatusLabel = createMemo(() => {
+    if (!props.orchestratorStatus) return "Unavailable";
+    return props.orchestratorStatus.running ? "Running" : "Offline";
   });
 
-  const openwrkStatusStyle = createMemo(() => {
-    if (!props.openwrkStatus) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
-    return props.openwrkStatus.running
+  const orchestratorStatusStyle = createMemo(() => {
+    if (!props.orchestratorStatus) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    return props.orchestratorStatus.running
       ? "bg-green-7/10 text-green-11 border-green-7/20"
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
   });
@@ -579,20 +579,20 @@ export default function SettingsView(props: SettingsViewProps) {
     return props.opencodeRouterInfo?.lastStderr?.trim() || "No stderr captured yet.";
   };
 
-  const formatOpenwrkBinary = (binary?: OpenwrkBinaryInfo | null) => {
+  const formatOrchestratorBinary = (binary?: OrchestratorBinaryInfo | null) => {
     if (!binary) return "Binary unavailable";
     const version = binary.actualVersion || binary.expectedVersion || "unknown";
     return `${binary.source} · ${version}`;
   };
 
-  const formatOpenwrkBinaryVersion = (binary?: OpenwrkBinaryInfo | null) => {
+  const formatOrchestratorBinaryVersion = (binary?: OrchestratorBinaryInfo | null) => {
     if (!binary) return "—";
     return binary.actualVersion || binary.expectedVersion || "—";
   };
 
-  const openwrkBinaryPath = () => props.openwrkStatus?.binaries?.opencode?.path ?? "—";
-  const openwrkSidecarSummary = () => {
-    const info = props.openwrkStatus?.sidecar;
+  const orchestratorBinaryPath = () => props.orchestratorStatus?.binaries?.opencode?.path ?? "—";
+  const orchestratorSidecarSummary = () => {
+    const info = props.orchestratorStatus?.sidecar;
     if (!info) return "Sidecar config unavailable";
     const source = info.source ?? "auto";
     const target = info.target ?? "unknown";
@@ -606,13 +606,13 @@ export default function SettingsView(props: SettingsViewProps) {
     return sha.length > 12 ? sha.slice(0, 12) : sha;
   };
   const opencodeVersionLabel = () => {
-    const fromOpenwrk = formatOpenwrkBinaryVersion(props.openwrkStatus?.binaries?.opencode ?? null);
-    if (fromOpenwrk !== "—") return fromOpenwrk;
+    const fromOrchestrator = formatOrchestratorBinaryVersion(props.orchestratorStatus?.binaries?.opencode ?? null);
+    if (fromOrchestrator !== "—") return fromOrchestrator;
     return props.engineDoctorVersion ?? "—";
   };
   const openworkServerVersionLabel = () => props.openworkServerDiagnostics?.version ?? "—";
   const opencodeRouterVersionLabel = () => props.opencodeRouterInfo?.version ?? "—";
-  const openwrkVersionLabel = () => props.openwrkStatus?.cliVersion ?? "—";
+  const orchestratorVersionLabel = () => props.orchestratorStatus?.cliVersion ?? "—";
 
   onMount(() => {
     if (!isTauriRuntime()) return;
@@ -1161,11 +1161,11 @@ export default function SettingsView(props: SettingsViewProps) {
                             Direct (OpenCode)
                           </Button>
                           <Button
-                            variant={props.engineRuntime === "openwrk" ? "secondary" : "outline"}
-                            onClick={() => props.setEngineRuntime("openwrk")}
+                            variant={props.engineRuntime === "openwork-orchestrator" ? "secondary" : "outline"}
+                            onClick={() => props.setEngineRuntime("openwork-orchestrator")}
                             disabled={props.busy}
                           >
-                            Openwrk orchestrator
+                            OpenWork Orchestrator
                           </Button>
                         </div>
                         <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
@@ -1232,7 +1232,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         <div class="space-y-1">
                           <div class="text-[11px] text-gray-7 font-mono truncate">Desktop app: {appVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">Commit: {appCommitLabel()}</div>
-                          <div class="text-[11px] text-gray-7 font-mono truncate">Openwrk: {openwrkVersionLabel()}</div>
+                          <div class="text-[11px] text-gray-7 font-mono truncate">Orchestrator: {orchestratorVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">
                             OpenWork server: {openworkServerVersionLabel()}
@@ -1279,41 +1279,41 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">Openwrk daemon</div>
+                          <div class="text-sm font-medium text-gray-12">Orchestrator daemon</div>
                           <div class="text-xs text-gray-10">Workspace orchestration layer.</div>
                         </div>
-                        <div class={`text-xs px-2 py-1 rounded-full border ${openwrkStatusStyle()}`}>
-                          {openwrkStatusLabel()}
+                        <div class={`text-xs px-2 py-1 rounded-full border ${orchestratorStatusStyle()}`}>
+                          {orchestratorStatusLabel()}
                         </div>
                       </div>
                       <div class="space-y-1">
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          {props.openwrkStatus?.dataDir ?? "Data directory unavailable"}
+                          {props.orchestratorStatus?.dataDir ?? "Data directory unavailable"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Daemon: {props.openwrkStatus?.daemon?.baseUrl ?? "—"}
+                          Daemon: {props.orchestratorStatus?.daemon?.baseUrl ?? "—"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          OpenCode: {props.openwrkStatus?.opencode?.baseUrl ?? "—"}
+                          OpenCode: {props.orchestratorStatus?.opencode?.baseUrl ?? "—"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Openwrk version: {props.openwrkStatus?.cliVersion ?? "—"}
+                          Version: {props.orchestratorStatus?.cliVersion ?? "—"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Sidecar: {openwrkSidecarSummary()}
+                          Sidecar: {orchestratorSidecarSummary()}
                         </div>
-                        <div class="text-[11px] text-gray-7 font-mono truncate" title={openwrkBinaryPath()}>
-                          Opencode binary: {formatOpenwrkBinary(props.openwrkStatus?.binaries?.opencode ?? null)}
+                        <div class="text-[11px] text-gray-7 font-mono truncate" title={orchestratorBinaryPath()}>
+                          Opencode binary: {formatOrchestratorBinary(props.orchestratorStatus?.binaries?.opencode ?? null)}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
-                          Active workspace: {props.openwrkStatus?.activeId ?? "—"}
+                          Active workspace: {props.orchestratorStatus?.activeId ?? "—"}
                         </div>
                       </div>
-                      <Show when={props.openwrkStatus?.lastError}>
+                      <Show when={props.orchestratorStatus?.lastError}>
                         <div>
                           <div class="text-[11px] text-gray-9 mb-1">Last error</div>
                           <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-24 overflow-auto bg-gray-2/50 border border-gray-6 rounded-lg p-2">
-                            {props.openwrkStatus?.lastError}
+                            {props.orchestratorStatus?.lastError}
                           </pre>
                         </div>
                       </Show>

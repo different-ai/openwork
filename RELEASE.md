@@ -20,16 +20,16 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
    - `git tag vX.Y.Z`
    - `git push origin vX.Y.Z`
 
-## openwrk (npm + sidecars)
+## openwork-orchestrator (npm + sidecars)
 
-1. Bump versions (includes `packages/headless/package.json`):
+1. Bump versions (includes `packages/orchestrator/package.json`):
    - `pnpm bump:patch` or `pnpm bump:minor` or `pnpm bump:major`
 2. Build sidecar assets and manifest:
-   - `pnpm --filter openwrk build:sidecars`
+   - `pnpm --filter openwork-orchestrator build:sidecars`
 3. Create the GitHub release for sidecars:
-   - `gh release create openwrk-vX.Y.Z packages/headless/dist/sidecars/* --repo different-ai/openwork`
+   - `gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* --repo different-ai/openwork`
 4. Publish the package:
-   - `pnpm --filter openwrk publish --access public`
+   - `pnpm --filter openwork-orchestrator publish --access public`
 
 ## openwork-server + opencode-router (if version changed)
 
@@ -38,7 +38,7 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 
 ## Verification
 
-- `openwrk start --workspace /path/to/workspace --check --check-events`
+- `openwork start --workspace /path/to/workspace --check --check-events`
 - `gh run list --repo different-ai/openwork --workflow "Release App" --limit 5`
 - `gh release view vX.Y.Z --repo different-ai/openwork`
 
@@ -55,7 +55,7 @@ Required repo config:
 
 ## npm publishing
 
-If you want `Release App` to publish `openwrk`, `openwork-server`, and `opencode-router` to npm, configure:
+If you want `Release App` to publish `openwork-orchestrator`, `openwork-server`, and `opencode-router` to npm, configure:
 
 - GitHub Actions secret: `NPM_TOKEN` (npm automation token)
 

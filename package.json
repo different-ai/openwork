@@ -21,7 +21,7 @@
     "test:session-switch": "pnpm --filter @different-ai/openwork-ui test:session-switch",
     "test:fs-engine": "pnpm --filter @different-ai/openwork-ui test:fs-engine",
     "test:e2e": "pnpm --filter @different-ai/openwork-ui test:e2e",
-    "test:openwrk": "pnpm --filter openwrk test:router",
+    "test:orchestrator": "pnpm --filter openwork-orchestrator test:router",
     "bump:patch": "pnpm --filter @different-ai/openwork-ui bump:patch",
     "bump:minor": "pnpm --filter @different-ai/openwork-ui bump:minor",
     "bump:major": "pnpm --filter @different-ai/openwork-ui bump:major",

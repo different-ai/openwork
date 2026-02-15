@@ -8,10 +8,10 @@ const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const repoRoot = resolve(root, "..", "..");
 const outdir = resolve(root, "dist", "sidecars");
 
-const openwrkPkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
-const openwrkVersion = String(openwrkPkg.version ?? "").trim();
-if (!openwrkVersion) {
-  throw new Error("openwrk version missing in packages/headless/package.json");
+const orchestratorPkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+const orchestratorVersion = String(orchestratorPkg.version ?? "").trim();
+if (!orchestratorVersion) {
+  throw new Error("openwork-orchestrator version missing in packages/orchestrator/package.json");
 }
 
 const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH
@@ -97,9 +97,13 @@ for (const target of targets) {
 }
 
 const manifest = {
-  version: openwrkVersion,
+  version: orchestratorVersion,
   generatedAt,
   entries,
 };
 
-writeFileSync(join(outdir, "openwrk-sidecars.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+writeFileSync(
+  join(outdir, "openwork-orchestrator-sidecars.json"),
+  `${JSON.stringify(manifest, null, 2)}\n`,
+  "utf8",
+);

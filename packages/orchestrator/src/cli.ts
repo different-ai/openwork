@@ -78,7 +78,7 @@ type OpenCodeRouterHealthSnapshot = {
 
 const FALLBACK_VERSION = "0.1.0";
 
-declare const __OPENWRK_VERSION__: string | undefined;
+declare const __OPENWORK_ORCHESTRATOR_VERSION__: string | undefined;
 const DEFAULT_OPENWORK_PORT = 8787;
 const DEFAULT_APPROVAL_TIMEOUT = 30000;
 const DEFAULT_OPENCODE_USERNAME = "opencode";
@@ -485,8 +485,7 @@ let cachedSandboxAllowlist: SandboxMountAllowlist | null | undefined;
 let cachedSandboxAllowlistError: string | null = null;
 
 function resolveSandboxAllowlistPath(): string {
-  const override =
-    process.env.OPENWRK_SANDBOX_MOUNT_ALLOWLIST?.trim() ?? process.env.OPENWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
+  const override = process.env.OPENWORK_SANDBOX_MOUNT_ALLOWLIST?.trim();
   if (override) return resolve(override);
   return join(homedir(), ".config", "openwork", "sandbox-mount-allowlist.json");
 }
@@ -508,7 +507,7 @@ async function isDir(input: string): Promise<boolean> {
 }
 
 async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWRK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -723,8 +722,11 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 async function resolveCliVersion(): Promise<string> {
-  if (typeof __OPENWRK_VERSION__ === "string" && __OPENWRK_VERSION__.trim()) {
-    return __OPENWRK_VERSION__.trim();
+  if (
+    typeof __OPENWORK_ORCHESTRATOR_VERSION__ === "string" &&
+    __OPENWORK_ORCHESTRATOR_VERSION__.trim()
+  ) {
+    return __OPENWORK_ORCHESTRATOR_VERSION__.trim();
   }
   const candidates = [
     join(dirname(process.execPath), "..", "package.json"),
@@ -1057,24 +1059,21 @@ function shQuote(value: string): string {
 }
 
 function resolveSidecarDir(flags: Map<string, string | boolean>): string {
-  const override =
-    readFlag(flags, "sidecar-dir") ??
-    process.env.OPENWRK_SIDECAR_DIR ??
-    process.env.OPENWORK_SIDECAR_DIR;
+  const override = readFlag(flags, "sidecar-dir") ?? process.env.OPENWORK_SIDECAR_DIR;
   if (override && override.trim()) return resolve(override.trim());
   return join(resolveRouterDataDir(flags), "sidecars");
 }
 
 function resolveSidecarBaseUrl(flags: Map<string, string | boolean>, cliVersion: string): string {
-  const override = readFlag(flags, "sidecar-base-url") ?? process.env.OPENWRK_SIDECAR_BASE_URL;
+  const override = readFlag(flags, "sidecar-base-url") ?? process.env.OPENWORK_SIDECAR_BASE_URL;
   if (override && override.trim()) return override.trim();
-  return `https://github.com/different-ai/openwork/releases/download/openwrk-v${cliVersion}`;
+  return `https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v${cliVersion}`;
 }
 
 function resolveSidecarManifestUrl(flags: Map<string, string | boolean>, baseUrl: string): string {
-  const override = readFlag(flags, "sidecar-manifest") ?? process.env.OPENWRK_SIDECAR_MANIFEST_URL;
+  const override = readFlag(flags, "sidecar-manifest") ?? process.env.OPENWORK_SIDECAR_MANIFEST_URL;
   if (override && override.trim()) return override.trim();
-  return `${baseUrl.replace(/\/$/, "")}/openwrk-sidecars.json`;
+  return `${baseUrl.replace(/\/$/, "")}/openwork-orchestrator-sidecars.json`;
 }
 
 function resolveSidecarConfig(flags: Map<string, string | boolean>, cliVersion: string): SidecarConfig {
@@ -1242,7 +1241,7 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
   if (!expectedVersion) return null;
   if (!sidecar.target) return null;
 
-  const assetOverride = process.env.OPENWRK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
+  const assetOverride = process.env.OPENWORK_OPENCODE_ASSET ?? process.env.OPENCODE_ASSET;
   const asset = assetOverride?.trim() || resolveOpencodeAsset(sidecar.target);
   if (!asset) return null;
 
@@ -1268,8 +1267,8 @@ async function resolveOpencodeDownload(sidecar: SidecarConfig, expectedVersion?:
 
   await mkdir(targetDir, { recursive: true });
   const stamp = Date.now();
-  const archivePath = join(tmpdir(), `openwrk-opencode-${stamp}-${asset}`);
-  const extractDir = await mkdtemp(join(tmpdir(), "openwrk-opencode-"));
+  const archivePath = join(tmpdir(), `openwork-orchestrator-opencode-${stamp}-${asset}`);
+  const extractDir = await mkdtemp(join(tmpdir(), "openwork-orchestrator-opencode-"));
 
   try {
     await downloadToPath(url, archivePath);
@@ -1445,7 +1444,7 @@ async function readCliVersion(bin: string, timeoutMs = 4000): Promise<string | u
   const resolved = resolveBinCommand(bin);
   const child = spawnProcess(resolved.command, [...resolved.prefixArgs, "--version"], {
     // Avoid picking up a local bunfig.toml preload from the caller's cwd.
-    // (Notably, packages/headless/bunfig.toml preloads @opentui/solid/preload which
+    // (Notably, packages/orchestrator/bunfig.toml preloads @opentui/solid/preload which
     // breaks running bun-compiled binaries like opencodeRouter during version checks.)
     cwd: tmpdir(),
     stdio: ["ignore", "pipe", "pipe"],
@@ -1634,7 +1633,9 @@ async function resolveOpenworkServerBin(options: {
   if (options.source === "bundled") {
     const bundled = await resolveBundledBinary(options.manifest, "openwork-server");
     if (!bundled) {
-      throw new Error("Bundled openwork-server binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+      throw new Error(
+        "Bundled openwork-server binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+      );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1704,7 +1705,9 @@ async function resolveOpencodeBin(options: {
   if (options.source === "bundled") {
     const bundled = await resolveBundledBinary(options.manifest, "opencode");
     if (!bundled) {
-      throw new Error("Bundled opencode binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+      throw new Error(
+        "Bundled opencode binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+      );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1814,7 +1817,9 @@ async function resolveOpenCodeRouterBin(options: {
   if (options.source === "bundled") {
     const bundled = await resolveBundledBinary(options.manifest, "opencode-router");
     if (!bundled) {
-      throw new Error("Bundled opencodeRouter binary missing. Build with pnpm --filter openwrk build:bin:bundled.");
+      throw new Error(
+        "Bundled opencodeRouter binary missing. Build with pnpm --filter openwork-orchestrator build:bin:bundled.",
+      );
     }
     return { bin: bundled, source: "bundled", expectedVersion };
   }
@@ -1853,15 +1858,15 @@ async function resolveOpenCodeRouterBin(options: {
 }
 
 function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
-  const override = readFlag(flags, "data-dir") ?? process.env.OPENWRK_DATA_DIR ?? process.env.OPENWORK_DATA_DIR;
+  const override = readFlag(flags, "data-dir") ?? process.env.OPENWORK_DATA_DIR;
   if (override && override.trim()) {
     return resolve(override.trim());
   }
-  return join(homedir(), ".openwork", "openwrk");
+  return join(homedir(), ".openwork", "openwork-orchestrator");
 }
 
 function routerStatePath(dataDir: string): string {
-  return join(dataDir, "openwrk-state.json");
+  return join(dataDir, "openwork-orchestrator-state.json");
 }
 
 function nowMs(): number {
@@ -2134,22 +2139,22 @@ async function waitForHealthyViaProxy(
 
 function printHelp(): void {
   const message = [
-    "openwrk",
+    "openwork",
     "",
     "Usage:",
-    "  openwrk start [--workspace <path>] [options]",
-    "  openwrk serve [--workspace <path>] [options]",
-    "  openwrk daemon [run|start|stop|status] [options]",
-    "  openwrk workspace <action> [options]",
-    "  openwrk instance dispose <id> [options]",
-    "  openwrk approvals list --openwork-url <url> --host-token <token>",
-    "  openwrk approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
-    "  openwrk status [--openwork-url <url>] [--opencode-url <url>]",
+    "  openwork start [--workspace <path>] [options]",
+    "  openwork serve [--workspace <path>] [options]",
+    "  openwork daemon [run|start|stop|status] [options]",
+    "  openwork workspace <action> [options]",
+    "  openwork instance dispose <id> [options]",
+    "  openwork approvals list --openwork-url <url> --host-token <token>",
+    "  openwork approvals reply <id> --allow|--deny --openwork-url <url> --host-token <token>",
+    "  openwork status [--openwork-url <url>] [--opencode-url <url>]",
     "",
     "Commands:",
     "  start                   Start OpenCode + OpenWork server + OpenCodeRouter",
     "  serve                   Start services and stream logs (no TUI)",
-    "  daemon                  Run openwrk router daemon (multi-workspace)",
+    "  daemon                  Run orchestrator router daemon (multi-workspace)",
     "  workspace               Manage workspaces (add/list/switch/path)",
     "  instance                Manage workspace instances (dispose)",
     "  approvals list           List pending approval requests",
@@ -2158,9 +2163,9 @@ function printHelp(): void {
     "",
     "Options:",
     "  --workspace <path>        Workspace directory (default: cwd)",
-    "  --data-dir <path>         Data dir for openwrk router state",
-    "  --daemon-host <host>      Host for openwrk router daemon (default: 127.0.0.1)",
-    "  --daemon-port <port>      Port for openwrk router daemon (default: random)",
+    "  --data-dir <path>         Data dir for orchestrator router state",
+    "  --daemon-host <host>      Host for orchestrator router daemon (default: 127.0.0.1)",
+    "  --daemon-port <port>      Port for orchestrator router daemon (default: random)",
     "  --opencode-bin <path>     Path to opencode binary (requires --allow-external)",
     "  --opencode-host <host>    Bind host for opencode serve (default: 0.0.0.0)",
     "  --opencode-port <port>    Port for opencode serve (default: random)",
@@ -2261,10 +2266,10 @@ async function startOpencode(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENCODE_CLIENT: "openwrk",
+      OPENCODE_CLIENT: "openwork-orchestrator",
       OPENWORK: "1",
-      OPENWRK_RUN_ID: options.runId,
-      OPENWRK_LOG_FORMAT: options.logFormat,
+      OPENWORK_RUN_ID: options.runId,
+      OPENWORK_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
           "service.name": "opencode",
@@ -2358,7 +2363,6 @@ async function startOpenworkServer(options: {
       ...process.env,
       OPENWORK_TOKEN: options.token,
       OPENWORK_HOST_TOKEN: options.hostToken,
-      OPENWRK_RUN_ID: options.runId,
       OPENWORK_RUN_ID: options.runId,
       OPENWORK_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
@@ -2409,8 +2413,8 @@ async function startOpenCodeRouter(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      OPENWRK_RUN_ID: options.runId,
-      OPENWRK_LOG_FORMAT: options.logFormat,
+      OPENWORK_RUN_ID: options.runId,
+      OPENWORK_LOG_FORMAT: options.logFormat,
       OTEL_RESOURCE_ATTRIBUTES: mergeResourceAttributes(
         {
           "service.name": "opencode-router",
@@ -2543,7 +2547,7 @@ async function stageSandboxRuntime(options: {
   entrypointHostPath: string;
   cleanup: () => Promise<void>;
 }> {
-  const baseDir = join(options.persistDir, "openwrk-sandbox", options.containerName);
+  const baseDir = join(options.persistDir, "openwork-orchestrator-sandbox", options.containerName);
   await mkdir(baseDir, { recursive: true });
 
   const sidecarsDir = join(baseDir, "sidecars");
@@ -2563,7 +2567,7 @@ async function stageSandboxRuntime(options: {
     await ensureExecutable(stagedOpenCodeRouter);
   }
 
-  const rootInContainer = `/persist/openwrk-sandbox/${options.containerName}`;
+  const rootInContainer = `/persist/openwork-orchestrator-sandbox/${options.containerName}`;
   const cleanup = async () => {
     if (options.detach) return;
     try {
@@ -2647,13 +2651,13 @@ async function writeSandboxEntrypoint(options: {
     `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
     `mkdir -p ${shQuote(opencodeConfigDir)}`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
-    `export OPENCODE_CLIENT=openwrk`,
+    `export OPENCODE_CLIENT=openwork-orchestrator`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
     `export OPENWORK=1`,
-    `export OPENWRK_RUN_ID=${shQuote(options.runId)}`,
-    `export OPENWRK_LOG_FORMAT=${shQuote(options.logFormat)}`,
+    `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
+    `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
     `export OPENWORK_SANDBOX_ENABLED=1`,
     `export OPENWORK_SANDBOX_BACKEND=${shQuote(options.backend)}`,
     opencodeRouterEnv,
@@ -2933,7 +2937,7 @@ async function verifyOpencodeVersion(binary: ResolvedBinary): Promise<string | u
   // warning instead of throwing so the caller can still proceed.
   if (binary.source === "external" && binary.expectedVersion && actual && binary.expectedVersion !== actual) {
     process.stderr.write(
-      `[openwrk] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
+      `[openwork-orchestrator] Warning: opencode version mismatch (expected ${binary.expectedVersion}, got ${actual}). Proceeding with ${binary.bin}.\n`,
     );
     return actual;
   }
@@ -3238,7 +3242,7 @@ function outputError(error: unknown, json: boolean): void {
   console.error(message);
 }
 
-function createVerboseLogger(enabled: boolean, logger?: Logger, component = "openwrk") {
+function createVerboseLogger(enabled: boolean, logger?: Logger, component = "openwork-orchestrator") {
   return (message: string) => {
     if (!enabled) return;
     if (logger) {
@@ -3323,11 +3327,11 @@ function createLogger(options: {
   const output = options.output ?? "stdout";
   const colorEnabled = options.color ?? false;
   const componentColors: Record<string, string> = {
-    openwrk: ANSI.gray,
+    "openwork-orchestrator": ANSI.gray,
     opencode: ANSI.cyan,
     "openwork-server": ANSI.green,
     opencodeRouter: ANSI.magenta,
-    "openwrk-router": ANSI.cyan,
+    "openwork-orchestrator-router": ANSI.cyan,
   };
   const levelColors: Record<LogLevel, string> = {
     debug: ANSI.gray,
@@ -3472,31 +3476,28 @@ async function spawnRouterDaemon(args: ParsedArgs, dataDir: string, host: string
     String(port),
   ];
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWRK_OPENCODE_BIN;
-  const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWRK_OPENCODE_HOST;
-  const opencodePort = readFlag(args.flags, "opencode-port") ?? process.env.OPENWRK_OPENCODE_PORT;
-  const opencodeWorkdir = readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWRK_OPENCODE_WORKDIR;
+  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+  const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST;
+  const opencodePort = readFlag(args.flags, "opencode-port") ?? process.env.OPENWORK_OPENCODE_PORT;
+  const opencodeWorkdir = readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWORK_OPENCODE_WORKDIR;
   const opencodeHotReload =
     readFlag(args.flags, "opencode-hot-reload") ??
-    process.env.OPENWRK_OPENCODE_HOT_RELOAD ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD;
   const opencodeHotReloadDebounceMs =
     readFlag(args.flags, "opencode-hot-reload-debounce-ms") ??
-    process.env.OPENWRK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS;
   const opencodeHotReloadCooldownMs =
     readFlag(args.flags, "opencode-hot-reload-cooldown-ms") ??
-    process.env.OPENWRK_OPENCODE_HOT_RELOAD_COOLDOWN_MS ??
     process.env.OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS;
   const opencodeUsername = readFlag(args.flags, "opencode-username") ?? process.env.OPENWORK_OPENCODE_USERNAME;
   const opencodePassword = readFlag(args.flags, "opencode-password") ?? process.env.OPENWORK_OPENCODE_PASSWORD;
-  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWRK_OPENCODE_CORS;
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
-  const sidecarSource = readFlag(args.flags, "sidecar-source") ?? process.env.OPENWRK_SIDECAR_SOURCE;
-  const opencodeSource = readFlag(args.flags, "opencode-source") ?? process.env.OPENWRK_OPENCODE_SOURCE;
-  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
-  const logFormat = readFlag(args.flags, "log-format") ?? process.env.OPENWRK_LOG_FORMAT;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWRK_RUN_ID;
+  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWORK_OPENCODE_CORS;
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
+  const sidecarSource = readFlag(args.flags, "sidecar-source") ?? process.env.OPENWORK_SIDECAR_SOURCE;
+  const opencodeSource = readFlag(args.flags, "opencode-source") ?? process.env.OPENWORK_OPENCODE_SOURCE;
+  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+  const logFormat = readFlag(args.flags, "log-format") ?? process.env.OPENWORK_LOG_FORMAT;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID;
 
   if (opencodeBin) commandArgs.push("--opencode-bin", opencodeBin);
   if (opencodeHost) commandArgs.push("--opencode-host", opencodeHost);
@@ -3540,12 +3541,12 @@ async function ensureRouterDaemon(args: ParsedArgs, autoStart = true): Promise<{
   }
 
   if (!autoStart) {
-    throw new Error("openwrk daemon is not running");
+    throw new Error("orchestrator daemon is not running");
   }
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWRK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
     "127.0.0.1",
   );
   const baseUrl = `http://${host}:${port}`;
@@ -3683,23 +3684,23 @@ async function runInstanceCommand(args: ParsedArgs) {
 
 async function runRouterDaemon(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
-  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWRK_LOG_FORMAT");
+  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWORK_LOG_FORMAT");
   const colorEnabled =
-    readBool(args.flags, "color", process.stdout.isTTY, "OPENWRK_COLOR") && !process.env.NO_COLOR;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWRK_RUN_ID ?? randomUUID();
+    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") && !process.env.NO_COLOR;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID ?? randomUUID();
   const cliVersion = await resolveCliVersion();
   const logger = createLogger({
     format: logFormat,
     runId,
-    serviceName: "openwrk",
+    serviceName: "openwork-orchestrator",
     serviceVersion: cliVersion,
     output: "stdout",
     color: colorEnabled,
   });
-  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
-  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
-  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
+  const logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWORK_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWORK_OPENCODE_SOURCE");
   const sidecarSource = sidecarSourceInput;
   const opencodeSource = opencodeSourceInput;
   const dataDir = resolveRouterDataDir(args.flags);
@@ -3708,12 +3709,13 @@ async function runRouterDaemon(args: ParsedArgs) {
 
   const host = readFlag(args.flags, "daemon-host") ?? "127.0.0.1";
   const port = await resolvePort(
-    readNumber(args.flags, "daemon-port", undefined, "OPENWRK_DAEMON_PORT"),
+    readNumber(args.flags, "daemon-port", undefined, "OPENWORK_DAEMON_PORT"),
     "127.0.0.1",
   );
 
-  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWRK_OPENCODE_BIN;
-  const opencodeHost = readFlag(args.flags, "opencode-host") ?? process.env.OPENWRK_OPENCODE_HOST ?? "127.0.0.1";
+  const opencodeBin = readFlag(args.flags, "opencode-bin") ?? process.env.OPENWORK_OPENCODE_BIN;
+  const opencodeHost =
+    readFlag(args.flags, "opencode-host") ?? process.env.OPENWORK_OPENCODE_HOST ?? "127.0.0.1";
   const opencodePassword =
     readFlag(args.flags, "opencode-password") ??
     process.env.OPENWORK_OPENCODE_PASSWORD ??
@@ -3727,7 +3729,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` }
     : undefined;
   const opencodePort = await resolvePort(
-    readNumber(args.flags, "opencode-port", state.opencode?.port, "OPENWRK_OPENCODE_PORT"),
+    readNumber(args.flags, "opencode-port", state.opencode?.port, "OPENWORK_OPENCODE_PORT"),
     "127.0.0.1",
     state.opencode?.port,
   );
@@ -3739,14 +3741,18 @@ async function runRouterDaemon(args: ParsedArgs) {
       cooldownMs: DEFAULT_OPENCODE_HOT_RELOAD_COOLDOWN_MS,
     },
     {
-      enabled: "OPENWRK_OPENCODE_HOT_RELOAD",
-      debounceMs: "OPENWRK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
-      cooldownMs: "OPENWRK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
+      enabled: "OPENWORK_OPENCODE_HOT_RELOAD",
+      debounceMs: "OPENWORK_OPENCODE_HOT_RELOAD_DEBOUNCE_MS",
+      cooldownMs: "OPENWORK_OPENCODE_HOT_RELOAD_COOLDOWN_MS",
     },
   );
-  const corsValue = readFlag(args.flags, "cors") ?? process.env.OPENWRK_OPENCODE_CORS ?? "http://localhost:5173,tauri://localhost,http://tauri.localhost";
+  const corsValue =
+    readFlag(args.flags, "cors") ??
+    process.env.OPENWORK_OPENCODE_CORS ??
+    "http://localhost:5173,tauri://localhost,http://tauri.localhost";
   const corsOrigins = parseList(corsValue);
-  const opencodeWorkdirFlag = readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWRK_OPENCODE_WORKDIR;
+  const opencodeWorkdirFlag =
+    readFlag(args.flags, "opencode-workdir") ?? process.env.OPENWORK_OPENCODE_WORKDIR;
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
@@ -3755,11 +3761,11 @@ async function runRouterDaemon(args: ParsedArgs) {
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
-    "openwrk",
+    "openwork-orchestrator",
   );
 
   const sidecar = resolveSidecarConfig(args.flags, cliVersion);
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
   const manifest = await readVersionManifest();
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sidecar target: ${sidecar.target ?? "unknown"}`);
@@ -3882,7 +3888,7 @@ async function runRouterDaemon(args: ParsedArgs) {
           durationMs: Date.now() - startedAt,
           activeId: state.activeId,
         },
-        "openwrk-router",
+        "openwork-orchestrator-router",
       );
     });
     res.setHeader("Access-Control-Allow-Origin", "*");
@@ -4076,7 +4082,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   });
 
   const shutdown = async () => {
-    logger.info("Daemon shutting down", { host, port }, "openwrk-router");
+    logger.info("Daemon shutting down", { host, port }, "openwork-orchestrator-router");
     try {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     } catch {
@@ -4108,9 +4114,9 @@ async function runRouterDaemon(args: ParsedArgs) {
       outputResult({ ok: true, daemon: state.daemon }, true);
     } else {
       if (logFormat === "json") {
-        logger.info("Daemon running", { host, port }, "openwrk-router");
+        logger.info("Daemon running", { host, port }, "openwork-orchestrator-router");
       } else {
-        console.log(`openwrk daemon running on ${host}:${port}`);
+        console.log(`orchestrator daemon running on ${host}:${port}`);
       }
     }
   });
@@ -4231,14 +4237,15 @@ async function runStart(args: ParsedArgs) {
   const outputJson = readBool(args.flags, "json", false);
   const checkOnly = readBool(args.flags, "check", false);
   const checkEvents = readBool(args.flags, "check-events", false);
-  const verbose = readBool(args.flags, "verbose", false, "OPENWRK_VERBOSE");
-  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWRK_LOG_FORMAT");
-  const detachRequested = readBool(args.flags, "detach", false, "OPENWRK_DETACH");
+  const verbose = readBool(args.flags, "verbose", false, "OPENWORK_VERBOSE");
+  const logFormat = readLogFormat(args.flags, "log-format", "pretty", "OPENWORK_LOG_FORMAT");
+  const detachRequested = readBool(args.flags, "detach", false, "OPENWORK_DETACH");
   const defaultTui = process.stdout.isTTY && !outputJson && !checkOnly && !checkEvents;
   const tuiRequested = readBool(args.flags, "tui", defaultTui);
   let useTui = tuiRequested && !detachRequested && !outputJson && !checkOnly && !checkEvents && logFormat === "pretty";
-  const colorPreferred = readBool(args.flags, "color", process.stdout.isTTY, "OPENWRK_COLOR") && !process.env.NO_COLOR;
-  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWRK_RUN_ID ?? randomUUID();
+  const colorPreferred =
+    readBool(args.flags, "color", process.stdout.isTTY, "OPENWORK_COLOR") && !process.env.NO_COLOR;
+  const runId = readFlag(args.flags, "run-id") ?? process.env.OPENWORK_RUN_ID ?? randomUUID();
   const cliVersion = await resolveCliVersion();
   const compiledBinary = isCompiledBunBinary();
   let tui: TuiHandle | undefined;
@@ -4246,11 +4253,11 @@ async function runStart(args: ParsedArgs) {
   const baseLoggerOptions = {
     format: logFormat,
     runId,
-    serviceName: "openwrk",
+    serviceName: "openwork-orchestrator",
     serviceVersion: cliVersion,
     onLog: (event: LogEvent) => {
       if (!tui) return;
-      const component = event.component ?? "openwrk";
+      const component = event.component ?? "openwork-orchestrator";
       const tuiComponent = component === "opencode-router" ? "router" : component;
       tui.pushLog({
         time: event.time,
@@ -4265,7 +4272,7 @@ async function runStart(args: ParsedArgs) {
     output: useTui ? "silent" : "stdout",
     color: useTui ? false : colorPreferred,
   });
-  let logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
+  let logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
   const switchToPlainOutput = (error: string) => {
     if (!useTui) return;
     useTui = false;
@@ -4278,25 +4285,26 @@ async function runStart(args: ParsedArgs) {
       output: "stdout",
       color: colorPreferred,
     });
-    logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwrk");
+    logVerbose = createVerboseLogger(verbose && !outputJson, logger, "openwork-orchestrator");
     logger.warn(
-      "TUI failed to start; falling back to plain output. Use `openwrk serve` for explicit non-TUI mode.",
+      "TUI failed to start; falling back to plain output. Use `openwork serve` for explicit non-TUI mode.",
       { error },
-      "openwrk",
+      "openwork-orchestrator",
     );
   };
-  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWRK_SIDECAR_SOURCE");
-  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWRK_OPENCODE_SOURCE");
+  const sidecarSourceInput = readBinarySource(args.flags, "sidecar-source", "auto", "OPENWORK_SIDECAR_SOURCE");
+  const opencodeSourceInput = readBinarySource(args.flags, "opencode-source", "auto", "OPENWORK_OPENCODE_SOURCE");
 
   const workspace = readFlag(args.flags, "workspace") ?? process.env.OPENWORK_WORKSPACE ?? process.cwd();
   const resolvedWorkspace = await ensureWorkspace(workspace);
-  logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "openwrk");
+  logger.info("Run starting", { workspace: resolvedWorkspace, logFormat, runId }, "openwork-orchestrator");
 
-  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "OPENWRK_SANDBOX");
+  const sandboxRequested = readSandboxMode(args.flags, "sandbox", "none", "OPENWORK_SANDBOX");
   const sandboxMode = await resolveSandboxMode(sandboxRequested);
   const sandboxImage =
-    readFlag(args.flags, "sandbox-image") ?? process.env.OPENWRK_SANDBOX_IMAGE ?? "debian:bookworm-slim";
-  const sandboxPersistOverride = readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWRK_SANDBOX_PERSIST_DIR;
+    readFlag(args.flags, "sandbox-image") ?? process.env.OPENWORK_SANDBOX_IMAGE ?? "debian:bookworm-slim";
+  const sandboxPersistOverride =
+    readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWORK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
   await ensureOpencodeManagedTools(opencodeConfigDir);
@@ -4316,7 +4324,6 @@ async function runStart(args: ParsedArgs) {
 
   const sandboxMountValue =
     readFlag(args.flags, "sandbox-mount") ??
-    process.env.OPENWRK_SANDBOX_MOUNT ??
     process.env.OPENWORK_SANDBOX_MOUNT;
   const sandboxMountSpecs = parseList(sandboxMountValue);
   const sandboxExtraMounts =
@@ -4385,7 +4392,7 @@ async function runStart(args: ParsedArgs) {
   const connectHost = readFlag(args.flags, "connect-host");
 
   const manifest = await readVersionManifest();
-  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWRK_ALLOW_EXTERNAL");
+  const allowExternal = readBool(args.flags, "allow-external", false, "OPENWORK_ALLOW_EXTERNAL");
   const sidecarTarget = resolveSandboxSidecarTarget(sandboxMode);
   const sidecar = resolveSidecarConfigForTarget(args.flags, cliVersion, sidecarTarget);
 
@@ -4456,7 +4463,12 @@ async function runStart(args: ParsedArgs) {
     }
   }
   const opencodeRouterEnabled = readBool(args.flags, "opencode-router", true);
-  const opencodeRouterRequired = readBool(args.flags, "opencode-router-required", false, "OPENWRK_OPENCODE_ROUTER_REQUIRED");
+  const opencodeRouterRequired = readBool(
+    args.flags,
+    "opencode-router-required",
+    false,
+    "OPENWORK_OPENCODE_ROUTER_REQUIRED",
+  );
   const openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,
     manifest,
@@ -4538,7 +4550,11 @@ async function runStart(args: ParsedArgs) {
       clearInterval(opencodeRouterHealthInterval);
       opencodeRouterHealthInterval = null;
     }
-    logger.info("Shutting down", { children: children.map((handle) => handle.name) }, "openwrk");
+    logger.info(
+      "Shutting down",
+      { children: children.map((handle) => handle.name) },
+      "openwork-orchestrator",
+    );
     if (sandboxContainerName && sandboxStop) {
       await sandboxStop(sandboxContainerName);
     }
@@ -4612,15 +4628,19 @@ async function runStart(args: ParsedArgs) {
             return String(item);
           })
           .join(" ");
-        if (text.includes("React is not defined") || text.includes("/$bunfs/root/openwrk")) {
+        if (
+          text.includes("React is not defined") ||
+          text.includes("/$bunfs/root/openwork-orchestrator") ||
+          text.includes("/$bunfs/root/openwork")
+        ) {
           switchToPlainOutput(text);
         }
         originalConsoleError(...items);
       };
     }
     try {
-      const { startOpenwrkTui } = await import("./tui/app.js");
-      tui = startOpenwrkTui({
+      const { startOrchestratorTui } = await import("./tui/app.js");
+      tui = startOrchestratorTui({
         version: cliVersion,
         connect: {
           runId,
@@ -4756,7 +4776,7 @@ async function runStart(args: ParsedArgs) {
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
 
     if (sandboxMode !== "none") {
-      const containerName = `openwrk-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
+      const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
       sandboxContainerName = containerName;
 
       sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
@@ -5145,7 +5165,7 @@ async function runStart(args: ParsedArgs) {
           openwork: payload.openwork,
           opencodeRouter: payload.opencodeRouter,
         },
-        "openwrk",
+        "openwork-orchestrator",
       );
     } else if (logFormat === "json") {
       logger.info(
@@ -5156,10 +5176,10 @@ async function runStart(args: ParsedArgs) {
           openwork: payload.openwork,
           opencodeRouter: payload.opencodeRouter,
         },
-        "openwrk",
+        "openwork-orchestrator",
       );
     } else {
-      console.log("Openwrk running");
+      console.log("OpenWork orchestrator running");
       console.log(`Run ID: ${runId}`);
       console.log(`Workspace: ${payload.workspace}`);
       console.log(`OpenCode: ${payload.opencode.baseUrl}`);
@@ -5199,12 +5219,12 @@ async function runStart(args: ParsedArgs) {
             checkEvents,
           });
         }
-        logger.info("Checks ok", { checkEvents }, "openwrk");
+        logger.info("Checks ok", { checkEvents }, "openwork-orchestrator");
         if (!outputJson && logFormat === "pretty") {
           console.log("Checks: ok");
         }
       } catch (error) {
-        logger.error("Checks failed", { error: String(error) }, "openwrk");
+        logger.error("Checks failed", { error: String(error) }, "openwork-orchestrator");
         await shutdown();
         tui?.stop();
         process.exit(1);
@@ -5220,7 +5240,11 @@ async function runStart(args: ParsedArgs) {
   } catch (error) {
     await shutdown();
     tui?.stop();
-    logger.error("Run failed", { error: error instanceof Error ? error.message : String(error) }, "openwrk");
+    logger.error(
+      "Run failed",
+      { error: error instanceof Error ? error.message : String(error) },
+      "openwork-orchestrator",
+    );
     process.exit(1);
   }
 }

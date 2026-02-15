@@ -11,15 +11,15 @@ use tauri_plugin_shell::ShellExt;
 use crate::paths::home_dir;
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
 use crate::types::{
-    OpenwrkBinaryState, OpenwrkDaemonState, OpenwrkOpencodeState, OpenwrkSidecarInfo,
-    OpenwrkStatus, OpenwrkWorkspace,
+    OrchestratorBinaryState, OrchestratorDaemonState, OrchestratorOpencodeState,
+    OrchestratorSidecarInfo, OrchestratorStatus, OrchestratorWorkspace,
 };
 
 pub mod manager;
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkAuthFile {
+pub struct OrchestratorAuthFile {
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
     pub project_dir: Option<String>,
@@ -28,41 +28,41 @@ pub struct OpenwrkAuthFile {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkStateFile {
+pub struct OrchestratorStateFile {
     #[allow(dead_code)]
     pub version: Option<u32>,
-    pub daemon: Option<OpenwrkDaemonState>,
-    pub opencode: Option<OpenwrkOpencodeState>,
+    pub daemon: Option<OrchestratorDaemonState>,
+    pub opencode: Option<OrchestratorOpencodeState>,
     pub cli_version: Option<String>,
-    pub sidecar: Option<OpenwrkSidecarInfo>,
-    pub binaries: Option<OpenwrkBinaryState>,
+    pub sidecar: Option<OrchestratorSidecarInfo>,
+    pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     #[serde(default)]
-    pub workspaces: Vec<OpenwrkWorkspace>,
+    pub workspaces: Vec<OrchestratorWorkspace>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkHealth {
+pub struct OrchestratorHealth {
     pub ok: bool,
-    pub daemon: Option<OpenwrkDaemonState>,
-    pub opencode: Option<OpenwrkOpencodeState>,
+    pub daemon: Option<OrchestratorDaemonState>,
+    pub opencode: Option<OrchestratorOpencodeState>,
     pub cli_version: Option<String>,
-    pub sidecar: Option<OpenwrkSidecarInfo>,
-    pub binaries: Option<OpenwrkBinaryState>,
+    pub sidecar: Option<OrchestratorSidecarInfo>,
+    pub binaries: Option<OrchestratorBinaryState>,
     pub active_id: Option<String>,
     pub workspace_count: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct OpenwrkWorkspaceList {
+pub struct OrchestratorWorkspaceList {
     pub active_id: Option<String>,
     #[serde(default)]
-    pub workspaces: Vec<OpenwrkWorkspace>,
+    pub workspaces: Vec<OrchestratorWorkspace>,
 }
 
-pub struct OpenwrkSpawnOptions {
+pub struct OrchestratorSpawnOptions {
     pub data_dir: String,
     pub daemon_host: String,
     pub daemon_port: u16,
@@ -75,15 +75,10 @@ pub struct OpenwrkSpawnOptions {
     pub cors: Option<String>,
 }
 
-pub fn resolve_openwrk_data_dir() -> String {
-    let env_dir = env::var("OPENWRK_DATA_DIR")
+pub fn resolve_orchestrator_data_dir() -> String {
+    let env_dir = env::var("OPENWORK_DATA_DIR")
         .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            env::var("OPENWORK_DATA_DIR")
-                .ok()
-                .filter(|value| !value.trim().is_empty())
-        });
+        .filter(|value| !value.trim().is_empty());
 
     if let Some(dir) = env_dir {
         return dir;
@@ -92,41 +87,41 @@ pub fn resolve_openwrk_data_dir() -> String {
     if let Some(home) = home_dir() {
         return home
             .join(".openwork")
-            .join("openwrk")
+            .join("openwork-orchestrator")
             .to_string_lossy()
             .to_string();
     }
 
-    ".openwork/openwrk".to_string()
+    ".openwork/openwork-orchestrator".to_string()
 }
 
-fn openwrk_state_path(data_dir: &str) -> PathBuf {
-    Path::new(data_dir).join("openwrk-state.json")
+fn orchestrator_state_path(data_dir: &str) -> PathBuf {
+    Path::new(data_dir).join("openwork-orchestrator-state.json")
 }
 
-fn openwrk_auth_path(data_dir: &str) -> PathBuf {
-    Path::new(data_dir).join("openwrk-auth.json")
+fn orchestrator_auth_path(data_dir: &str) -> PathBuf {
+    Path::new(data_dir).join("openwork-orchestrator-auth.json")
 }
 
-pub fn read_openwrk_auth(data_dir: &str) -> Option<OpenwrkAuthFile> {
-    let path = openwrk_auth_path(data_dir);
+pub fn read_orchestrator_auth(data_dir: &str) -> Option<OrchestratorAuthFile> {
+    let path = orchestrator_auth_path(data_dir);
     let payload = fs::read_to_string(path).ok()?;
     serde_json::from_str(&payload).ok()
 }
 
-pub fn write_openwrk_auth(
+pub fn write_orchestrator_auth(
     data_dir: &str,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
     project_dir: Option<&str>,
 ) -> Result<(), String> {
-    let path = openwrk_auth_path(data_dir);
+    let path = orchestrator_auth_path(data_dir);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
     }
 
-    let payload = OpenwrkAuthFile {
+    let payload = OrchestratorAuthFile {
         opencode_username: opencode_username.map(|value| value.to_string()),
         opencode_password: opencode_password.map(|value| value.to_string()),
         project_dir: project_dir.map(|value| value.to_string()),
@@ -140,13 +135,13 @@ pub fn write_openwrk_auth(
     Ok(())
 }
 
-pub fn clear_openwrk_auth(data_dir: &str) {
-    let path = openwrk_auth_path(data_dir);
+pub fn clear_orchestrator_auth(data_dir: &str) {
+    let path = orchestrator_auth_path(data_dir);
     let _ = fs::remove_file(path);
 }
 
-pub fn read_openwrk_state(data_dir: &str) -> Option<OpenwrkStateFile> {
-    let path = openwrk_state_path(data_dir);
+pub fn read_orchestrator_state(data_dir: &str) -> Option<OrchestratorStateFile> {
+    let path = orchestrator_state_path(data_dir);
     let payload = fs::read_to_string(path).ok()?;
     serde_json::from_str(&payload).ok()
 }
@@ -161,37 +156,40 @@ fn fetch_json<T: DeserializeOwned>(url: &str) -> Result<T, String> {
         .map_err(|e| format!("Failed to parse response: {e}"))
 }
 
-pub fn fetch_openwrk_health(base_url: &str) -> Result<OpenwrkHealth, String> {
+pub fn fetch_orchestrator_health(base_url: &str) -> Result<OrchestratorHealth, String> {
     let url = format!("{}/health", base_url.trim_end_matches('/'));
     fetch_json(&url)
 }
 
-pub fn fetch_openwrk_workspaces(base_url: &str) -> Result<OpenwrkWorkspaceList, String> {
+pub fn fetch_orchestrator_workspaces(base_url: &str) -> Result<OrchestratorWorkspaceList, String> {
     let url = format!("{}/workspaces", base_url.trim_end_matches('/'));
     fetch_json(&url)
 }
 
-pub fn wait_for_openwrk(base_url: &str, timeout_ms: u64) -> Result<OpenwrkHealth, String> {
+pub fn wait_for_orchestrator(
+    base_url: &str,
+    timeout_ms: u64,
+) -> Result<OrchestratorHealth, String> {
     let start = std::time::Instant::now();
     let mut last_error = None;
     while start.elapsed().as_millis() < timeout_ms as u128 {
-        match fetch_openwrk_health(base_url) {
+        match fetch_orchestrator_health(base_url) {
             Ok(health) if health.ok => return Ok(health),
-            Ok(_) => last_error = Some("Openwrk reported unhealthy".to_string()),
+            Ok(_) => last_error = Some("Orchestrator reported unhealthy".to_string()),
             Err(err) => last_error = Some(err),
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
-    Err(last_error.unwrap_or_else(|| "Timed out waiting for openwrk".to_string()))
+    Err(last_error.unwrap_or_else(|| "Timed out waiting for orchestrator".to_string()))
 }
 
-pub fn spawn_openwrk_daemon(
+pub fn spawn_orchestrator_daemon(
     app: &AppHandle,
-    options: &OpenwrkSpawnOptions,
+    options: &OrchestratorSpawnOptions,
 ) -> Result<(tauri::async_runtime::Receiver<CommandEvent>, CommandChild), String> {
-    let command = match app.shell().sidecar("openwrk") {
+    let command = match app.shell().sidecar("openwork-orchestrator") {
         Ok(command) => command,
-        Err(_) => app.shell().command("openwrk"),
+        Err(_) => app.shell().command("openwork"),
     };
 
     let mut args = vec![
@@ -252,11 +250,14 @@ pub fn spawn_openwrk_daemon(
 
     command
         .spawn()
-        .map_err(|e| format!("Failed to start openwrk: {e}"))
+        .map_err(|e| format!("Failed to start orchestrator: {e}"))
 }
 
-pub fn openwrk_status_from_state(data_dir: &str, last_error: Option<String>) -> OpenwrkStatus {
-    let state = read_openwrk_state(data_dir);
+pub fn orchestrator_status_from_state(
+    data_dir: &str,
+    last_error: Option<String>,
+) -> OrchestratorStatus {
+    let state = read_orchestrator_state(data_dir);
     let workspaces = state
         .as_ref()
         .map(|state| state.workspaces.clone())
@@ -266,7 +267,7 @@ pub fn openwrk_status_from_state(data_dir: &str, last_error: Option<String>) -> 
         .as_ref()
         .and_then(|state| state.active_id.clone())
         .filter(|id| !id.trim().is_empty());
-    OpenwrkStatus {
+    OrchestratorStatus {
         running: false,
         data_dir: data_dir.to_string(),
         daemon: state.as_ref().and_then(|state| state.daemon.clone()),
@@ -281,8 +282,11 @@ pub fn openwrk_status_from_state(data_dir: &str, last_error: Option<String>) -> 
     }
 }
 
-pub fn resolve_openwrk_status(data_dir: &str, last_error: Option<String>) -> OpenwrkStatus {
-    let fallback = openwrk_status_from_state(data_dir, last_error);
+pub fn resolve_orchestrator_status(
+    data_dir: &str,
+    last_error: Option<String>,
+) -> OrchestratorStatus {
+    let fallback = orchestrator_status_from_state(data_dir, last_error);
     let base_url = fallback
         .daemon
         .as_ref()
@@ -291,9 +295,9 @@ pub fn resolve_openwrk_status(data_dir: &str, last_error: Option<String>) -> Ope
         return fallback;
     };
 
-    match fetch_openwrk_health(&base_url) {
+    match fetch_orchestrator_health(&base_url) {
         Ok(health) => {
-            let workspace_payload = fetch_openwrk_workspaces(&base_url).ok();
+            let workspace_payload = fetch_orchestrator_workspaces(&base_url).ok();
             let workspaces = workspace_payload
                 .as_ref()
                 .map(|payload| payload.workspaces.clone())
@@ -308,7 +312,7 @@ pub fn resolve_openwrk_status(data_dir: &str, last_error: Option<String>) -> Ope
                 .map(|payload| payload.workspaces.len())
                 .or(health.workspace_count)
                 .unwrap_or(workspaces.len());
-            OpenwrkStatus {
+            OrchestratorStatus {
                 running: health.ok,
                 data_dir: data_dir.to_string(),
                 daemon: health.daemon,
@@ -322,7 +326,7 @@ pub fn resolve_openwrk_status(data_dir: &str, last_error: Option<String>) -> Ope
                 last_error: None,
             }
         }
-        Err(error) => OpenwrkStatus {
+        Err(error) => OrchestratorStatus {
             last_error: Some(error),
             ..fallback
         },

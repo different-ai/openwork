@@ -39,9 +39,9 @@ import {
   engineStop,
   sandboxDoctor,
   sandboxStop,
-  openwrkInstanceDispose,
-  openwrkStartDetached,
-  openwrkWorkspaceActivate,
+  orchestratorInstanceDispose,
+  orchestratorStartDetached,
+  orchestratorWorkspaceActivate,
   pickFile,
   pickDirectory,
   saveFile,
@@ -440,7 +440,7 @@ export function createWorkspaceStore(options: {
     };
   };
 
-  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwrk";
+  const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwork-orchestrator";
 
   const resolveWorkspacePaths = () => {
     const active = activeWorkspacePath().trim();
@@ -943,10 +943,10 @@ export function createWorkspaceStore(options: {
         existingEngineProjectDir: existingEngine?.projectDir ?? null,
       });
 
-      if (canReuseHost && runtime === "openwrk") {
+      if (canReuseHost && runtime === "openwork-orchestrator") {
         try {
           const reuseStart = Date.now();
-          await openwrkWorkspaceActivate({
+          await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
@@ -1003,8 +1003,8 @@ export function createWorkspaceStore(options: {
 
       try {
         const runtime = resolveEngineRuntime();
-        if (runtime === "openwrk") {
-          await openwrkWorkspaceActivate({
+        if (runtime === "openwork-orchestrator") {
+          await orchestratorWorkspaceActivate({
             workspacePath: next.path,
             name: next.displayName?.trim() || next.name?.trim() || null,
           });
@@ -1022,7 +1022,7 @@ export function createWorkspaceStore(options: {
               const ok = await connectToServer(
                 newInfo.baseUrl,
                 newInfo.projectDir ?? undefined,
-                { reason: "workspace-openwrk-switch" },
+                { reason: "workspace-orchestrator-switch" },
                 auth,
                 { navigate: false },
               );
@@ -1449,7 +1449,7 @@ export function createWorkspaceStore(options: {
           },
         );
 
-        const host = await openwrkStartDetached({
+        const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
           sandboxBackend: "docker",
           runId,
@@ -2220,9 +2220,9 @@ export function createWorkspaceStore(options: {
 
     try {
       const runtime = engine()?.runtime ?? resolveEngineRuntime();
-      if (runtime === "openwrk") {
-        await openwrkInstanceDispose(root);
-        await openwrkWorkspaceActivate({
+      if (runtime === "openwork-orchestrator") {
+        await orchestratorInstanceDispose(root);
+        await orchestratorWorkspaceActivate({
           workspacePath: root,
           name: activeWorkspaceInfo()?.displayName?.trim() || activeWorkspaceInfo()?.name?.trim() || null,
         });
@@ -2239,7 +2239,7 @@ export function createWorkspaceStore(options: {
           const ok = await connectToServer(
             nextInfo.baseUrl,
             nextInfo.projectDir ?? undefined,
-            { reason: "engine-reload-openwrk" },
+            { reason: "engine-reload-orchestrator" },
             auth,
           );
           if (!ok) {
