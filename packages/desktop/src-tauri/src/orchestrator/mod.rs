@@ -248,6 +248,10 @@ pub fn spawn_orchestrator_daemon(
         command = command.env("PATH", path_env);
     }
 
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command = command.env(key, value);
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start orchestrator: {e}"))

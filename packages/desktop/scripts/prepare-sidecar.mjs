@@ -131,13 +131,13 @@ const bunTarget = (() => {
     case "aarch64-apple-darwin":
       return "bun-darwin-arm64";
     case "x86_64-apple-darwin":
-      return "bun-darwin-x64";
+      return "bun-darwin-x64-baseline";
     case "aarch64-unknown-linux-gnu":
       return "bun-linux-arm64";
     case "x86_64-unknown-linux-gnu":
-      return "bun-linux-x64";
+      return "bun-linux-x64-baseline";
     case "x86_64-pc-windows-msvc":
-      return "bun-windows-x64";
+      return "bun-windows-x64-baseline";
     default:
       return null;
   }

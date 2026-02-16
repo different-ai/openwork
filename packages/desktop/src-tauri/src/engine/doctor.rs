@@ -2,18 +2,18 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use crate::engine::paths::{
-  resolve_opencode_env_override,
-  resolve_opencode_executable,
-  resolve_opencode_executable_without_override,
+    resolve_opencode_env_override, resolve_opencode_executable,
+    resolve_opencode_executable_without_override,
 };
 use crate::platform::command_for_program;
 use crate::utils::truncate_output;
 
 pub fn opencode_version(program: &OsStr) -> Option<String> {
-    let output = command_for_program(Path::new(program))
-        .arg("--version")
-        .output()
-        .ok()?;
+    let mut command = command_for_program(Path::new(program));
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command.env(key, value);
+    }
+    let output = command.arg("--version").output().ok()?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
 
@@ -28,11 +28,12 @@ pub fn opencode_version(program: &OsStr) -> Option<String> {
 }
 
 pub fn opencode_serve_help(program: &OsStr) -> (bool, Option<i32>, Option<String>, Option<String>) {
-    match command_for_program(Path::new(program))
-        .arg("serve")
-        .arg("--help")
-        .output()
-    {
+    let mut command = command_for_program(Path::new(program));
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command.env(key, value);
+    }
+
+    match command.arg("serve").arg("--help").output() {
         Ok(output) => {
             let status = output.status.code();
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -240,7 +241,9 @@ mod tests {
         let (resolved, _in_path, notes) =
             resolve_engine_path(true, None, Some(sidecar_dir.as_path()));
         assert_eq!(resolved.as_ref(), Some(&override_path));
-        assert!(notes.iter().any(|note| note.contains("Using OPENCODE_BIN_PATH")));
+        assert!(notes
+            .iter()
+            .any(|note| note.contains("Using OPENCODE_BIN_PATH")));
 
         let _ = std::fs::remove_dir_all(&override_dir);
         let _ = std::fs::remove_dir_all(&sidecar_dir);

@@ -64,6 +64,10 @@ pub fn spawn_opencode_router(
         }
     }
 
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command = command.env(key, value);
+    }
+
     command
         .spawn()
         .map_err(|e| format!("Failed to start opencodeRouter: {e}"))

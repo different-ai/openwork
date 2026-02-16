@@ -1,3 +1,4 @@
+mod bun_env;
 mod commands;
 mod config;
 mod engine;

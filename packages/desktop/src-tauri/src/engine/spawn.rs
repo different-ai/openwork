@@ -78,6 +78,10 @@ pub fn spawn_engine(
     command = command.env("OPENCODE_CLIENT", "openwork");
     command = command.env("OPENWORK", "1");
 
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command = command.env(key, value);
+    }
+
     let resource_dir = app.path().resource_dir().ok();
     let current_bin_dir = tauri::process::current_binary(&app.env())
         .ok()

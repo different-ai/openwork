@@ -264,7 +264,12 @@ pub fn opencode_mcp_auth(
     ));
     };
 
-    let output = command_for_program(&program)
+    let mut command = command_for_program(&program);
+    for (key, value) in crate::bun_env::bun_env_overrides() {
+        command.env(key, value);
+    }
+
+    let output = command
         .arg("mcp")
         .arg("auth")
         .arg(server_name)
