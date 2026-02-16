@@ -503,6 +503,7 @@ pub fn orchestrator_start_detached(
     workspace_path: String,
     sandbox_backend: Option<String>,
     run_id: Option<String>,
+    opencode_hot_reload_enabled: Option<bool>,
 ) -> Result<OrchestratorDetachedHost, String> {
     let workspace_path = workspace_path.trim().to_string();
     if workspace_path.is_empty() {
@@ -576,6 +577,11 @@ pub fn orchestrator_start_detached(
         if wants_docker_sandbox {
             args.push("--sandbox".to_string());
             args.push("docker".to_string());
+        }
+
+        if let Some(enabled) = opencode_hot_reload_enabled {
+            args.push("--opencode-hot-reload".to_string());
+            args.push(if enabled { "true" } else { "false" }.to_string());
         }
 
         // Convert to &str for the shell command builder.

@@ -14,6 +14,7 @@ import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
 import { ReloadEventStore } from "./events.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { startReloadWatchers } from "./reload-watcher.js";
 import { opencodeConfigPath, openworkConfigPath, projectCommandsDir, projectSkillsDir } from "./workspace-files.js";
 import { ensureDir, exists, hashToken, shortId } from "./utils.js";
 import { workspaceIdForPath } from "./workspaces.js";
@@ -231,6 +232,22 @@ export function startServer(config: ServerConfig) {
   const routes = createRoutes(config, approvals, tokens);
   const logger = createServerLogger(config);
 
+  let reloadWatcher: { close: () => void } | null = null;
+  if (config.hotReload.enabled) {
+    try {
+      reloadWatcher = startReloadWatchers({
+        config,
+        reloadEvents,
+        logger,
+        debounceMs: config.hotReload.debounceMs,
+      });
+    } catch (error) {
+      logger.log("warn", "Reload watcher failed to initialize", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const serverOptions: {
     hostname: string;
     port: number;
@@ -418,6 +435,10 @@ export function startServer(config: ServerConfig) {
   (serverOptions as { idleTimeout?: number }).idleTimeout = 120;
 
   const server = Bun.serve(serverOptions);
+
+  if (reloadWatcher) {
+    (server as any).reloadWatcher = reloadWatcher;
+  }
 
   return server;
 }
@@ -1021,10 +1042,7 @@ function emitReloadEvent(
   reason: ReloadReason,
   trigger?: ReloadTrigger,
 ) {
-  void reloadEvents;
-  void workspace;
-  void reason;
-  void trigger;
+  reloadEvents.recordDebounced(workspace.id, reason, trigger);
 }
 
 function buildConfigTrigger(path: string): ReloadTrigger {
@@ -2156,8 +2174,20 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "GET", "/workspace/:id/events", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    void ctx;
-    return jsonResponse({ items: [], cursor: 0, workspaceId: workspace.id, disabled: true });
+    if (!config.hotReload.enabled) {
+      return jsonResponse({
+        items: [],
+        cursor: ctx.reloadEvents.cursor(),
+        workspaceId: workspace.id,
+        disabled: true,
+      });
+    }
+
+    const sinceParam = ctx.url.searchParams.get("since");
+    const parsedSince = sinceParam ? Number(sinceParam) : NaN;
+    const since = Number.isFinite(parsedSince) ? parsedSince : undefined;
+    const items = ctx.reloadEvents.list(workspace.id, since);
+    return jsonResponse({ items, cursor: ctx.reloadEvents.cursor(), workspaceId: workspace.id, disabled: false });
   });
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {

@@ -139,6 +139,7 @@ export function createWorkspaceStore(options: {
   setOpencodeConnectStatus?: (status: OpencodeConnectStatus | null) => void;
   onEngineStable?: () => void;
   engineRuntime?: () => EngineRuntime;
+  opencodeHotReloadEnabled?: () => boolean;
   developerMode: () => boolean;
 }) {
 
@@ -441,6 +442,7 @@ export function createWorkspaceStore(options: {
   };
 
   const resolveEngineRuntime = () => options.engineRuntime?.() ?? "openwork-orchestrator";
+  const resolveOpencodeHotReloadEnabled = () => options.opencodeHotReloadEnabled?.() ?? true;
 
   const resolveWorkspacePaths = () => {
     const active = activeWorkspacePath().trim();
@@ -1041,6 +1043,7 @@ export function createWorkspaceStore(options: {
             opencodeBinPath:
               options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
             runtime,
+            opencodeHotReloadEnabled: resolveOpencodeHotReloadEnabled(),
             workspacePaths: resolveWorkspacePaths(),
           });
           setEngine(newInfo);
@@ -1453,6 +1456,7 @@ export function createWorkspaceStore(options: {
           workspacePath: resolvedFolder,
           sandboxBackend: "docker",
           runId,
+          opencodeHotReloadEnabled: resolveOpencodeHotReloadEnabled(),
         });
         setSandboxStep("sandbox", { status: "done", detail: host.sandboxContainerName ?? null });
         setSandboxStep("health", { status: "done" });
@@ -2088,6 +2092,7 @@ export function createWorkspaceStore(options: {
         opencodeBinPath:
           options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
         runtime: resolveEngineRuntime(),
+        opencodeHotReloadEnabled: resolveOpencodeHotReloadEnabled(),
         workspacePaths: resolveWorkspacePaths(),
       });
       setEngine(info);
@@ -2259,6 +2264,7 @@ export function createWorkspaceStore(options: {
         opencodeBinPath:
           options.engineSource() === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
         runtime,
+        opencodeHotReloadEnabled: resolveOpencodeHotReloadEnabled(),
         workspacePaths: resolveWorkspacePaths(),
       });
       setEngine(nextInfo);

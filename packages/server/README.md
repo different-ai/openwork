@@ -60,6 +60,11 @@ Defaults to `~/.config/openwork/server.json` (override with `OPENWORK_SERVER_CON
 - `OPENWORK_OPENCODE_USERNAME`
 - `OPENWORK_OPENCODE_PASSWORD`
 
+Experimental hot reload event feed:
+
+- `OPENWORK_EXPERIMENTAL_HOT_RELOAD` (`1` | `0`, default: `0`)
+- `OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS` (default: `750`)
+
 Token management (scoped tokens):
 
 - `OPENWORK_TOKEN_STORE` path to token store JSON (default: alongside `server.json`)
@@ -100,6 +105,8 @@ Sandbox advertisement (for capability discovery):
 - `GET /workspace/:id/audit`
 - `GET /workspace/:id/export`
 - `POST /workspace/:id/import`
+
+`GET /workspace/:id/events` returns `disabled: true` when experimental hot reload is off.
 
 Token management (host/owner auth):
 

@@ -2308,6 +2308,7 @@ async function startOpenworkServer(options: {
   opencodeDirectory?: string;
   opencodeUsername?: string;
   opencodePassword?: string;
+  hotReload: OpencodeHotReload;
   opencodeRouterHealthPort?: number;
   opencodeRouterDataDir?: string;
   logger: Logger;
@@ -2378,6 +2379,8 @@ async function startOpenworkServer(options: {
       ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
+      OPENWORK_EXPERIMENTAL_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
+      OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
     },
   });
 
@@ -2655,6 +2658,8 @@ async function writeSandboxEntrypoint(options: {
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
+    `export OPENWORK_EXPERIMENTAL_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
+    `export OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENWORK=1`,
     `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
     `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
@@ -5004,6 +5009,7 @@ async function runStart(args: ParsedArgs) {
         opencodeDirectory: resolvedWorkspace,
         opencodeUsername,
         opencodePassword,
+        hotReload: opencodeHotReload,
         opencodeRouterHealthPort: opencodeRouterReady ? opencodeRouterHealthPort : undefined,
         opencodeRouterDataDir: opencodeRouterReady ? (opencodeRouterDataDir ?? undefined) : undefined,
         logger,

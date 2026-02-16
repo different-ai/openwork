@@ -62,6 +62,8 @@ export type SettingsViewProps = {
   setEngineCustomBinPath: (value: string) => void;
   engineRuntime: "direct" | "openwork-orchestrator";
   setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
+  experimentalHotReloadEnabled: boolean;
+  toggleExperimentalHotReload: () => void;
   isWindows: boolean;
   defaultModelLabel: string;
   defaultModelRef: string;
@@ -1001,6 +1003,39 @@ export default function SettingsView(props: SettingsViewProps) {
                     disabled={props.busy}
                   >
                     {props.hideTitlebar ? "On" : "Off"}
+                  </Button>
+                </div>
+              </div>
+            </Show>
+
+            <Show when={isTauriRuntime() && isLocalPreference()}>
+              <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                <div>
+                  <div class="text-sm font-medium text-gray-12">Experimental hot reload</div>
+                  <div class="text-xs text-gray-10">
+                    Enable orchestrator hot reload for OpenCode and OpenWork server workspace events.
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">Use hot reload with orchestrator</div>
+                    <div class="text-xs text-gray-7">
+                      Applies on the next engine start. Keep this on to iterate on `.opencode` and `opencode.json` without manual restarts.
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.toggleExperimentalHotReload}
+                    disabled={props.busy || props.engineRuntime !== "openwork-orchestrator"}
+                    title={
+                      props.engineRuntime === "openwork-orchestrator"
+                        ? ""
+                        : "Switch engine runtime to OpenWork Orchestrator"
+                    }
+                  >
+                    {props.experimentalHotReloadEnabled ? "On" : "Off"}
                   </Button>
                 </div>
               </div>

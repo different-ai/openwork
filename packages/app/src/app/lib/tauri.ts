@@ -143,6 +143,7 @@ export async function engineStart(
     runtime?: "direct" | "openwork-orchestrator";
     workspacePaths?: string[];
     opencodeBinPath?: string | null;
+    opencodeHotReloadEnabled?: boolean;
   },
 ): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_start", {
@@ -150,6 +151,7 @@ export async function engineStart(
     preferSidecar: options?.preferSidecar ?? false,
     opencodeBinPath: options?.opencodeBinPath ?? null,
     runtime: options?.runtime ?? null,
+    opencodeHotReloadEnabled: options?.opencodeHotReloadEnabled ?? null,
     workspacePaths: options?.workspacePaths ?? null,
   });
 }
@@ -403,11 +405,13 @@ export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
+  opencodeHotReloadEnabled?: boolean | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
+    opencodeHotReloadEnabled: input.opencodeHotReloadEnabled ?? null,
   });
 }
 

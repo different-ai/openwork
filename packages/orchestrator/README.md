@@ -40,7 +40,8 @@ locally installed `openwork-server` or `opencode-router` binaries.
 
 Add `--verbose` (or `OPENWORK_VERBOSE=1`) to print extra diagnostics about resolved binaries.
 
-OpenCode hot reload is enabled by default when launched via `openwork`.
+Experimental hot reload is enabled by default when launched via `openwork`.
+This enables OpenCode hot reload and OpenWork server reload events for workspace changes.
 Tune it with:
 
 - `--opencode-hot-reload` / `--no-opencode-hot-reload`

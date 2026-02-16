@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import type { ApprovalMode, ApprovalConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
+import type { ApprovalMode, ApprovalConfig, HotReloadConfig, ServerConfig, WorkspaceConfig, LogFormat } from "./types.js";
 import { buildWorkspaceInfos } from "./workspaces.js";
 import { parseList, readJsonFile, shortId } from "./utils.js";
 
@@ -40,6 +40,7 @@ interface FileConfig {
   opencodePassword?: string;
   logFormat?: LogFormat;
   logRequests?: boolean;
+  hotReload?: Partial<HotReloadConfig>;
 }
 
 const DEFAULT_PORT = 8787;
@@ -47,6 +48,8 @@ const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_TIMEOUT_MS = 30000;
 const DEFAULT_LOG_FORMAT: LogFormat = "pretty";
 const DEFAULT_LOG_REQUESTS = true;
+const DEFAULT_EXPERIMENTAL_HOT_RELOAD = false;
+const DEFAULT_HOT_RELOAD_DEBOUNCE_MS = 750;
 
 function normalizeLogFormat(value: string | undefined): LogFormat | undefined {
   if (!value) return undefined;
@@ -62,6 +65,12 @@ function parseBoolean(value: string | undefined): boolean | undefined {
   if (["true", "1", "yes", "on"].includes(normalized)) return true;
   if (["false", "0", "no", "off"].includes(normalized)) return false;
   return undefined;
+}
+
+function normalizeDebounceMs(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_HOT_RELOAD_DEBOUNCE_MS;
+  const rounded = Math.floor(value);
+  return rounded >= 50 ? rounded : DEFAULT_HOT_RELOAD_DEBOUNCE_MS;
 }
 
 export function parseCliArgs(argv: string[]): CliArgs {
@@ -303,6 +312,15 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envLogRequests = parseBoolean(process.env.OPENWORK_LOG_REQUESTS);
   const logRequests = cli.logRequests ?? envLogRequests ?? fileConfig.logRequests ?? DEFAULT_LOG_REQUESTS;
 
+  const envExperimentalHotReload = parseBoolean(process.env.OPENWORK_EXPERIMENTAL_HOT_RELOAD);
+  const envHotReloadDebounceMs = process.env.OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS
+    ? Number(process.env.OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS)
+    : undefined;
+  const hotReload: HotReloadConfig = {
+    enabled: envExperimentalHotReload ?? fileConfig.hotReload?.enabled ?? DEFAULT_EXPERIMENTAL_HOT_RELOAD,
+    debounceMs: normalizeDebounceMs(envHotReloadDebounceMs ?? fileConfig.hotReload?.debounceMs),
+  };
+
   const authorizedRoots =
     fileConfig.authorizedRoots?.length
       ? fileConfig.authorizedRoots.map((root) => resolve(configDir, root))
@@ -327,5 +345,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostTokenSource,
     logFormat,
     logRequests,
+    hotReload,
   };
 }

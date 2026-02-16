@@ -43,6 +43,10 @@ if (args.verbose) {
   logger.log("info", `Approval: ${config.approval.mode} (${config.approval.timeoutMs}ms)`);
   logger.log("info", `CORS origins: ${config.corsOrigins.join(", ")}`);
   logger.log("info", `Authorized roots: ${config.authorizedRoots.join(", ")}`);
+  logger.log(
+    "info",
+    `Experimental hot reload: ${config.hotReload.enabled ? "on" : "off"} (debounce ${config.hotReload.debounceMs}ms)`
+  );
   logger.log("info", `Token source: ${config.tokenSource}`);
   logger.log("info", `Host token source: ${config.hostTokenSource}`);
 }

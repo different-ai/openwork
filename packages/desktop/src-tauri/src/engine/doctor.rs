@@ -2,9 +2,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use crate::engine::paths::{
-  resolve_opencode_env_override,
-  resolve_opencode_executable,
-  resolve_opencode_executable_without_override,
+    resolve_opencode_env_override, resolve_opencode_executable,
+    resolve_opencode_executable_without_override,
 };
 use crate::platform::command_for_program;
 use crate::utils::truncate_output;
@@ -240,7 +239,9 @@ mod tests {
         let (resolved, _in_path, notes) =
             resolve_engine_path(true, None, Some(sidecar_dir.as_path()));
         assert_eq!(resolved.as_ref(), Some(&override_path));
-        assert!(notes.iter().any(|note| note.contains("Using OPENCODE_BIN_PATH")));
+        assert!(notes
+            .iter()
+            .any(|note| note.contains("Using OPENCODE_BIN_PATH")));
 
         let _ = std::fs::remove_dir_all(&override_dir);
         let _ = std::fs::remove_dir_all(&sidecar_dir);

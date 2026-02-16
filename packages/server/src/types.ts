@@ -42,6 +42,11 @@ export interface ApprovalConfig {
   timeoutMs: number;
 }
 
+export interface HotReloadConfig {
+  enabled: boolean;
+  debounceMs: number;
+}
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -58,6 +63,7 @@ export interface ServerConfig {
   hostTokenSource: "cli" | "env" | "file" | "generated";
   logFormat: LogFormat;
   logRequests: boolean;
+  hotReload: HotReloadConfig;
 }
 
 export interface Capabilities {

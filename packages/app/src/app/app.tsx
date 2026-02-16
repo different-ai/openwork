@@ -255,6 +255,7 @@ export default function App() {
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
 
   const [engineRuntime, setEngineRuntime] = createSignal<EngineRuntime>("openwork-orchestrator");
+  const [experimentalHotReloadEnabled, setExperimentalHotReloadEnabled] = createSignal(true);
 
   const [baseUrl, setBaseUrl] = createSignal("http://127.0.0.1:4096");
   const [clientDirectory, setClientDirectory] = createSignal("");
@@ -1632,6 +1633,7 @@ export default function App() {
     openworkServerClient,
     onEngineStable: () => {},
     engineRuntime,
+    opencodeHotReloadEnabled: experimentalHotReloadEnabled,
     developerMode,
   });
 
@@ -3622,6 +3624,11 @@ export default function App() {
           setEngineRuntime(storedEngineRuntime);
         }
 
+        const storedExperimentalHotReload = window.localStorage.getItem("openwork.experimentalHotReload");
+        if (storedExperimentalHotReload === "0" || storedExperimentalHotReload === "1") {
+          setExperimentalHotReloadEnabled(storedExperimentalHotReload === "1");
+        }
+
         const storedDefaultModel = window.localStorage.getItem(MODEL_PREF_KEY);
         const parsedDefaultModel = parseModelRef(storedDefaultModel);
         if (parsedDefaultModel) {
@@ -3987,6 +3994,18 @@ export default function App() {
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem("openwork.engineRuntime", engineRuntime());
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(
+        "openwork.experimentalHotReload",
+        experimentalHotReloadEnabled() ? "1" : "0",
+      );
     } catch {
       // ignore
     }
@@ -4450,6 +4469,8 @@ export default function App() {
       setEngineCustomBinPath,
       engineRuntime: engineRuntime(),
       setEngineRuntime,
+      experimentalHotReloadEnabled: experimentalHotReloadEnabled(),
+      toggleExperimentalHotReload: () => setExperimentalHotReloadEnabled((value) => !value),
       isWindows: isWindowsPlatform(),
       toggleDeveloperMode: () => setDeveloperMode((v) => !v),
       developerMode: developerMode(),

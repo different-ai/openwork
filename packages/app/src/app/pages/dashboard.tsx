@@ -236,6 +236,8 @@ export type DashboardViewProps = {
   setEngineCustomBinPath: (value: string) => void;
   engineRuntime: "direct" | "openwork-orchestrator";
   setEngineRuntime: (value: "direct" | "openwork-orchestrator") => void;
+  experimentalHotReloadEnabled: boolean;
+  toggleExperimentalHotReload: () => void;
   isWindows: boolean;
   toggleDeveloperMode: () => void;
   developerMode: boolean;
@@ -1294,6 +1296,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   setEngineCustomBinPath={props.setEngineCustomBinPath}
                   engineRuntime={props.engineRuntime}
                   setEngineRuntime={props.setEngineRuntime}
+                  experimentalHotReloadEnabled={props.experimentalHotReloadEnabled}
+                  toggleExperimentalHotReload={props.toggleExperimentalHotReload}
                   isWindows={props.isWindows}
                   defaultModelLabel={props.defaultModelLabel}
                   defaultModelRef={props.defaultModelRef}

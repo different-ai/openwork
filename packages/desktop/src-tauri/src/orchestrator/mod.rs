@@ -72,6 +72,7 @@ pub struct OrchestratorSpawnOptions {
     pub opencode_port: Option<u16>,
     pub opencode_username: Option<String>,
     pub opencode_password: Option<String>,
+    pub opencode_hot_reload_enabled: Option<bool>,
     pub cors: Option<String>,
 }
 
@@ -237,6 +238,13 @@ pub fn spawn_orchestrator_daemon(
     }
 
     let mut command = command.args(args);
+
+    if let Some(enabled) = options.opencode_hot_reload_enabled {
+        command = command.env(
+            "OPENWORK_OPENCODE_HOT_RELOAD",
+            if enabled { "1" } else { "0" },
+        );
+    }
 
     let resource_dir = app.path().resource_dir().ok();
     let current_bin_dir = tauri::process::current_binary(&app.env())
