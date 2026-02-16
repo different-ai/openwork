@@ -1,7 +1,7 @@
 {
   "name": "@different-ai/openwork-ui",
   "private": true,
-  "version": "0.11.74",
+  "version": "0.11.76",
   "type": "module",
   "scripts": {
     "dev": "vite",

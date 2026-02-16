@@ -3,9 +3,10 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::env;
+use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
@@ -61,6 +62,92 @@ fn run_local_command(program: &str, args: &[&str]) -> Result<(i32, String, Strin
     let status = output.status.code().unwrap_or(-1);
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    Ok((status, stdout, stderr))
+}
+
+fn run_local_command_with_timeout(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<(i32, String, String), String> {
+    let mut command = Command::new(program);
+    configure_hidden(&mut command);
+    let mut child = command
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run {program}: {e}"))?;
+
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut reader) = stdout_pipe.take() {
+            let _ = reader.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut reader) = stderr_pipe.take() {
+            let _ = reader.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let poll = Duration::from_millis(25);
+    let start = Instant::now();
+    let mut timed_out = false;
+    let mut exit_status: Option<std::process::ExitStatus> = None;
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                exit_status = Some(status);
+                break;
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    timed_out = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                std::thread::sleep(poll);
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let stdout_bytes = stdout_handle.join().unwrap_or_default();
+                let stderr_bytes = stderr_handle.join().unwrap_or_default();
+                let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+                let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+                return Err(format!(
+                    "Failed to wait for {program}: {err} (stdout: {}, stderr: {})",
+                    stdout.trim(),
+                    stderr.trim()
+                ));
+            }
+        }
+    }
+
+    let stdout_bytes = stdout_handle.join().unwrap_or_default();
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+    let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
+
+    if timed_out {
+        let arg_list = args.join(" ");
+        return Err(format!(
+            "Timed out after {}ms running {program} {arg_list}",
+            timeout.as_millis()
+        ));
+    }
+
+    let status = exit_status.and_then(|s| s.code()).unwrap_or(-1);
     Ok((status, stdout, stderr))
 }
 
@@ -166,7 +253,7 @@ fn resolve_docker_candidates() -> Vec<PathBuf> {
         .collect()
 }
 
-fn run_docker_command(args: &[&str]) -> Result<(i32, String, String), String> {
+fn run_docker_command(args: &[&str], timeout: Duration) -> Result<(i32, String, String), String> {
     // On macOS, GUI apps may not inherit the user's shell PATH (e.g. missing /opt/homebrew/bin).
     // We resolve candidates conservatively and prefer an explicit override when provided.
     let candidates = resolve_docker_candidates();
@@ -181,7 +268,7 @@ fn run_docker_command(args: &[&str]) -> Result<(i32, String, String), String> {
 
     let mut errors: Vec<String> = Vec::new();
     for program in tried {
-        match run_local_command(&program, args) {
+        match run_local_command_with_timeout(&program, args, timeout) {
             Ok(result) => return Ok(result),
             Err(err) => errors.push(err),
         }
@@ -267,10 +354,13 @@ fn emit_sandbox_progress(
 }
 
 fn docker_container_state(container_name: &str) -> Result<Option<String>, String> {
-    let (status, stdout, stderr) = run_local_command(
-        "docker",
+    let (status, stdout, stderr) = match run_docker_command(
         &["inspect", "-f", "{{.State.Status}}", container_name],
-    )?;
+        Duration::from_secs(2),
+    ) {
+        Ok(result) => result,
+        Err(_) => return Ok(None),
+    };
     if status == 0 {
         let trimmed = stdout.trim().to_string();
         return Ok(if trimmed.is_empty() {
@@ -627,7 +717,8 @@ pub fn orchestrator_start_detached(
 
 #[tauri::command]
 pub fn sandbox_doctor() -> SandboxDoctorResult {
-    let (status, stdout, stderr) = match run_docker_command(&["--version"]) {
+    let (status, stdout, stderr) = match run_docker_command(&["--version"], Duration::from_secs(2))
+    {
         Ok(result) => result,
         Err(err) => {
             return SandboxDoctorResult {
@@ -660,20 +751,21 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
     let client_version = parse_docker_client_version(&stdout);
 
     // `docker info` is a good readiness check (installed + daemon reachable + perms).
-    let (info_status, info_stdout, info_stderr) = match run_docker_command(&["info"]) {
-        Ok(result) => result,
-        Err(err) => {
-            return SandboxDoctorResult {
-                installed: true,
-                daemon_running: false,
-                permission_ok: false,
-                ready: false,
-                client_version,
-                server_version: None,
-                error: Some(err),
-            };
-        }
-    };
+    let (info_status, info_stdout, info_stderr) =
+        match run_docker_command(&["info"], Duration::from_secs(8)) {
+            Ok(result) => result,
+            Err(err) => {
+                return SandboxDoctorResult {
+                    installed: true,
+                    daemon_running: false,
+                    permission_ok: false,
+                    ready: false,
+                    client_version,
+                    server_version: None,
+                    error: Some(err),
+                };
+            }
+        };
 
     if info_status == 0 {
         let server_version = parse_docker_server_version(&info_stdout);
@@ -738,11 +830,147 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
         return Err("containerName contains invalid characters".to_string());
     }
 
-    let (status, stdout, stderr) = run_docker_command(&["stop", &name])?;
+    let (status, stdout, stderr) = run_docker_command(&["stop", &name], Duration::from_secs(15))?;
     Ok(ExecResult {
         ok: status == 0,
         status,
         stdout,
         stderr,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::fs;
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    struct EnvGuard {
+        key: &'static str,
+        prev: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &'static str, value: String) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prev }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prev = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, prev }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn write_executable(path: &Path, contents: &str) {
+        fs::write(path, contents).expect("write script");
+        let mut perms = fs::metadata(path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms).expect("chmod");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn docker_command_falls_back_after_timeout() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let tmp =
+            std::env::temp_dir().join(format!("openwork-docker-timeout-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).expect("create tmp dir");
+
+        let slow = tmp.join("slow-docker");
+        let fast = tmp.join("docker");
+
+        write_executable(&slow, "#!/bin/sh\nexec /bin/sleep 5\n");
+        write_executable(
+            &fast,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Docker version 0.0.0, build test"
+  exit 0
+fi
+if [ "$1" = "info" ]; then
+  echo "Server Version: 0.0.0"
+  exit 0
+fi
+exit 0
+"#,
+        );
+
+        let _path = EnvGuard::set("PATH", tmp.to_string_lossy().to_string());
+        let _docker = EnvGuard::set("OPENWORK_DOCKER_BIN", slow.to_string_lossy().to_string());
+        let _docker_alt = EnvGuard::unset("OPENWRK_DOCKER_BIN");
+        let _docker_bin = EnvGuard::unset("DOCKER_BIN");
+
+        let (status, stdout, _stderr) =
+            run_docker_command(&["--version"], Duration::from_millis(300))
+                .expect("docker --version");
+        assert_eq!(status, 0);
+        assert!(stdout.contains("Docker version 0.0.0"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn sandbox_doctor_uses_override_docker_bin() {
+        let _lock = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let tmp =
+            std::env::temp_dir().join(format!("openwork-docker-doctor-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).expect("create tmp dir");
+
+        let fast = tmp.join("docker");
+        write_executable(
+            &fast,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "Docker version 0.0.0, build test"
+  exit 0
+fi
+if [ "$1" = "info" ]; then
+  echo "Server Version: 0.0.0"
+  exit 0
+fi
+exit 0
+"#,
+        );
+
+        let _path = EnvGuard::set("PATH", tmp.to_string_lossy().to_string());
+        let _docker = EnvGuard::set("OPENWORK_DOCKER_BIN", fast.to_string_lossy().to_string());
+        let _docker_alt = EnvGuard::unset("OPENWRK_DOCKER_BIN");
+        let _docker_bin = EnvGuard::unset("DOCKER_BIN");
+
+        let result = sandbox_doctor();
+        assert!(result.installed);
+        assert!(result.ready);
+        assert_eq!(result.server_version.as_deref(), Some("0.0.0"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }
