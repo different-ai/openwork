@@ -37,10 +37,7 @@ ASSET_URL_ARM64="https://github.com/different-ai/openwork/releases/download/${TA
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Download AMD64 asset
 curl -fsSL -o "${TMP_DIR}/${ASSET_NAME_AMD64}" "$ASSET_URL_AMD64"
-
-# Download ARM64 asset
 curl -fsSL -o "${TMP_DIR}/${ASSET_NAME_ARM64}" "$ASSET_URL_ARM64"
 
 # Calculate SHA256 checksums
