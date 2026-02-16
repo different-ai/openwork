@@ -752,7 +752,7 @@ jobs:
           # Treat missing packages as "not published" so release can publish them.
           orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
           server_current="$(npm view openwork-server version 2>/dev/null || true)"
-          opencodeRouter_current="$(npm view owpenwork version 2>/dev/null || true)"
+          opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
 
           if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
             echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
@@ -805,9 +805,9 @@ jobs:
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
         run: pnpm --filter openwork-server publish --access public --no-git-checks
 
-      - name: Publish owpenwork
+      - name: Publish opencode-router
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
-        run: pnpm --filter owpenwork publish --access public --no-git-checks
+        run: pnpm --filter opencode-router publish --access public --no-git-checks
 
       - name: Publish openwork-orchestrator
         if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'

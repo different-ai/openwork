@@ -30,6 +30,7 @@
   "scripts": {
     "dev": "bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
+    "prepack": "node -e \"const fs=require('fs'); fs.rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.json",
     "build:bin": "bun ./script/build.ts --outdir dist/bin --filename opencode-router",
     "build:bin:all": "bun ./script/build.ts --outdir dist/bin --filename opencode-router --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
     "build:binary": "bun ./script/build.ts --outdir dist/bin --filename opencode-router",
