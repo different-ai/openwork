@@ -11,6 +11,7 @@ depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'o
 source_x86_64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
 sha256sums_x86_64=('d444feecbacb432a8b43a5162c5a538b0fffd2c51d3e5eee650fbabd69c66016')
 
+# Note: ARM64 checksums will be updated by scripts/aur/update-aur.sh once ARM64 builds are available
 source_aarch64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-arm64.deb")
 sha256sums_aarch64=('SKIP')
 
