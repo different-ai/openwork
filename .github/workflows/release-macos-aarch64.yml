@@ -249,6 +249,10 @@ jobs:
             os_type: linux
             target: x86_64-unknown-linux-gnu
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
+          - platform: ubuntu-22.04
+            os_type: linux
+            target: aarch64-unknown-linux-gnu
+            args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - platform: windows-2022
             os_type: windows
             target: x86_64-pc-windows-msvc
@@ -328,6 +332,14 @@ jobs:
             rpm \
             libdbus-1-dev \
             librsvg2-dev
+
+      - name: Install Linux ARM64 cross-compilation tools
+        if: matrix.os_type == 'linux' && matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -424,6 +436,9 @@ jobs:
               ;;
             x86_64-unknown-linux-gnu)
               opencode_asset="opencode-linux-x64-baseline.tar.gz"
+              ;;
+            aarch64-unknown-linux-gnu)
+              opencode_asset="opencode-linux-arm64.tar.gz"
               ;;
             x86_64-pc-windows-msvc)
               opencode_asset="opencode-windows-x64-baseline.zip"
