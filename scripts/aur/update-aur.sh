@@ -43,8 +43,9 @@ curl -fsSL -o "${TMP_DIR}/${ASSET_NAME_AMD64}" "$ASSET_URL_AMD64"
 # Download ARM64 asset
 curl -fsSL -o "${TMP_DIR}/${ASSET_NAME_ARM64}" "$ASSET_URL_ARM64"
 
-# Calculate SHA256 for AMD64
-SHA256_AMD64=$($PYTHON_BIN - "${TMP_DIR}/${ASSET_NAME_AMD64}" <<'PY'
+# Define reusable SHA256 calculation function
+compute_sha256() {
+  $PYTHON_BIN - "$1" <<'PY'
 import hashlib
 import sys
 
@@ -55,21 +56,11 @@ with open(path, "rb") as handle:
         hasher.update(chunk)
 print(hasher.hexdigest())
 PY
-)
+}
 
-# Calculate SHA256 for ARM64
-SHA256_ARM64=$($PYTHON_BIN - "${TMP_DIR}/${ASSET_NAME_ARM64}" <<'PY'
-import hashlib
-import sys
-
-path = sys.argv[1]
-hasher = hashlib.sha256()
-with open(path, "rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-        hasher.update(chunk)
-print(hasher.hexdigest())
-PY
-)
+# Calculate SHA256 checksums using the universal function
+SHA256_AMD64=$(compute_sha256 "${TMP_DIR}/${ASSET_NAME_AMD64}")
+SHA256_ARM64=$(compute_sha256 "${TMP_DIR}/${ASSET_NAME_ARM64}")
 
 $PYTHON_BIN - "$PKGBUILD" "$VERSION" "$SHA256_AMD64" "$SHA256_ARM64" <<'PY'
 import pathlib
