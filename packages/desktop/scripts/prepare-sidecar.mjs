@@ -343,7 +343,6 @@ if (shouldBuildOpenworkServer) {
   const buildResult = spawnSync("bun", openworkServerArgs, {
     cwd: openworkServerDir,
     stdio: "inherit",
-    shell: true,
   });
 
   if (buildResult.status !== 0) {
@@ -561,7 +560,7 @@ if (shouldBuildOpenCodeRouter) {
   if (bunTarget) {
     opencodeRouterArgs.push("--target", bunTarget);
   }
-  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit", shell: true });
+  const result = spawnSync("bun", opencodeRouterArgs, { cwd: opencodeRouterDir, stdio: "inherit" });
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
@@ -624,7 +623,6 @@ if (shouldBuildOrchestrator) {
   const result = spawnSync("bun", orchestratorArgs, {
     cwd: orchestratorDir,
     stdio: "inherit",
-    shell: true,
     env: {
       ...process.env,
       NODE_ENV: "production",
@@ -699,7 +697,6 @@ if (shouldBuildChromeDevtools) {
   const result = spawnSync("bun", chromeDevtoolsArgs, {
     cwd: __dirname,
     stdio: "inherit",
-    shell: true,
     env: {
       ...process.env,
       NODE_ENV: "production",
