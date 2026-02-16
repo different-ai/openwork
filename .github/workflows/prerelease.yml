@@ -154,8 +154,10 @@ jobs:
             libdbus-1-dev \
             librsvg2-dev
 
+      # Cross-compilation tools are only needed when building for ARM64 on a non-ARM64 runner.
+      # Native ARM64 runners (e.g., ubuntu-22.04-arm64 or self-hosted ARM64) don't need these.
       - name: Install Linux ARM64 cross-compilation tools
-        if: matrix.os_type == 'linux' && matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.os_type == 'linux' && matrix.target == 'aarch64-unknown-linux-gnu' && runner.arch != 'ARM64'
         run: |
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
