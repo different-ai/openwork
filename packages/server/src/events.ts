@@ -6,9 +6,11 @@ export class ReloadEventStore {
   private seq = 0;
   private maxSize: number;
   private lastRecorded: Map<string, number> = new Map();
+  private onRecord?: (event: ReloadEvent) => void;
 
-  constructor(maxSize = 200) {
+  constructor(maxSize = 200, onRecord?: (event: ReloadEvent) => void) {
     this.maxSize = maxSize;
+    this.onRecord = onRecord;
   }
 
   record(workspaceId: string, reason: ReloadReason, trigger?: ReloadTrigger): ReloadEvent {
@@ -24,6 +26,12 @@ export class ReloadEventStore {
     this.events.push(event);
     if (this.events.length > this.maxSize) {
       this.events.splice(0, this.events.length - this.maxSize);
+    }
+
+    try {
+      this.onRecord?.(event);
+    } catch {
+      // ignore callback errors
     }
 
     return event;

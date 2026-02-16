@@ -65,6 +65,8 @@ Experimental hot reload event feed:
 - `OPENWORK_EXPERIMENTAL_HOT_RELOAD` (`1` | `0`, default: `0`)
 - `OPENWORK_EXPERIMENTAL_HOT_RELOAD_DEBOUNCE_MS` (default: `750`)
 
+When experimental hot reload is enabled, OpenWork forwards skills/plugins/mcp/commands/agents/config changes to OpenCode via `POST /global/dispose`, so changes become active without restarting the orchestrator.
+
 Token management (scoped tokens):
 
 - `OPENWORK_TOKEN_STORE` path to token store JSON (default: alongside `server.json`)

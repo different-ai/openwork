@@ -39,6 +39,37 @@ const LOG_LEVEL_NUMBERS: Record<LogLevel, number> = {
   error: 17,
 };
 
+const OPENCODE_RELOAD_PATH = "/global/dispose";
+const OPENCODE_RELOAD_REASONS = new Set<ReloadReason>([
+  "skills",
+  "commands",
+  "plugins",
+  "mcp",
+  "agents",
+  "config",
+]);
+
+export function shouldReloadOpencode(reason: ReloadReason): boolean {
+  return OPENCODE_RELOAD_REASONS.has(reason);
+}
+
+export function createOpencodeReloader(config: ServerConfig, logger: ServerLogger) {
+  const workspaces = new Map(config.workspaces.map((workspace) => [workspace.id, workspace]));
+  return (event: { workspaceId: string; reason: ReloadReason }) => {
+    if (!config.hotReload.enabled) return;
+    if (!shouldReloadOpencode(event.reason)) return;
+    const workspace = workspaces.get(event.workspaceId);
+    if (!workspace?.baseUrl?.trim()) return;
+    void fetchOpencodeJson(workspace, OPENCODE_RELOAD_PATH, { method: "POST" }).catch((error) => {
+      logger.log("warn", "OpenCode reload request failed", {
+        workspaceId: event.workspaceId,
+        reason: event.reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  };
+}
+
 function toUnixNano(): string {
   return (BigInt(Date.now()) * 1_000_000n).toString();
 }
@@ -227,10 +258,10 @@ type AgentLabAutomationStore = {
 
 export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
-  const reloadEvents = new ReloadEventStore();
+  const logger = createServerLogger(config);
+  const reloadEvents = new ReloadEventStore(200, createOpencodeReloader(config, logger));
   const tokens = new TokenService(config);
   const routes = createRoutes(config, approvals, tokens);
-  const logger = createServerLogger(config);
 
   let reloadWatcher: { close: () => void } | null = null;
   if (config.hotReload.enabled) {

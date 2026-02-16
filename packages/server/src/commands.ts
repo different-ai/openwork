@@ -58,8 +58,8 @@ export async function upsertCommand(
     name: sanitized,
     description: payload.description,
     agent: payload.agent,
-    model: payload.model ?? null,
-    subtask: payload.subtask ?? false,
+    model: payload.model ?? undefined,
+    subtask: payload.subtask,
   });
   const content = frontmatter + "\n" + payload.template.trim() + "\n";
   const dir = projectCommandsDir(workspaceRoot);
