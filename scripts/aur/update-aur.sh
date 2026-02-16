@@ -58,7 +58,7 @@ print(hasher.hexdigest())
 PY
 }
 
-# Calculate SHA256 checksums using the universal function
+# Calculate SHA256 checksums using the reusable function
 SHA256_AMD64=$(compute_sha256 "${TMP_DIR}/${ASSET_NAME_AMD64}")
 SHA256_ARM64=$(compute_sha256 "${TMP_DIR}/${ASSET_NAME_ARM64}")
 
