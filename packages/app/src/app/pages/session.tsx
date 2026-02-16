@@ -209,6 +209,8 @@ const SOUL_SETUP_TEMPLATE = (() => {
   return { name, description, body };
 })();
 
+const INITIAL_MESSAGE_WINDOW = 140;
+
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -236,6 +238,9 @@ export default function SessionView(props: SessionViewProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeSearchHitIndex, setActiveSearchHitIndex] = createSignal(0);
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | null>(null);
+  const [messageWindowStart, setMessageWindowStart] = createSignal(0);
+  const [messageWindowSessionId, setMessageWindowSessionId] = createSignal<string | null>(null);
+  const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
 
   const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
   const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
@@ -340,6 +345,22 @@ export default function SessionView(props: SessionViewProps) {
     const raw = activeSearchHitIndex();
     const index = ((raw % size) + size) % size;
     return `${index + 1} of ${size}`;
+  });
+
+  const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
+  const renderedMessages = createMemo(() => {
+    if (messageWindowExpanded() || searchActive()) return props.messages;
+
+    const start = messageWindowStart();
+    if (start <= 0) return props.messages;
+    if (start >= props.messages.length) return [];
+    return props.messages.slice(start);
+  });
+
+  const hiddenMessageCount = createMemo(() => {
+    if (messageWindowExpanded() || searchActive()) return 0;
+    const hidden = props.messages.length - renderedMessages().length;
+    return hidden > 0 ? hidden : 0;
   });
 
   const canUndoLastMessage = createMemo(() => {
@@ -573,6 +594,49 @@ export default function SessionView(props: SessionViewProps) {
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
+
+  createEffect(
+    on(
+      () => [props.selectedSessionId, props.messages.length] as const,
+      ([sessionId, count], previous) => {
+        const previousSessionId = previous?.[0] ?? null;
+        if (sessionId !== previousSessionId) {
+          setMessageWindowSessionId(null);
+          setMessageWindowExpanded(false);
+          setMessageWindowStart(0);
+        }
+
+        if (!sessionId) return;
+        if (messageWindowExpanded()) return;
+        if (count === 0) return;
+
+        const targetStart = count > INITIAL_MESSAGE_WINDOW ? count - INITIAL_MESSAGE_WINDOW : 0;
+        if (messageWindowSessionId() !== sessionId) {
+          setMessageWindowStart(targetStart);
+          setMessageWindowSessionId(sessionId);
+          return;
+        }
+
+        const currentStart = messageWindowStart();
+        if (currentStart <= 0 && targetStart > 0) {
+          setMessageWindowStart(targetStart);
+          return;
+        }
+
+        if (autoScrollEnabled() && targetStart > currentStart) {
+          setMessageWindowStart(targetStart);
+        }
+      },
+      { defer: true },
+    ),
+  );
+
+  createEffect(() => {
+    const count = props.messages.length;
+    const start = messageWindowStart();
+    if (start <= count) return;
+    setMessageWindowStart(count);
+  });
 
   const isAbsolutePath = (value: string) =>
     /^(?:[a-zA-Z]:[\\/]|\\\\|\/|~\/)/.test(value.trim());
@@ -2273,8 +2337,24 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </Show>
 
+          <Show when={hiddenMessageCount() > 0}>
+            <div class="mb-4 flex justify-center">
+              <button
+                type="button"
+                class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
+                onClick={() => {
+                  setMessageWindowExpanded(true);
+                  setMessageWindowStart(0);
+                }}
+              >
+                Show {hiddenMessageCount().toLocaleString()} earlier message
+                {hiddenMessageCount() === 1 ? "" : "s"}
+              </button>
+            </div>
+          </Show>
+
           <MessageList
-            messages={props.messages}
+            messages={renderedMessages()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}
             expandedStepIds={props.expandedStepIds}
