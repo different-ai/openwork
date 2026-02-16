@@ -113,6 +113,7 @@ renamed = f"{pkgname}-{version}.deb"
 text = srcinfo_path.read_text()
 text = re.sub(r"^\s*pkgver = .*", f"\tpkgver = {version}", text, flags=re.M)
 text = re.sub(r"^\s*pkgrel = .*", "\tpkgrel = 1", text, flags=re.M)
+text = re.sub(r"^\s*noextract = .*", f"\tnoextract = {renamed}", text, flags=re.M)
 text = re.sub(
     r"^\s*source_x86_64 = .*",
     f"\tsource_x86_64 = {renamed}::{url_amd64}",
