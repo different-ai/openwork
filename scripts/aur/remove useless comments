@@ -103,3 +103,4 @@ text = re.sub(
 text = re.sub(r"^\s*sha256sums_aarch64 = .*", f"\tsha256sums_aarch64 = {sha_arm64}", text, flags=re.M)
 srcinfo_path.write_text(text)
 PY
+
