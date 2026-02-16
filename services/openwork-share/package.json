@@ -1,0 +1,10 @@
+{
+  "name": "openwork-share-service",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "dependencies": {
+    "@vercel/blob": "^0.27.0",
+    "ulid": "^2.3.0"
+  }
+}
