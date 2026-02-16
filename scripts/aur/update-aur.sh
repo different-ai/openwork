@@ -45,17 +45,7 @@ curl -fsSL -o "${TMP_DIR}/${ASSET_NAME_ARM64}" "$ASSET_URL_ARM64"
 
 # Define reusable SHA256 calculation function
 compute_sha256() {
-  $PYTHON_BIN - "$1" <<'PY'
-import hashlib
-import sys
-
-path = sys.argv[1]
-hasher = hashlib.sha256()
-with open(path, "rb") as handle:
-    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-        hasher.update(chunk)
-print(hasher.hexdigest())
-PY
+  sha256sum "$1" | awk '{print $1}'
 }
 
 # Calculate SHA256 checksums using the reusable function
