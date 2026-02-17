@@ -79,11 +79,6 @@ function statusDotClass(status?: string): string {
   }
 }
 
-/** Count total steps in a parts group array */
-function countSteps(partsGroups: Part[][]): number {
-  return partsGroups.reduce((sum, parts) => sum + parts.length, 0);
-}
-
 function latestStepPart(partsGroups: Part[][]): Part | undefined {
   for (let groupIndex = partsGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
     const parts = partsGroups[groupIndex] ?? [];
@@ -327,8 +322,12 @@ export default function MessageList(props: MessageListProps) {
   }) => {
     const relatedIds = () => containerProps.relatedIds ?? [];
     const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
-    const totalSteps = () => countSteps(containerProps.partsGroups);
     const latestStep = () => latestStepPart(containerProps.partsGroups);
+    const collapsedLabel = () => {
+      const part = latestStep();
+      if (!part) return "View steps";
+      return summarizeStep(part).title;
+    };
     const hasRunning = () =>
       containerProps.partsGroups.some((parts) =>
         parts.some((part) => {
@@ -354,7 +353,7 @@ export default function MessageList(props: MessageListProps) {
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
           <span class="font-medium">
-            {expanded() ? "Hide steps" : `Show ${totalSteps()} step${totalSteps() === 1 ? "" : "s"}`}
+            {expanded() ? "Hide steps" : collapsedLabel()}
           </span>
           <Show when={hasRunning()}>
             <span class="flex items-center gap-1.5 text-[11px] text-blue-11">
