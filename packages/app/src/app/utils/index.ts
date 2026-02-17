@@ -593,6 +593,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
 
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
+  const writingTools = new Set(["write", "edit", "apply_patch"]);
 
   const isFailedStatus = (value: unknown) => {
     if (typeof value !== "string") return false;
@@ -600,11 +601,8 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
     return lower === "failed" || lower === "error" || lower === "cancelled";
   };
 
-  const isWriteTool = (toolName: unknown) => {
-    if (typeof toolName !== "string") return false;
-    const category = classifyTool(toolName);
-    return category === "write" || category === "edit";
-  };
+  const isWriteTool = (toolName: unknown) =>
+    typeof toolName === "string" && writingTools.has(toolName.trim().toLowerCase());
 
   const normalizeCandidatePath = (value: unknown) => {
     if (typeof value !== "string") return "";
@@ -637,6 +635,50 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
     return matches;
   };
 
+  const collectPatchPaths = (value: unknown, out: Set<string>) => {
+    if (typeof value !== "string" || !value.trim()) return;
+
+    for (const line of value.split("\n")) {
+      const updateMatch = line.match(/^\*\*\*\s+(?:Update|Add)\s+File:\s+(.+)$/);
+      if (updateMatch) {
+        const parsed = normalizeCandidatePath(updateMatch[1]);
+        if (parsed) out.add(parsed);
+        continue;
+      }
+
+      const diffMatch = line.match(/^\+\+\+\s+(?:[ab]\/)?(.+)$/);
+      if (diffMatch) {
+        const parsed = normalizeCandidatePath(diffMatch[1]);
+        if (parsed && parsed !== "/dev/null") out.add(parsed);
+      }
+    }
+  };
+
+  const collectInputPaths = (value: unknown, out: Set<string>, keyHint = "") => {
+    if (typeof value === "string") {
+      if (/patch/i.test(keyHint)) {
+        collectPatchPaths(value, out);
+      }
+      if (/(?:^|_)(?:path|file|filepath|filename)s?$/i.test(keyHint)) {
+        const parsed = normalizeCandidatePath(value);
+        if (parsed) out.add(parsed);
+      }
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        collectInputPaths(item, out, keyHint);
+      }
+      return;
+    }
+
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      collectInputPaths(child, out, key);
+    }
+  };
+
   list.forEach((message) => {
     const messageId = String((message.info as any)?.id ?? "");
 
@@ -659,6 +701,10 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
         const parsed = normalizeCandidatePath(f);
         if (parsed) matches.add(parsed);
       });
+
+      collectInputPaths(state.input, matches);
+      collectPatchPaths(state.patch, matches);
+      collectPatchPaths(state.diff, matches);
 
       collectSuccessOutputPaths(state.output).forEach((filePath) => matches.add(filePath));
 
