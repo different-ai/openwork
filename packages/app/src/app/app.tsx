@@ -39,6 +39,14 @@ import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import {
+  abortSession as abortSessionTyped,
+  abortSessionSafe,
+  revertSession,
+  unrevertSession,
+  shellInSession,
+  listCommands as listCommandsTyped,
+} from "./lib/opencode-session";
+import {
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
@@ -855,23 +863,7 @@ export default function App() {
       const parts = buildPromptParts(resolvedDraft);
 
       if (resolvedDraft.mode === "shell") {
-        const sessionApi = c.session as any;
-        if (sessionApi.shellAsync) {
-          const result = await sessionApi.shellAsync({ sessionID, command: content });
-          assertNoClientError(result);
-        } else if (sessionApi.shell) {
-          const result = await sessionApi.shell({ sessionID, command: content });
-          assertNoClientError(result);
-        } else {
-          const result = await c.session.promptAsync({
-            sessionID,
-            model,
-            agent: agent ?? undefined,
-            variant: modelVariant() ?? undefined,
-            parts: [{ type: "text", text: `!${content}` }],
-          });
-          assertNoClientError(result);
-        }
+        await shellInSession(c, sessionID, content);
       } else if (resolvedDraft.command) {
         // Slash command: route through session.command() API
         const selected = selectedSessionModel();
@@ -931,7 +923,7 @@ export default function App() {
     // OpenCode exposes session.abort which interrupts the active prompt/run.
     // We intentionally don't mutate global busy state here; the SessionView
     // provides local UX (button disabled + toast) for cancellation.
-    unwrap(await (c.session as any).abort({ sessionID: id }));
+    await abortSessionTyped(c, id);
   }
 
   function retryLastPrompt() {
@@ -996,7 +988,7 @@ export default function App() {
     // Revert is rejected while the session is busy. We *usually* have an accurate
     // session status via SSE, but to be resilient to transient desync we attempt
     // an abort even when we think we're idle.
-    await (c.session as any).abort({ sessionID }).catch(() => undefined);
+    await abortSessionSafe(c, sessionID);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     const users = messages().filter((message) => {
@@ -1019,8 +1011,8 @@ export default function App() {
     const messageID = messageIdFromInfo(target);
     if (!messageID) return;
 
-    const next = unwrap(await (c.session as any).revert({ sessionID, messageID }));
-    upsertLocalSession(next as Session);
+    const next = await revertSession(c, sessionID, messageID);
+    upsertLocalSession(next);
     restorePromptFromUserMessage(target);
   }
 
@@ -1029,7 +1021,7 @@ export default function App() {
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
-    await (c.session as any).abort({ sessionID }).catch(() => undefined);
+    await abortSessionSafe(c, sessionID);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     if (!revertMessageID) return;
@@ -1045,8 +1037,8 @@ export default function App() {
     });
 
     if (!next) {
-      const session = unwrap(await (c.session as any).unrevert({ sessionID }));
-      upsertLocalSession(session as Session);
+      const session = await unrevertSession(c, sessionID);
+      upsertLocalSession(session);
       setPrompt("");
       return;
     }
@@ -1054,8 +1046,8 @@ export default function App() {
     const messageID = messageIdFromInfo(next);
     if (!messageID) return;
 
-    const nextSession = unwrap(await (c.session as any).revert({ sessionID, messageID }));
-    upsertLocalSession(nextSession as Session);
+    const nextSession = await revertSession(c, sessionID, messageID);
+    upsertLocalSession(nextSession);
 
     let prior: MessageWithParts | null = null;
     for (let idx = users.length - 1; idx >= 0; idx -= 1) {
@@ -1150,21 +1142,7 @@ export default function App() {
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = client();
     if (!c) return [];
-    try {
-      const commandApi = c.command as any;
-      if (!commandApi?.list) return [];
-      const result = await commandApi.list({ directory: workspaceStore.activeWorkspaceRoot().trim() || undefined });
-      const list = result?.data ?? result ?? [];
-      if (!Array.isArray(list)) return [];
-      return list.map((cmd: any) => ({
-        id: `cmd:${cmd.name}`,
-        name: cmd.name,
-        description: cmd.description,
-        source: cmd.source,
-      }));
-    } catch {
-      return [];
-    }
+    return listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
   }
 
   function setSessionAgent(sessionID: string, agent: string | null) {
