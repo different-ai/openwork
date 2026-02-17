@@ -266,6 +266,8 @@ export default function SessionView(props: SessionViewProps) {
 
   type SearchHit = {
     messageId: string;
+    occurrence: number;
+    key: string;
   };
 
   const messageIdFromInfo = (message: MessageWithParts) => {
@@ -314,13 +316,51 @@ export default function SessionView(props: SessionViewProps) {
       if (!messageId) continue;
       const haystack = messageTextForSearch(message).toLowerCase();
       if (!haystack) continue;
+      let occurrence = 0;
       let index = haystack.indexOf(query);
       while (index !== -1) {
-        hits.push({ messageId });
+        occurrence += 1;
+        hits.push({ messageId, occurrence, key: `${messageId}:${occurrence}` });
         index = haystack.indexOf(query, index + Math.max(1, query.length));
       }
     }
     return hits;
+  });
+
+  const [activeSearchHitKey, setActiveSearchHitKey] = createSignal<string | null>(null);
+
+  const activeSearchResolvedIndex = createMemo(() => {
+    const hits = searchHits();
+    if (!hits.length) return -1;
+
+    const keyed = activeSearchHitKey();
+    if (keyed) {
+      const keyedIndex = hits.findIndex((hit) => hit.key === keyed);
+      if (keyedIndex !== -1) return keyedIndex;
+
+      const separator = keyed.lastIndexOf(":");
+      if (separator > 0) {
+        const messageId = keyed.slice(0, separator);
+        const occurrenceRaw = Number(keyed.slice(separator + 1));
+        if (Number.isFinite(occurrenceRaw) && occurrenceRaw > 0) {
+          let bestIndex = -1;
+          let bestDistance = Number.POSITIVE_INFINITY;
+          for (let idx = 0; idx < hits.length; idx += 1) {
+            const hit = hits[idx];
+            if (hit.messageId !== messageId) continue;
+            const distance = Math.abs(hit.occurrence - occurrenceRaw);
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              bestIndex = idx;
+            }
+          }
+          if (bestIndex !== -1) return bestIndex;
+        }
+      }
+    }
+
+    const raw = activeSearchHitIndex();
+    return ((raw % hits.length) + hits.length) % hits.length;
   });
 
   const searchMatchMessageIds = createMemo(() => {
@@ -332,19 +372,17 @@ export default function SessionView(props: SessionViewProps) {
   const activeSearchHit = createMemo<SearchHit | null>(() => {
     const hits = searchHits();
     if (!hits.length) return null;
-    const size = hits.length;
-    const raw = activeSearchHitIndex();
-    const index = ((raw % size) + size) % size;
+    const index = activeSearchResolvedIndex();
+    if (index < 0) return null;
     return hits[index] ?? null;
   });
 
   const activeSearchPositionLabel = createMemo(() => {
     const hits = searchHits();
     if (!hits.length) return "No matches";
-    const size = hits.length;
-    const raw = activeSearchHitIndex();
-    const index = ((raw % size) + size) % size;
-    return `${index + 1} of ${size}`;
+    const index = activeSearchResolvedIndex();
+    if (index < 0) return `1 of ${hits.length}`;
+    return `${index + 1} of ${hits.length}`;
   });
 
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
@@ -908,6 +946,7 @@ export default function SessionView(props: SessionViewProps) {
         setSearchOpen(false);
         setSearchQuery("");
         setActiveSearchHitIndex(0);
+        setActiveSearchHitKey(null);
       },
     ),
   );
@@ -916,22 +955,31 @@ export default function SessionView(props: SessionViewProps) {
     const hits = searchHits();
     if (!hits.length) {
       setActiveSearchHitIndex(0);
+      setActiveSearchHitKey(null);
       return;
     }
-    setActiveSearchHitIndex((current) => {
-      if (current < 0 || current >= hits.length) return 0;
-      return current;
-    });
+    const resolvedIndex = activeSearchResolvedIndex();
+    const safeIndex = resolvedIndex < 0 || resolvedIndex >= hits.length ? 0 : resolvedIndex;
+    setActiveSearchHitIndex((current) => (current === safeIndex ? current : safeIndex));
+    const nextKey = hits[safeIndex]?.key ?? null;
+    setActiveSearchHitKey((current) => (current === nextKey ? current : nextKey));
   });
 
+  let lastScrolledSearchHitKey: string | null = null;
   createEffect(() => {
+    if (!searchOpen()) {
+      lastScrolledSearchHitKey = null;
+      return;
+    }
     const active = activeSearchHit();
     if (!active) return;
+    if (active.key === lastScrolledSearchHitKey) return;
     const container = chatContainerEl;
     if (!container) return;
     const escapedId = active.messageId.replace(/"/g, '\\"');
     const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
     if (!target) return;
+    lastScrolledSearchHitKey = active.key;
     target.scrollIntoView({ behavior: "smooth", block: "center" });
   });
 
@@ -1118,12 +1166,14 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const moveSearchHit = (offset: number) => {
-    const total = searchHits().length;
+    const hits = searchHits();
+    const total = hits.length;
     if (!total) return;
-    setActiveSearchHitIndex((current) => {
-      const normalized = ((current % total) + total) % total;
-      return (normalized + offset + total) % total;
-    });
+    const normalized = activeSearchResolvedIndex();
+    const current = normalized >= 0 ? normalized : 0;
+    const next = (current + offset + total) % total;
+    setActiveSearchHitIndex(next);
+    setActiveSearchHitKey(hits[next]?.key ?? null);
   };
 
   const undoLastMessage = async () => {
@@ -2234,6 +2284,7 @@ export default function SessionView(props: SessionViewProps) {
                 onInput={(event) => {
                   setSearchQuery(event.currentTarget.value);
                   setActiveSearchHitIndex(0);
+                  setActiveSearchHitKey(null);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
@@ -2359,8 +2410,9 @@ export default function SessionView(props: SessionViewProps) {
             showThinking={props.showThinking}
             expandedStepIds={props.expandedStepIds}
             setExpandedStepIds={props.setExpandedStepIds}
-            searchMatchMessageIds={searchMatchMessageIds()}
-            activeSearchMessageId={activeSearchHit()?.messageId ?? null}
+            searchMatchMessageIds={searchOpen() ? searchMatchMessageIds() : undefined}
+            activeSearchMessageId={searchOpen() ? activeSearchHit()?.messageId ?? null : null}
+            searchQuery={searchOpen() ? searchQuery() : ""}
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">

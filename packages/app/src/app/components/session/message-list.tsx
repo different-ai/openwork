@@ -15,6 +15,7 @@ export type MessageListProps = {
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
+  searchQuery?: string;
   footer?: JSX.Element;
 };
 
@@ -104,6 +105,7 @@ function latestStepPart(partsGroups: Part[][]): Part | undefined {
 
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
+  const normalizedSearchQuery = createMemo(() => (props.searchQuery ?? "").trim());
   let copyTimeout: number | undefined;
   const isAttachmentPart = (part: Part) => {
     if (part.type !== "file") return false;
@@ -421,10 +423,10 @@ export default function MessageList(props: MessageListProps) {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
           const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
           const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
-          const searchOutlineClass = hasActiveSearchMatch
-            ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
+          const searchHighlightClass = hasActiveSearchMatch
+            ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl bg-amber-3/10"
             : hasSearchMatch
-              ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
+              ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl bg-amber-2/10"
               : "";
 
           if (block.kind === "steps-cluster") {
@@ -439,7 +441,7 @@ export default function MessageList(props: MessageListProps) {
                     block.isUser
                       ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
                       : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
-                  } ${searchOutlineClass}`}
+                  } ${searchHighlightClass}`}
                 >
                   <StepsContainer
                     id={block.id}
@@ -464,7 +466,7 @@ export default function MessageList(props: MessageListProps) {
                   block.isUser
                     ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
                     : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
-                } ${searchOutlineClass}`}
+                  } ${searchHighlightClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
                   <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
@@ -502,6 +504,7 @@ export default function MessageList(props: MessageListProps) {
                           showThinking={props.showThinking}
                           tone={block.isUser ? "dark" : "light"}
                           renderMarkdown={!block.isUser}
+                          highlightQuery={normalizedSearchQuery()}
                         />
                       </Show>
                       {group.kind === "steps" &&

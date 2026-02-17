@@ -10,6 +10,7 @@ type Props = {
   showThinking?: boolean;
   tone?: "light" | "dark";
   renderMarkdown?: boolean;
+  highlightQuery?: string;
 };
 
 function clampText(text: string, max = 800) {
@@ -152,6 +153,12 @@ export default function PartView(props: Props) {
   const tone = () => props.tone ?? "light";
   const showThinking = () => props.showThinking ?? true;
   const renderMarkdown = () => props.renderMarkdown ?? false;
+  const highlightQuery = () => (props.highlightQuery ?? "").trim();
+  const textPartValue = createMemo(() => {
+    if (p().type !== "text") return "";
+    return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
+  });
+  const highlightedTextSegments = createMemo(() => splitWithHighlights(textPartValue(), highlightQuery()));
   const fileInfo = () => {
     if (p().type !== "file") return null;
     const part = p() as {
@@ -392,7 +399,13 @@ export default function PartView(props: Props) {
           when={renderMarkdown()}
           fallback={
             <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
-              {"text" in p() ? (p() as { text: string }).text : ""}
+              <For each={highlightedTextSegments()}>
+                {(segment) => (
+                  <Show when={segment.match} fallback={<span>{segment.text}</span>}>
+                    <span class="rounded-sm bg-amber-3/60 px-0.5 text-amber-12">{segment.text}</span>
+                  </Show>
+                )}
+              </For>
             </div>
           }
         >
@@ -400,7 +413,13 @@ export default function PartView(props: Props) {
             when={renderedMarkdown()}
             fallback={
               <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
-                {"text" in p() ? (p() as { text: string }).text : ""}
+                <For each={highlightedTextSegments()}>
+                  {(segment) => (
+                    <Show when={segment.match} fallback={<span>{segment.text}</span>}>
+                      <span class="rounded-sm bg-amber-3/60 px-0.5 text-amber-12">{segment.text}</span>
+                    </Show>
+                  )}
+                </For>
               </div>
             }
           >
