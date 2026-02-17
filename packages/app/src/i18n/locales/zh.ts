@@ -84,7 +84,7 @@ export default {
   "dashboard.remote_display_name_placeholder": "设计团队工作区",
   "dashboard.select_folder": "选择文件夹",
   "dashboard.choose_folder": "选择文件夹",
-  "dashboard.choose_folder_next": "接下来您将选择一个目录。",
+  "dashboard.choose_folder_next": "与您的工作区共享文件。",
   "dashboard.change": "更改",
   "dashboard.opening": "正在打开...",
   "dashboard.choose_preset": "选择预设",

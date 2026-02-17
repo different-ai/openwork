@@ -307,6 +307,11 @@ export default function SessionSidebar(props: SidebarProps) {
                   const isConnecting = () => props.connectingWorkspaceId === group.workspace.id;
                   const pathLabel = () => workspacePathLabel(group.workspace);
                   const detailLabel = () => workspaceDetailLabel(group.workspace);
+                  const isSandboxWorkspace = () =>
+                    group.workspace.workspaceType === "remote" &&
+                    (group.workspace.sandboxBackend === "docker" ||
+                      Boolean(group.workspace.sandboxRunId?.trim()) ||
+                      Boolean(group.workspace.sandboxContainerName?.trim()));
                   const sessions = () => group.sessions;
                   const allowActions = () => !props.connectingWorkspaceId || isConnecting();
                   const connectionState = () => props.workspaceConnectionStateById[group.workspace.id];
@@ -360,7 +365,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 </span>
                                 <Show when={group.workspace.workspaceType === "remote"}>
                                   <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-3 text-gray-11">
-                                    {group.workspace.sandboxContainerName?.trim() ? "Sandbox" : "Remote"}
+                                    {isSandboxWorkspace() ? "Sandbox" : "Remote"}
                                   </span>
                                 </Show>
                               </div>

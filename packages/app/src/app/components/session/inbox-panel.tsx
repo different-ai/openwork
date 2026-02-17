@@ -45,7 +45,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
-  const helperText = "This is remote. Sandboxes are remote too. You need to share files with them. This is where you can do it.";
+  const helperText = "Share files with your remote worker.";
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -221,9 +221,6 @@ export default function InboxPanel(props: InboxPanelProps) {
                 {uploading() ? "Uploading..." : "Drop files or click to upload"}
               </div>
               <div class="mt-0.5 text-[11px] text-dls-secondary">{helperText}</div>
-              <div class="mt-1 text-[11px] text-dls-secondary">
-                <div class="font-mono break-all text-dls-secondary/90">{INBOX_PREFIX}</div>
-              </div>
             </div>
           </div>
         </button>

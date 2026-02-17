@@ -1,9 +1,9 @@
 {
   "name": "@different-ai/openwork",
   "private": true,
-  "version": "0.11.80",
+  "version": "0.11.83",
   "opencodeVersion": "1.1.60",
-  "opencodeRouterVersion": "0.11.80",
+  "opencodeRouterVersion": "0.11.83",
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",

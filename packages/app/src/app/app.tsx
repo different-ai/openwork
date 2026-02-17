@@ -2384,6 +2384,9 @@ export default function App() {
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
+    dockerCleanupBusy,
+    dockerCleanupResult,
+    cleanupOpenworkDockerContainers,
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,
@@ -4471,6 +4474,9 @@ export default function App() {
       repairOpencodeCache,
       cacheRepairBusy: cacheRepairBusy(),
       cacheRepairResult: cacheRepairResult(),
+      cleanupOpenworkDockerContainers,
+      dockerCleanupBusy: dockerCleanupBusy(),
+      dockerCleanupResult: dockerCleanupResult(),
       notionStatus: notionStatus(),
       notionStatusDetail: notionStatusDetail(),
       notionError: notionError(),
@@ -4834,7 +4840,14 @@ export default function App() {
         }
         onConfirmWorker={
           isTauriRuntime()
-            ? (preset, folder) => workspaceStore.createSandboxFlow(preset, folder)
+            ? async (preset, folder) => {
+                const ok = await workspaceStore.createSandboxFlow(preset, folder, {
+                  onReady: async () => {
+                    await createSessionAndOpen();
+                  },
+                });
+                if (!ok) return;
+              }
             : undefined
         }
         workerDisabled={(() => {
@@ -4866,10 +4879,36 @@ export default function App() {
           }
         }}
         workerRetryLabel={t("common.retry", currentLocale())}
+        workerDebugLines={(() => {
+          const doctor = workspaceStore.sandboxDoctorResult?.();
+          const lines: string[] = [];
+          if (!doctor?.debug) return lines;
+          const selected = doctor.debug.selectedBin?.trim();
+          if (selected) lines.push(`selected: ${selected}`);
+          if (doctor.debug.candidates?.length) {
+            lines.push(`candidates: ${doctor.debug.candidates.join(", ")}`);
+          }
+          if (doctor.debug.versionCommand) {
+            const cmd = doctor.debug.versionCommand;
+            lines.push(`docker --version exit=${cmd.status}`);
+            if (cmd.stderr?.trim()) lines.push(`docker --version stderr: ${cmd.stderr.trim()}`);
+          }
+          if (doctor.debug.infoCommand) {
+            const cmd = doctor.debug.infoCommand;
+            lines.push(`docker info exit=${cmd.status}`);
+            if (cmd.stderr?.trim()) lines.push(`docker info stderr: ${cmd.stderr.trim()}`);
+          }
+          return lines;
+        })()}
         onWorkerRetry={() => {
           void workspaceStore.refreshSandboxDoctor?.();
         }}
-        submitting={busy() && busyLabel() === "status.creating_workspace"}
+        workerSubmitting={workspaceStore.sandboxPreflightBusy?.() ?? false}
+        submitting={(() => {
+          const phase = workspaceStore.sandboxCreatePhase?.() ?? "idle";
+          if (phase === "provisioning" || phase === "finalizing") return true;
+          return busy() && busyLabel() === "status.creating_workspace";
+        })()}
         submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
       />
 

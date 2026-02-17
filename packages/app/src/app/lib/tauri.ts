@@ -419,6 +419,20 @@ export type SandboxDoctorResult = {
   clientVersion?: string | null;
   serverVersion?: string | null;
   error?: string | null;
+  debug?: {
+    candidates: string[];
+    selectedBin?: string | null;
+    versionCommand?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+    infoCommand?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+  } | null;
 };
 
 export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
@@ -427,6 +441,16 @@ export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
 
 export async function sandboxStop(containerName: string): Promise<ExecResult> {
   return invoke<ExecResult>("sandbox_stop", { containerName });
+}
+
+export type OpenworkDockerCleanupResult = {
+  candidates: string[];
+  removed: string[];
+  errors: string[];
+};
+
+export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDockerCleanupResult> {
+  return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
 }
 
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {

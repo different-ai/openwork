@@ -50,6 +50,43 @@ pub struct SandboxDoctorResult {
     pub server_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debug: Option<SandboxDoctorDebug>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxDoctorDebug {
+    pub candidates: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_bin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_command: Option<SandboxDoctorCommandDebug>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_command: Option<SandboxDoctorCommandDebug>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxDoctorCommandDebug {
+    pub status: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+struct DockerCommandResult {
+    status: i32,
+    stdout: String,
+    stderr: String,
+    program: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenworkDockerCleanupResult {
+    pub candidates: Vec<String>,
+    pub removed: Vec<String>,
+    pub errors: Vec<String>,
 }
 
 fn run_local_command(program: &str, args: &[&str]) -> Result<(i32, String, String), String> {
@@ -254,6 +291,14 @@ fn resolve_docker_candidates() -> Vec<PathBuf> {
 }
 
 fn run_docker_command(args: &[&str], timeout: Duration) -> Result<(i32, String, String), String> {
+    let result = run_docker_command_detailed(args, timeout)?;
+    Ok((result.status, result.stdout, result.stderr))
+}
+
+fn run_docker_command_detailed(
+    args: &[&str],
+    timeout: Duration,
+) -> Result<DockerCommandResult, String> {
     // On macOS, GUI apps may not inherit the user's shell PATH (e.g. missing /opt/homebrew/bin).
     // We resolve candidates conservatively and prefer an explicit override when provided.
     let candidates = resolve_docker_candidates();
@@ -269,7 +314,14 @@ fn run_docker_command(args: &[&str], timeout: Duration) -> Result<(i32, String, 
     let mut errors: Vec<String> = Vec::new();
     for program in tried {
         match run_local_command_with_timeout(&program, args, timeout) {
-            Ok(result) => return Ok(result),
+            Ok((status, stdout, stderr)) => {
+                return Ok(DockerCommandResult {
+                    status,
+                    stdout,
+                    stderr,
+                    program,
+                })
+            }
             Err(err) => errors.push(err),
         }
     }
@@ -305,6 +357,15 @@ fn parse_docker_server_version(stdout: &str) -> Option<String> {
     None
 }
 
+fn truncate_for_debug(input: &str) -> String {
+    const MAX_LEN: usize = 1200;
+    let trimmed = input.trim();
+    if trimmed.len() <= MAX_LEN {
+        return trimmed.to_string();
+    }
+    format!("{}...[truncated]", &trimmed[..MAX_LEN])
+}
+
 fn derive_orchestrator_container_name(run_id: &str) -> String {
     // Must match openwork-orchestrator's docker naming scheme:
     // `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`
@@ -317,6 +378,39 @@ fn derive_orchestrator_container_name(run_id: &str) -> String {
         sanitized.truncate(24);
     }
     format!("openwork-orchestrator-{sanitized}")
+}
+
+fn is_openwork_managed_container(name: &str) -> bool {
+    name.starts_with("openwork-orchestrator-")
+        || name.starts_with("openwork-dev-")
+        || name.starts_with("openwrk-")
+}
+
+fn list_openwork_managed_containers() -> Result<Vec<String>, String> {
+    let (status, stdout, stderr) = run_docker_command(
+        &["ps", "-a", "--format", "{{.Names}}"],
+        Duration::from_secs(8),
+    )?;
+    if status != 0 {
+        let combined = format!("{}\n{}", stdout.trim(), stderr.trim())
+            .trim()
+            .to_string();
+        let detail = if combined.is_empty() {
+            format!("docker ps -a failed (status {status})")
+        } else {
+            format!("docker ps -a failed (status {status}): {combined}")
+        };
+        return Err(detail);
+    }
+
+    let mut names: Vec<String> = stdout
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|name| !name.is_empty() && is_openwork_managed_container(name))
+        .collect();
+    names.sort();
+    names.dedup();
+    Ok(names)
 }
 
 fn allocate_free_port() -> Result<u16, String> {
@@ -343,24 +437,39 @@ fn emit_sandbox_progress(
     message: &str,
     payload: serde_json::Value,
 ) {
+    let at = now_ms();
+    let elapsed = payload
+        .get("elapsedMs")
+        .and_then(|value| value.as_u64())
+        .map(|value| format!("{value}ms"))
+        .unwrap_or_else(|| "n/a".to_string());
+    let payload_brief = truncate_for_debug(&payload.to_string());
+    eprintln!(
+        "[sandbox-create][at={at}][runId={run_id}][stage={stage}][elapsed={elapsed}] {message} payload={payload_brief}"
+    );
     let event_payload = json!({
         "runId": run_id,
         "stage": stage,
         "message": message,
-        "at": now_ms(),
+        "at": at,
         "payload": payload,
     });
     let _ = app.emit(SANDBOX_PROGRESS_EVENT, event_payload);
 }
 
 fn docker_container_state(container_name: &str) -> Result<Option<String>, String> {
-    let (status, stdout, stderr) = match run_docker_command(
+    let result = match run_docker_command_detailed(
         &["inspect", "-f", "{{.State.Status}}", container_name],
         Duration::from_secs(2),
     ) {
         Ok(result) => result,
-        Err(_) => return Ok(None),
+        Err(err) => {
+            return Err(format!("docker inspect failed: {err}"));
+        }
     };
+    let status = result.status;
+    let stdout = result.stdout;
+    let stderr = result.stderr;
     if status == 0 {
         let trimmed = stdout.trim().to_string();
         return Ok(if trimmed.is_empty() {
@@ -379,7 +488,12 @@ fn docker_container_state(container_name: &str) -> Result<Option<String>, String
     }
 
     // If docker returned something unexpected, don't block progress reporting.
-    Ok(None)
+    Err(format!(
+        "docker inspect {} returned status {} (stderr: {})",
+        result.program,
+        status,
+        truncate_for_debug(&stderr)
+    ))
 }
 
 #[derive(Debug, Deserialize)]
@@ -504,6 +618,7 @@ pub fn orchestrator_start_detached(
     sandbox_backend: Option<String>,
     run_id: Option<String>,
 ) -> Result<OrchestratorDetachedHost, String> {
+    let start_ts = now_ms();
     let workspace_path = workspace_path.trim().to_string();
     if workspace_path.is_empty() {
         return Err("workspacePath is required".to_string());
@@ -523,6 +638,13 @@ pub fn orchestrator_start_detached(
     } else {
         None
     };
+    eprintln!(
+        "[sandbox-create][at={start_ts}][runId={}][stage=entry] workspacePath={} sandboxBackend={} container={}",
+        sandbox_run_id,
+        workspace_path,
+        if wants_docker_sandbox { "docker" } else { "none" },
+        sandbox_container_name.as_deref().unwrap_or("<none>")
+    );
 
     let port = allocate_free_port()?;
     let token = Uuid::new_v4().to_string();
@@ -542,6 +664,25 @@ pub fn orchestrator_start_detached(
             "containerName": sandbox_container_name,
         }),
     );
+
+    if wants_docker_sandbox {
+        let candidates = resolve_docker_candidates()
+            .into_iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        emit_sandbox_progress(
+            &app,
+            &sandbox_run_id,
+            "docker.config",
+            "Inspecting Docker configuration...",
+            json!({
+                "candidates": candidates,
+                "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
+                "openwrkDockerBin": env::var("OPENWRK_DOCKER_BIN").ok(),
+                "dockerBin": env::var("DOCKER_BIN").ok(),
+            }),
+        );
+    }
 
     let command = match app.shell().sidecar("openwork-orchestrator") {
         Ok(command) => command,
@@ -588,6 +729,11 @@ pub fn orchestrator_start_detached(
             .args(str_args)
             .spawn()
             .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
+        eprintln!(
+            "[sandbox-create][at={}][runId={}][stage=spawn] launched openwork sidecar for detached sandbox host",
+            now_ms(),
+            sandbox_run_id
+        );
     }
 
     emit_sandbox_progress(
@@ -605,6 +751,7 @@ pub fn orchestrator_start_detached(
     let mut last_tick = Instant::now() - Duration::from_secs(5);
     let mut last_container_check = Instant::now() - Duration::from_secs(10);
     let mut last_container_state: Option<String> = None;
+    let mut last_container_probe_error: Option<String> = None;
     let mut last_error: Option<String> = None;
 
     while start.elapsed() < Duration::from_millis(health_timeout_ms) {
@@ -614,21 +761,43 @@ pub fn orchestrator_start_detached(
             if last_container_check.elapsed() > Duration::from_millis(1500) {
                 last_container_check = Instant::now();
                 if let Some(name) = sandbox_container_name.as_deref() {
-                    if let Ok(state) = docker_container_state(name) {
-                        if state != last_container_state {
-                            last_container_state = state.clone();
-                            let label = state.clone().unwrap_or_else(|| "not-created".to_string());
-                            emit_sandbox_progress(
-                                &app,
-                                &sandbox_run_id,
-                                "docker.container",
-                                &format!("Sandbox container: {label}"),
-                                json!({
-                                    "containerName": name,
-                                    "containerState": state,
-                                    "elapsedMs": elapsed_ms,
-                                }),
-                            );
+                    match docker_container_state(name) {
+                        Ok(state) => {
+                            if state != last_container_state {
+                                last_container_state = state.clone();
+                                let label =
+                                    state.clone().unwrap_or_else(|| "not-created".to_string());
+                                emit_sandbox_progress(
+                                    &app,
+                                    &sandbox_run_id,
+                                    "docker.container",
+                                    &format!("Sandbox container: {label}"),
+                                    json!({
+                                        "containerName": name,
+                                        "containerState": state,
+                                        "elapsedMs": elapsed_ms,
+                                    }),
+                                );
+                            }
+                            if last_container_probe_error.is_some() {
+                                last_container_probe_error = None;
+                            }
+                        }
+                        Err(err) => {
+                            if last_container_probe_error.as_deref() != Some(err.as_str()) {
+                                last_container_probe_error = Some(err.clone());
+                                emit_sandbox_progress(
+                                    &app,
+                                    &sandbox_run_id,
+                                    "docker.inspect",
+                                    "Docker inspect returned an error while probing sandbox container.",
+                                    json!({
+                                        "containerName": name,
+                                        "error": err,
+                                        "elapsedMs": elapsed_ms,
+                                    }),
+                                );
+                            }
                         }
                     }
                 }
@@ -671,6 +840,7 @@ pub fn orchestrator_start_detached(
                     "elapsedMs": elapsed_ms,
                     "lastError": last_error,
                     "containerState": last_container_state,
+                    "containerProbeError": last_container_probe_error,
                 }),
             );
         }
@@ -691,10 +861,26 @@ pub fn orchestrator_start_detached(
                 "elapsedMs": start.elapsed().as_millis() as u64,
                 "openworkUrl": openwork_url,
                 "containerState": last_container_state,
+                "containerProbeError": last_container_probe_error,
             }),
+        );
+        eprintln!(
+            "[sandbox-create][at={}][runId={}][stage=timeout] health wait timed out after {}ms error={}",
+            now_ms(),
+            sandbox_run_id,
+            start.elapsed().as_millis(),
+            message
         );
         return Err(message);
     }
+
+    eprintln!(
+        "[sandbox-create][at={}][runId={}][stage=complete] detached sandbox host ready in {}ms url={}",
+        now_ms(),
+        sandbox_run_id,
+        start.elapsed().as_millis(),
+        openwork_url
+    );
 
     Ok(OrchestratorDetachedHost {
         openwork_url,
@@ -717,10 +903,28 @@ pub fn orchestrator_start_detached(
 
 #[tauri::command]
 pub fn sandbox_doctor() -> SandboxDoctorResult {
-    let (status, stdout, stderr) = match run_docker_command(&["--version"], Duration::from_secs(2))
-    {
+    let doctor_start = Instant::now();
+    eprintln!("[sandbox-doctor][at={}] start", now_ms());
+    let candidates = resolve_docker_candidates()
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    let mut debug = SandboxDoctorDebug {
+        candidates,
+        selected_bin: None,
+        version_command: None,
+        info_command: None,
+    };
+
+    let version = match run_docker_command_detailed(&["--version"], Duration::from_secs(2)) {
         Ok(result) => result,
         Err(err) => {
+            eprintln!(
+                "[sandbox-doctor][at={}][elapsed={}ms] docker --version failed: {}",
+                now_ms(),
+                doctor_start.elapsed().as_millis(),
+                err
+            );
             return SandboxDoctorResult {
                 installed: false,
                 daemon_running: false,
@@ -729,11 +933,37 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
                 client_version: None,
                 server_version: None,
                 error: Some(err),
+                debug: Some(debug),
             };
         }
     };
 
+    debug.selected_bin = Some(version.program.clone());
+    eprintln!(
+        "[sandbox-doctor][at={}][elapsed={}ms] docker --version via {} status={}",
+        now_ms(),
+        doctor_start.elapsed().as_millis(),
+        version.program,
+        version.status
+    );
+    debug.version_command = Some(SandboxDoctorCommandDebug {
+        status: version.status,
+        stdout: truncate_for_debug(&version.stdout),
+        stderr: truncate_for_debug(&version.stderr),
+    });
+
+    let status = version.status;
+    let stdout = version.stdout;
+    let stderr = version.stderr;
+
     if status != 0 {
+        eprintln!(
+            "[sandbox-doctor][at={}][elapsed={}ms] docker --version non-zero status={} stderr={}",
+            now_ms(),
+            doctor_start.elapsed().as_millis(),
+            status,
+            truncate_for_debug(&stderr)
+        );
         return SandboxDoctorResult {
             installed: false,
             daemon_running: false,
@@ -745,30 +975,59 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
                 "docker --version failed (status {status}): {}",
                 stderr.trim()
             )),
+            debug: Some(debug),
         };
     }
 
     let client_version = parse_docker_client_version(&stdout);
 
     // `docker info` is a good readiness check (installed + daemon reachable + perms).
-    let (info_status, info_stdout, info_stderr) =
-        match run_docker_command(&["info"], Duration::from_secs(8)) {
-            Ok(result) => result,
-            Err(err) => {
-                return SandboxDoctorResult {
-                    installed: true,
-                    daemon_running: false,
-                    permission_ok: false,
-                    ready: false,
-                    client_version,
-                    server_version: None,
-                    error: Some(err),
-                };
-            }
-        };
+    let info = match run_docker_command_detailed(&["info"], Duration::from_secs(8)) {
+        Ok(result) => result,
+        Err(err) => {
+            eprintln!(
+                "[sandbox-doctor][at={}][elapsed={}ms] docker info failed: {}",
+                now_ms(),
+                doctor_start.elapsed().as_millis(),
+                err
+            );
+            return SandboxDoctorResult {
+                installed: true,
+                daemon_running: false,
+                permission_ok: false,
+                ready: false,
+                client_version,
+                server_version: None,
+                error: Some(err),
+                debug: Some(debug),
+            };
+        }
+    };
+
+    debug.info_command = Some(SandboxDoctorCommandDebug {
+        status: info.status,
+        stdout: truncate_for_debug(&info.stdout),
+        stderr: truncate_for_debug(&info.stderr),
+    });
+    eprintln!(
+        "[sandbox-doctor][at={}][elapsed={}ms] docker info status={}",
+        now_ms(),
+        doctor_start.elapsed().as_millis(),
+        info.status
+    );
+
+    let info_status = info.status;
+    let info_stdout = info.stdout;
+    let info_stderr = info.stderr;
 
     if info_status == 0 {
         let server_version = parse_docker_server_version(&info_stdout);
+        eprintln!(
+            "[sandbox-doctor][at={}][elapsed={}ms] ready=true serverVersion={}",
+            now_ms(),
+            doctor_start.elapsed().as_millis(),
+            server_version.as_deref().unwrap_or("<unknown>")
+        );
         return SandboxDoctorResult {
             installed: true,
             daemon_running: true,
@@ -777,6 +1036,7 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
             client_version,
             server_version,
             error: None,
+            debug: Some(debug),
         };
     }
 
@@ -808,6 +1068,7 @@ pub fn sandbox_doctor() -> SandboxDoctorResult {
         } else {
             combined
         }),
+        debug: Some(debug),
     }
 }
 
@@ -836,6 +1097,48 @@ pub fn sandbox_stop(container_name: String) -> Result<ExecResult, String> {
         status,
         stdout,
         stderr,
+    })
+}
+
+#[tauri::command]
+pub fn sandbox_cleanup_openwork_containers() -> Result<OpenworkDockerCleanupResult, String> {
+    let candidates = list_openwork_managed_containers()?;
+    if candidates.is_empty() {
+        return Ok(OpenworkDockerCleanupResult {
+            candidates,
+            removed: Vec::new(),
+            errors: Vec::new(),
+        });
+    }
+
+    let mut removed = Vec::new();
+    let mut errors = Vec::new();
+
+    for name in &candidates {
+        match run_docker_command(&["rm", "-f", name.as_str()], Duration::from_secs(20)) {
+            Ok((status, stdout, stderr)) => {
+                if status == 0 {
+                    removed.push(name.clone());
+                } else {
+                    let combined = format!("{}\n{}", stdout.trim(), stderr.trim())
+                        .trim()
+                        .to_string();
+                    let detail = if combined.is_empty() {
+                        format!("exit {status}")
+                    } else {
+                        format!("exit {status}: {}", truncate_for_debug(&combined))
+                    };
+                    errors.push(format!("{name}: {detail}"));
+                }
+            }
+            Err(err) => errors.push(format!("{name}: {err}")),
+        }
+    }
+
+    Ok(OpenworkDockerCleanupResult {
+        candidates,
+        removed,
+        errors,
     })
 }
 

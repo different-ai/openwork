@@ -22,6 +22,11 @@ export default function WorkspaceChip(props: {
     props.workspace.workspaceType === "remote"
       ? props.workspace.baseUrl ?? props.workspace.path
       : props.workspace.path;
+  const isSandboxWorkspace =
+    props.workspace.workspaceType === "remote" &&
+    (props.workspace.sandboxBackend === "docker" ||
+      Boolean(props.workspace.sandboxRunId?.trim()) ||
+      Boolean(props.workspace.sandboxContainerName?.trim()));
   const translate = (key: string) => t(key, currentLocale());
 
   return (
@@ -45,7 +50,7 @@ export default function WorkspaceChip(props: {
           </span>
           {props.workspace.workspaceType === "remote" ? (
             <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-4 text-gray-11">
-              {translate("dashboard.remote")}
+              {isSandboxWorkspace ? "Sandbox" : translate("dashboard.remote")}
             </span>
           ) : null}
         </div>

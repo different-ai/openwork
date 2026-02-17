@@ -93,6 +93,7 @@ const SANDBOX_INTERNAL_OPENWORK_PORT = DEFAULT_OPENWORK_PORT;
 const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
 
 const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH = "/persist/.config/opencode";
+const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH = "/persist/.openwork-host-opencode-data";
 
 type ParsedArgs = {
   positionals: string[];
@@ -529,6 +530,43 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
         // keep looking
       }
     }
+
+    // Fall back to any non-empty config directory. Some setups keep
+    // provider/auth material in files that are not part of the strict list above.
+    try {
+      const entries = await readdir(candidate);
+      if (entries.length > 0) return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+
+  return null;
+}
+
+async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
+  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  if (!enabled) return null;
+
+  const candidates: string[] = [];
+  const xdgData = process.env.XDG_DATA_HOME?.trim();
+  if (xdgData) candidates.push(join(xdgData, "opencode"));
+  candidates.push(join(homedir(), ".local", "share", "opencode"));
+  if (process.platform === "darwin") {
+    candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
+  }
+
+  const files = ["auth.json", "mcp-auth.json"];
+  for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
+    if (!(await isDir(candidate))) continue;
+    for (const file of files) {
+      try {
+        await access(join(candidate, file));
+        return candidate;
+      } catch {
+        // keep looking
+      }
+    }
   }
 
   return null;
@@ -783,10 +821,14 @@ async function ensureWorkspace(workspace: string): Promise<string> {
   const resolved = resolve(workspace);
   await mkdir(resolved, { recursive: true });
 
-  const configPath = join(resolved, "opencode.json");
-  if (!(await fileExists(configPath))) {
+  const configPathJsonc = join(resolved, "opencode.jsonc");
+  const configPathJson = join(resolved, "opencode.json");
+  const hasJsonc = await fileExists(configPathJsonc);
+  const hasJson = await fileExists(configPathJson);
+
+  if (!hasJsonc && !hasJson) {
     const payload = JSON.stringify({ "$schema": "https://opencode.ai/config.json" }, null, 2);
-    await writeFile(configPath, `${payload}\n`, "utf8");
+    await writeFile(configPathJsonc, `${payload}\n`, "utf8");
   }
 
   return resolved;
@@ -2611,6 +2653,8 @@ async function writeSandboxEntrypoint(options: {
   const opencodeRouterBin = `${options.rootInContainer}/sidecars/opencode-router`;
   const workspaceDir = "/workspace";
   const opencodeConfigDir = options.opencodeConfigDirInContainer;
+  const hostOpencodeConfigDir = SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH;
+  const hostOpencodeDataDir = SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH;
 
   const opencodeCors = options.opencode.corsOrigins
     .map((origin) => `--cors ${shQuote(origin)}`)
@@ -2643,13 +2687,18 @@ async function writeSandboxEntrypoint(options: {
     `export HOME=${shQuote("/persist")}`,
     "export XDG_CONFIG_HOME=\"$HOME/.config\"",
     "export XDG_CACHE_HOME=\"$HOME/.cache\"",
-    "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\"",
+    "export XDG_DATA_HOME=\"$HOME/.local/share\"",
+    "export XDG_STATE_HOME=\"$HOME/.local/state\"",
+    "mkdir -p \"$XDG_CONFIG_HOME\" \"$XDG_CACHE_HOME\" \"$XDG_DATA_HOME\" \"$XDG_STATE_HOME\"",
     // Do not `cd` into the mounted workspace: bun-compiled sidecars read bunfig.toml
     // from cwd, and user workspaces may include preloads that break startup.
     `cd ${shQuote("/persist")}`,
     `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
     `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
     `mkdir -p ${shQuote(opencodeConfigDir)}`,
+    `if [ -d ${shQuote(hostOpencodeConfigDir)} ]; then cp -R ${shQuote(`${hostOpencodeConfigDir}/.`)} ${shQuote(opencodeConfigDir)} 2>/dev/null || true; fi`,
+    "mkdir -p \"$XDG_DATA_HOME/opencode\"",
+    `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `export OPENCODE_CLIENT=openwork-orchestrator`,
     `export OPENCODE_HOT_RELOAD=${shQuote(options.opencode.hotReload.enabled ? "1" : "0")}`,
@@ -2779,6 +2828,18 @@ async function startDockerSandbox(options: {
     });
   }
 
+  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
+  const hasOpencodeDataMount = options.extraMounts.some(
+    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
+  );
+  if (hostOpencodeData && !hasOpencodeDataMount) {
+    args.push("-v", `${hostOpencodeData}:${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH}:ro`);
+    options.logger.debug("sandbox: mounted host opencode data", {
+      hostPath: hostOpencodeData,
+      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
+    });
+  }
+
   if (options.sidecars.opencodeRouter && options.ports.opencodeRouterHealth) {
     args.push("-p", `${options.ports.opencodeRouterHealth}:${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`);
   }
@@ -2891,6 +2952,21 @@ async function startAppleContainerSandbox(options: {
     options.logger.debug("sandbox: mounted host opencode config", {
       hostPath: hostOpencodeConfig,
       containerPath: SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH,
+    });
+  }
+
+  const hostOpencodeData = await resolveHostOpencodeGlobalDataDir();
+  const hasOpencodeDataMount = options.extraMounts.some(
+    (mount) => mount.containerPath === SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
+  );
+  if (hostOpencodeData && !hasOpencodeDataMount) {
+    args.push(
+      "--mount",
+      `type=bind,source=${hostOpencodeData},target=${SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH},readonly`,
+    );
+    options.logger.debug("sandbox: mounted host opencode data", {
+      hostPath: hostOpencodeData,
+      containerPath: SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH,
     });
   }
 

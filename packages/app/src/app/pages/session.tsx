@@ -257,7 +257,13 @@ export default function SessionView(props: SessionViewProps) {
     workspace.path?.trim() ||
     "Worker";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-    workspace.workspaceType === "remote" ? "Remote" : "Local";
+    workspace.workspaceType === "remote"
+      ? workspace.sandboxBackend === "docker" ||
+        Boolean(workspace.sandboxRunId?.trim()) ||
+        Boolean(workspace.sandboxContainerName?.trim())
+        ? "Sandbox"
+        : "Remote"
+      : "Local";
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>

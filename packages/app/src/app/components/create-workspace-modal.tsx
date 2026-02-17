@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
-import { CheckCircle2, FolderPlus, Loader2, X } from "lucide-solid";
+import { CheckCircle2, FolderPlus, Loader2, X, XCircle } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
@@ -25,6 +25,8 @@ export default function CreateWorkspaceModal(props: {
   onWorkerCta?: () => void;
   workerRetryLabel?: string;
   onWorkerRetry?: () => void;
+  workerDebugLines?: string[];
+  workerSubmitting?: boolean;
 
   submittingProgress?: {
     runId: string;
@@ -95,8 +97,10 @@ export default function CreateWorkspaceModal(props: {
   const workerLabel = () => props.workerLabel ?? translate("dashboard.create_sandbox_confirm");
   const isInline = () => props.inline ?? false;
   const submitting = () => props.submitting ?? false;
+  const workerSubmitting = () => props.workerSubmitting ?? false;
 
   const progress = createMemo(() => props.submittingProgress ?? null);
+  const provisioning = createMemo(() => submitting() && Boolean(progress()));
   const [showProgressDetails, setShowProgressDetails] = createSignal(false);
   const [now, setNow] = createSignal(Date.now());
 
@@ -119,6 +123,7 @@ export default function CreateWorkspaceModal(props: {
   const workerDisabled = () => Boolean(props.workerDisabled);
   const workerDisabledReason = () => (props.workerDisabledReason ?? "").trim();
   const showWorkerCallout = () => Boolean(props.onConfirmWorker && workerDisabled() && workerDisabledReason());
+  const workerDebugLines = createMemo(() => (props.workerDebugLines ?? []).map((line) => line.trim()).filter(Boolean));
 
   const content = (
     <div class="bg-gray-2 border border-gray-6 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -138,7 +143,7 @@ export default function CreateWorkspaceModal(props: {
         </Show>
       </div>
 
-          <div class="p-6 flex-1 overflow-y-auto space-y-8">
+          <div class={`p-6 flex-1 overflow-y-auto space-y-8 transition-opacity duration-300 ${provisioning() ? "opacity-40 pointer-events-none" : "opacity-100"}`}>
             <div class="space-y-4">
               <div class="flex items-center gap-3 text-sm font-medium text-gray-12">
                 <div class="w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs">
@@ -223,52 +228,63 @@ export default function CreateWorkspaceModal(props: {
       <div class="p-6 border-t border-gray-6 bg-gray-1 flex flex-col gap-3">
         <Show when={submitting() && progress()}>
           {(p) => (
-            <div class="rounded-xl border border-indigo-7/25 bg-indigo-2/40 px-4 py-3">
+            <div class="rounded-xl border border-gray-6 bg-gray-2/50 px-4 py-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="text-xs font-semibold text-indigo-12">Sandbox setup</div>
-                  <div class="mt-1 text-sm text-gray-12 leading-snug truncate">{p().stage}</div>
-                  <div class="mt-1 text-[11px] text-gray-10 font-mono">{elapsedSeconds()}s elapsed</div>
+                  <div class="text-xs font-semibold text-gray-12 flex items-center gap-2">
+                    <Show when={!p().error} fallback={<XCircle size={14} class="text-red-11" />}>
+                      <Loader2 size={14} class="text-indigo-11 animate-spin" />
+                    </Show>
+                    Sandbox setup
+                  </div>
+                  <div class="mt-1 text-sm text-gray-11 leading-snug truncate">{p().stage}</div>
+                  <div class="mt-1 text-[10px] text-gray-9 font-mono uppercase tracking-wider">{elapsedSeconds()}s</div>
                 </div>
                 <button
                   type="button"
-                  class="shrink-0 text-xs text-gray-10 hover:text-gray-12"
+                  class="shrink-0 text-xs text-gray-10 hover:text-gray-12 transition-colors px-2 py-1 hover:bg-gray-4 rounded"
                   onClick={() => setShowProgressDetails((prev) => !prev)}
                 >
-                  {showProgressDetails() ? "Hide" : "Details"}
+                  {showProgressDetails() ? "Hide logs" : "Show logs"}
                 </button>
               </div>
 
               <Show when={p().error}>
                 {(err) => (
-                  <div class="mt-3 rounded-lg border border-red-7/30 bg-red-2/40 px-3 py-2 text-xs text-red-11">
+                  <div class="mt-3 rounded-lg border border-red-7/30 bg-red-2/40 px-3 py-2 text-xs text-red-11 animate-in fade-in">
                     {err()}
                   </div>
                 )}
               </Show>
 
-              <div class="mt-3 grid gap-2">
+              <div class="mt-4 grid gap-2.5">
                 <For each={p().steps}>
                   {(step) => {
-                    const dotClass = () => {
-                      if (step.status === "done") return "bg-emerald-9";
-                      if (step.status === "active") return "bg-indigo-9 animate-pulse";
-                      if (step.status === "error") return "bg-red-9";
-                      return "bg-gray-7";
+                    const icon = () => {
+                      if (step.status === "done") return <CheckCircle2 size={16} class="text-emerald-10" />;
+                      if (step.status === "active") return <Loader2 size={16} class="text-indigo-11 animate-spin" />;
+                      if (step.status === "error") return <XCircle size={16} class="text-red-10" />;
+                      return <div class="w-4 h-4 rounded-full border-2 border-gray-6" />;
                     };
+                    
                     const textClass = () => {
-                      if (step.status === "done") return "text-emerald-12";
-                      if (step.status === "active") return "text-indigo-12";
-                      if (step.status === "error") return "text-red-12";
-                      return "text-gray-11";
+                      if (step.status === "done") return "text-gray-11 font-medium";
+                      if (step.status === "active") return "text-gray-12 font-semibold";
+                      if (step.status === "error") return "text-red-11 font-medium";
+                      return "text-gray-9";
                     };
+
                     return (
-                      <div class="flex items-start gap-2">
-                        <span class={`mt-1.5 h-2 w-2 rounded-full ${dotClass()}`.trim()} />
-                        <div class="min-w-0 flex-1">
-                          <div class={`text-xs font-medium ${textClass()}`.trim()}>{step.label}</div>
+                      <div class="flex items-center gap-3">
+                        <div class="shrink-0 flex items-center justify-center w-5 h-5">
+                          {icon()}
+                        </div>
+                        <div class="min-w-0 flex-1 flex items-center justify-between gap-2">
+                          <div class={`text-xs ${textClass()} transition-colors duration-200`.trim()}>{step.label}</div>
                           <Show when={(step.detail ?? "").trim()}>
-                            <div class="text-[11px] text-gray-10 font-mono truncate">{step.detail}</div>
+                            <div class="text-[10px] text-gray-9 font-mono truncate max-w-[120px] bg-gray-3/50 px-1.5 py-0.5 rounded">
+                              {step.detail}
+                            </div>
                           </Show>
                         </div>
                       </div>
@@ -278,12 +294,14 @@ export default function CreateWorkspaceModal(props: {
               </div>
 
               <Show when={showProgressDetails() && (p().logs?.length ?? 0) > 0}>
-                <div class="mt-3 rounded-lg border border-gray-6 bg-gray-2/60 px-3 py-2">
-                  <div class="text-[10px] uppercase tracking-wide font-semibold text-gray-10">Recent</div>
-                  <div class="mt-2 space-y-1">
-                    <For each={p().logs.slice(-6)}>
+                <div class="mt-3 rounded-lg border border-gray-6 bg-black/5 px-3 py-2 animate-in fade-in">
+                  <div class="flex justify-between items-center mb-2">
+                    <div class="text-[10px] uppercase tracking-wide font-semibold text-gray-10">Live Logs</div>
+                  </div>
+                  <div class="space-y-0.5 max-h-[120px] overflow-y-auto scrollbar-thin">
+                    <For each={p().logs.slice(-10)}>
                       {(line) => (
-                        <div class="text-[11px] text-gray-11 font-mono break-words">{line}</div>
+                        <div class="text-[10px] text-gray-11 font-mono break-all leading-tight">{line}</div>
                       )}
                     </For>
                   </div>
@@ -313,6 +331,16 @@ export default function CreateWorkspaceModal(props: {
                 </Button>
               </Show>
             </div>
+            <Show when={workerDebugLines().length > 0}>
+              <details class="mt-3 rounded-lg border border-gray-6 bg-gray-2/60 px-3 py-2 text-[11px] text-gray-11">
+                <summary class="cursor-pointer text-xs font-semibold text-gray-12">Docker debug details</summary>
+                <div class="mt-2 space-y-1 font-mono break-words">
+                  <For each={workerDebugLines()}>
+                    {(line) => <div>{line}</div>}
+                  </For>
+                </div>
+              </details>
+            </Show>
           </div>
         </Show>
 
@@ -326,14 +354,19 @@ export default function CreateWorkspaceModal(props: {
             <Button
               variant="outline"
               onClick={() => props.onConfirmWorker?.(preset(), selectedFolder())}
-              disabled={!selectedFolder() || submitting() || workerDisabled()}
+              disabled={!selectedFolder() || submitting() || workerSubmitting() || workerDisabled()}
               title={(() => {
                 if (!selectedFolder()) return translate("dashboard.choose_folder_continue");
                 if (workerDisabled() && workerDisabledReason()) return workerDisabledReason();
                 return undefined;
               })()}
             >
-              {workerLabel()}
+              <Show when={workerSubmitting()} fallback={workerLabel()}>
+                <span class="inline-flex items-center gap-2">
+                  <Loader2 size={16} class="animate-spin" />
+                  {translate("dashboard.sandbox_checking_docker")}
+                </span>
+              </Show>
             </Button>
           </Show>
           <Button

@@ -251,6 +251,9 @@ export type DashboardViewProps = {
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
+  cleanupOpenworkDockerContainers: () => void;
+  dockerCleanupBusy: boolean;
+  dockerCleanupResult: string | null;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
   notionError: string | null;
@@ -288,7 +291,9 @@ export default function DashboardView(props: DashboardViewProps) {
     "Worker";
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
-      ? workspace.sandboxContainerName?.trim()
+      ? workspace.sandboxBackend === "docker" ||
+        Boolean(workspace.sandboxRunId?.trim()) ||
+        Boolean(workspace.sandboxContainerName?.trim())
         ? "Sandbox"
         : "Remote"
       : "Local";
@@ -1328,6 +1333,9 @@ export default function DashboardView(props: DashboardViewProps) {
                   repairOpencodeCache={props.repairOpencodeCache}
                   cacheRepairBusy={props.cacheRepairBusy}
                   cacheRepairResult={props.cacheRepairResult}
+                  cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
+                  dockerCleanupBusy={props.dockerCleanupBusy}
+                  dockerCleanupResult={props.dockerCleanupResult}
                   notionStatus={props.notionStatus}
                   notionStatusDetail={props.notionStatusDetail}
                   notionError={props.notionError}

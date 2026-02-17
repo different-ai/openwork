@@ -105,6 +105,9 @@ export type SettingsViewProps = {
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
+  cleanupOpenworkDockerContainers: () => void;
+  dockerCleanupBusy: boolean;
+  dockerCleanupResult: string | null;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
   notionError: string | null;
@@ -1033,6 +1036,33 @@ export default function SettingsView(props: SettingsViewProps) {
                     title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
                   >
                     {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                  </Button>
+                </div>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div class="min-w-0">
+                    <div class="text-sm text-gray-12">OpenWork Docker containers</div>
+                    <div class="text-xs text-gray-7">
+                      Force-remove Docker containers launched by OpenWork (sandbox + local dev stacks).
+                    </div>
+                    <Show when={props.dockerCleanupResult}>
+                      <div class="text-xs text-gray-11 mt-2">{props.dockerCleanupResult}</div>
+                    </Show>
+                  </div>
+                  <Button
+                    variant="danger"
+                    class="text-xs h-8 py-0 px-3 shrink-0"
+                    onClick={props.cleanupOpenworkDockerContainers}
+                    disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
+                    title={
+                      !isTauriRuntime()
+                        ? "Docker cleanup requires the desktop app"
+                        : props.anyActiveRuns
+                          ? "Stop active runs before cleanup"
+                          : ""
+                    }
+                  >
+                    {props.dockerCleanupBusy ? "Removing containers..." : "Delete containers"}
                   </Button>
                 </div>
 

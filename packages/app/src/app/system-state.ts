@@ -17,7 +17,11 @@ import type {
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
-import { resetOpenworkState, resetOpencodeCache } from "./lib/tauri";
+import {
+  resetOpenworkState,
+  resetOpencodeCache,
+  sandboxCleanupOpenworkContainers,
+} from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
 export type NotionState = {
@@ -54,6 +58,8 @@ export function createSystemState(options: {
 
   const [cacheRepairBusy, setCacheRepairBusy] = createSignal(false);
   const [cacheRepairResult, setCacheRepairResult] = createSignal<string | null>(null);
+  const [dockerCleanupBusy, setDockerCleanupBusy] = createSignal(false);
+  const [dockerCleanupResult, setDockerCleanupResult] = createSignal<string | null>(null);
 
   const updater = createUpdaterState();
   const {
@@ -378,6 +384,42 @@ export function createSystemState(options: {
     }
   }
 
+  async function cleanupOpenworkDockerContainers() {
+    if (!isTauriRuntime()) {
+      setDockerCleanupResult("Docker cleanup requires the desktop app.");
+      return;
+    }
+
+    if (dockerCleanupBusy()) return;
+
+    setDockerCleanupBusy(true);
+    setDockerCleanupResult(null);
+    options.setError(null);
+
+    try {
+      const result = await sandboxCleanupOpenworkContainers();
+      if (!result.candidates.length) {
+        setDockerCleanupResult("No OpenWork Docker containers found.");
+        return;
+      }
+
+      const removedCount = result.removed.length;
+      if (result.errors.length) {
+        const first = result.errors[0];
+        setDockerCleanupResult(
+          `Removed ${removedCount}/${result.candidates.length} containers. ${first}`,
+        );
+        return;
+      }
+
+      setDockerCleanupResult(`Removed ${removedCount} OpenWork Docker container(s).`);
+    } catch (e) {
+      setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
+    } finally {
+      setDockerCleanupBusy(false);
+    }
+  }
+
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
     if (!isTauriRuntime()) return;
 
@@ -523,6 +565,9 @@ export function createSystemState(options: {
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
+    dockerCleanupBusy,
+    dockerCleanupResult,
+    cleanupOpenworkDockerContainers,
     updateAutoCheck,
     setUpdateAutoCheck,
     updateAutoDownload,

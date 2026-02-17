@@ -5,7 +5,6 @@ on:
     branches:
       - dev
       - feat/windows-sidecar
-      - Linux-ARM64-build-and-release
 
 permissions:
   contents: write

@@ -249,7 +249,7 @@ jobs:
             os_type: linux
             target: x86_64-unknown-linux-gnu
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: ubuntu-22.04
+          - platform: ubuntu-22.04-arm
             os_type: linux
             target: aarch64-unknown-linux-gnu
             args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"

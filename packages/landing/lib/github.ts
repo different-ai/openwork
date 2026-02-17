@@ -5,7 +5,9 @@ type ReleaseAsset = {
 
 type Release = {
   draft?: boolean;
+  prerelease?: boolean;
   html_url?: string;
+  tag_name?: string;
   assets?: ReleaseAsset[];
 };
 
@@ -80,11 +82,25 @@ export const getGithubData = async () => {
       : "—";
 
   const releaseList = Array.isArray(releases) ? releases : [];
-  const pick = releaseList.find((release) => {
-    if (!release || release.draft) return false;
+
+  const isStableDesktopRelease = (release: Release) => {
+    if (!release || release.draft || release.prerelease) return false;
+    const tag = String(release.tag_name || "").trim();
+    if (!/^v\d+\.\d+\.\d+([.-][0-9A-Za-z.-]+)?$/.test(tag)) return false;
     const assets = Array.isArray(release.assets) ? release.assets : [];
-    return assets.some((asset) => asset?.browser_download_url);
-  });
+    return assets.some((asset) => {
+      const name = String(asset?.name || "").toLowerCase();
+      return name.startsWith("openwork-desktop-");
+    });
+  };
+
+  const pick =
+    releaseList.find((release) => isStableDesktopRelease(release)) ||
+    releaseList.find((release) => {
+      if (!release || release.draft) return false;
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      return assets.some((asset) => asset?.browser_download_url);
+    });
 
   const assets = Array.isArray(pick?.assets) ? pick.assets : [];
   const dmg = selectAsset(assets, [".dmg"]);

@@ -84,7 +84,7 @@ export default {
   "dashboard.remote_display_name_placeholder": "Design team worker",
   "dashboard.select_folder": "Select Folder",
   "dashboard.choose_folder": "Choose a folder",
-  "dashboard.choose_folder_next": "You will choose a directory next.",
+  "dashboard.choose_folder_next": "Share files with your worker.",
   "dashboard.change": "Change",
   "dashboard.opening": "Opening...",
   "dashboard.choose_preset": "Choose Preset",
