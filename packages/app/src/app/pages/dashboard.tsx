@@ -15,7 +15,12 @@ import type {
   View,
 } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import {
+  formatRelativeTime,
+  getWorkspaceTaskLoadErrorDisplay,
+  isTauriRuntime,
+  normalizeDirectoryPath,
+} from "../utils";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
@@ -774,6 +779,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 const workspace = () => group.workspace;
                 const isConnecting = () => props.connectingWorkspaceId === workspace().id;
                 const isMenuOpen = () => workspaceMenuId() === workspace().id;
+                const taskLoadError = () => getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
 
                 return (
                   <div class="space-y-1">
@@ -821,10 +827,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         </Show>
                         <Show when={group.status === "error"}>
                           <span
-                            class="text-[10px] px-2 py-0.5 rounded-full border border-red-7/50 text-red-11 bg-red-3/30"
-                            title={group.error ?? "Failed to load tasks"}
+                            class={`text-[10px] px-2 py-0.5 rounded-full border ${
+                              taskLoadError().tone === "offline"
+                                ? "border-amber-7/50 text-amber-11 bg-amber-3/30"
+                                : "border-red-7/50 text-red-11 bg-red-3/30"
+                            }`}
+                            title={taskLoadError().title}
                           >
-                            Error
+                            {taskLoadError().label}
                           </span>
                         </Show>
                         {/* Session count intentionally hidden (not a useful signal and it can crowd the header actions). */}
@@ -981,10 +991,14 @@ export default function DashboardView(props: DashboardViewProps) {
                               fallback={
                                 <Show when={group.status === "error"}>
                                   <div
-                                    class="w-full px-3 py-2 text-xs text-red-11 ml-2 text-left rounded-lg bg-red-3/20 border border-red-7/40"
-                                    title={group.error ?? "Failed to load tasks"}
+                                    class={`w-full px-3 py-2 text-xs ml-2 text-left rounded-lg border ${
+                                      taskLoadError().tone === "offline"
+                                        ? "text-amber-11 bg-amber-3/20 border-amber-7/40"
+                                        : "text-red-11 bg-red-3/20 border-red-7/40"
+                                    }`}
+                                    title={taskLoadError().title}
                                   >
-                                    Failed to load tasks
+                                    {taskLoadError().message}
                                   </div>
                                 </Show>
                               }

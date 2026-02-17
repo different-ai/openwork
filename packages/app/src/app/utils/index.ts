@@ -9,6 +9,7 @@ import type {
   PlaceholderAssistantMessage,
   ProviderListItem,
 } from "../types";
+import type { WorkspaceInfo } from "../lib/tauri";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -267,6 +268,78 @@ export function addOpencodeCacheHint(message: string) {
   }
 
   return message;
+}
+
+const SANDBOX_DOCKER_OFFLINE_HINTS = [
+  "cannot connect to the docker daemon",
+  "is the docker daemon running",
+  "docker daemon",
+  "docker desktop",
+  "docker engine",
+  "error during connect",
+  "docker.sock",
+  "docker_socket",
+  "open //./pipe/docker_engine",
+];
+
+const SANDBOX_NETWORK_HINTS = [
+  "failed to fetch",
+  "fetch failed",
+  "networkerror",
+  "request timed out",
+  "timeout",
+  "connection refused",
+  "econnrefused",
+  "connection reset",
+  "socket hang up",
+  "enotfound",
+  "getaddrinfo",
+  "could not connect",
+];
+
+export function isSandboxWorkspace(workspace: WorkspaceInfo) {
+  return (
+    workspace.workspaceType === "remote" &&
+    (workspace.sandboxBackend === "docker" ||
+      Boolean(workspace.sandboxRunId?.trim()) ||
+      Boolean(workspace.sandboxContainerName?.trim()))
+  );
+}
+
+export function getWorkspaceTaskLoadErrorDisplay(workspace: WorkspaceInfo, error?: string | null) {
+  const raw = error?.trim() ?? "";
+  const fallbackTitle = raw || "Failed to load tasks";
+  if (!raw || !isSandboxWorkspace(workspace)) {
+    return {
+      tone: "error" as const,
+      label: "Error",
+      message: "Failed to load tasks",
+      title: fallbackTitle,
+    };
+  }
+
+  const normalized = raw.toLowerCase();
+  const hasDockerHint = SANDBOX_DOCKER_OFFLINE_HINTS.some((hint) => normalized.includes(hint));
+  const hasNetworkHint = SANDBOX_NETWORK_HINTS.some((hint) => normalized.includes(hint));
+  const host = `${workspace.baseUrl ?? ""} ${workspace.openworkHostUrl ?? ""}`.toLowerCase();
+  const localHost = host.includes("localhost") || host.includes("127.0.0.1");
+
+  if (!hasDockerHint && !(localHost && hasNetworkHint)) {
+    return {
+      tone: "error" as const,
+      label: "Error",
+      message: "Failed to load tasks",
+      title: fallbackTitle,
+    };
+  }
+
+  const message = "Sandbox is offline. Start Docker Desktop, then test connection.";
+  return {
+    tone: "offline" as const,
+    label: "Offline",
+    message,
+    title: `${message}\n\n${raw}`,
+  };
 }
 
 export function parseTemplateFrontmatter(raw: string) {
