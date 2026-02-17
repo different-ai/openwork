@@ -1,4 +1,5 @@
 import { For, createEffect, createSignal, onCleanup, onMount } from "solid-js";
+import { t } from "../../../i18n";
 import type { MessageWithParts } from "../../types";
 
 export type MinimapProps = {
@@ -95,7 +96,7 @@ export default function Minimap(props: MinimapProps) {
           return (
             <button
               type="button"
-              aria-label={`${isUser ? "User" : "Agent"} message ${idx() + 1}`}
+              aria-label={isUser ? t("session.minimap_user_msg").replace("{index}", String(idx() + 1)) : t("session.minimap_agent_msg").replace("{index}", String(idx() + 1))}
               aria-current={isActive() ? "true" : undefined}
               class={`absolute left-1/2 -translate-x-1/2 rounded-full transition-all duration-300 ease-out cursor-pointer appearance-none border-none p-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-12/70
                 ${
@@ -107,7 +108,7 @@ export default function Minimap(props: MinimapProps) {
               style={{
                 top: `${line.top}px`,
               }}
-              title={isUser ? "User" : "Agent"}
+              title={isUser ? t("session.minimap_user") : t("session.minimap_agent")}
               onClick={(e) => {
                 e.stopPropagation();
                 const container = props.containerRef();

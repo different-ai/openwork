@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
+import { t } from "../../../i18n";
 import fuzzysort from "fuzzysort";
 import { ArrowUp, AtSign, Check, ChevronDown, File as FileIcon, Paperclip, Square, Terminal, X, Zap } from "lucide-solid";
 
@@ -132,12 +133,12 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 const normalizeText = (value: string) => value.replace(/\u00a0/g, " ");
 
-const MODEL_VARIANT_OPTIONS = [
-  { value: "none", label: "None" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
-  { value: "xhigh", label: "X-High" },
+const MODEL_VARIANT_OPTIONS = () => [
+  { value: "none", label: t("session.variant_none") },
+  { value: "low", label: t("session.variant_low") },
+  { value: "medium", label: t("session.variant_medium") },
+  { value: "high", label: t("session.variant_high") },
+  { value: "xhigh", label: t("session.variant_xhigh") },
 ];
 
 const partsToText = (parts: ComposerPart[]) =>
@@ -254,7 +255,7 @@ const buildPartsFromEditor = (root: HTMLElement, pasteTextById?: Map<string, str
     }
     if (el.dataset.pasteId) {
       const id = el.dataset.pasteId ?? "";
-      const label = el.dataset.pasteLabel ?? el.textContent ?? "[pasted text]";
+      const label = el.dataset.pasteLabel ?? el.textContent ?? t("session.pasted_text");
       const lines = Number(el.dataset.pasteLines ?? "0") || 0;
       const text = pasteTextById?.get(id) ?? label;
       parts.push({ type: "paste", id, label, text, lines });
@@ -404,7 +405,7 @@ export default function Composer(props: ComposerProps) {
     span.dataset.pasteId = part.id;
     span.dataset.pasteLabel = part.label;
     span.dataset.pasteLines = String(part.lines);
-    span.title = "Click to expand pasted text";
+    span.title = t("session.click_to_expand");
     span.className =
       "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold bg-dls-hover text-dls-secondary border border-dls-border cursor-pointer hover:bg-dls-active hover:text-dls-text";
     return span;
@@ -903,17 +904,17 @@ export default function Composer(props: ComposerProps) {
 
   const addAttachments = async (files: File[]) => {
     if (attachmentsDisabled()) {
-      props.onToast(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
+      props.onToast(props.attachmentsDisabledReason ?? t("session.attachments_unavailable"));
       return;
     }
     const next: ComposerAttachment[] = [];
     for (const file of files) {
       if (!ACCEPTED_FILE_TYPES.includes(file.type)) {
-        props.onToast(`${file.name} is not a supported attachment type.`);
+        props.onToast(t("session.toast_unsupported_type"));
         continue;
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        props.onToast(`${file.name} exceeds the 8MB limit.`);
+        props.onToast(t("session.toast_file_too_large").replace("{name}", file.name));
         continue;
       }
       try {
@@ -923,7 +924,7 @@ export default function Composer(props: ComposerProps) {
         // Pre-check: data URL will be embedded in JSON body; reject if too large
         const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead
         if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
-          props.onToast(`${file.name} is too large after encoding. Try a smaller image.`);
+          props.onToast(t("session.toast_image_too_large").replace("{name}", file.name));
           continue;
         }
         next.push({
@@ -935,7 +936,7 @@ export default function Composer(props: ComposerProps) {
           dataUrl,
         });
       } catch (error) {
-        props.onToast(error instanceof Error ? error.message : "Failed to read attachment");
+        props.onToast(error instanceof Error ? error.message : t("session.toast_read_failed"));
       }
     }
     if (next.length) {
@@ -971,7 +972,7 @@ export default function Composer(props: ComposerProps) {
 
     pasteCounter += 1;
     const id = `paste-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const label = `[pasted text ${pasteCounter}]`;
+    const label = `[${t("session.pasted_text").replace(/[[\]]/g, "")} ${pasteCounter}]`;
     const part = { type: "paste", id, label, text, lines } as const;
     const span = createPasteSpan(part);
 
@@ -1035,7 +1036,7 @@ export default function Composer(props: ComposerProps) {
       event.preventDefault();
       const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
       if (!hasSupported) {
-        props.onToast("Unsupported attachment type.");
+        props.onToast(t("session.toast_unsupported_type"));
         return;
       }
       void addAttachments(allFiles);
@@ -1050,7 +1051,7 @@ export default function Composer(props: ComposerProps) {
       const hasAbsoluteWindows = /(^|\s)[a-zA-Z]:\\/.test(trimmedForCheck);
       if (hasFileUrl || hasAbsolutePosix || hasAbsoluteWindows) {
         props.onToast(
-          "This is a remote worker. Sandboxes are remote too. To share files with it, upload them to the Inbox in the sidebar.",
+          t("session.toast_remote_drop_hint")
         );
         setShowInboxUploadAction(Boolean(props.onUploadInboxFiles));
       }
@@ -1328,7 +1329,7 @@ export default function Composer(props: ComposerProps) {
                 <div class="p-2 bg-dls-surface max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={mentionVisible().length}
-                    fallback={<div class="px-3 py-2 text-xs text-dls-secondary">No matches found.</div>}
+                    fallback={<div class="px-3 py-2 text-xs text-dls-secondary">{t("session.search_no_matches")}</div>}
                   >
                     <For each={mentionVisible()}>
                       {(option: MentionOption) => {
@@ -1391,7 +1392,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-dls-secondary">
-                        {slashLoaded() ? "No commands found." : "Loading commands..."}
+                        {slashLoaded() ? t("session.composer_no_commands") : t("session.composer_loading_commands")}
                       </div>
                     }
                   >
@@ -1438,8 +1439,8 @@ export default function Composer(props: ComposerProps) {
                 class="w-full mb-2 flex items-center justify-between gap-3 rounded-xl border border-green-7/20 bg-green-7/10 px-3 py-2 text-left text-sm text-green-12 transition-colors hover:bg-green-7/15"
                 onClick={props.onNotionBannerClick}
               >
-                <span>Try it now: set up my CRM in Notion</span>
-                <span class="text-xs text-green-12 font-medium">Insert prompt</span>
+                <span>{t("session.try_notion_prompt")}</span>
+                <span class="text-xs text-green-12 font-medium">{t("session.insert_prompt")}</span>
               </button>
             </Show>
 
@@ -1459,7 +1460,7 @@ export default function Composer(props: ComposerProps) {
                       <div class="max-w-[160px]">
                         <div class="truncate text-dls-text">{attachment.name}</div>
                         <div class="text-[10px] text-dls-secondary">
-                          {attachment.kind === "image" ? "Image" : attachment.mimeType || "File"}
+                          {attachment.kind === "image" ? t("session.attachment_image") : attachment.mimeType || t("session.attachment_file")}
                         </div>
                       </div>
                       <button
@@ -1491,7 +1492,7 @@ export default function Composer(props: ComposerProps) {
                         class="shrink-0 rounded-md border border-dls-border bg-dls-hover px-2 py-1 text-[10px] text-dls-text hover:bg-dls-active"
                         onClick={() => inboxFileInputRef?.click()}
                       >
-                        Upload to inbox
+                        {t("session.upload_to_inbox")}
                       </button>
                     </Show>
                   </div>
@@ -1501,13 +1502,13 @@ export default function Composer(props: ComposerProps) {
               <div class="flex flex-col gap-2">
                 <div class="flex-1 min-w-0">
                   <Show when={props.isRemoteWorkspace}>
-                    <div class="mb-2 text-[10px] uppercase tracking-wider text-dls-secondary">Remote workspace</div>
+                    <div class="mb-2 text-[10px] uppercase tracking-wider text-dls-secondary">{t("session.composer_remote_workspace")}</div>
                   </Show>
 
                   <div class="relative">
                     <Show when={!props.prompt.trim() && !attachments().length}>
                       <div class="absolute left-0 top-0 text-dls-secondary text-sm leading-relaxed pointer-events-none">
-                        Ask OpenWork...
+                        {t("session.placeholder")}
                       </div>
                     </Show>
                     <div
@@ -1567,8 +1568,8 @@ export default function Composer(props: ComposerProps) {
                           disabled={attachmentsDisabled()}
                           title={
                             attachmentsDisabled()
-                              ? props.attachmentsDisabledReason ?? "Attachments are unavailable."
-                              : "Attach files"
+                              ? props.attachmentsDisabledReason ?? t("session.attachments_unavailable")
+                              : t("session.attach_files")
                           }
                         >
                           <Paperclip size={16} />
@@ -1581,7 +1582,7 @@ export default function Composer(props: ComposerProps) {
                             onClick={props.onToggleAgentPicker}
                             disabled={props.busy}
                             aria-expanded={props.agentPickerOpen}
-                            title="Agent"
+                            title={t("session.agent_label")}
                           >
                             <AtSign size={14} />
                             <span class="max-w-[140px] truncate">{props.agentLabel}</span>
@@ -1591,14 +1592,14 @@ export default function Composer(props: ComposerProps) {
                           <Show when={props.agentPickerOpen}>
                             <div class="absolute left-0 bottom-full mb-2 w-64 rounded-xl border border-dls-border bg-dls-surface shadow-xl backdrop-blur-md overflow-hidden z-40">
                               <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-dls-secondary border-b border-dls-border">
-                                Agent
+                                {t("session.agent_label")}
                               </div>
 
                               <div class="p-2 space-y-1 max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                                 <Show
                                   when={!props.agentPickerBusy}
                                   fallback={
-                                    <div class="px-3 py-2 text-xs text-dls-secondary">Loading agents...</div>
+                                    <div class="px-3 py-2 text-xs text-dls-secondary">{t("session.loading_agents")}</div>
                                   }
                                 >
                                   <Show when={!props.agentPickerError}>
@@ -1613,7 +1614,7 @@ export default function Composer(props: ComposerProps) {
                                         props.onSelectAgent(null);
                                       }}
                                     >
-                                      <span>Default agent</span>
+                                      <span>{t("session.default_agent")}</span>
                                       <Show when={!props.selectedAgent}>
                                         <Check size={14} class="text-dls-secondary" />
                                       </Show>
@@ -1672,17 +1673,17 @@ export default function Composer(props: ComposerProps) {
                             disabled={props.busy}
                             aria-expanded={variantMenuOpen()}
                           >
-                            <span>Thinking</span>
+                            <span>{t("settings.thinking")}</span>
                             <span class="font-mono text-dls-text">{props.modelVariantLabel}</span>
                             <ChevronDown size={14} />
                           </button>
                           <Show when={variantMenuOpen()}>
                             <div class="absolute left-0 bottom-full mb-2 w-48 rounded-xl border border-dls-border bg-dls-surface shadow-xl backdrop-blur-md overflow-hidden z-40">
                               <div class="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-dls-secondary border-b border-dls-border">
-                                Thinking effort
+                                {t("session.thinking_effort")}
                               </div>
                               <div class="p-2 space-y-1">
-                                <For each={MODEL_VARIANT_OPTIONS}>
+                                <For each={MODEL_VARIANT_OPTIONS()}>
                                   {(option) => (
                                     <button
                                       type="button"
@@ -1697,7 +1698,7 @@ export default function Composer(props: ComposerProps) {
                                     >
                                       <span>{option.label}</span>
                                       <Show when={activeVariant() === option.value}>
-                                        <span class="text-[10px] uppercase tracking-wider text-dls-secondary">Active</span>
+                                        <span class="text-[10px] uppercase tracking-wider text-dls-secondary">{t("session.active_variant")}</span>
                                       </Show>
                                     </button>
                                   )}
@@ -1719,7 +1720,7 @@ export default function Composer(props: ComposerProps) {
                                 ? "bg-dls-active text-dls-secondary"
                                 : "bg-dls-accent text-white"
                                 }`}
-                              title="Send"
+                              title={t("session.send_button")}
                             >
                               <ArrowUp size={18} />
                             </button>
@@ -1729,7 +1730,7 @@ export default function Composer(props: ComposerProps) {
                             type="button"
                             onClick={() => props.onStop()}
                             class="p-1.5 rounded-full bg-gray-12 text-gray-1 hover:bg-gray-11 transition-colors"
-                            title="Stop"
+                            title={t("session.stop_button")}
                           >
                             <Square size={14} fill="currentColor" />
                           </button>

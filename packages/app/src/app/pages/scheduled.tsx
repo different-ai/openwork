@@ -3,6 +3,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { ScheduledJob } from "../types";
 import { usePlatform } from "../context/platform";
 import { formatRelativeTime, isTauriRuntime } from "../utils";
+import { t } from "../../i18n";
 
 import Button from "../components/button";
 import {
@@ -39,9 +40,9 @@ export type ScheduledTasksViewProps = {
 };
 
 const toRelative = (value?: string | null) => {
-  if (!value) return "Never";
+  if (!value) return t("scheduled.never");
   const parsed = Date.parse(value);
-  if (!Number.isFinite(parsed)) return "Never";
+  if (!Number.isFinite(parsed)) return t("scheduled.never");
   return formatRelativeTime(parsed);
 };
 
@@ -74,28 +75,28 @@ const parseCronNumbers = (value: string) => {
 
 const humanizeCron = (cron: string) => {
   const parts = cron.trim().split(/\s+/);
-  if (parts.length < 5) return "Custom schedule";
+  if (parts.length < 5) return t("scheduled.custom_schedule");
   const [minuteRaw, hourRaw, dom, mon, dowRaw] = parts;
-  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return "Custom schedule";
+  if (!minuteRaw || !hourRaw || !dom || !mon || !dowRaw) return t("scheduled.custom_schedule");
 
   // Every N hours
   if (minuteRaw === "0" && hourRaw.startsWith("*/") && dom === "*" && mon === "*" && dowRaw === "*") {
     const interval = Number.parseInt(hourRaw.slice(2), 10);
     if (Number.isFinite(interval) && interval > 0) {
-      return interval === 1 ? "Every hour" : `Every ${interval} hours`;
+      return interval === 1 ? t("scheduled.every_hour") : t("scheduled.every_n_hours").replace("{n}", String(interval));
     }
   }
 
   // Daily / weekly at a fixed time
   const hour = Number.parseInt(hourRaw, 10);
   const minute = Number.parseInt(minuteRaw, 10);
-  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return "Custom schedule";
-  if (dom !== "*" || mon !== "*") return "Custom schedule";
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return t("scheduled.custom_schedule");
+  if (dom !== "*" || mon !== "*") return t("scheduled.custom_schedule");
 
   const timeLabel = `${pad2(hour)}:${pad2(minute)}`;
 
   if (dowRaw === "*") {
-    return `Every day at ${timeLabel}`;
+    return t("scheduled.every_day_at").replace("{time}", timeLabel);
   }
 
   const days = parseCronNumbers(dowRaw);
@@ -105,50 +106,50 @@ const humanizeCron = (cron: string) => {
   const weekendDays = [0, 6];
 
   const includesAll = allDays.every((d) => normalized.has(d));
-  if (includesAll) return `Every day at ${timeLabel}`;
+  if (includesAll) return t("scheduled.every_day_at").replace("{time}", timeLabel);
 
   const includesWeekdays = weekdayDays.every((d) => normalized.has(d)) && !weekendDays.some((d) => normalized.has(d));
-  if (includesWeekdays) return `Weekdays at ${timeLabel}`;
+  if (includesWeekdays) return t("scheduled.weekdays_at").replace("{time}", timeLabel);
 
   const includesWeekends = weekendDays.every((d) => normalized.has(d)) && !weekdayDays.some((d) => normalized.has(d));
-  if (includesWeekends) return `Weekends at ${timeLabel}`;
+  if (includesWeekends) return t("scheduled.weekends_at").replace("{time}", timeLabel);
 
   const labels: Record<number, string> = {
-    0: "Sun",
-    1: "Mon",
-    2: "Tue",
-    3: "Wed",
-    4: "Thu",
-    5: "Fri",
-    6: "Sat",
+    0: t("scheduled.day_sun"),
+    1: t("scheduled.day_mon"),
+    2: t("scheduled.day_tue"),
+    3: t("scheduled.day_wed"),
+    4: t("scheduled.day_thu"),
+    5: t("scheduled.day_fri"),
+    6: t("scheduled.day_sat"),
   };
   const list = Array.from(normalized)
     .filter((d) => d >= 0 && d <= 6)
     .sort((a, b) => a - b)
     .map((d) => labels[d] ?? String(d))
     .join(", ");
-  if (!list) return `At ${timeLabel}`;
-  return `${list} at ${timeLabel}`;
+  if (!list) return t("scheduled.at_time").replace("{time}", timeLabel);
+  return t("scheduled.days_at_time").replace("{days}", list).replace("{time}", timeLabel);
 };
 
 const taskSummary = (job: ScheduledJob) => {
   const run = job.run;
   if (run?.command) {
     const args = run.arguments ? ` ${run.arguments}` : "";
-    return { label: "Command", value: `${run.command}${args}`, mono: true };
+    return { label: t("scheduled.label_command"), value: `${run.command}${args}`, mono: true };
   }
   const prompt = run?.prompt ?? job.prompt;
   if (prompt) {
-    return { label: "Prompt", value: prompt, mono: false };
+    return { label: t("scheduled.label_prompt"), value: prompt, mono: false };
   }
-  return { label: "Task", value: "No prompt or command found.", mono: false };
+  return { label: t("scheduled.label_task"), value: t("scheduled.no_prompt_command"), mono: false };
 };
 
 const statusLabel = (status?: string | null) => {
-  if (!status) return "Not run yet";
-  if (status === "running") return "Running";
-  if (status === "success") return "Success";
-  if (status === "failed") return "Failed";
+  if (!status) return t("scheduled.status_not_run");
+  if (status === "running") return t("scheduled.status_running");
+  if (status === "success") return t("scheduled.status_success");
+  if (status === "failed") return t("scheduled.status_failed");
   return status;
 };
 
@@ -169,9 +170,9 @@ const statusIconTone = (status?: string | null) => {
 const automationTemplates = [
   {
     icon: Calendar,
-    name: "Daily planning brief",
-    description: "Build a focused plan from your tasks and calendar.",
-    prompt: "Review my pending tasks and calendar, then draft a practical plan for today with top priorities and one follow-up reminder.",
+    nameKey: "scheduled.template_daily_planning",
+    descKey: "scheduled.template_daily_planning_desc",
+    promptKey: "scheduled.template_daily_planning_prompt",
     tone: "text-blue-9",
     scheduleMode: "daily" as const,
     scheduleTime: "08:30",
@@ -179,9 +180,9 @@ const automationTemplates = [
   },
   {
     icon: BookOpen,
-    name: "Inbox zero helper",
-    description: "Summarize unread messages and draft short replies.",
-    prompt: "Summarize unread inbox messages, suggest priority order, and draft concise reply options for the top conversations.",
+    nameKey: "scheduled.template_inbox_zero",
+    descKey: "scheduled.template_inbox_zero_desc",
+    promptKey: "scheduled.template_inbox_zero_prompt",
     tone: "text-teal-9",
     scheduleMode: "daily" as const,
     scheduleTime: "17:30",
@@ -189,9 +190,9 @@ const automationTemplates = [
   },
   {
     icon: MessageSquare,
-    name: "Meeting prep notes",
-    description: "Generate prep bullets for tomorrow's meetings.",
-    prompt: "Prepare meeting briefs for tomorrow with context, talking points, and questions to unblock decisions.",
+    nameKey: "scheduled.template_meeting_prep",
+    descKey: "scheduled.template_meeting_prep_desc",
+    promptKey: "scheduled.template_meeting_prep_prompt",
     tone: "text-indigo-9",
     scheduleMode: "daily" as const,
     scheduleTime: "18:00",
@@ -199,9 +200,9 @@ const automationTemplates = [
   },
   {
     icon: TrendingUp,
-    name: "Weekly wins recap",
-    description: "Create a Friday recap of wins, blockers, and next steps.",
-    prompt: "Summarize the week into wins, blockers, and clear next steps I can share with the team.",
+    nameKey: "scheduled.template_weekly_wins",
+    descKey: "scheduled.template_weekly_wins_desc",
+    promptKey: "scheduled.template_weekly_wins_prompt",
     tone: "text-emerald-9",
     scheduleMode: "daily" as const,
     scheduleTime: "16:00",
@@ -209,9 +210,9 @@ const automationTemplates = [
   },
   {
     icon: Trophy,
-    name: "Learning digest",
-    description: "Turn saved links and notes into a weekly digest.",
-    prompt: "Collect my saved links and notes, then draft a weekly learning digest with key ideas and follow-up actions.",
+    nameKey: "scheduled.template_learning_digest",
+    descKey: "scheduled.template_learning_digest_desc",
+    promptKey: "scheduled.template_learning_digest_prompt",
     tone: "text-amber-9",
     scheduleMode: "daily" as const,
     scheduleTime: "10:00",
@@ -219,9 +220,9 @@ const automationTemplates = [
   },
   {
     icon: Brain,
-    name: "Habit check-in",
-    description: "Run a quick accountability check through the day.",
-    prompt: "Ask me for a quick progress check-in, capture blockers, and suggest one concrete next action.",
+    nameKey: "scheduled.template_habit_checkin",
+    descKey: "scheduled.template_habit_checkin_desc",
+    promptKey: "scheduled.template_habit_checkin_prompt",
     tone: "text-pink-9",
     scheduleMode: "interval" as const,
     intervalHours: 6,
@@ -229,13 +230,13 @@ const automationTemplates = [
 ];
 
 const dayOptions = [
-  { id: "mo", label: "Mo", cron: "1" },
-  { id: "tu", label: "Tu", cron: "2" },
-  { id: "we", label: "We", cron: "3" },
-  { id: "th", label: "Th", cron: "4" },
-  { id: "fr", label: "Fr", cron: "5" },
-  { id: "sa", label: "Sa", cron: "6" },
-  { id: "su", label: "Su", cron: "0" },
+  { id: "mo", labelKey: "scheduled.day_mon", cron: "1" },
+  { id: "tu", labelKey: "scheduled.day_tue", cron: "2" },
+  { id: "we", labelKey: "scheduled.day_wed", cron: "3" },
+  { id: "th", labelKey: "scheduled.day_thu", cron: "4" },
+  { id: "fr", labelKey: "scheduled.day_fri", cron: "5" },
+  { id: "sa", labelKey: "scheduled.day_sat", cron: "6" },
+  { id: "su", labelKey: "scheduled.day_sun", cron: "0" },
 ];
 
 const normalizeSentence = (value: string) => {
@@ -280,9 +281,13 @@ const buildAutomationPrompt = (options: {
   const prompt = normalizeSentence(options.prompt);
   if (!schedule || !prompt) return "";
   const workdir = options.workdir.trim();
-  const nameSegment = name ? ` named "${name}"` : "";
-  const workdirSegment = workdir ? ` Run from ${workdir}.` : "";
-  return `Schedule a job${nameSegment} with cron "${schedule}" to ${prompt}${workdirSegment}`.trim();
+  const nameSegment = name ? t("scheduled.named").replace("{name}", name) : "";
+  const workdirSegment = workdir ? t("scheduled.run_from").replace("{workdir}", workdir) : "";
+  return t("scheduled.prompt_construct")
+    .replace("{name}", nameSegment)
+    .replace("{schedule}", schedule)
+    .replace("{prompt}", prompt)
+    .replace("{workdir}", workdirSegment);
 };
 
 const AutomationCard = (props: {
@@ -359,7 +364,7 @@ const AutomationJobCard = (props: {
             }`}
           >
             <Play size={12} />
-            Run
+            {t("scheduled.run")}
           </button>
           <button
             type="button"
@@ -372,7 +377,7 @@ const AutomationJobCard = (props: {
             }`}
           >
             <Trash2 size={12} />
-            Delete
+            {t("scheduled.delete")}
           </button>
         </div>
       </div>
@@ -387,7 +392,7 @@ const AutomationJobCard = (props: {
           </div>
         </div>
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-3 py-3 space-y-2">
-          <div class="text-[10px] uppercase tracking-wide text-gray-8">Run context</div>
+          <div class="text-[10px] uppercase tracking-wide text-gray-8">{t("scheduled.run_context")}</div>
           <div class="space-y-2 text-xs text-gray-9">
             <div class="flex items-center gap-2">
               <FolderOpen size={14} class="text-gray-8" />
@@ -404,7 +409,7 @@ const AutomationJobCard = (props: {
               </div>
             </Show>
             <Show when={props.job.source}>
-              <div class="text-[11px] text-gray-8">Source: {props.job.source}</div>
+              <div class="text-[11px] text-gray-8">{t("scheduled.source").replace("{source}", props.job.source)}</div>
             </Show>
           </div>
         </div>
@@ -413,14 +418,14 @@ const AutomationJobCard = (props: {
       <div class="flex flex-wrap items-center gap-4 text-xs text-gray-9">
         <div class="flex items-center gap-1">
           <Clock size={12} />
-          Last run {toRelative(props.job.lastRunAt)}
+          {t("scheduled.last_run").replace("{time}", toRelative(props.job.lastRunAt))}
         </div>
-        <div>Created {toRelative(props.job.createdAt)}</div>
+        <div>{t("scheduled.created").replace("{time}", toRelative(props.job.createdAt))}</div>
         <Show when={props.job.run?.agent}>
-          <div>Agent {props.job.run?.agent}</div>
+          <div>{t("scheduled.agent").replace("{agent}", props.job.run?.agent ?? "")}</div>
         </Show>
         <Show when={props.job.run?.model}>
-          <div>Model {props.job.run?.model}</div>
+          <div>{t("scheduled.model").replace("{model}", props.job.run?.model ?? "")}</div>
         </Show>
       </div>
     </div>
@@ -435,35 +440,35 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   });
   const supportNote = createMemo(() => {
     if (props.source === "remote") {
-      return props.sourceReady ? null : "OpenWork server unavailable. Connect to sync scheduled tasks.";
+      return props.sourceReady ? null : t("scheduled.server_unavailable");
     }
-    if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
-    if (props.isWindows) return "Scheduler is not supported on Windows yet.";
+    if (!isTauriRuntime()) return t("scheduled.desktop_required");
+    if (props.isWindows) return t("scheduled.windows_not_supported");
     return null;
   });
   const sourceDescription = createMemo(() =>
     props.source === "remote"
-      ? "Automations that run on a schedule from the connected OpenWork server."
-      : "Automations that run on a schedule from this device."
+      ? t("scheduled.desc_remote")
+      : t("scheduled.desc_local")
   );
   const sourceLabel = createMemo(() =>
-    props.source === "remote" ? "From OpenWork server" : "From local scheduler"
+    props.source === "remote" ? t("scheduled.from_server") : t("scheduled.from_local")
   );
-  const schedulerLabel = createMemo(() => (props.source === "remote" ? "OpenWork server" : "Local"));
+  const schedulerLabel = createMemo(() => (props.source === "remote" ? t("scheduled.server") : t("scheduled.local")));
   const schedulerHint = createMemo(() =>
-    props.source === "remote" ? "Remote instance" : "Launchd or systemd"
+    props.source === "remote" ? t("scheduled.remote_instance") : t("scheduled.launchd_systemd")
   );
   const schedulerUnavailableHint = createMemo(() =>
-    props.source === "remote" ? "OpenWork server unavailable" : "Desktop-only"
+    props.source === "remote" ? t("scheduled.server_unavailable_short") : t("scheduled.desktop_only")
   );
   const deleteDescription = createMemo(() =>
     props.source === "remote"
-      ? "This removes the schedule and deletes the job definition from the connected OpenWork server."
-      : "This removes the schedule and deletes the job definition from your machine."
+      ? t("scheduled.delete_desc_remote")
+      : t("scheduled.delete_desc_local")
   );
 
   const lastUpdatedLabel = createMemo(() => {
-    if (!props.lastUpdatedAt) return "Not synced yet";
+    if (!props.lastUpdatedAt) return t("scheduled.not_synced");
     return formatRelativeTime(props.lastUpdatedAt);
   });
 
@@ -471,10 +476,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const [deleteBusy, setDeleteBusy] = createSignal(false);
   const [deleteError, setDeleteError] = createSignal<string | null>(null);
   const [createModalOpen, setCreateModalOpen] = createSignal(false);
-  const [automationName, setAutomationName] = createSignal("Daily bug scan");
+  const [automationName, setAutomationName] = createSignal(t("scheduled.template_daily_planning"));
   const [automationProject, setAutomationProject] = createSignal(props.activeWorkspaceRoot);
   const [automationPrompt, setAutomationPrompt] = createSignal(
-    "Scan recent commits and flag riskier diffs."
+    t("scheduled.template_daily_planning_prompt")
   );
   const [scheduleMode, setScheduleMode] = createSignal<"daily" | "interval">("daily");
   const [scheduleTime, setScheduleTime] = createSignal("09:00");
@@ -491,7 +496,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       setDeleteTarget(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setDeleteError(message || "Failed to delete job.");
+      setDeleteError(message || t("scheduled.delete_failed"));
     } finally {
       setDeleteBusy(false);
     }
@@ -532,8 +537,8 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     if (root) {
       setAutomationProject(root);
     }
-    setAutomationName(template.name);
-    setAutomationPrompt(template.prompt);
+    setAutomationName(t(template.nameKey));
+    setAutomationPrompt(t(template.promptKey));
     setScheduleMode(template.scheduleMode);
     if (template.scheduleMode === "interval") {
       setIntervalHours(template.intervalHours ?? 6);
@@ -559,8 +564,8 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
     if (run?.prompt || job.prompt) {
       const promptBody = (run?.prompt ?? job.prompt ?? "").trim();
-      const workdirHint = workdir ? `\n\nRun from ${workdir}.` : "";
-      props.setPrompt(`Run this automation now: ${job.name}.\nSchedule: ${schedule}.\n\n${promptBody}${workdirHint}`.trim());
+      const workdirHint = workdir ? t("scheduled.run_from").replace("{workdir}", workdir) : "";
+      props.setPrompt(t("scheduled.run_now_prompt").replace("{name}", job.name).replace("{schedule}", schedule) + `\n\n${promptBody}${workdirHint}`.trim());
       props.createSessionAndOpen();
       return;
     }
@@ -568,15 +573,15 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     if (run?.command) {
       const args = run.arguments ? ` ${run.arguments}` : "";
       const cmd = `${run.command}${args}`.trim();
-      const workdirHint = workdir ? `\n\nRun from ${workdir}.` : "";
+      const workdirHint = workdir ? t("scheduled.run_from").replace("{workdir}", workdir) : "";
       props.setPrompt(
-        `Run this automation now: ${job.name}.\nSchedule: ${schedule}.\n\nRun the following command:\n${cmd}${workdirHint}`.trim()
+        t("scheduled.run_command_prompt").replace("{name}", job.name).replace("{schedule}", schedule).replace("{cmd}", cmd).replace("{workdirHint}", workdirHint)
       );
       props.createSessionAndOpen();
       return;
     }
 
-    props.setPrompt(`Run this automation now: ${job.name}.\nSchedule: ${schedule}.`);
+    props.setPrompt(t("scheduled.run_now_prompt").replace("{name}", job.name).replace("{schedule}", schedule));
     props.createSessionAndOpen();
   };
 
@@ -607,7 +612,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           onClick={openSchedulerDocs}
           class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
         >
-          Learn more
+          {t("scheduled.explore_more")}
         </button>
         <button
           type="button"
@@ -620,7 +625,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           }`}
         >
           <RefreshCw size={14} />
-          {props.busy ? "Refreshing" : "Refresh"}
+          {props.busy ? t("scheduled.refreshing") : t("scheduled.refresh")}
         </button>
         <button
           type="button"
@@ -633,7 +638,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           }`}
         >
           <Plus size={14} />
-          New automation
+          {t("scheduled.new_automation")}
         </button>
       </div>
 
@@ -642,9 +647,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           <Terminal size={28} class="text-gray-9" />
         </div>
         <div class="flex items-center justify-center gap-2">
-          <h2 class="text-2xl font-semibold text-gray-12">Automations</h2>
+          <h2 class="text-2xl font-semibold text-gray-12">{t("scheduled.automations")}</h2>
           <span class="rounded border border-gray-4 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-tight text-gray-8">
-            Beta
+            {t("scheduled.beta")}
           </span>
         </div>
         <p class="mt-2 text-sm text-gray-9">{sourceDescription()}</p>
@@ -673,14 +678,14 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         fallback={
           <div class="space-y-4">
             <div class="text-center text-sm text-gray-9">
-              No automations yet. Pick a template or create your own automation prompt.
+              {t("scheduled.no_automations")}
             </div>
             <div class="grid w-full max-w-5xl mx-auto grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
               <For each={automationTemplates}>
                 {(card) => (
                   <AutomationCard
                     icon={card.icon}
-                    description={card.description}
+                    description={t(card.descKey)}
                     tone={card.tone}
                     onClick={() => openCreateModalFromTemplate(card)}
                     disabled={props.newTaskDisabled}
@@ -693,7 +698,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               onClick={openSchedulerDocs}
               class="mx-auto block text-xs text-gray-9 transition-colors hover:text-gray-12"
             >
-              Explore more
+              {t("scheduled.explore_more")}
             </button>
           </div>
         }
@@ -719,7 +724,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <div class="p-6 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h3 class="text-lg font-semibold text-gray-12">Delete automation?</h3>
+                  <h3 class="text-lg font-semibold text-gray-12">{t("scheduled.delete_confirm_title")}</h3>
                   <p class="text-sm text-gray-9 mt-1">{deleteDescription()}</p>
                 </div>
               </div>
@@ -728,10 +733,10 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               </div>
               <div class="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={deleteBusy()}>
-                  Cancel
+                  {t("scheduled.cancel")}
                 </Button>
                 <Button variant="danger" onClick={confirmDelete} disabled={deleteBusy()}>
-                  {deleteBusy() ? "Deleting" : "Delete"}
+                  {deleteBusy() ? t("scheduled.deleting") : t("scheduled.delete")}
                 </Button>
               </div>
             </div>
@@ -745,10 +750,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
             <div class="p-8 space-y-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
-                  <h2 class="text-xl font-semibold text-gray-12">Create automation</h2>
+                  <h2 class="text-xl font-semibold text-gray-12">{t("scheduled.create_modal_title")}</h2>
                   <p class="text-xs text-gray-9 mt-2">
-                    Automations are scheduled by running a prompt in a new thread. We’ll prefill
-                    a prompt for you to send.
+                    {t("scheduled.create_modal_desc")}
                   </p>
                 </div>
                 <button
@@ -763,7 +767,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
               <div class="space-y-6">
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Name
+                    {t("scheduled.name")}
                   </label>
                   <input
                     type="text"
@@ -774,19 +778,19 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Projects
+                    {t("scheduled.projects")}
                   </label>
                   <input
                     type="text"
                     value={automationProject()}
                     onInput={(event) => setAutomationProject(event.currentTarget.value)}
-                    placeholder="Choose a folder"
+                    placeholder={t("scheduled.choose_folder")}
                     class="w-full rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12 focus:outline-none focus:ring-1 focus:ring-blue-9/20 focus:border-blue-7"
                   />
                 </div>
                 <div>
                   <label class="mb-2 block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                    Prompt
+                    {t("scheduled.label_prompt")}
                   </label>
                   <div class="rounded-xl border border-gray-6 bg-gray-2 p-3">
                     <textarea
@@ -800,7 +804,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 <div>
                   <div class="mb-2 flex items-center justify-between">
                     <label class="block text-[11px] font-bold uppercase tracking-wider text-gray-8">
-                      Schedule
+                      {t("scheduled.schedule")}
                     </label>
                     <div class="flex rounded-lg bg-gray-3 p-0.5">
                       <button
@@ -812,7 +816,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             : "text-gray-9"
                         }`}
                       >
-                        Daily
+                        {t("scheduled.daily")}
                       </button>
                       <button
                         type="button"
@@ -823,7 +827,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             : "text-gray-9"
                         }`}
                       >
-                        Interval
+                        {t("scheduled.interval")}
                       </button>
                     </div>
                   </div>
@@ -832,7 +836,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                     fallback={
                       <div class="flex flex-wrap items-center gap-3">
                         <div class="flex items-center gap-2 rounded-xl border border-gray-6 bg-gray-2 px-3 py-2 text-sm text-gray-12">
-                          <span>Every</span>
+                          <span>{t("scheduled.every")}</span>
                           <input
                             type="number"
                             min={1}
@@ -841,7 +845,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                             onInput={(event) => updateIntervalHours(event.currentTarget.value)}
                             class="w-16 bg-transparent text-right focus:outline-none"
                           />
-                          <span>hours</span>
+                          <span>{t("scheduled.hours")}</span>
                         </div>
                       </div>
                     }
@@ -868,7 +872,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                                   : "bg-gray-3 text-gray-9"
                               }`}
                             >
-                              {day.label}
+                              {t(day.labelKey)}
                             </button>
                           )}
                         </For>
@@ -889,7 +893,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                 onClick={openSchedulerDocs}
                 class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
               >
-                View scheduler docs
+                {t("scheduled.view_docs")}
               </button>
               <div class="flex items-center gap-3">
                 <button
@@ -897,7 +901,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                   onClick={() => setCreateModalOpen(false)}
                   class="px-4 py-2 text-xs font-medium text-gray-8 transition-colors hover:text-gray-12"
                 >
-                  Cancel
+                  {t("scheduled.cancel")}
                 </button>
                 <button
                   type="button"
@@ -909,7 +913,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                       : "bg-gray-12 text-gray-1 hover:bg-gray-11"
                   }`}
                 >
-                  Create
+                  {t("scheduled.create")}
                 </button>
               </div>
             </div>

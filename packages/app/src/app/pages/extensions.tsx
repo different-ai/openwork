@@ -2,6 +2,7 @@ import { Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { Box, Cpu } from "lucide-solid";
 
+import { t } from "../../i18n";
 import Button from "../components/button";
 import McpView, { type McpViewProps } from "./mcp";
 import PluginsView, { type PluginsViewProps } from "./plugins";
@@ -46,16 +47,16 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
     <section class="space-y-6 animate-in fade-in duration-300">
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div class="space-y-1">
-          <h2 class="text-3xl font-bold text-dls-text">Extensions</h2>
+          <h2 class="text-3xl font-bold text-dls-text">{t("extensions.title")}</h2>
           <p class="text-sm text-dls-secondary mt-1.5">
-            Apps (MCP) and OpenCode plugins live in one place.
+            {t("extensions.description")}
           </p>
           <div class="mt-3 flex flex-wrap items-center gap-2">
             <Show when={connectedAppsCount() > 0}>
               <div class="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
                 <div class="w-2 h-2 rounded-full bg-green-9" />
                 <span class="text-xs font-medium text-green-11">
-                  {connectedAppsCount()} app{connectedAppsCount() === 1 ? "" : "s"} connected
+                  {t("extensions.apps_connected").replace("{count}", String(connectedAppsCount())).replace("{plural}", connectedAppsCount() === 1 ? "" : "s")}
                 </span>
               </div>
             </Show>
@@ -63,7 +64,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
                 <Cpu size={14} class="text-gray-11" />
                 <span class="text-xs font-medium text-gray-11">
-                  {pluginCount()} plugin{pluginCount() === 1 ? "" : "s"}
+                  {t("extensions.plugins_count").replace("{count}", String(pluginCount())).replace("{plural}", pluginCount() === 1 ? "" : "s")}
                 </span>
               </div>
             </Show>
@@ -78,7 +79,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               aria-pressed={section() === "all"}
               onClick={() => setSection("all")}
             >
-              All
+              {t("extensions.tab_all")}
             </button>
             <button
               type="button"
@@ -87,7 +88,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => setSection("mcp")}
             >
               <Box size={14} />
-              Apps
+              {t("extensions.tab_apps")}
             </button>
             <button
               type="button"
@@ -96,11 +97,11 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => setSection("plugins")}
             >
               <Cpu size={14} />
-              Plugins
+              {t("extensions.tab_plugins")}
             </button>
           </div>
           <Button variant="ghost" onClick={refreshAll}>
-            Refresh
+            {t("extensions.refresh")}
           </Button>
         </div>
       </div>
@@ -109,7 +110,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Box size={16} class="text-gray-11" />
-            <span>Apps (MCP)</span>
+            <span>{t("extensions.section_apps")}</span>
           </div>
           <McpView
             showHeader={false}
@@ -137,7 +138,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Cpu size={16} class="text-gray-11" />
-            <span>Plugins (OpenCode)</span>
+            <span>{t("extensions.section_plugins")}</span>
           </div>
           <PluginsView
             busy={props.busy}

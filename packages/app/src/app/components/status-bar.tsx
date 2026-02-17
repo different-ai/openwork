@@ -1,5 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
+import { t } from "../../i18n";
 
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
@@ -27,35 +28,35 @@ export default function StatusBar(props: StatusBarProps) {
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
     text: props.clientConnected ? "text-green-11" : "text-gray-10",
-    label: props.clientConnected ? "Connected" : "Not connected",
+    label: props.clientConnected ? t("status_bar.connected") : t("status_bar.not_connected"),
   }));
 
   const openworkStatusMeta = createMemo(() => {
     switch (props.openworkServerStatus) {
       case "connected":
-        return { dot: "bg-green-9", text: "text-green-11", label: "Ready" };
+        return { dot: "bg-green-9", text: "text-green-11", label: t("status_bar.ready") };
       case "limited":
-        return { dot: "bg-amber-9", text: "text-amber-11", label: "Limited access" };
+        return { dot: "bg-amber-9", text: "text-amber-11", label: t("status_bar.limited_access") };
       default:
-        return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
+        return { dot: "bg-gray-6", text: "text-gray-10", label: t("status_bar.unavailable") };
     }
   });
 
   const messagingMeta = createMemo(() => {
     const status = opencodeRouterStatus();
     if (!status) {
-      return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge unavailable" };
+      return { dot: "bg-gray-6", text: "text-gray-10", label: t("status_bar.messaging_unavailable") };
     }
     const telegramConfigured = (status.telegram.items?.length ?? 0) > 0;
     const slackConfigured = (status.slack.items?.length ?? 0) > 0;
     const configuredCount = [telegramConfigured, slackConfigured].filter(Boolean).length;
     if (status.running && configuredCount > 0) {
-      return { dot: "bg-green-9", text: "text-green-11", label: "Messaging bridge ready" };
+      return { dot: "bg-green-9", text: "text-green-11", label: t("status_bar.messaging_ready") };
     }
     if (configuredCount > 0 || status.running) {
-      return { dot: "bg-amber-9", text: "text-amber-11", label: "Messaging bridge setup" };
+      return { dot: "bg-amber-9", text: "text-amber-11", label: t("status_bar.messaging_setup") };
     }
-    return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge offline" };
+    return { dot: "bg-gray-6", text: "text-gray-10", label: t("status_bar.messaging_offline") };
   });
 
   type ProTip = {
@@ -79,7 +80,7 @@ export default function StatusBar(props: StatusBarProps) {
   const proTips = createMemo<ProTip[]>(() => [
     {
       id: "slack",
-      label: "Connect Slack",
+      label: t("status_bar.tip_connect_slack"),
       enabled: () => {
         const status = opencodeRouterStatus();
         return Boolean(status && (status.slack.items?.length ?? 0) === 0);
@@ -88,7 +89,7 @@ export default function StatusBar(props: StatusBarProps) {
     },
     {
       id: "telegram",
-      label: "Connect Telegram",
+      label: t("status_bar.tip_connect_telegram"),
       enabled: () => {
         const status = opencodeRouterStatus();
         return Boolean(status && (status.telegram.items?.length ?? 0) === 0);
@@ -97,13 +98,13 @@ export default function StatusBar(props: StatusBarProps) {
     },
     {
       id: "notion",
-      label: "Connect Notion MCP",
+      label: t("status_bar.tip_connect_notion"),
       enabled: () => notionStatus() !== "connected",
       action: () => runAction(props.onOpenMcp),
     },
     {
       id: "providers",
-      label: "Use your own models (OpenRouter, Anthropic, OpenAI)",
+      label: t("status_bar.tip_providers"),
       enabled: () => props.clientConnected && providerConnectedCount() === 0,
       action: () => runAction(props.onOpenProviders),
     },
@@ -192,7 +193,7 @@ export default function StatusBar(props: StatusBarProps) {
       <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
         <div
           class="flex items-center gap-2"
-          title={`OpenCode Engine: ${opencodeStatusMeta().label}`}
+          title={t("status_bar.opencode_label").replace("{status}", opencodeStatusMeta().label)}
         >
           <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
           <Cpu class="w-4 h-4 text-gray-11" />
@@ -204,7 +205,7 @@ export default function StatusBar(props: StatusBarProps) {
         <div class="w-px h-4 bg-gray-6/70" />
         <div
           class="flex items-center gap-2"
-          title={`OpenWork Server: ${openworkStatusMeta().label}`}
+          title={t("status_bar.openwork_label").replace("{status}", openworkStatusMeta().label)}
         >
           <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
           <Server class="w-4 h-4 text-gray-11" />
@@ -222,7 +223,7 @@ export default function StatusBar(props: StatusBarProps) {
               title={activeTip()?.label}
               aria-label={activeTip()?.label}
             >
-              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">Tip</span>
+              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">{t("status_bar.tip_label")}</span>
               <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
             </button>
           </Show>
@@ -230,11 +231,11 @@ export default function StatusBar(props: StatusBarProps) {
             variant="ghost"
             class="h-7 px-2.5 py-0 text-xs"
             onClick={props.onOpenSettings}
-            title="Settings"
+            title={t("status_bar.settings")}
           >
             <Settings class="w-4 h-4" />
             <Show when={props.developerMode}>
-              <span class="text-gray-11 font-medium">Settings</span>
+              <span class="text-gray-11 font-medium">{t("status_bar.settings")}</span>
             </Show>
           </Button>
         </div>

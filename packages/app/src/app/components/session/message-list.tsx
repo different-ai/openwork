@@ -1,8 +1,9 @@
-import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 
+import { t } from "../../../i18n";
 import type { MessageGroup, MessageWithParts } from "../../types";
 import { classifyTool, groupMessageParts, summarizeStep } from "../../utils";
 import PartView from "../part-view";
@@ -281,7 +282,7 @@ export default function MessageList(props: MessageListProps) {
         {/* Skill badge */}
         <Show when={summary().isSkill}>
           <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
-            skill
+            {t("session.skill_badge")}
           </span>
         </Show>
         {/* Detail - truncated to single line */}
@@ -354,12 +355,12 @@ export default function MessageList(props: MessageListProps) {
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
           <span class="font-medium">
-            {expanded() ? "Hide steps" : `Show ${totalSteps()} step${totalSteps() === 1 ? "" : "s"}`}
+            {expanded() ? t("session.hide_steps") : t("session.show_steps").replace("{count}", String(totalSteps())).replace("{plural}", totalSteps() === 1 ? "" : "s")}
           </span>
           <Show when={hasRunning()}>
             <span class="flex items-center gap-1.5 text-[11px] text-blue-11">
               <span class="w-1.5 h-1.5 rounded-full bg-blue-9 animate-pulse" />
-              running
+              {t("session.step_running")}
             </span>
           </Show>
         </button>
@@ -512,7 +513,7 @@ export default function MessageList(props: MessageListProps) {
                 <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
                   <button
                     class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                    title="Copy message"
+                    title={t("session.copy_message")}
                     onClick={() => {
                       const text = block.renderableParts
                         .map((part) => partToText(part))

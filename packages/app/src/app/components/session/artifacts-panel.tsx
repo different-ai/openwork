@@ -1,4 +1,5 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
+import { t } from "../../../i18n";
 import { Paperclip } from "lucide-solid";
 
 export type ArtifactsPanelProps = {
@@ -99,7 +100,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
           <Paperclip size={14} class="text-dls-secondary" />
           <div class="min-w-0">
             <div class="text-[11px] font-bold tracking-tight text-dls-secondary uppercase">
-              Artifacts
+              {t("session.artifacts_title")}
             </div>
           </div>
         </div>
@@ -111,7 +112,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
       <div class="mt-2 space-y-1">
         <Show
           when={visibleArtifacts().length > 0}
-          fallback={<div class="text-xs text-dls-secondary px-1 py-1">No artifacts yet.</div>}
+          fallback={<div class="text-xs text-dls-secondary px-1 py-1">{t("session.artifacts_empty")}</div>}
         >
           <For each={visibleArtifacts()}>
             {(artifact) => {
@@ -123,7 +124,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
               const openable = () => (md() ? canOpenMarkdown() : img() ? canOpenImage() : false);
               const tooltip = () => {
                 if (md()) return display();
-                if (img() && !canOpenImage()) return `${display()} (image preview coming soon)`;
+                if (img() && !canOpenImage()) return `${display()} (${t("session.artifacts_image_preview_soon")})`;
                 return display();
               };
               return (
@@ -173,7 +174,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
             class="w-full mt-1 rounded-lg px-2 py-1.5 text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-active transition-colors"
             onClick={() => setShowAll((prev) => !prev)}
           >
-            {showAll() ? "Show fewer" : `Show ${hiddenCount()} more`}
+            {showAll() ? t("session.artifacts_show_fewer") : t("session.artifacts_show_more").replace("{count}", String(hiddenCount()))}
           </button>
         </Show>
       </div>
