@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { File } from "lucide-solid";
-import { safeStringify } from "../utils";
+import { isTauriRuntime, isWindowsPlatform, safeStringify } from "../utils";
 
 type Props = {
   part: Part;
@@ -41,7 +41,114 @@ function useThrottledValue<T>(value: () => T, delayMs = 80) {
   return state;
 }
 
-function createCustomRenderer(tone: "light" | "dark") {
+const LOCAL_PATH_PATTERN =
+  /(^|[\s([{"'])((?:~\/|\/|\.\.?\/)[^\s<>"'`]+|[A-Za-z]:\\[^\s<>"'`]+)(?=$|[\s)\]}.,;!?])/g;
+
+function isLocalFilesystemReference(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (/^file:\/\//i.test(trimmed)) return true;
+  if (/^(?:~\/|\/|\.\.?\/)/.test(trimmed)) return true;
+  if (/^[A-Za-z]:\\/.test(trimmed)) return true;
+  return false;
+}
+
+function normalizeLocalReference(value: string) {
+  const trimmed = value.trim();
+  if (/^file:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^file:\/\//i, "");
+  }
+  return trimmed;
+}
+
+function escapeAttr(value: string) {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function renderLocalPathReference(rawPath: string, runtimeDesktop: boolean, className: string) {
+  const normalizedPath = normalizeLocalReference(rawPath);
+  const safeText = normalizedPath
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  if (!runtimeDesktop) {
+    return `<span class="${className} opacity-70 cursor-not-allowed" title="Available in the desktop app">${safeText}</span>`;
+  }
+
+  return `<a href="#" data-local-path="${escapeAttr(normalizedPath)}" class="${className}" title="Show in file manager">${safeText}</a>`;
+}
+
+function linkifyLocalPathsInText(text: string, runtimeDesktop: boolean, className: string) {
+  let output = "";
+  let lastIndex = 0;
+
+  LOCAL_PATH_PATTERN.lastIndex = 0;
+  let match = LOCAL_PATH_PATTERN.exec(text);
+  while (match) {
+    const prefix = match[1] ?? "";
+    const candidate = match[2] ?? "";
+    const start = match.index;
+    const whole = match[0] ?? "";
+    const candidateIndex = whole.lastIndexOf(candidate);
+    const pathStart = candidateIndex >= 0 ? start + candidateIndex : start + prefix.length;
+    const pathEnd = pathStart + candidate.length;
+
+    output += text.slice(lastIndex, start + prefix.length);
+
+    if (isLocalFilesystemReference(candidate)) {
+      output += renderLocalPathReference(candidate, runtimeDesktop, className);
+    } else {
+      output += candidate;
+    }
+
+    lastIndex = pathEnd;
+    match = LOCAL_PATH_PATTERN.exec(text);
+  }
+
+  output += text.slice(lastIndex);
+  return output;
+}
+
+function linkifyLocalPathsInHtml(html: string, runtimeDesktop: boolean, className: string) {
+  const parts = html.split(/(<[^>]+>)/g);
+  const blockedTags = new Set(["a", "code", "pre"]);
+  const stack: string[] = [];
+
+  return parts
+    .map((part) => {
+      if (!part) return "";
+      if (!part.startsWith("<")) {
+        const inBlockedTag = stack.some((tag) => blockedTags.has(tag));
+        if (inBlockedTag) return part;
+        return linkifyLocalPathsInText(part, runtimeDesktop, className);
+      }
+
+      const tagMatch = part.match(/^<\/?\s*([a-zA-Z0-9-]+)/);
+      if (!tagMatch) return part;
+
+      const tagName = tagMatch[1].toLowerCase();
+      const selfClosing = /\/\s*>$/.test(part);
+      const closing = /^<\//.test(part);
+
+      if (!selfClosing) {
+        if (closing) {
+          for (let i = stack.length - 1; i >= 0; i -= 1) {
+            if (stack[i] === tagName) {
+              stack.splice(i, 1);
+              break;
+            }
+          }
+        } else {
+          stack.push(tagName);
+        }
+      }
+
+      return part;
+    })
+    .join("");
+}
+
+function createCustomRenderer(tone: "light" | "dark", runtimeDesktop: boolean) {
   const renderer = new marked.Renderer();
   const codeBlockClass =
     tone === "dark"
@@ -51,6 +158,10 @@ function createCustomRenderer(tone: "light" | "dark") {
     tone === "dark"
       ? "bg-gray-12/15 text-gray-12"
       : "bg-gray-2/70 text-gray-12";
+  const localPathClass =
+    tone === "dark"
+      ? "ow-local-path underline underline-offset-2 text-blue-10 hover:text-blue-9 font-mono"
+      : "ow-local-path underline underline-offset-2 text-blue-11 hover:text-blue-10 font-mono";
   
   const escapeHtml = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -83,12 +194,21 @@ function createCustomRenderer(tone: "light" | "dark") {
   };
 
   renderer.codespan = ({ text }) => {
+    if (isLocalFilesystemReference(text)) {
+      return renderLocalPathReference(text, runtimeDesktop, localPathClass);
+    }
+
     return `<code class="rounded-md px-1.5 py-0.5 text-[13px] font-mono ${inlineCodeClass}">${escapeHtml(
       text
     )}</code>`;
   };
 
   renderer.link = ({ href, title, text }) => {
+    const rawHref = (href ?? "").trim();
+    if (isLocalFilesystemReference(rawHref)) {
+      return renderLocalPathReference(rawHref, runtimeDesktop, localPathClass);
+    }
+
     const safeHref = isSafeUrl(href) ? escapeHtml(href ?? "#") : "#";
     const safeTitle = title ? escapeHtml(title) : "";
     return `
@@ -117,7 +237,68 @@ function createCustomRenderer(tone: "light" | "dark") {
     `;
   };
 
-  return renderer;
+  const renderWithLocalPaths = (source: string) =>
+    linkifyLocalPathsInHtml(source, runtimeDesktop, localPathClass);
+
+  return {
+    renderer,
+    renderWithLocalPaths,
+  };
+}
+
+function trimLineColumnSuffix(path: string) {
+  if (!path) return path;
+  return path.replace(/:(\d+)(?::\d+)?$/, "");
+}
+
+function pathCandidates(path: string) {
+  const normalized = path.trim();
+  const stripped = trimLineColumnSuffix(normalized);
+  return [...new Set([normalized, stripped].filter(Boolean))];
+}
+
+async function revealLocalPath(path: string) {
+  if (!isTauriRuntime()) return;
+  const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  let lastError: unknown = null;
+
+  for (const candidate of pathCandidates(path)) {
+    try {
+      await revealItemInDir(candidate);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!isWindowsPlatform()) continue;
+      try {
+        await openPath(candidate);
+        return;
+      } catch (innerError) {
+        lastError = innerError;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("Failed to reveal local path");
+}
+
+function createMarkdownClickHandler(runtimeDesktop: boolean) {
+  return async (event: MouseEvent) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const link = target.closest("a[data-local-path]") as HTMLAnchorElement | null;
+    if (!link) return;
+
+    event.preventDefault();
+    const localPath = link.dataset.localPath?.trim() ?? "";
+    if (!localPath) return;
+    if (!runtimeDesktop) return;
+
+    try {
+      await revealLocalPath(localPath);
+    } catch (error) {
+      console.warn("Failed to reveal local filesystem path", error);
+    }
+  };
 }
 
 export default function PartView(props: Props) {
@@ -175,21 +356,24 @@ export default function PartView(props: Props) {
     return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
   });
   const throttledMarkdownSource = useThrottledValue(markdownSource, 100);
+  const runtimeDesktop = isTauriRuntime();
+  const onMarkdownClick = createMarkdownClickHandler(runtimeDesktop);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     const text = throttledMarkdownSource();
     if (!text.trim()) return "";
     
     try {
-      const renderer = createCustomRenderer(tone());
+      const { renderer, renderWithLocalPaths } = createCustomRenderer(tone(), runtimeDesktop);
       const result = marked.parse(text, { 
         breaks: true, 
         gfm: true,
         renderer,
         async: false
       });
-      
-      return typeof result === 'string' ? result : '';
+
+      if (typeof result !== "string") return "";
+      return renderWithLocalPaths(result);
     } catch (error) {
       console.error('Markdown parsing error:', error);
       return null;
@@ -346,6 +530,7 @@ export default function PartView(props: Props) {
                 [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
                 [&_td]:border [&_td]:border-dls-border [&_td]:p-2
               `.trim()}
+              onClick={onMarkdownClick}
               innerHTML={renderedMarkdown()!}
             />
           </Show>
