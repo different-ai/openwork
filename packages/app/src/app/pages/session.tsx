@@ -1625,27 +1625,44 @@ export default function SessionView(props: SessionViewProps) {
 
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
 
-  const uploadInboxFiles = async (files: File[]) => {
+  const uploadInboxFiles = async (
+    files: File[],
+    options?: { notify?: boolean },
+  ): Promise<Array<{ name: string; path: string }>> => {
+    const notify = options?.notify ?? true;
     const client = props.openworkServerClient;
     const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
-      setToastMessage("Connect to the OpenWork server to upload inbox files.");
-      return;
+      if (notify) {
+        setToastMessage("Connect to the OpenWork server to upload inbox files.");
+      }
+      return [];
     }
-    if (!files.length) return;
+    if (!files.length) return [];
 
     const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-    setToastMessage(`Uploading ${label} to inbox...`);
+    if (notify) {
+      setToastMessage(`Uploading ${label} to inbox...`);
+    }
 
     try {
+      const uploaded: Array<{ name: string; path: string }> = [];
       for (const file of files) {
-        await client.uploadInbox(workspaceId, file);
+        const result = await client.uploadInbox(workspaceId, file);
+        const path = result.path?.trim() || file.name;
+        uploaded.push({ name: file.name || path, path });
       }
-      const summary = files.map((file) => file.name).filter(Boolean).join(", ");
-      setToastMessage(summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.");
+      if (notify) {
+        const summary = uploaded.map((file) => file.name).filter(Boolean).join(", ");
+        setToastMessage(summary ? `Uploaded to inbox: ${summary}` : "Uploaded to inbox.");
+      }
+      return uploaded;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Inbox upload failed";
-      setToastMessage(message);
+      if (notify) {
+        const message = error instanceof Error ? error.message : "Inbox upload failed";
+        setToastMessage(message);
+      }
+      return [];
     }
   };
 

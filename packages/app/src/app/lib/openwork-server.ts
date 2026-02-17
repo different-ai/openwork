@@ -359,6 +359,12 @@ export type OpenworkInboxList = {
   items: OpenworkInboxItem[];
 };
 
+export type OpenworkInboxUploadResult = {
+  ok: boolean;
+  path: string;
+  bytes: number;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1271,7 +1277,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         throw new OpenworkServerError(result.status, "request_failed", message || "Inbox upload failed");
       }
 
-      return result.text;
+      const body = result.text.trim();
+      if (body) {
+        try {
+          const parsed = JSON.parse(body) as Partial<OpenworkInboxUploadResult>;
+          if (typeof parsed.path === "string" && parsed.path.trim()) {
+            return {
+              ok: parsed.ok ?? true,
+              path: parsed.path.trim(),
+              bytes: typeof parsed.bytes === "number" ? parsed.bytes : file.size,
+            } satisfies OpenworkInboxUploadResult;
+          }
+        } catch {
+          // ignore invalid JSON and fall back
+        }
+      }
+
+      return {
+        ok: true,
+        path: options?.path?.trim() || file.name,
+        bytes: file.size,
+      } satisfies OpenworkInboxUploadResult;
     },
 
     listInbox: (workspaceId: string) =>

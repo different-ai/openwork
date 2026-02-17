@@ -49,7 +49,10 @@ type ComposerProps = {
   searchFiles: (query: string) => Promise<string[]>;
   isRemoteWorkspace: boolean;
   isSandboxWorkspace: boolean;
-  onUploadInboxFiles?: (files: File[]) => void | Promise<void>;
+  onUploadInboxFiles?: (
+    files: File[],
+    options?: { notify?: boolean },
+  ) => void | Promise<Array<{ name: string; path: string }> | void>;
   attachmentsEnabled: boolean;
   attachmentsDisabledReason: string | null;
   listCommands: () => Promise<SlashCommandOption[]>;
@@ -61,8 +64,76 @@ const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const ACCEPTED_FILE_TYPES = [...ACCEPTED_IMAGE_TYPES, "application/pdf"];
+const FILE_URL_RE = /^file:\/\//i;
+const HTTP_URL_RE = /^https?:\/\//i;
+const WINDOWS_PATH_RE = /^[a-zA-Z]:\\/;
+const UNC_PATH_RE = /^\\\\/;
 
 const isImageMime = (mime: string) => ACCEPTED_IMAGE_TYPES.includes(mime);
+const isSupportedAttachmentType = (mime: string) => ACCEPTED_FILE_TYPES.includes(mime);
+
+const escapeMarkdownLabel = (value: string) =>
+  value
+    .replace(/\\/g, "\\\\")
+    .replace(/\[/g, "\\[")
+    .replace(/\]/g, "\\]");
+
+const normalizeLinkTarget = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  if (FILE_URL_RE.test(trimmed) || HTTP_URL_RE.test(trimmed)) {
+    return encodeURI(trimmed);
+  }
+  if (WINDOWS_PATH_RE.test(trimmed)) {
+    return `file:///${encodeURI(trimmed.replace(/\\/g, "/"))}`;
+  }
+  if (UNC_PATH_RE.test(trimmed)) {
+    const normalized = trimmed.replace(/\\/g, "/").replace(/^\/+/, "");
+    return `file://${encodeURI(normalized)}`;
+  }
+  if (trimmed.startsWith("/")) {
+    return `file://${encodeURI(trimmed)}`;
+  }
+  return "";
+};
+
+const parseClipboardLinks = (clipboard: DataTransfer) => {
+  const values = [
+    clipboard.getData("text/uri-list") ?? "",
+    clipboard.getData("text/plain") ?? "",
+    clipboard.getData("text") ?? "",
+  ];
+  const links: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const lines = value
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith("#"));
+    for (const line of lines) {
+      const target = normalizeLinkTarget(line);
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      links.push(target);
+    }
+  }
+  return links;
+};
+
+const inboxPathToLink = (path: string) => {
+  const normalized = path.trim().replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/^\/+/, "");
+  if (!normalized) return "";
+  if (normalized.startsWith(".opencode/openwork/inbox/")) {
+    return normalized;
+  }
+  return `.opencode/openwork/inbox/${normalized}`;
+};
+
+const formatLinks = (links: Array<{ name: string; target: string }>) =>
+  links
+    .filter((entry) => entry.target)
+    .map((entry) => `[${escapeMarkdownLabel(entry.name || "file")}](${entry.target})`)
+    .join("\n");
 
 const fileToDataUrl = (file: File) =>
   new Promise<string>((resolve, reject) => {
@@ -377,6 +448,12 @@ export default function Composer(props: ComposerProps) {
   let suppressPromptSync = false;
   let pasteCounter = 0;
   const pasteTextById = new Map<string, string>();
+  const objectUrls = new Set<string>();
+  const createObjectUrl = (file: File) => {
+    const url = URL.createObjectURL(file);
+    objectUrls.add(url);
+    return url;
+  };
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
   let imeComposing = false;
@@ -395,6 +472,13 @@ export default function Composer(props: ComposerProps) {
   const [showInboxUploadAction, setShowInboxUploadAction] = createSignal(false);
   const activeVariant = createMemo(() => props.modelVariant ?? "none");
   const attachmentsDisabled = createMemo(() => !props.attachmentsEnabled);
+
+  onCleanup(() => {
+    for (const url of objectUrls) {
+      URL.revokeObjectURL(url);
+    }
+    objectUrls.clear();
+  });
 
   const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
     pasteTextById.set(part.id, part.text);
@@ -908,7 +992,7 @@ export default function Composer(props: ComposerProps) {
     }
     const next: ComposerAttachment[] = [];
     for (const file of files) {
-      if (!ACCEPTED_FILE_TYPES.includes(file.type)) {
+      if (!isSupportedAttachmentType(file.type)) {
         props.onToast(`${file.name} is not a supported attachment type.`);
         continue;
       }
@@ -1022,6 +1106,53 @@ export default function Composer(props: ComposerProps) {
     emitDraftChange();
   };
 
+  const insertUnsupportedFileLinks = async (files: File[], clipboardLinks: string[]) => {
+    const fallbackLinks = () =>
+      files.map((file, index) => ({
+        name: file.name || `file-${index + 1}`,
+        target: clipboardLinks[index] || createObjectUrl(file),
+      }));
+
+    if (props.isSandboxWorkspace && props.onUploadInboxFiles) {
+      const uploaded = await Promise.resolve(props.onUploadInboxFiles(files, { notify: false }));
+      if (Array.isArray(uploaded) && uploaded.length) {
+        const links = uploaded
+          .map((item, index) => {
+            const target = inboxPathToLink(item.path ?? "");
+            const fallbackName = files[index]?.name || `file-${index + 1}`;
+            const name = item.name?.trim() || fallbackName;
+            return { name, target };
+          })
+          .filter((entry) => entry.target);
+        const text = formatLinks(links);
+        if (text) {
+          insertPlainTextAtSelection(text);
+          updateMentionQuery();
+          updateSlashQuery();
+          emitDraftChange();
+          props.onToast(
+            links.length === 1
+              ? `Uploaded ${links[0].name} to inbox and inserted a link.`
+              : `Uploaded ${links.length} files to inbox and inserted links.`,
+          );
+          return;
+        }
+      }
+      props.onToast("Couldn't upload to inbox. Inserted local links instead.");
+    }
+
+    const text = formatLinks(fallbackLinks());
+    if (!text) {
+      props.onToast("Unsupported attachment type.");
+      return;
+    }
+    insertPlainTextAtSelection(text);
+    updateMentionQuery();
+    updateSlashQuery();
+    emitDraftChange();
+    props.onToast("Inserted links for unsupported files.");
+  };
+
   const handlePaste = (event: ClipboardEvent) => {
     if (!event.clipboardData) return;
     const clipboard = event.clipboardData;
@@ -1033,12 +1164,15 @@ export default function Composer(props: ComposerProps) {
     const allFiles = files.length ? files : itemFiles;
     if (allFiles.length) {
       event.preventDefault();
-      const hasSupported = allFiles.some((file) => ACCEPTED_FILE_TYPES.includes(file.type));
-      if (!hasSupported) {
-        props.onToast("Unsupported attachment type.");
-        return;
+      const supported = allFiles.filter((file) => isSupportedAttachmentType(file.type));
+      const unsupported = allFiles.filter((file) => !isSupportedAttachmentType(file.type));
+      if (supported.length) {
+        void addAttachments(supported);
       }
-      void addAttachments(allFiles);
+      if (unsupported.length) {
+        const links = parseClipboardLinks(clipboard);
+        void insertUnsupportedFileLinks(unsupported, links);
+      }
       return;
     }
 
