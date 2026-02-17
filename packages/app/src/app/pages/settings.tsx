@@ -863,8 +863,8 @@ export default function SettingsView(props: SettingsViewProps) {
                       <>
                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
-                            <div class="text-sm text-gray-12">Automatic checks</div>
-                            <div class="text-xs text-gray-7">Once per day (quiet)</div>
+                            <div class="text-sm text-gray-12">Background checks</div>
+                            <div class="text-xs text-gray-7">OpenWork always checks on launch. Also checks once per day (quiet).</div>
                           </div>
                           <button
                             class={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${

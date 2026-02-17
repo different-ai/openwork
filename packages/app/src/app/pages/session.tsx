@@ -1694,13 +1694,32 @@ export default function SessionView(props: SessionViewProps) {
     return state === "available" || state === "downloading" || state === "ready";
   });
 
+  const updateDownloadPercent = createMemo<number | null>(() => {
+    const total = props.updateStatus?.totalBytes;
+    if (total == null || total <= 0) return null;
+    const downloaded = props.updateStatus?.downloadedBytes ?? 0;
+    const clamped = Math.max(0, Math.min(1, downloaded / total));
+    return Math.floor(clamped * 100);
+  });
+
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Restart";
+      return props.anyActiveRuns ? "Update ready" : "Install update";
     }
-    if (state === "downloading") return "Downloading";
+    if (state === "downloading") {
+      const percent = updateDownloadPercent();
+      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+    }
     return "Update available";
+  });
+
+  const updatePillTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return "border-transparent bg-green-9 text-white shadow-[0_2px_10px_rgba(22,163,74,0.35)] hover:bg-green-10";
+    }
+    return "border-transparent bg-dls-accent text-white shadow-[0_2px_10px_rgba(var(--dls-accent-rgb),0.35)] hover:bg-[var(--dls-accent-hover)]";
   });
 
   const updatePillTitle = createMemo(() => {
@@ -1743,7 +1762,7 @@ export default function SessionView(props: SessionViewProps) {
           <Show when={showUpdatePill()}>
             <button
               type="button"
-              class="mb-3 w-full flex h-9 items-center gap-2 rounded-xl border border-dls-border bg-dls-hover px-3 text-xs text-dls-secondary shadow-sm transition-colors hover:bg-dls-active hover:text-dls-text"
+              class={`mb-3 w-full flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-medium transition-all hover:-translate-y-[1px] ${updatePillTone()}`}
               onClick={handleUpdatePillClick}
               title={updatePillTitle()}
               aria-label={updatePillTitle()}
@@ -1751,19 +1770,15 @@ export default function SessionView(props: SessionViewProps) {
               <Show
                 when={props.updateStatus?.state === "downloading"}
                 fallback={
-                  <span
-                    class={`w-2 h-2 rounded-full ${
-                      props.updateStatus?.state === "ready" ? "bg-green-9" : "bg-amber-9"
-                    }`}
-                  />
+                  <span class="w-2 h-2 rounded-full bg-white/85" />
                 }
               >
-                <Loader2 size={14} class="animate-spin text-dls-secondary" />
+                <Loader2 size={14} class="animate-spin text-white/90" />
               </Show>
-              <span class="text-[11px] font-medium text-dls-text">{updatePillLabel()}</span>
+              <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
               <Show when={props.updateStatus?.version}>
                 {(version) => (
-                  <span class="ml-auto text-[11px] text-dls-secondary font-mono">v{version()}</span>
+                  <span class="ml-auto text-[11px] text-white/80 font-mono">v{version()}</span>
                 )}
               </Show>
             </button>
@@ -2109,7 +2124,7 @@ export default function SessionView(props: SessionViewProps) {
             <Show when={showUpdatePill()}>
               <button
                 type="button"
-                class="md:hidden flex h-8 items-center gap-2 rounded-full border border-dls-border bg-dls-hover px-3 text-xs text-dls-secondary shadow-sm transition-colors hover:bg-dls-active hover:text-dls-text"
+                class={`md:hidden flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${updatePillTone()}`}
                 onClick={handleUpdatePillClick}
                 title={updatePillTitle()}
                 aria-label={updatePillTitle()}
@@ -2117,19 +2132,15 @@ export default function SessionView(props: SessionViewProps) {
                 <Show
                   when={props.updateStatus?.state === "downloading"}
                   fallback={
-                    <span
-                      class={`w-2 h-2 rounded-full ${
-                        props.updateStatus?.state === "ready" ? "bg-green-9" : "bg-amber-9"
-                      }`}
-                    />
+                    <span class="w-2 h-2 rounded-full bg-white/85" />
                   }
                 >
-                  <Loader2 size={14} class="animate-spin text-dls-secondary" />
+                  <Loader2 size={14} class="animate-spin text-white/90" />
                 </Show>
-                <span class="text-[11px] font-medium text-dls-text">{updatePillLabel()}</span>
+                <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
                 <Show when={props.updateStatus?.version}>
                   {(version) => (
-                    <span class="hidden sm:inline text-[11px] text-dls-secondary font-mono">v{version()}</span>
+                    <span class="hidden sm:inline text-[11px] text-white/80 font-mono">v{version()}</span>
                   )}
                 </Show>
               </button>

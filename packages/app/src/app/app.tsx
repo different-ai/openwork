@@ -2619,6 +2619,7 @@ export default function App() {
   const [autoConnectAttempted, setAutoConnectAttempted] = createSignal(false);
 
   const [appVersion, setAppVersion] = createSignal<string | null>(null);
+  const [launchUpdateCheckTriggered, setLaunchUpdateCheckTriggered] = createSignal(false);
 
 
   const busySeconds = createMemo(() => {
@@ -4091,8 +4092,21 @@ export default function App() {
 
   createEffect(() => {
     if (booting()) return;
+    if (!isTauriRuntime()) return;
+    if (launchUpdateCheckTriggered()) return;
+
+    const state = updateStatus();
+    if (state.state === "checking" || state.state === "downloading") return;
+
+    setLaunchUpdateCheckTriggered(true);
+    checkForUpdates({ quiet: true }).catch(() => undefined);
+  });
+
+  createEffect(() => {
+    if (booting()) return;
     if (typeof window === "undefined") return;
     if (!isTauriRuntime()) return;
+    if (!launchUpdateCheckTriggered()) return;
     if (!updateAutoCheck()) return;
 
     const maybeRunAutoUpdateCheck = () => {
@@ -4102,8 +4116,6 @@ export default function App() {
       if (!shouldAutoCheckForUpdates()) return;
       checkForUpdates({ quiet: true }).catch(() => undefined);
     };
-
-    maybeRunAutoUpdateCheck();
 
     const interval = window.setInterval(maybeRunAutoUpdateCheck, UPDATE_AUTO_CHECK_POLL_MS);
     onCleanup(() => window.clearInterval(interval));
