@@ -594,6 +594,49 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
 export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
 
+  const isFailedStatus = (value: unknown) => {
+    if (typeof value !== "string") return false;
+    const lower = value.trim().toLowerCase();
+    return lower === "failed" || lower === "error" || lower === "cancelled";
+  };
+
+  const isWriteTool = (toolName: unknown) => {
+    if (typeof toolName !== "string") return false;
+    const category = classifyTool(toolName);
+    return category === "write" || category === "edit";
+  };
+
+  const normalizeCandidatePath = (value: unknown) => {
+    if (typeof value !== "string") return "";
+    const trimmed = value.trim().replace(/^['"`]+|['"`]+$/g, "");
+    if (!trimmed || trimmed.length > 500) return "";
+    if (/^\.\.{2,}$/.test(trimmed)) return "";
+    if (/^[A-Za-z]:$/.test(trimmed)) return "";
+    return trimmed;
+  };
+
+  const collectSuccessOutputPaths = (output: unknown) => {
+    if (typeof output !== "string" || !output.trim()) return [] as string[];
+    const matches: string[] = [];
+    for (const line of output.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const successMatch = trimmed.match(/^Success\. Updated the following files:\s*[MADR]\s+(.+)$/i);
+      if (successMatch) {
+        const parsed = normalizeCandidatePath(successMatch[1]);
+        if (parsed) matches.push(parsed);
+        continue;
+      }
+
+      const gitLikeMatch = trimmed.match(/^[MADR]\s+(.+)$/);
+      if (gitLikeMatch) {
+        const parsed = normalizeCandidatePath(gitLikeMatch[1]);
+        if (parsed) matches.push(parsed);
+      }
+    }
+    return matches;
+  };
+
   list.forEach((message) => {
     const messageId = String((message.info as any)?.id ?? "");
 
@@ -601,6 +644,9 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
       if (part.type !== "tool") return;
       const record = part as any;
       const state = record.state ?? {};
+      if (!isWriteTool(record.tool)) return;
+      if (isFailedStatus(state.status)) return;
+
       const matches = new Set<string>();
 
       const explicit = [
@@ -610,32 +656,11 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
       ];
 
       explicit.forEach((f) => {
-        if (typeof f === "string") {
-          const trimmed = f.trim();
-          if (
-            trimmed.length > 0 &&
-            trimmed.length <= 500 &&
-            trimmed.includes(".") &&
-            !/^\.{2,}$/.test(trimmed)
-          ) {
-            matches.add(trimmed);
-          }
-        }
+        const parsed = normalizeCandidatePath(f);
+        if (parsed) matches.add(parsed);
       });
 
-      const text = [state.title, state.output]
-        .filter((v): v is string => typeof v === "string")
-        .join(" ");
-
-      if (text) {
-        const pathPattern =
-          /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
-
-        Array.from(text.matchAll(pathPattern))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
-      }
+      collectSuccessOutputPaths(state.output).forEach((filePath) => matches.add(filePath));
 
       if (matches.size === 0) return;
 
