@@ -28,7 +28,7 @@ impl EngineManager {
     pub fn snapshot_locked(state: &mut EngineState) -> EngineInfo {
         let (running, pid) = match state.child.as_ref() {
             None => (false, None),
-            Some(child) if state.child_exited => {
+            Some(_child) if state.child_exited => {
                 state.child = None;
                 (false, None)
             }
