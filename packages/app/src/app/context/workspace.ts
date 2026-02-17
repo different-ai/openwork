@@ -1278,6 +1278,29 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  const openEmptySession = async (scopeRoot?: string) => {
+    const root = (scopeRoot ?? activeWorkspaceRoot().trim()).trim();
+
+    // Load sessions scoped to the newly-active worker before we clear selection.
+    // This avoids briefly auto-selecting a session from the previously-active worker
+    // when the user is already on the /session route.
+    if (options.client()) {
+      try {
+        await options.loadSessions(root || undefined);
+      } catch {
+        // If session load fails, still proceed to show an empty session.
+      }
+    }
+
+    options.setSelectedSessionId(null);
+    options.setMessages([]);
+    options.setTodos([]);
+    options.setPendingPermissions([]);
+    options.setSessionStatusById({});
+
+    options.setView("session");
+  };
+
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -1309,16 +1332,14 @@ export function createWorkspaceStore(options: {
         updateWorkspaceConnectionState(ws.activeId, { status: "connected", message: null });
       }
 
-      const active = ws.workspaces.find((w) => w.id === ws.activeId) ?? null;
-        if (active) {
-          setProjectDir(active.path);
-          setAuthorizedDirs([active.path]);
-        }
-
       setCreateWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
       markOnboardingComplete();
+
+      if (ws.activeId) {
+        await activateWorkspace(ws.activeId);
+      }
+
+      await openEmptySession(ws.activeId ? activeWorkspaceRoot().trim() : resolvedFolder);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
@@ -1460,8 +1481,6 @@ export function createWorkspaceStore(options: {
 
         setSandboxStep("connect", { status: "active", detail: null });
 
-        options.setTab("scheduled");
-        options.setView("dashboard");
         markOnboardingComplete();
 
         const ok = await createRemoteWorkspaceFlow({
@@ -2008,13 +2027,13 @@ export function createWorkspaceStore(options: {
       syncActiveWorkspaceId(ws.activeId);
       setCreateWorkspaceOpen(false);
       setCreateRemoteWorkspaceOpen(false);
-      options.setTab("scheduled");
-      options.setView("dashboard");
       markOnboardingComplete();
 
       if (ws.activeId) {
         await activateWorkspace(ws.activeId);
       }
+
+      await openEmptySession(ws.activeId ? activeWorkspaceRoot().trim() : resolvedFolder);
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
