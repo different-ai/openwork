@@ -1517,7 +1517,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Advanced",
+          placeholder: token ? undefined : "Set token in workspace settings",
           hint: "This token grants access to the worker on that host.",
         },
       ];
@@ -1690,7 +1690,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openConfig = () => {
-    props.setTab("config");
+    props.setTab(props.developerMode ? "config" : "identities");
     props.setView("dashboard");
   };
 
@@ -2631,18 +2631,20 @@ export default function SessionView(props: SessionViewProps) {
             <MessageCircle size={18} />
             Identities
           </button>
-          <button
-            type="button"
-            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "config"
-                ? "bg-dls-active text-dls-text"
-                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-            }`}
-            onClick={openConfig}
-          >
-            <SlidersHorizontal size={18} />
-            Advanced
-          </button>
+          <Show when={props.developerMode}>
+            <button
+              type="button"
+              class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+                showRightSidebarSelection() && props.tab === "config"
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              }`}
+              onClick={openConfig}
+            >
+              <SlidersHorizontal size={18} />
+              Advanced
+            </button>
+          </Show>
           </div>
 
           <InboxPanel

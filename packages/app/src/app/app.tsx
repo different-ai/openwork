@@ -4110,9 +4110,29 @@ export default function App() {
     downloadUpdate().catch(() => undefined);
   });
 
+  const headerConnectedVersion = createMemo(() => {
+    const fallbackVersion = connectedVersion()?.trim() ?? "";
+    if (!developerMode()) {
+      return fallbackVersion || null;
+    }
+
+    const openworkVersion =
+      appVersion()?.trim() ||
+      openworkServerDiagnostics()?.version?.trim() ||
+      "";
+    if (!openworkVersion) {
+      return fallbackVersion || null;
+    }
+
+    const normalizedVersion = openworkVersion.startsWith("v")
+      ? openworkVersion
+      : `v${openworkVersion}`;
+    return `OpenWork ${normalizedVersion}`;
+  });
+
   const headerStatus = createMemo(() => {
-    if (!client() || !connectedVersion()) return t("status.disconnected", currentLocale());
-    const bits = [`${t("status.connected", currentLocale())} · ${connectedVersion()}`];
+    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
+    const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
     if (sseConnected()) bits.push(t("status.live", currentLocale()));
     return bits.join(" · ");
   });

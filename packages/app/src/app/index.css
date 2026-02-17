@@ -7,12 +7,12 @@
   color-scheme: light;
   --dls-surface: #ffffff;
   --dls-sidebar: #f3f3f3;
-  --dls-border: #f3f3f3;
+  --dls-border: #e4e6eb;
   --dls-accent: #2563eb;
   --dls-accent-hover: #1d4ed8;
   --dls-accent-rgb: 37 99 235;
   --dls-text-primary: #111827;
-  --dls-text-secondary: #6b7280;
+  --dls-text-secondary: #5f6773;
   --dls-hover: #f9fafb;
   --dls-active: #e5e5e7;
   --dls-radius: 8px;

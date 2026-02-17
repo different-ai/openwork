@@ -521,8 +521,14 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const openConfig = () => {
-    props.setTab("config");
+    props.setTab(props.developerMode ? "config" : "identities");
   };
+
+  createEffect(() => {
+    if (props.developerMode) return;
+    if (props.tab !== "config") return;
+    props.setTab("identities");
+  });
 
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
@@ -1261,7 +1267,7 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "config"}>
+            <Match when={props.tab === "config" && props.developerMode}>
               <ConfigView
                 busy={props.busy}
                 clientConnected={props.clientConnected}
@@ -1451,7 +1457,7 @@ export default function DashboardView(props: DashboardViewProps) {
           mcpStatuses={props.mcpStatuses}
         />
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-5 gap-2">
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1488,15 +1494,17 @@ export default function DashboardView(props: DashboardViewProps) {
               <MessageCircle size={18} />
               IDs
             </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "config" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("config")}
-            >
-              <SlidersHorizontal size={18} />
-              Advanced
-            </button>
+            <Show when={props.developerMode}>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("config")}
+              >
+                <SlidersHorizontal size={18} />
+                Advanced
+              </button>
+            </Show>
           </div>
         </nav>
       </main>
@@ -1507,7 +1515,7 @@ export default function DashboardView(props: DashboardViewProps) {
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Extensions", <Box size={18} />)}
           {navItem("identities", "Identities", <MessageCircle size={18} />)}
-          {navItem("config", "Advanced", <SlidersHorizontal size={18} />)}
+          <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
         </div>
       </aside>
     </div>
