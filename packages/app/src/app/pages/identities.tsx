@@ -44,6 +44,8 @@ Examples:
 - Keep responses concise and action-oriented.
 - Ask one clarifying question when requirements are ambiguous.
 - Prefer concrete tool use over speculation when troubleshooting.
+- For outbound delivery, first call opencode_router_status to confirm channel/identity/bindings.
+- Then call opencode_router_send with peerId for direct sends, or directory for binding fan-out.
 `;
 
 function formatRequestError(error: unknown): string {
