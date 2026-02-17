@@ -132,6 +132,29 @@ export type OpenworkCommandItem = {
   scope: "workspace" | "global";
 };
 
+export type OpenworkSoulModeEnableResult = {
+  ok: boolean;
+  soulFile: string;
+  stateFile: string;
+  heartbeatLog: string;
+  heartbeatCommandPath: string;
+  revertCommandPath: string;
+  job: ScheduledJob | null;
+  scheduleOutput: string;
+  runOutput: string;
+};
+
+export type OpenworkSoulModeDisableResult = {
+  ok: boolean;
+  jobDeleted: boolean;
+  removedSoulFile: boolean;
+  removedStateFile: boolean;
+  removedHeartbeatLog: boolean;
+  removedSoulDir: boolean;
+  removedHeartbeatCommand: boolean;
+  removedRevertCommand: boolean;
+};
+
 export type OpenworkMcpItem = {
   name: string;
   config: Record<string, unknown>;
@@ -1239,6 +1262,18 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "DELETE",
         },
       ),
+    enableSoulMode: (workspaceId: string) =>
+      requestJson<OpenworkSoulModeEnableResult>(baseUrl, `/workspace/${workspaceId}/soul/enable`, {
+        token,
+        hostToken,
+        method: "POST",
+      }),
+    disableSoulMode: (workspaceId: string) =>
+      requestJson<OpenworkSoulModeDisableResult>(baseUrl, `/workspace/${workspaceId}/soul/disable`, {
+        token,
+        hostToken,
+        method: "POST",
+      }),
 
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();

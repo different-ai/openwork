@@ -56,10 +56,12 @@ import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
 import type { OpenworkServerClient, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
+import { opencodeCommandWrite } from "../lib/tauri";
 import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath, parseTemplateFrontmatter } from "../utils";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
+import takeSoulBackTemplate from "../data/commands/take-my-soul-back.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -210,6 +212,15 @@ const SOUL_SETUP_TEMPLATE = (() => {
 })();
 
 const INITIAL_MESSAGE_WINDOW = 140;
+const TAKE_SOUL_BACK_TEMPLATE = (() => {
+  const parsed = parseTemplateFrontmatter(takeSoulBackTemplate);
+  const name = parsed?.data?.name?.trim() || "take-my-soul-back";
+  const description =
+    parsed?.data?.description?.trim() ||
+    "Disable soul mode and remove the soul scheduler and memory artifacts";
+  const body = (parsed?.body ?? takeSoulBackTemplate).trim();
+  return { name, description, body };
+})();
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
@@ -710,6 +721,7 @@ export default function SessionView(props: SessionViewProps) {
     assistantId: null,
     partCount: 0,
   });
+  const [soulQuickstartBusy, setSoulQuickstartBusy] = createSignal(false);
   const [abortBusy, setAbortBusy] = createSignal(false);
   const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
@@ -1551,6 +1563,53 @@ export default function SessionView(props: SessionViewProps) {
     props.sendPromptAsync(draft).catch(() => undefined);
   };
 
+  const upsertWorkspaceQuickstartCommand = async (input: {
+    name: string;
+    description?: string;
+    template: string;
+  }) => {
+    const workspacePath = props.activeWorkspaceRoot?.trim() ?? "";
+    if (!workspacePath) return false;
+
+    if (props.activeWorkspaceDisplay.workspaceType === "remote") {
+      const client = props.openworkServerClient;
+      const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+      if (!client || !workspaceId) return false;
+      await client.upsertCommand(workspaceId, {
+        name: input.name,
+        description: input.description,
+        template: input.template,
+      });
+      return true;
+    }
+
+    if (!isTauriRuntime()) return false;
+
+    await opencodeCommandWrite({
+      scope: "workspace",
+      projectDir: workspacePath,
+      command: {
+        name: input.name,
+        description: input.description,
+        template: input.template,
+      },
+    });
+    return true;
+  };
+
+  const ensureSoulQuickstartCommands = async () => {
+    await upsertWorkspaceQuickstartCommand({
+      name: SOUL_SETUP_TEMPLATE.name,
+      description: SOUL_SETUP_TEMPLATE.description,
+      template: SOUL_SETUP_TEMPLATE.body,
+    });
+    await upsertWorkspaceQuickstartCommand({
+      name: TAKE_SOUL_BACK_TEMPLATE.name,
+      description: TAKE_SOUL_BACK_TEMPLATE.description,
+      template: TAKE_SOUL_BACK_TEMPLATE.body,
+    });
+  };
+
   const handleBrowserAutomationQuickstart = async () => {
     const name = BROWSER_SETUP_TEMPLATE.name;
     try {
@@ -1582,33 +1641,43 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleSoulQuickstart = async () => {
-    const name = SOUL_SETUP_TEMPLATE.name;
+    if (soulQuickstartBusy()) return;
+    setSoulQuickstartBusy(true);
     try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: `/${name}`,
-          resolvedText: `/${name}`,
-          parts: [{ type: "text", text: `/${name}` }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
+      try {
+        await ensureSoulQuickstartCommands();
+      } catch {
+        // Best-effort command install. Continue with API/prompt fallback below.
       }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
 
-    const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
+      try {
+        const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
+        const client = props.openworkServerClient;
+        if (workspaceId && client) {
+          const result = await client.enableSoulMode(workspaceId);
+          if (result.job) {
+            setToastMessage("Soul Mode enabled. Check-ins run every 12 hours. Revert with /take-my-soul-back.");
+          } else {
+            setToastMessage("Soul Mode enabled. Revert with /take-my-soul-back.");
+          }
+          return;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to enable Soul Mode via server";
+        setToastMessage(message);
+      }
+
+      const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
+      handleSendPrompt({
+        mode: "prompt",
+        text,
+        resolvedText: text,
+        parts: [{ type: "text", text }],
+        attachments: [],
+      });
+    } finally {
+      setSoulQuickstartBusy(false);
+    }
   };
 
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
@@ -2323,14 +2392,15 @@ export default function SessionView(props: SessionViewProps) {
                 <button
                   type="button"
                   class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                  disabled={soulQuickstartBusy()}
                   onClick={() => {
                     void handleSoulQuickstart();
                   }}
                 >
                   <div class="text-sm font-semibold text-dls-text">Give me a soul</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Keep your goals and preferences across sessions with light scheduled check-ins.
-                    Tradeoff: more autonomy can create extra background runs, but revert is one command.
+                    Keep your goals and preferences across sessions with a heartbeat every 12 hours.
+                    Revert anytime with one command: /take-my-soul-back.
                   </div>
                 </button>
               </div>

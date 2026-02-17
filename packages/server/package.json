@@ -43,6 +43,7 @@
   "dependencies": {
     "jsonc-parser": "^3.2.1",
     "minimatch": "^10.0.1",
+    "opencode-scheduler": "^1.2.0",
     "yaml": "^2.6.1"
   },
   "devDependencies": {

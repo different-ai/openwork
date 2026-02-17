@@ -54,13 +54,20 @@ export async function upsertCommand(
   }
   const sanitized = sanitizeCommandName(payload.name);
   validateCommandName(sanitized);
-  const frontmatter = buildFrontmatter({
-    name: sanitized,
-    description: payload.description,
-    agent: payload.agent,
-    model: payload.model ?? null,
-    subtask: payload.subtask ?? false,
-  });
+  const frontmatterData: Record<string, unknown> = { name: sanitized };
+  if (typeof payload.description === "string" && payload.description.trim()) {
+    frontmatterData.description = payload.description;
+  }
+  if (typeof payload.agent === "string" && payload.agent.trim()) {
+    frontmatterData.agent = payload.agent;
+  }
+  if (typeof payload.model === "string" && payload.model.trim()) {
+    frontmatterData.model = payload.model;
+  }
+  if (payload.subtask === true) {
+    frontmatterData.subtask = true;
+  }
+  const frontmatter = buildFrontmatter(frontmatterData);
   const content = frontmatter + "\n" + payload.template.trim() + "\n";
   const dir = projectCommandsDir(workspaceRoot);
   await mkdir(dir, { recursive: true });

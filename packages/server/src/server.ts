@@ -9,6 +9,7 @@ import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
+import { disableSoulMode, enableSoulMode } from "./soul-mode.js";
 import { ApiError, formatError } from "./errors.js";
 import { readJsoncFile, updateJsoncTopLevel, writeJsoncFile } from "./jsonc.js";
 import { recordAudit, readAuditEntries, readLastAudit } from "./audit.js";
@@ -3028,6 +3029,96 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       timestamp: Date.now(),
     });
     return jsonResponse({ job });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/enable", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const soulFile = join(workspace.path, ".opencode", "soul.md");
+    const stateFile = join(workspace.path, ".opencode", "soul", "state.json");
+    const heartbeatLog = join(workspace.path, ".opencode", "soul", "heartbeat.jsonl");
+    const heartbeatCommandPath = join(workspace.path, ".opencode", "commands", "soul-heartbeat.md");
+    const revertCommandPath = join(workspace.path, ".opencode", "commands", "take-my-soul-back.md");
+    const schedulerRoot = join(homedir(), ".config", "opencode", "scheduler");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.enable",
+      summary: "Enable Soul Mode",
+      paths: [soulFile, stateFile, heartbeatLog, heartbeatCommandPath, revertCommandPath, schedulerRoot],
+    });
+
+    const result = await enableSoulMode(workspace.path);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "soul.enable",
+      target: soulFile,
+      summary: "Enabled Soul Mode",
+      timestamp: Date.now(),
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName("soul-heartbeat"),
+      action: "updated",
+      path: result.heartbeatCommandPath,
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName("take-my-soul-back"),
+      action: "updated",
+      path: result.revertCommandPath,
+    });
+
+    return jsonResponse({ ok: true, ...result });
+  });
+
+  addRoute(routes, "POST", "/workspace/:id/soul/disable", "client", async (ctx) => {
+    ensureWritable(config);
+    requireClientScope(ctx, "collaborator");
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const soulFile = join(workspace.path, ".opencode", "soul.md");
+    const stateFile = join(workspace.path, ".opencode", "soul", "state.json");
+    const heartbeatLog = join(workspace.path, ".opencode", "soul", "heartbeat.jsonl");
+    const heartbeatCommandPath = join(workspace.path, ".opencode", "commands", "soul-heartbeat.md");
+    const revertCommandPath = join(workspace.path, ".opencode", "commands", "take-my-soul-back.md");
+    const schedulerRoot = join(homedir(), ".config", "opencode", "scheduler");
+    await requireApproval(ctx, {
+      workspaceId: workspace.id,
+      action: "soul.disable",
+      summary: "Disable Soul Mode",
+      paths: [soulFile, stateFile, heartbeatLog, heartbeatCommandPath, revertCommandPath, schedulerRoot],
+    });
+
+    const result = await disableSoulMode(workspace.path);
+    await recordAudit(workspace.path, {
+      id: shortId(),
+      workspaceId: workspace.id,
+      actor: ctx.actor ?? { type: "remote" },
+      action: "soul.disable",
+      target: soulFile,
+      summary: "Disabled Soul Mode",
+      timestamp: Date.now(),
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName("soul-heartbeat"),
+      action: "removed",
+      path: heartbeatCommandPath,
+    });
+
+    emitReloadEvent(ctx.reloadEvents, workspace, "commands", {
+      type: "command",
+      name: sanitizeCommandName("take-my-soul-back"),
+      action: "removed",
+      path: revertCommandPath,
+    });
+
+    return jsonResponse({ ok: true, ...result });
   });
 
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {

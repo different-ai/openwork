@@ -223,6 +223,9 @@ importers:
       minimatch:
         specifier: ^10.0.1
         version: 10.1.1
+      opencode-scheduler:
+        specifier: ^1.2.0
+        version: 1.2.0(@opencode-ai/plugin@1.1.56)
       yaml:
         specifier: ^2.6.1
         version: 2.8.2
@@ -964,8 +967,14 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
+  '@opencode-ai/plugin@1.1.56':
+    resolution: {integrity: sha512-THvL3RR30D2c7J6gClE3mMN2dOCkNlfNfAB6yQroqLK8Lm5pxnuW3z3LeP9/oIXpQBM7gzTt9HCedolxpK+P9A==}
+
   '@opencode-ai/sdk@1.1.39':
     resolution: {integrity: sha512-EUYBZAci0bzG9+a7JVINmqAqis71ipG2/D3juvmvvKFyu0YBIT/6b+g3+p82Eb5CU2dujxpPdJJCaexZ1389eQ==}
+
+  '@opencode-ai/sdk@1.1.56':
+    resolution: {integrity: sha512-VFIk4wS7chc1fbodMXstBHV6uj9z25g3c72SlwBYjzPZZLgtr9IUK+FyGMUYefXYeeXJ/l91CdmfjCjDZTmD1g==}
 
   '@opentui/core-darwin-arm64@0.1.77':
     resolution: {integrity: sha512-SNqmygCMEsPCW7xWjzCZ5caBf36xaprwVdAnFijGDOuIzLA4iaDa6um8cj3TJh7awenN3NTRsuRc7OuH42UH+g==}
@@ -2077,6 +2086,11 @@ packages:
     resolution: {integrity: sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==}
     engines: {node: '>=14.0.0'}
 
+  opencode-scheduler@1.2.0:
+    resolution: {integrity: sha512-nXJMhT632AGdQQSzJ+o+ZiulXPSbKvZRAn5Fh/DmSEZJjr/nFrkZKdBjkBqKQB6lckzGFQogufeQjN3ikbZlUQ==}
+    peerDependencies:
+      '@opencode-ai/plugin': '>=1.0.0'
+
   p-finally@1.0.0:
     resolution: {integrity: sha512-LICb2p9CB7FS+0eR1oqWnHhp0FljGLZCWBE9aix0Uye9W8LTQPwMTYVGWQWIw9RdQiDg4+epXQODwIYJtSJaow==}
     engines: {node: '>=4'}
@@ -2596,6 +2610,9 @@ packages:
 
   zod@3.25.76:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
+  zod@4.1.8:
+    resolution: {integrity: sha512-5R1P+WwQqmmMIEACyzSvo4JXHY5WiAFHRMg+zBZKgKS+Q1viRa0C1hmUKtHltoIFKtIdki3pRxkmpP74jnNYHQ==}
 
 snapshots:
 
@@ -3361,7 +3378,14 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
 
+  '@opencode-ai/plugin@1.1.56':
+    dependencies:
+      '@opencode-ai/sdk': 1.1.56
+      zod: 4.1.8
+
   '@opencode-ai/sdk@1.1.39': {}
+
+  '@opencode-ai/sdk@1.1.56': {}
 
   '@opentui/core-darwin-arm64@0.1.77': {}
 
@@ -4412,6 +4436,10 @@ snapshots:
 
   on-exit-leak-free@2.1.2: {}
 
+  opencode-scheduler@1.2.0(@opencode-ai/plugin@1.1.56):
+    dependencies:
+      '@opencode-ai/plugin': 1.1.56
+
   p-finally@1.0.0: {}
 
   p-limit@2.3.0:
@@ -4894,3 +4922,5 @@ snapshots:
   yoga-layout@3.2.1: {}
 
   zod@3.25.76: {}
+
+  zod@4.1.8: {}
