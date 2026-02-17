@@ -363,18 +363,6 @@ export default function MessageList(props: MessageListProps) {
           </Show>
         </button>
 
-        <Show when={!expanded()}>
-          <div
-            class={`mt-1 ml-1 pl-3 border-l-2 ${
-              containerProps.isUser ? "border-gray-6" : "border-gray-6/60"
-            }`}
-          >
-            <Show when={latestStep()}>
-              {(part) => <StepRow part={part()} isUser={containerProps.isUser} />}
-            </Show>
-          </div>
-        </Show>
-
         {/* Expanded content */}
         <Show when={expanded()}>
           <div
