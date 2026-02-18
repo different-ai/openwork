@@ -2751,9 +2751,6 @@ export default function App() {
   const activeWorkspaceDisplay = createMemo(() => workspaceStore.activeWorkspaceDisplay());
   const activePermissionMemo = createMemo(() => activePermission());
 
-  const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
-    new Set()
-  );
   const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
     progress: true,
     artifacts: true,
@@ -4785,8 +4782,6 @@ export default function App() {
     showThinking: showThinking(),
     groupMessageParts,
     summarizeStep,
-    expandedStepIds: expandedStepIds(),
-    setExpandedStepIds: setExpandedStepIds,
     expandedSidebarSections: expandedSidebarSections(),
     setExpandedSidebarSections: setExpandedSidebarSections,
     artifacts: activeArtifacts(),

@@ -147,8 +147,6 @@ export type SessionViewProps = {
   showThinking: boolean;
   groupMessageParts: (parts: Part[], messageId: string) => MessageGroup[];
   summarizeStep: (part: Part) => { title: string; detail?: string };
-  expandedStepIds: Set<string>;
-  setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => Set<string>;
   expandedSidebarSections: SidebarSectionState;
   setExpandedSidebarSections: (
     updater: (current: SidebarSectionState) => SidebarSectionState,
@@ -2491,8 +2489,6 @@ export default function SessionView(props: SessionViewProps) {
             developerMode={props.developerMode}
             showThinking={props.showThinking}
             workspaceRoot={props.activeWorkspaceRoot}
-            expandedStepIds={props.expandedStepIds}
-            setExpandedStepIds={props.setExpandedStepIds}
             searchMatchMessageIds={searchMatchMessageIds()}
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             footer={

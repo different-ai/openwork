@@ -508,19 +508,28 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
     textBuffer = "";
   };
 
+  const flushSteps = () => {
+    if (!steps.length) return;
+    groups.push({ kind: "steps", id: `steps-${messageId}-${groups.length}`, parts: steps.slice() });
+    steps.length = 0;
+  };
+
   parts.forEach((part) => {
     if (part.type === "text") {
+      flushSteps();
       textBuffer += (part as { text?: string }).text ?? "";
       return;
     }
 
     if (part.type === "agent") {
+      flushSteps();
       const name = (part as { name?: string }).name ?? "";
       textBuffer += name ? `@${name}` : "@agent";
       return;
     }
 
     if (part.type === "file") {
+      flushSteps();
       flushText();
       groups.push({ kind: "text", part });
       return;
@@ -531,10 +540,7 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
   });
 
   flushText();
-
-  if (steps.length) {
-    groups.push({ kind: "steps", id: `steps-${messageId}`, parts: steps });
-  }
+  flushSteps();
 
   return groups;
 }
