@@ -4,7 +4,7 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
-import { classifyTool, groupMessageParts, summarizeStep } from "../../utils";
+import { groupMessageParts, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 
 export type MessageListProps = {
@@ -242,21 +242,9 @@ export default function MessageList(props: MessageListProps) {
 
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean }) => {
-    const summary = () => summarizeStep(rowProps.part);
-    const category = () => {
-      if (rowProps.part.type === "tool") {
-        const toolName = (rowProps.part as any).tool ? String((rowProps.part as any).tool) : "";
-        return classifyTool(toolName);
-      }
-      return "tool";
-    };
-    const status = () => {
-      if (rowProps.part.type === "tool") {
-        const state = (rowProps.part as any).state ?? {};
-        return state.status ? String(state.status) : undefined;
-      }
-      return undefined;
-    };
+    const summary = createMemo(() => summarizeStep(rowProps.part));
+    const category = createMemo(() => summary().toolCategory ?? "tool");
+    const status = createMemo(() => summary().status);
 
     return (
       <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">

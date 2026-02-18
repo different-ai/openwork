@@ -686,7 +686,10 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
-  const artifacts = createMemo(() => deriveArtifacts(messages()));
+  const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
+  const artifacts = createMemo(() =>
+    deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
+  );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());

@@ -223,6 +223,7 @@ const SOUL_SETUP_TEMPLATE = (() => {
 })();
 
 const INITIAL_MESSAGE_WINDOW = 140;
+const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
@@ -381,6 +382,22 @@ export default function SessionView(props: SessionViewProps) {
     const hidden = props.messages.length - renderedMessages().length;
     return hidden > 0 ? hidden : 0;
   });
+
+  const nextRevealCount = createMemo(() => {
+    const hidden = hiddenMessageCount();
+    if (hidden <= 0) return 0;
+    return Math.min(hidden, MESSAGE_WINDOW_LOAD_CHUNK);
+  });
+
+  const revealEarlierMessages = () => {
+    const hidden = hiddenMessageCount();
+    if (hidden <= 0) return;
+    const nextStart = Math.max(0, messageWindowStart() - MESSAGE_WINDOW_LOAD_CHUNK);
+    setMessageWindowStart(nextStart);
+    if (nextStart === 0) {
+      setMessageWindowExpanded(true);
+    }
+  };
 
   const canUndoLastMessage = createMemo(() => {
     if (!props.selectedSessionId) return false;
@@ -2424,13 +2441,10 @@ export default function SessionView(props: SessionViewProps) {
               <button
                 type="button"
                 class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-                onClick={() => {
-                  setMessageWindowExpanded(true);
-                  setMessageWindowStart(0);
-                }}
+                onClick={revealEarlierMessages}
               >
-                Show {hiddenMessageCount().toLocaleString()} earlier message
-                {hiddenMessageCount() === 1 ? "" : "s"}
+                Show {nextRevealCount().toLocaleString()} earlier message
+                {nextRevealCount() === 1 ? "" : "s"}
               </button>
             </div>
           </Show>

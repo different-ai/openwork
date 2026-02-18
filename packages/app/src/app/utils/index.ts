@@ -743,9 +743,11 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   }
 
   // For completed tools with output, show a very short summary
-  const output = typeof state?.output === "string" && state.output.trim() ? state.output.trim() : null;
-  if (output) {
+  const outputRaw = typeof state?.output === "string" ? state.output.trim() : "";
+  if (outputRaw) {
     if (lower === "read") return undefined;
+
+    const output = outputRaw.length > 3000 ? outputRaw.slice(0, 3000) : outputRaw;
 
     // Extract just the first meaningful line (skip line numbers and raw file markers)
     const lines = output.split("\n").filter((l: string) => {
@@ -775,6 +777,15 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
 
   return undefined;
 }
+
+const ARTIFACT_PATH_PATTERN =
+  /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
+const ARTIFACT_OUTPUT_SCAN_LIMIT = 4000;
+const ARTIFACT_OUTPUT_SKIP_TOOLS = new Set(["webfetch"]);
+
+type DeriveArtifactsOptions = {
+  maxMessages?: number;
+};
 
 export function summarizeStep(part: Part): { title: string; detail?: string; isSkill?: boolean; skillName?: string; toolCategory?: string; status?: string } {
   if (part.type === "tool") {
@@ -817,10 +828,15 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   return { title: "Step", toolCategory: "tool" };
 }
 
-export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
+export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifactsOptions = {}): ArtifactItem[] {
   const results = new Map<string, ArtifactItem>();
+  const maxMessages =
+    typeof options.maxMessages === "number" && Number.isFinite(options.maxMessages) && options.maxMessages > 0
+      ? Math.floor(options.maxMessages)
+      : null;
+  const source = maxMessages && list.length > maxMessages ? list.slice(list.length - maxMessages) : list;
 
-  list.forEach((message) => {
+  source.forEach((message) => {
     const messageId = String((message.info as any)?.id ?? "");
 
     message.parts.forEach((part) => {
@@ -849,15 +865,23 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
         }
       });
 
-      const text = [state.title, state.output]
-        .filter((v): v is string => typeof v === "string")
+      const toolName =
+        typeof record.tool === "string" && record.tool.trim()
+          ? record.tool.trim().toLowerCase()
+          : "";
+      const titleText = typeof state.title === "string" ? state.title : "";
+      const outputText =
+        typeof state.output === "string" && !ARTIFACT_OUTPUT_SKIP_TOOLS.has(toolName)
+          ? state.output.slice(0, ARTIFACT_OUTPUT_SCAN_LIMIT)
+          : "";
+
+      const text = [titleText, outputText]
+        .filter((v): v is string => Boolean(v))
         .join(" ");
 
       if (text) {
-        const pathPattern =
-          /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
-
-        Array.from(text.matchAll(pathPattern))
+        ARTIFACT_PATH_PATTERN.lastIndex = 0;
+        Array.from(text.matchAll(ARTIFACT_PATH_PATTERN))
           .map((m) => m[1])
           .filter((f) => f && f.length <= 500)
           .forEach((f) => matches.add(f));
