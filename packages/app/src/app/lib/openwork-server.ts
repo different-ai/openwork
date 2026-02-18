@@ -333,20 +333,6 @@ export type OpenworkWorkspaceExport = {
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
-export type OpenworkArtifactItem = {
-  id: string;
-  name?: string;
-  path?: string;
-  size?: number;
-  createdAt?: number;
-  updatedAt?: number;
-  mime?: string;
-};
-
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
-};
-
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1284,18 +1270,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
 
-    listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
-        token,
-        hostToken,
-      }),
-
-    downloadArtifact: (workspaceId: string, artifactId: string) =>
-      requestBinary(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
-        { token, hostToken, timeoutMs: timeouts.binary },
-      ),
   };
 }
 

@@ -1,7 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
 import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
-  ArtifactItem,
   DashboardTab,
   ComposerDraft,
   MessageGroup,
@@ -66,8 +65,6 @@ import Composer from "../components/session/composer";
 import type { SidebarSectionState } from "../components/session/sidebar";
 import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
-import ArtifactsPanel from "../components/session/artifacts-panel";
-import ArtifactMarkdownEditor from "../components/session/artifact-markdown-editor";
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -139,7 +136,6 @@ export type SessionViewProps = {
   setExpandedSidebarSections: (
     updater: (current: SidebarSectionState) => SidebarSectionState,
   ) => SidebarSectionState;
-  artifacts: ArtifactItem[];
   workingFiles: string[];
   authorizedDirs: string[];
   activePlugins: string[];
@@ -235,9 +231,6 @@ export default function SessionView(props: SessionViewProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeSearchHitIndex, setActiveSearchHitIndex] = createSignal(0);
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | null>(null);
-
-  const [markdownEditorOpen, setMarkdownEditorOpen] = createSignal(false);
-  const [markdownEditorPath, setMarkdownEditorPath] = createSignal<string | null>(null);
 
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
@@ -359,93 +352,6 @@ export default function SessionView(props: SessionViewProps) {
     return Boolean(props.sessionRevertMessageId);
   });
 
-  const touchedFiles = createMemo(() => {
-    const out: string[] = [];
-    const seen = new Set<string>();
-    const add = (value: string) => {
-      const normalized = String(value ?? "").trim().replace(/[\\/]+/g, "/");
-      if (!normalized) return;
-      const key = normalized.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push(normalized);
-    };
-
-    const artifacts = props.artifacts;
-    for (let idx = artifacts.length - 1; idx >= 0; idx -= 1) {
-      const item = artifacts[idx];
-      add(item?.path ?? item?.name ?? "");
-      if (out.length >= 48) break;
-    }
-
-    if (out.length === 0) {
-      const working = props.workingFiles;
-      for (let idx = working.length - 1; idx >= 0; idx -= 1) {
-        add(working[idx] ?? "");
-        if (out.length >= 48) break;
-      }
-    }
-
-    return out;
-  });
-
-  const normalizeSidebarPath = (value: string) => String(value ?? "").trim().replace(/[\\/]+/g, "/");
-
-  const toWorkspaceRelativeForApi = (file: string) => {
-    const normalized = normalizeSidebarPath(file).replace(/^file:\/\//i, "");
-    if (!normalized) return "";
-
-    const root = normalizeSidebarPath(props.activeWorkspaceRoot).replace(/\/+$/, "");
-    const rootKey = root.toLowerCase();
-    const fileKey = normalized.toLowerCase();
-
-    if (root && fileKey.startsWith(`${rootKey}/`)) {
-      return normalized.slice(root.length + 1);
-    }
-    if (root && fileKey === rootKey) {
-      return "";
-    }
-
-    let relative = normalized.replace(/^\.\/+/, "");
-    if (!relative) return "";
-
-    // Tool output paths sometimes carry git-style prefixes (a/ or b/).
-    if (/^[ab]\/.+\.(md|mdx|markdown)$/i.test(relative)) {
-      relative = relative.slice(2);
-    }
-
-    // Some tool outputs include a leading "workspace/" prefix.
-    if (/^workspace\//i.test(relative)) {
-      relative = relative.replace(/^workspace\//i, "");
-    }
-
-    // Other surfaces include an absolute-style "/workspace/<path>" prefix.
-    if (/^\/+workspace\//i.test(relative)) {
-      relative = relative.replace(/^\/+workspace\//i, "");
-    }
-    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
-    if (relative.split("/").some((part) => part === "." || part === "..")) return "";
-    return relative;
-  };
-
-  const openMarkdownEditor = (file: string) => {
-    const relative = toWorkspaceRelativeForApi(file);
-    if (!relative) {
-      setToastMessage("Only worker-relative files can be opened here.");
-      return;
-    }
-    if (!/\.(md|mdx|markdown)$/i.test(relative)) {
-      setToastMessage("Only markdown files can be edited here right now.");
-      return;
-    }
-    setMarkdownEditorPath(relative);
-    setMarkdownEditorOpen(true);
-  };
-
-  const closeMarkdownEditor = () => {
-    setMarkdownEditorOpen(false);
-    setMarkdownEditorPath(null);
-  };
   const todoLabel = createMemo(() => {
     const total = todoCount();
     if (!total) return "";
@@ -2322,18 +2228,6 @@ export default function SessionView(props: SessionViewProps) {
            </Show>
          </div>
 
-          <Show when={markdownEditorOpen()}>
-            <aside class="hidden lg:flex w-[520px] shrink-0 border-l border-dls-border bg-dls-sidebar">
-              <ArtifactMarkdownEditor
-                open={markdownEditorOpen()}
-                path={markdownEditorPath()}
-                workspaceId={props.openworkServerWorkspaceId}
-                client={props.openworkServerClient}
-                onClose={closeMarkdownEditor}
-                onToast={(message) => setToastMessage(message)}
-              />
-            </aside>
-          </Show>
         </div>
 
       <Show when={todoCount() > 0}>
@@ -2531,12 +2425,6 @@ export default function SessionView(props: SessionViewProps) {
           </button>
           </div>
 
-          <ArtifactsPanel
-            id="sidebar-artifacts"
-            files={touchedFiles()}
-            workspaceRoot={props.activeWorkspaceRoot}
-            onOpenMarkdown={openMarkdownEditor}
-          />
         </div>
       </aside>
 

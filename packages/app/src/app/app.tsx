@@ -81,7 +81,6 @@ import type {
 } from "./types";
 import {
   clearStartupPreference,
-  deriveArtifacts,
   deriveWorkingFiles,
   formatBytes,
   formatModelLabel,
@@ -676,14 +675,12 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
-  const artifacts = createMemo(() => deriveArtifacts(messages()));
-  const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
+  const workingFiles = createMemo(() => deriveWorkingFiles(messages()));
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());
   const activeSessionStatusById = createMemo(() => sessionStatusById());
   const activeMessages = createMemo(() => messages());
   const activeTodos = createMemo(() => todos());
-  const activeArtifacts = createMemo(() => artifacts());
   const activeWorkingFiles = createMemo(() => workingFiles());
 
   const sessionActivity = (session: Session) =>
@@ -2606,7 +2603,6 @@ export default function App() {
   );
   const [expandedSidebarSections, setExpandedSidebarSections] = createSignal({
     progress: true,
-    artifacts: true,
     context: false,
     plugins: false,
     mcp: false,
@@ -4588,7 +4584,6 @@ export default function App() {
     setExpandedStepIds: setExpandedStepIds,
     expandedSidebarSections: expandedSidebarSections(),
     setExpandedSidebarSections: setExpandedSidebarSections,
-    artifacts: activeArtifacts(),
     workingFiles: activeWorkingFiles(),
     authorizedDirs: activeAuthorizedDirs(),
     busy: busy(),

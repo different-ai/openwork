@@ -1,6 +1,5 @@
 import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
-  ArtifactItem,
   MessageGroup,
   MessageInfo,
   MessageWithParts,
@@ -591,40 +590,30 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
   return { title: "Step", toolCategory: "tool" };
 }
 
-export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
-  const results = new Map<string, ArtifactItem>();
+export function deriveWorkingFiles(list: MessageWithParts[]): string[] {
+  const results: string[] = [];
+  const seen = new Set<string>();
+  const candidates = new Map<string, string>();
 
   list.forEach((message) => {
-    const messageId = String((message.info as any)?.id ?? "");
-
     message.parts.forEach((part) => {
       if (part.type !== "tool") return;
       const record = part as any;
       const state = record.state ?? {};
       const matches = new Set<string>();
 
-      const explicit = [
-        state.path,
-        state.file,
-        ...(Array.isArray(state.files) ? state.files : []),
-      ];
-
-      explicit.forEach((f) => {
-        if (typeof f === "string") {
-          const trimmed = f.trim();
-          if (
-            trimmed.length > 0 &&
-            trimmed.length <= 500 &&
-            trimmed.includes(".") &&
-            !/^\.{2,}$/.test(trimmed)
-          ) {
-            matches.add(trimmed);
-          }
+      const explicit = [state.path, state.file, ...(Array.isArray(state.files) ? state.files : [])];
+      explicit.forEach((value) => {
+        if (typeof value !== "string") return;
+        const trimmed = value.trim();
+        if (trimmed.length === 0 || trimmed.length > 500 || !trimmed.includes(".") || /^\.{2,}$/.test(trimmed)) {
+          return;
         }
+        matches.add(trimmed);
       });
 
       const text = [state.title, state.output]
-        .filter((v): v is string => typeof v === "string")
+        .filter((value): value is string => typeof value === "string")
         .join(" ");
 
       if (text) {
@@ -632,45 +621,22 @@ export function deriveArtifacts(list: MessageWithParts[]): ArtifactItem[] {
           /(?:^|[\s"'`([{])((?:[a-zA-Z]:[/\\]|\.{1,2}[/\\]|~[/\\]|[/\\])[\w./\\\-]*\.[a-z][a-z0-9]{0,9}|[\w.\-]+[/\\][\w./\\\-]*\.[a-z][a-z0-9]{0,9})/gi;
 
         Array.from(text.matchAll(pathPattern))
-          .map((m) => m[1])
-          .filter((f) => f && f.length <= 500)
-          .forEach((f) => matches.add(f));
+          .map((match) => match[1])
+          .filter((value) => value && value.length <= 500)
+          .forEach((value) => matches.add(value));
       }
-
-      if (matches.size === 0) return;
 
       matches.forEach((match) => {
         const normalizedPath = match.trim().replace(/[\\/]+/g, "/");
         if (!normalizedPath) return;
-
         const key = normalizedPath.toLowerCase();
-        const name = normalizedPath.split("/").pop() ?? normalizedPath;
-        const id = `artifact-${encodeURIComponent(normalizedPath)}`;
-
-        // Delete and re-add to move to end (most recent)
-        if (results.has(key)) results.delete(key);
-        results.set(key, {
-          id,
-          name,
-          path: normalizedPath,
-          kind: "file" as const,
-          size: state.size ? String(state.size) : undefined,
-          messageId: messageId || undefined,
-        });
+        if (candidates.has(key)) candidates.delete(key);
+        candidates.set(key, normalizedPath);
       });
     });
   });
 
-  return Array.from(results.values());
-}
-
-export function deriveWorkingFiles(items: ArtifactItem[]): string[] {
-  const results: string[] = [];
-  const seen = new Set<string>();
-
-  for (const item of items) {
-    const rawKey = item.path ?? item.name;
-    const normalizedPath = rawKey.trim().replace(/[\\/]+/g, "/");
+  for (const normalizedPath of candidates.values()) {
     const normalizedKey = normalizedPath.toLowerCase();
     if (!normalizedPath || seen.has(normalizedKey)) continue;
     seen.add(normalizedKey);

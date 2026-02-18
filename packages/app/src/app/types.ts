@@ -111,15 +111,6 @@ export type ComposerDraft = {
   command?: { name: string; arguments: string } | undefined;
 };
 
-export type ArtifactItem = {
-  id: string;
-  name: string;
-  path?: string;
-  kind: "file" | "text";
-  size?: string;
-  messageId?: string;
-};
-
 export type OpencodeEvent = {
   type: string;
   properties?: unknown;
