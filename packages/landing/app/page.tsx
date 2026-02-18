@@ -14,88 +14,87 @@ export default async function Home() {
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
           <div className="animate-fade-up">
-            <h1 className="mb-2 text-4xl font-bold tracking-tight">
-              Not just suggestions. Automate your work.
-            </h1>
-            <p className="mb-8 flex flex-wrap items-center gap-1.5 text-lg font-normal text-gray-500">
-              OpenWork is your open-source
-              <span className="word-cycle">
-                <span>Cowork</span>
-                <span>Codex</span>
-              </span>
+            <section className="mb-14 space-y-10">
+              <div className="space-y-5">
+                <h1 className="max-w-5xl text-balance text-4xl font-bold tracking-tight text-gray-950 sm:text-5xl md:text-6xl">
+                  Not just suggestions. Automate your work.
+                </h1>
+                <p className="max-w-5xl text-pretty text-lg leading-relaxed text-gray-600 sm:text-2xl sm:leading-relaxed">
+                  Create automations via a desktop app using tools you already
+                  use (skills, agents, mcp), click a button and share them with
+                  colleagues.
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                <p className="max-w-5xl text-[clamp(1.375rem,2.6vw,2rem)] leading-tight text-gray-900">
+                  Get started with free models, connect your ChatGPT account, or
+                  use any of the 50 other{" "}
+                  <a
+                    href="https://opencode.ai/docs/providers/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline decoration-gray-800 underline-offset-4"
+                  >
+                    providers
+                  </a>
+                  .
+                </p>
+
+                <div className="flex flex-wrap items-center gap-4">
+                  <a
+                    href={github.downloads.macos}
+                    className="inline-flex items-center gap-2 rounded-xl bg-black px-6 py-3 text-[17px] font-semibold text-white transition-opacity hover:opacity-90"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    Download for macOS
+                    <svg
+                      className="h-4 w-4"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+                      />
+                    </svg>
+                  </a>
+                  <div className="flex items-center gap-4 text-[15px] text-gray-500 sm:text-[19px]">
+                    <a
+                      href={github.downloads.windows}
+                      className="transition hover:text-black"
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Windows <span className="alpha-tag ml-1">Alpha</span>
+                    </a>
+                    <a
+                      href={github.downloads.linux}
+                      className="transition hover:text-black"
+                      rel="noreferrer"
+                      target="_blank"
+                    >
+                      Linux <span className="alpha-tag ml-1">Alpha</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <div className="group relative mb-8 rounded-[28px] border border-gray-100 bg-gradient-to-b from-slate-100 to-slate-50 p-4 shadow-sm sm:p-8">
+            <p className="mb-5 px-2 text-[clamp(1.65rem,3.3vw,3rem)] leading-tight text-slate-500 sm:mb-8 sm:px-4">
+              OpenWork is your open-source{" "}
+              <span className="font-semibold text-slate-900">Codex</span>{" "}
               alternative for teams.
-              <span className="sr-only">
-                OpenWork is your open-source Cowork alternative for teams.
-              </span>
             </p>
-          </div>
 
-          <div className="mb-10 space-y-4 text-[15px] leading-relaxed text-gray-700">
-            <p>
-              OpenWork is a desktop app for working on automation threads in
-              parallel, with built-in support for your local tools, files, and
-              browser.
-            </p>
-            <p>
-              Get started with free models, connect your ChatGPT account, or use
-              any of the 50 other{" "}
-              <a
-                href="https://opencode.ai/docs/providers/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-black underline underline-offset-4"
-              >
-                providers
-              </a>
-              .
-            </p>
-          </div>
-
-          <div className="mb-10 flex flex-wrap items-center gap-3">
-            <a
-              href={github.downloads.macos}
-              className="doc-button"
-              rel="noreferrer"
-              target="_blank"
-            >
-              Download for macOS
-              <svg
-                className="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                />
-              </svg>
-            </a>
-            <div className="ml-2 flex gap-4">
-              <a
-                href={github.downloads.windows}
-                className="text-[13px] text-gray-400 transition hover:text-black"
-                rel="noreferrer"
-                target="_blank"
-              >
-                Windows <span className="alpha-tag ml-1">Alpha</span>
-              </a>
-              <a
-                href={github.downloads.linux}
-                className="text-[13px] text-gray-400 transition hover:text-black"
-                rel="noreferrer"
-                target="_blank"
-              >
-                Linux <span className="alpha-tag ml-1">Alpha</span>
-              </a>
-            </div>
-          </div>
-
-          <div className="group relative mb-6 rounded-2xl border border-gray-100 bg-gradient-to-br from-blue-50 to-orange-50 p-10 shadow-sm">
-            <div className="overflow-hidden rounded-xl border border-gray-100 bg-white shadow-2xl transition-transform duration-500 group-hover:scale-[1.01]">
+            <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-[0_24px_70px_-35px_rgba(15,23,42,0.45)] transition-transform duration-500 group-hover:scale-[1.01]">
               <video
                 autoPlay
                 loop
