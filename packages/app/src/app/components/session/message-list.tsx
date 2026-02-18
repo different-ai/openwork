@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Check, Copy, File } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts } from "../../types";
 import { groupMessageParts, summarizeStep } from "../../utils";
@@ -24,31 +24,6 @@ type MessageBlock = {
   isUser: boolean;
   messageId: string;
 };
-
-/** Icon for a given tool category */
-function ToolIcon(props: { category: string; size?: number }) {
-  const s = () => props.size ?? 12;
-  switch (props.category) {
-    case "read":
-      return <Eye size={s()} />;
-    case "edit":
-      return <Pencil size={s()} />;
-    case "write":
-      return <FileEdit size={s()} />;
-    case "search":
-      return <Search size={s()} />;
-    case "terminal":
-      return <Terminal size={s()} />;
-    case "glob":
-      return <FolderSearch size={s()} />;
-    case "task":
-      return <Sparkles size={s()} />;
-    case "skill":
-      return <Sparkles size={s()} />;
-    default:
-      return <File size={s()} />;
-  }
-}
 
 /** Status dot color */
 function statusDotClass(status?: string): string {
@@ -168,35 +143,39 @@ export default function MessageList(props: MessageListProps) {
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
-    const category = createMemo(() => summary().toolCategory ?? "tool");
     const status = createMemo(() => summary().status);
+    const label = createMemo(() => {
+      if (rowProps.part.type === "tool") {
+        const record = rowProps.part as any;
+        if (record.tool === "bash") {
+          const state = record.state ?? {};
+          const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+          const command = typeof input.command === "string" ? input.command.trim() : "";
+          if (command) {
+            return `${status() === "completed" ? "Ran" : "Run"} ${command}`;
+          }
+        }
+      }
+      return summary().title;
+    });
+
+    const detail = createMemo(() => {
+      if (rowProps.part.type === "tool" && (rowProps.part as any).tool === "bash") {
+        return undefined;
+      }
+      return summary().detail;
+    });
 
     return (
-      <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">
+      <div class="flex items-center gap-2 py-1 text-[14px] leading-6">
         {/* Status dot */}
-        <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
-        {/* Tool icon */}
-        <div class={`shrink-0 ${
-          summary().isSkill 
-            ? "text-purple-10" 
-            : "text-gray-9"
-        }`}>
-          <ToolIcon category={category()} size={13} />
-        </div>
-        {/* Title */}
-        <span class="text-[13px] text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
-          {summary().title}
+        <div class={`w-1.5 h-1.5 rounded-full shrink-0 mt-[1px] ${statusDotClass(status())}`} />
+        <span class="text-gray-11 truncate shrink-0 max-w-[320px]">
+          {label()}
         </span>
-        {/* Skill badge */}
-        <Show when={summary().isSkill}>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
-            skill
-          </span>
-        </Show>
-        {/* Detail - truncated to single line */}
-        <Show when={summary().detail}>
+        <Show when={detail()}>
           <span class="text-[12px] text-gray-9 truncate min-w-0">
-            {summary().detail}
+            {detail()}
           </span>
         </Show>
       </div>
@@ -205,7 +184,7 @@ export default function MessageList(props: MessageListProps) {
 
   /** Compact steps list */
   const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
-    <div class="divide-y divide-gray-6/40">
+    <div class="space-y-0.5">
       <For each={listProps.parts}>
         {(part) => (
           <div>
@@ -228,16 +207,8 @@ export default function MessageList(props: MessageListProps) {
   );
 
   const StepsContainer = (containerProps: { parts: Part[]; isUser: boolean; isInline?: boolean }) => (
-    <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
-      <div
-        class={`mt-1 ml-1 pl-3 border-l-2 ${
-          containerProps.isUser
-            ? "border-gray-6"
-            : "border-gray-6/60"
-        }`}
-      >
-        <StepsList parts={containerProps.parts} isUser={containerProps.isUser} />
-      </div>
+    <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-2") : ""}>
+      <StepsList parts={containerProps.parts} isUser={containerProps.isUser} />
     </div>
   );
 

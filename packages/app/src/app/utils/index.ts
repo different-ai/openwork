@@ -516,8 +516,17 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
 
   parts.forEach((part) => {
     if (part.type === "text") {
-      flushSteps();
-      textBuffer += (part as { text?: string }).text ?? "";
+      const chunk = (part as { text?: string }).text ?? "";
+      if (!chunk) return;
+
+      const hasVisibleText = chunk.trim().length > 0;
+      if (hasVisibleText) {
+        flushSteps();
+      }
+
+      if (textBuffer || hasVisibleText) {
+        textBuffer += chunk;
+      }
       return;
     }
 
@@ -610,6 +619,11 @@ function buildToolTitle(state: any, toolName: string): string {
     return normalizePathToken(value);
   };
 
+  const stateTitle = normalizeStepText(state?.title);
+  if (stateTitle) {
+    return truncateStepText(isPathLike(stateTitle) ? normalizePathToken(stateTitle) : stateTitle, 56);
+  }
+
   if (lower === "read") {
     const target = file("filePath", "path", "file");
     return target ? `Read ${target}` : "Read file";
@@ -662,11 +676,6 @@ function buildToolTitle(state: any, toolName: string): string {
   if (lower === "skill") {
     const name = pick("name");
     return name ? `Load skill ${name}` : "Load skill";
-  }
-
-  const stateTitle = normalizeStepText(state?.title);
-  if (stateTitle) {
-    return truncateStepText(isPathLike(stateTitle) ? normalizePathToken(stateTitle) : stateTitle, 56);
   }
 
   const fallback = normalizeStepText(toolName).replace(/[_-]+/g, " ");
