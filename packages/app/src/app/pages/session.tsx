@@ -747,7 +747,6 @@ export default function SessionView(props: SessionViewProps) {
     partCount: 0,
   });
   const [abortBusy, setAbortBusy] = createSignal(false);
-  const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
 
   const lastAssistantSnapshot = createMemo(() => {
@@ -810,11 +809,43 @@ export default function SessionView(props: SessionViewProps) {
       const messageId =
         typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
       if (!messageId) continue;
-      if (baseline.assistantId && messageId === baseline.assistantId && msg.parts.length <= baseline.partCount) {
-        continue;
+      if (baseline.assistantId && messageId === baseline.assistantId) {
+        if (msg.parts.length <= baseline.partCount) {
+          return null;
+        }
+        return msg.parts[msg.parts.length - 1] ?? null;
       }
       if (!msg.parts.length) continue;
       return msg.parts[msg.parts.length - 1] ?? null;
+    }
+    return null;
+  });
+
+  const cleanReasoning = (value: string) => value.replace(/\[REDACTED\]/g, "").trim();
+
+  const latestRunReasoning = createMemo<string | null>(() => {
+    if (!showRunIndicator()) return null;
+    const baseline = runBaseline();
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role !== "assistant") continue;
+      const messageId =
+        typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+      if (!messageId) continue;
+
+      const minIndex = baseline.assistantId && messageId === baseline.assistantId ? baseline.partCount - 1 : -1;
+      for (let partIndex = msg.parts.length - 1; partIndex > minIndex; partIndex -= 1) {
+        const part = msg.parts[partIndex];
+        if (part?.type !== "reasoning") continue;
+        const raw = typeof (part as { text?: unknown }).text === "string" ? String((part as { text?: string }).text) : "";
+        const text = cleanReasoning(raw);
+        if (text) return text;
+      }
+
+      if (baseline.assistantId && messageId === baseline.assistantId) {
+        break;
+      }
     }
     return null;
   });
@@ -875,6 +906,12 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const thinkingDetail = createMemo<null | { title: string; detail?: string }>(() => {
+    const reasoning = latestRunReasoning();
+    if (reasoning) {
+      const detail = truncateDetail(reasoning);
+      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
+    }
+
     const part = latestRunPart();
     if (!part) return null;
     if (part.type === "tool") {
@@ -887,7 +924,7 @@ export default function SessionView(props: SessionViewProps) {
       return { title, detail: output ?? error ?? undefined };
     }
     if (part.type === "reasoning") {
-      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const text = cleanReasoning(typeof (part as any).text === "string" ? (part as any).text : "");
       const detail = truncateDetail(text);
       return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
     }
@@ -1024,12 +1061,6 @@ export default function SessionView(props: SessionViewProps) {
     setRunTick(Date.now());
     const id = window.setInterval(() => setRunTick(Date.now()), 50);
     onCleanup(() => window.clearInterval(id));
-  });
-
-  createEffect(() => {
-    if (!thinkingStatus()) {
-      setThinkingExpanded(false);
-    }
   });
 
   createEffect(
@@ -2483,6 +2514,13 @@ export default function SessionView(props: SessionViewProps) {
                         <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                       </Show>
                     </div>
+                    <Show when={thinkingDetail()?.detail}>
+                      {(detail) => (
+                        <div class="pl-3 pr-2 pt-0.5 text-[11px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
+                          {thinkingDetail()?.title === "Reasoning" ? detail() : `${thinkingDetail()?.title}: ${detail()}`}
+                        </div>
+                      )}
+                    </Show>
                   </div>
                 </div>
               ) : undefined
