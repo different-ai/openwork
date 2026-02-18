@@ -515,6 +515,13 @@ export default function DashboardView(props: DashboardViewProps) {
     });
   });
 
+  const soulModeEnabled = createMemo(() => {
+    const status = props.soulStatusByWorkspaceId[props.activeWorkspaceId];
+    return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
+  });
+
+  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
+
   const navItem = (t: DashboardTab, label: any, icon: any) => {
     const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
     return (
@@ -1537,7 +1544,7 @@ export default function DashboardView(props: DashboardViewProps) {
               }`}
               onClick={() => props.setTab("soul")}
             >
-              <HeartPulse size={18} />
+              <HeartPulse size={18} class={soulNavIconClass()} />
               Soul
             </button>
             <button
@@ -1585,7 +1592,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
           {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("soul", "Soul", <HeartPulse size={18} />)}
+          {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Extensions", <Box size={18} />)}
           {navItem("identities", "Messaging", <MessageCircle size={18} />)}

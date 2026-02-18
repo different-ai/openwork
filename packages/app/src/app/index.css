@@ -133,3 +133,42 @@ select:disabled {
 @utility animate-progress-shimmer {
   animation: progress-shimmer 2s infinite linear;
 }
+
+@keyframes soul-nav-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    color: #ef4444;
+    filter: drop-shadow(0 0 0 rgba(239, 68, 68, 0));
+  }
+
+  35% {
+    transform: scale(1.08);
+    color: #f87171;
+    filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.45));
+  }
+
+  70% {
+    transform: scale(1.15);
+    color: #ef4444;
+    filter: drop-shadow(0 0 14px rgba(239, 68, 68, 0.75));
+  }
+}
+
+.soul-nav-icon-active {
+  color: #ef4444;
+  animation: soul-nav-pulse 1.8s cubic-bezier(0.32, 0, 0.3, 1) infinite;
+  transform-origin: center;
+  will-change: transform, filter;
+}
+
+[data-theme="dark"] .soul-nav-icon-active {
+  color: #fb7185;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .soul-nav-icon-active {
+    animation: none;
+    filter: none;
+  }
+}

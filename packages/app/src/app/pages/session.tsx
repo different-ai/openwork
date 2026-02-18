@@ -1790,6 +1790,12 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
+  const soulModeEnabled = createMemo(() =>
+    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
+  );
+
+  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
+
   const openProviderAuth = () => {
     void props.openProviderAuthModal().catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
@@ -2645,7 +2651,7 @@ export default function SessionView(props: SessionViewProps) {
             }`}
             onClick={() => openSoul()}
           >
-            <HeartPulse size={18} />
+            <HeartPulse size={18} class={soulNavIconClass()} />
             Soul
           </button>
           <button
