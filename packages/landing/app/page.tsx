@@ -345,6 +345,26 @@ export default async function Home() {
               </div>
             </div>
 
+            <div className="mb-6">
+              <a href="/den" className="doc-button">
+                Explore Den preorder
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M14 5l7 7m0 0l-7 7m7-7H3"
+                  />
+                </svg>
+              </a>
+            </div>
+
             <WaitlistForm />
           </section>
 

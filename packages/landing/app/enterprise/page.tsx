@@ -71,6 +71,20 @@ export default async function Enterprise() {
                   <div>Team rollout</div>
                 </div>
               </div>
+
+              <div className="rounded-xl border border-gray-100 bg-white p-6 shadow-sm">
+                <div className="mb-2 text-[12px] font-bold uppercase tracking-wider text-gray-500">
+                  New
+                </div>
+                <h3 className="mb-2 text-[18px] font-bold">Den preorder</h3>
+                <p className="mb-4 text-[13px] leading-relaxed text-gray-600">
+                  $1 first month, then $50/month for 1 seat. Cancel anytime.
+                  Includes priority onboarding and custom workflows.
+                </p>
+                <a href="/den" className="doc-button">
+                  View Den
+                </a>
+              </div>
             </div>
 
             <BookCallForm calUrl={cal} />

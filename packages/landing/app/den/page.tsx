@@ -1,0 +1,118 @@
+import { SiteFooter } from "../../components/site-footer";
+import { SiteNav } from "../../components/site-nav";
+import { OpenCodeLogo } from "../../components/opencode-logo";
+import { getGithubData } from "../../lib/github";
+
+export const metadata = {
+  title: "OpenWork — Den",
+  description: "Hosted OpenWork for teams with priority onboarding.",
+};
+
+export default async function Den() {
+  const github = await getGithubData();
+  const checkoutUrl = process.env.NEXT_PUBLIC_DEN_CHECKOUT_URL ?? "";
+
+  return (
+    <div className="min-h-screen">
+      <SiteNav stars={github.stars} active="den" />
+
+      <main className="pb-24 pt-20">
+        <div className="content-max-width px-6">
+          <div className="animate-fade-up">
+            <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
+              OpenWork hosted
+            </div>
+            <h1 className="mb-3 text-4xl font-bold tracking-tight">Den</h1>
+            <h2 className="mb-8 text-[34px] font-bold leading-tight tracking-tight text-black">
+              Hosted OpenWork for teams
+            </h2>
+            <p className="max-w-3xl text-[18px] leading-relaxed text-gray-600">
+              Den gives your team a managed OpenWork runtime with priority
+              onboarding and custom workflows, so you can ship automations
+              without running infrastructure yourself.
+            </p>
+          </div>
+
+          <div className="mb-12 mt-10 flex flex-wrap items-center gap-3">
+            {checkoutUrl ? (
+              <a
+                href={checkoutUrl}
+                className="doc-button"
+                rel="noreferrer"
+                target="_blank"
+              >
+                Start Den preorder
+                <svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth="2"
+                    d="M14 5l7 7m0 0l-7 7m7-7H3"
+                  />
+                </svg>
+              </a>
+            ) : (
+              <a href="/enterprise#book" className="doc-button">
+                Book onboarding
+              </a>
+            )}
+          </div>
+
+          <div className="mb-8 text-[20px] font-semibold text-black">
+            $1 first month, then $50/month for 1 seat. Cancel anytime.
+          </div>
+          <p className="mb-12 max-w-3xl text-[15px] leading-relaxed text-gray-600">
+            Preorder includes priority onboarding, custom workflow setup, and
+            Den access when hosted rollout drops by Feb 24.
+          </p>
+
+          <div className="mb-14 grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
+            <div className="feature-card">
+              <h4 className="mb-2 text-[14px] font-bold">Priority onboarding</h4>
+              <p className="text-[13px] leading-relaxed text-gray-500">
+                We set up your first workflows with your team and tighten the
+                operating setup together.
+              </p>
+            </div>
+            <div className="feature-card">
+              <h4 className="mb-2 text-[14px] font-bold">Custom workflows</h4>
+              <p className="text-[13px] leading-relaxed text-gray-500">
+                Bring your internal tasks and we package them into reusable,
+                permissioned OpenWork flows.
+              </p>
+            </div>
+            <div className="feature-card">
+              <h4 className="mb-2 text-[14px] font-bold">Hosted reliability</h4>
+              <p className="text-[13px] leading-relaxed text-gray-500">
+                Managed runtime with clearer guardrails and less infrastructure
+                burden on your side.
+              </p>
+            </div>
+          </div>
+
+          <div className="mb-16 flex flex-wrap items-center gap-2 text-[13px] text-gray-500">
+            <span className="font-semibold text-gray-900">Powered by</span>
+            <a
+              href="https://opencode.ai"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center"
+              aria-label="opencode.ai"
+            >
+              <OpenCodeLogo className="h-3 w-auto" />
+            </a>
+            <span>Everything from opencode just works.</span>
+          </div>
+
+          <SiteFooter />
+        </div>
+      </main>
+    </div>
+  );
+}

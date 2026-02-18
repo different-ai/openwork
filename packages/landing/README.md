@@ -7,6 +7,11 @@
 2. Run the app:
    `pnpm --filter @different-ai/openwork-landing dev`
 
+### Optional env vars
+
+- `NEXT_PUBLIC_CAL_URL` - enterprise booking link
+- `NEXT_PUBLIC_DEN_CHECKOUT_URL` - Polar checkout URL for the Den preorder CTA
+
 ## Deploy (recommended)
 
 This app is ready for Vercel or any Node-compatible Next.js host.

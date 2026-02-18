@@ -3,7 +3,7 @@ import Link from "next/link";
 type Props = {
   stars: string;
   callUrl?: string;
-  active?: "home" | "enterprise";
+  active?: "home" | "enterprise" | "den";
 };
 
 export function SiteNav(props: Props) {
@@ -30,8 +30,8 @@ export function SiteNav(props: Props) {
             <Link href="/enterprise" className={navLink(props.active === "enterprise")}>
               Enterprise
             </Link>
-            <Link href="#" className="transition hover:text-black">
-              Blog
+            <Link href="/den" className={navLink(props.active === "den")}>
+              Den
             </Link>
           </div>
         </div>
