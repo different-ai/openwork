@@ -365,6 +365,40 @@ export type OpenworkInboxUploadResult = {
   bytes: number;
 };
 
+export type OpenworkSoulHeartbeatEntry = {
+  id: string;
+  ts: string | null;
+  workspace: string | null;
+  summary: string;
+  looseEnds: string[];
+  nextAction: string | null;
+};
+
+export type OpenworkSoulStatus = {
+  enabled: boolean;
+  state: "off" | "healthy" | "stale" | "error";
+  memoryEnabled: boolean;
+  instructionsEnabled: boolean;
+  heartbeatLogExists: boolean;
+  heartbeatCommandExists: boolean;
+  heartbeatJob: {
+    name: string;
+    slug: string;
+    schedule: string;
+    lastRunAt: string | null;
+    lastRunStatus: string | null;
+    lastRunError: string | null;
+  } | null;
+  heartbeatCount: number;
+  lastHeartbeatAt: string | null;
+  lastHeartbeatSummary: string | null;
+  staleAfterMs: number | null;
+  overdue: boolean;
+  summary: string;
+  memoryPath: string;
+  heartbeatPath: string;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1244,6 +1278,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           hostToken,
           method: "DELETE",
         },
+      ),
+    getSoulStatus: (workspaceId: string) =>
+      requestJson<OpenworkSoulStatus>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul/status`, {
+        token,
+        hostToken,
+      }),
+    listSoulHeartbeats: (workspaceId: string, limit = 20) =>
+      requestJson<{ items: OpenworkSoulHeartbeatEntry[]; total: number; path: string }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/soul/heartbeats?limit=${encodeURIComponent(String(limit))}`,
+        { token, hostToken },
       ),
 
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {

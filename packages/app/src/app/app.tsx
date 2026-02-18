@@ -147,6 +147,8 @@ import {
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
   type OpenworkAuditEntry,
+  type OpenworkSoulHeartbeatEntry,
+  type OpenworkSoulStatus,
   type OpenworkServerCapabilities,
   type OpenworkServerDiagnostics,
   type OpenworkServerStatus,
@@ -1352,6 +1354,13 @@ export default function App() {
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
+  const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
+    Record<string, OpenworkSoulStatus | null>
+  >({});
+  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<OpenworkSoulHeartbeatEntry[]>([]);
+  const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
+  const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
+  const [soulError, setSoulError] = createSignal<string | null>(null);
 
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
@@ -2571,6 +2580,163 @@ export default function App() {
     return;
   };
 
+  const resolveSoulWorkspaceMap = async () => {
+    const client = openworkServerClient();
+    if (!client || openworkServerStatus() !== "connected") {
+      return {} as Record<string, string>;
+    }
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    const map: Record<string, string> = {};
+
+    const idByLocalPath = new Map<string, string>();
+    for (const item of items) {
+      const path = normalizeDirectoryPath(item.path ?? "");
+      if (!path) continue;
+      idByLocalPath.set(path, item.id);
+    }
+
+    for (const workspace of workspaceStore.workspaces()) {
+      if (workspace.workspaceType === "local") {
+        const key = normalizeDirectoryPath(workspace.path ?? "");
+        if (!key) continue;
+        const found = idByLocalPath.get(key);
+        if (found) {
+          map[workspace.id] = found;
+        }
+        continue;
+      }
+
+      if (workspace.remoteType !== "openwork") {
+        continue;
+      }
+
+      const explicitId =
+        workspace.openworkWorkspaceId?.trim() ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "");
+      if (explicitId) {
+        map[workspace.id] = explicitId;
+        continue;
+      }
+
+      const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
+      if (!directoryHint) continue;
+      const match = items.find((entry) => {
+        const entryPath = normalizeDirectoryPath(
+          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
+        );
+        return Boolean(entryPath && entryPath === directoryHint);
+      });
+      if (match?.id) {
+        map[workspace.id] = match.id;
+      }
+    }
+
+    return map;
+  };
+
+  const refreshSoulData = async (options?: { force?: boolean }) => {
+    if (soulStatusBusy() && !options?.force) return;
+
+    const client = openworkServerClient();
+    if (!client || openworkServerStatus() !== "connected") {
+      setSoulStatusByWorkspaceId({});
+      setActiveSoulHeartbeats([]);
+      setSoulHeartbeatsBusy(false);
+      setSoulError(null);
+      return;
+    }
+
+    setSoulStatusBusy(true);
+    setSoulError(null);
+    try {
+      const workspaceMap = await resolveSoulWorkspaceMap();
+      const workspaceIds = Object.entries(workspaceMap);
+
+      const nextStatusByWorkspace: Record<string, OpenworkSoulStatus | null> = {};
+      for (const workspace of workspaceStore.workspaces()) {
+        nextStatusByWorkspace[workspace.id] = null;
+      }
+
+      let hadStatusError = false;
+      await Promise.all(
+        workspaceIds.map(async ([workspaceId, openworkId]) => {
+          try {
+            const status = await client.getSoulStatus(openworkId);
+            nextStatusByWorkspace[workspaceId] = status;
+          } catch {
+            hadStatusError = true;
+            nextStatusByWorkspace[workspaceId] = null;
+          }
+        }),
+      );
+      setSoulStatusByWorkspaceId(nextStatusByWorkspace);
+
+      const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+      const activeOpenworkId = workspaceMap[activeWorkspaceId];
+      if (!activeOpenworkId) {
+        setActiveSoulHeartbeats([]);
+        setSoulHeartbeatsBusy(false);
+        if (hadStatusError) {
+          setSoulError("Soul status is partially unavailable.");
+        }
+        return;
+      }
+
+      setSoulHeartbeatsBusy(true);
+      try {
+        const response = await client.listSoulHeartbeats(activeOpenworkId, 30);
+        setActiveSoulHeartbeats(Array.isArray(response.items) ? response.items : []);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load soul heartbeats.";
+        setActiveSoulHeartbeats([]);
+        setSoulError(message);
+      } finally {
+        setSoulHeartbeatsBusy(false);
+      }
+
+      if (hadStatusError && !soulError()) {
+        setSoulError("Soul status is partially unavailable.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load soul status.";
+      setSoulStatusByWorkspaceId({});
+      setActiveSoulHeartbeats([]);
+      setSoulHeartbeatsBusy(false);
+      setSoulError(message);
+    } finally {
+      setSoulStatusBusy(false);
+    }
+  };
+
+  const activeSoulStatus = createMemo(() => {
+    const id = workspaceStore.activeWorkspaceId();
+    if (!id) return null;
+    return soulStatusByWorkspaceId()[id] ?? null;
+  });
+
+  let lastSoulRefreshKey = "";
+  createEffect(() => {
+    const status = openworkServerStatus();
+    const hasClient = Boolean(openworkServerClient());
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+    const workspacesKey = workspaceStore
+      .workspaces()
+      .map((workspace) => {
+        const root = workspace.workspaceType === "local"
+          ? workspace.path?.trim() ?? ""
+          : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
+        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.openworkWorkspaceId ?? ""].join("|");
+      })
+      .join(";");
+    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
+    if (key === lastSoulRefreshKey) return;
+    lastSoulRefreshKey = key;
+    void refreshSoulData().catch(() => undefined);
+  });
+
   createEffect(() => {
     if (!isTauriRuntime()) return;
     workspaceStore.activeWorkspaceId();
@@ -3539,6 +3705,13 @@ export default function App() {
     }
   }
 
+  function runSoulPrompt(promptText: string) {
+    const text = promptText.trim();
+    if (!text) return;
+    setPrompt(text);
+    void createSessionAndOpen();
+  }
+
 
   onMount(async () => {
     const startupPref = readStartupPreference();
@@ -4393,6 +4566,14 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
+      soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
+      activeSoulStatus: activeSoulStatus(),
+      activeSoulHeartbeats: activeSoulHeartbeats(),
+      soulStatusBusy: soulStatusBusy(),
+      soulHeartbeatsBusy: soulHeartbeatsBusy(),
+      soulError: soulError(),
+      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
+      runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
@@ -4591,6 +4772,7 @@ export default function App() {
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
+    soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
     messages: visibleMessages(),
@@ -4654,6 +4836,7 @@ export default function App() {
 
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
+    "soul",
     "skills",
     "plugins",
     "mcp",

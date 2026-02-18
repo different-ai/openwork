@@ -28,6 +28,7 @@ import {
   ChevronDown,
   ChevronRight,
   Cpu,
+  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -54,7 +55,12 @@ import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
-import type { OpenworkServerClient, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type {
+  OpenworkServerClient,
+  OpenworkServerSettings,
+  OpenworkServerStatus,
+  OpenworkSoulStatus,
+} from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
 import {
   formatRelativeTime,
@@ -92,6 +98,7 @@ export type SessionViewProps = {
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
@@ -1771,6 +1778,18 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const openSoul = (workspaceId?: string) => {
+    const id = (workspaceId ?? props.activeWorkspaceId).trim();
+    if (!id) return;
+    void (async () => {
+      if (id !== props.activeWorkspaceId) {
+        await Promise.resolve(props.activateWorkspace(id));
+      }
+      props.setTab("soul");
+      props.setView("dashboard");
+    })();
+  };
+
   const openProviderAuth = () => {
     void props.openProviderAuthModal().catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
@@ -1813,6 +1832,8 @@ export default function SessionView(props: SessionViewProps) {
                 const isConnecting = () => props.connectingWorkspaceId === workspace().id;
                 const isMenuOpen = () => workspaceMenuId() === workspace().id;
                 const taskLoadError = () => getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
+                const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                const soulEnabled = () => Boolean(soulStatus()?.enabled);
 
                 return (
                   <div class="space-y-1">
@@ -1851,8 +1872,14 @@ export default function SessionView(props: SessionViewProps) {
                           </button>
                           <div class="min-w-0 flex-1">
                             <div class="text-sm font-medium truncate">{workspaceLabel(workspace())}</div>
-                            <div class="text-[11px] text-dls-secondary">
-                              {workspaceKindLabel(workspace())}
+                            <div class="text-[11px] text-dls-secondary flex items-center gap-1.5">
+                              <span>{workspaceKindLabel(workspace())}</span>
+                              <Show when={soulEnabled()}>
+                                <span class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-1.5 py-0.5 text-[10px] text-rose-11">
+                                  <HeartPulse size={10} />
+                                  Soul
+                                </span>
+                              </Show>
                             </div>
                           </div>
                           <Show when={group.status === "loading"}>
@@ -1926,6 +1953,16 @@ export default function SessionView(props: SessionViewProps) {
                             }}
                           >
                             Share...
+                          </button>
+                          <button
+                            type="button"
+                            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                            onClick={() => {
+                              openSoul(workspace().id);
+                              setWorkspaceMenuId(null);
+                            }}
+                          >
+                            {soulEnabled() ? "Soul settings" : "Enable soul"}
                           </button>
                           <Show when={workspace().workspaceType === "remote"}>
                             <button
@@ -2598,6 +2635,18 @@ export default function SessionView(props: SessionViewProps) {
           >
             <History size={18} />
             Automations
+          </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "soul"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={() => openSoul()}
+          >
+            <HeartPulse size={18} />
+            Soul
           </button>
           <button
             type="button"
