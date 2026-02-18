@@ -50,12 +50,17 @@ opencode-router
 
 Telegram support is configured via identities. You can either:
 - Use env vars for a single bot: `TELEGRAM_BOT_TOKEN=...`
- - Or add multiple bots to the config file (`opencode-router.json`) using the CLI:
+  - Or add multiple bots to the config file (`opencode-router.json`) using the CLI:
 
 ```bash
 opencode-router telegram add <token> --id default
 opencode-router telegram list
 ```
+
+Important for direct sends and bindings:
+- Telegram targets must use numeric `chat_id` values.
+- `@username` values are not valid direct `peerId` targets for router sends.
+- If a user has not started a chat with the bot yet, Telegram may return `chat not found`.
 
 ## Slack (Socket Mode)
 

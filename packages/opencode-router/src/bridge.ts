@@ -13,7 +13,7 @@ import { startHealthServer, type HealthSnapshot } from "./health.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createSlackAdapter } from "./slack.js";
-import { createTelegramAdapter } from "./telegram.js";
+import { createTelegramAdapter, isTelegramPeerId } from "./telegram.js";
 
 type Adapter = {
   key: string;
@@ -138,6 +138,14 @@ const CHANNEL_LABELS: Record<ChannelName, string> = {
 const TYPING_INTERVAL_MS = 6000;
 const OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH = ".opencode/agents/opencode-router.md";
 const OPENCODE_ROUTER_AGENT_MAX_CHARS = 16_000;
+const DEFAULT_MESSAGING_AGENT_INSTRUCTIONS = [
+  "Respond for non-technical users first.",
+  "Do not tell users to run router commands; use tools on their behalf.",
+  "Never expose raw peer IDs or Telegram chat IDs unless the user explicitly asks for debug details.",
+  "For Telegram send requests, try delivery immediately using existing bindings or direct tool calls.",
+  "If Telegram returns 'chat not found', explain that the recipient must message the bot first (for example with /start), then ask the user to retry.",
+  "Keep status updates concise and action-oriented.",
+].join("\n");
 
 type MessagingAgentConfig = {
   filePath: string;
@@ -175,6 +183,14 @@ function setUserModel(channel: ChannelName, identityId: string, peerId: string, 
 
 function adapterKey(channel: ChannelName, identityId: string): string {
   return `${channel}:${identityId}`;
+}
+
+function invalidTelegramPeerIdError(): Error & { status?: number } {
+  const error = new Error(
+    "Telegram requires a numeric chat_id for direct targets. Usernames like @name cannot be used as peerId.",
+  ) as Error & { status?: number };
+  error.status = 400;
+  return error;
 }
 
 function normalizeIdentityId(value: string | undefined): string {
@@ -938,6 +954,9 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           if (!peerKey || !directory) {
             throw new Error("peerId and directory are required");
           }
+          if (channel === "telegram" && !isTelegramPeerId(peerKey)) {
+            throw invalidTelegramPeerIdError();
+          }
           const scoped = resolveScopedDirectory(directory);
           if (!scoped.ok) {
             const error = new Error(scoped.error) as Error & { status?: number };
@@ -987,6 +1006,9 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           if (!directoryInput && !peerId) {
             throw new Error("directory or peerId is required");
+          }
+          if (channel === "telegram" && peerId && !isTelegramPeerId(peerId)) {
+            throw invalidTelegramPeerIdError();
           }
 
           const normalizedDir = directoryInput ? (() => {
@@ -1093,6 +1115,16 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           let sent = 0;
           for (const binding of bindings) {
             attempted += 1;
+            if (channel === "telegram" && !isTelegramPeerId(binding.peer_id)) {
+              store.deleteBinding(channel, binding.identity_id, binding.peer_id);
+              store.deleteSession(channel, binding.identity_id, binding.peer_id);
+              failures.push({
+                identityId: binding.identity_id,
+                peerId: binding.peer_id,
+                error: "Invalid Telegram peerId binding removed (expected numeric chat_id)",
+              });
+              continue;
+            }
             const adapter = adapters.get(adapterKey(channel, binding.identity_id));
             if (!adapter) {
               failures.push({
@@ -1389,18 +1421,20 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       try {
         const effectiveModel = getUserModel(inbound.channel, inbound.identityId, peerKey, config.model);
         const messagingAgent = await loadMessagingAgentConfig();
-        const promptText = messagingAgent.instructions
-          ? [
-              "You are handling a Slack/Telegram message via OpenWork.",
-              `Workspace agent file: ${messagingAgent.filePath}`,
-              ...(messagingAgent.selectedAgent ? [`Selected OpenCode agent: ${messagingAgent.selectedAgent}`] : []),
-              "Follow these workspace messaging instructions:",
-              messagingAgent.instructions,
-              "",
-              "Incoming user message:",
-              inbound.text,
-            ].join("\n")
-          : inbound.text;
+        const effectiveInstructions = [DEFAULT_MESSAGING_AGENT_INSTRUCTIONS, messagingAgent.instructions]
+          .map((value) => value.trim())
+          .filter(Boolean)
+          .join("\n\n");
+        const promptText = [
+          "You are handling a Slack/Telegram message via OpenWork.",
+          `Workspace agent file: ${messagingAgent.filePath}`,
+          ...(messagingAgent.selectedAgent ? [`Selected OpenCode agent: ${messagingAgent.selectedAgent}`] : []),
+          "Follow these workspace messaging instructions:",
+          effectiveInstructions,
+          "",
+          "Incoming user message:",
+          inbound.text,
+        ].join("\n");
         logger.debug(
           {
             sessionID,
