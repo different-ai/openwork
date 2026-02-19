@@ -15,23 +15,30 @@ export default async function Home() {
         <div className="content-max-width px-6">
           <div className="animate-fade-up">
             <h1 className="mb-2 text-4xl font-bold tracking-tight">
-              Package your skills, agents, and MCP into isolated workers.
+              Not just suggestions. Automate your work.
             </h1>
-            <p className="mb-8 text-lg font-normal text-gray-500">
-              OpenWork is the easiest way to package your skills, agents, and
-              MCP and run them in isolated workers.
+            <p className="mb-8 flex flex-wrap items-center gap-1.5 text-lg font-normal text-gray-500">
+              OpenWork is your open-source
+              <span className="word-cycle">
+                <span>Cowork</span>
+                <span>Codex</span>
+              </span>
+              alternative for teams.
+              <span className="sr-only">
+                OpenWork is your open-source Cowork alternative for teams.
+              </span>
             </p>
           </div>
 
           <div className="mb-10 space-y-4 text-[15px] leading-relaxed text-gray-700">
             <p>
-              Start locally in a matter of seconds with no login required.
-              Built-in support for local tools, files, and browser automation is
-              ready out of the box.
+              OpenWork is a desktop app for working on automation threads in
+              parallel, with built-in support for your local tools, files, and
+              browser.
             </p>
             <p>
-              Works with all providers. Use free models, connect your ChatGPT
-              account, or pick from 50+{" "}
+              Get started with free models, connect your ChatGPT account, or use
+              any of the 50 other{" "}
               <a
                 href="https://opencode.ai/docs/providers/"
                 target="_blank"
@@ -41,10 +48,6 @@ export default async function Home() {
                 providers
               </a>
               .
-            </p>
-            <p>
-              Host on your own infrastructure, or use Den for the easiest
-              hosted setup.
             </p>
           </div>
 
