@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
 
 import Button from "../components/button";
-import { HardDrive, MessageCircle, PlugZap, RefreshCcw, Shield, Smartphone, X } from "lucide-solid";
+import { CircleAlert, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   OpenworkAuditEntry,
@@ -842,10 +842,14 @@ export default function SettingsView(props: SettingsViewProps) {
                 Enables debug tools, diagnostics, and the Developer tab.
               </div>
               <div class="pt-1 flex flex-wrap items-center gap-3">
-                <Button variant={props.developerMode ? "secondary" : "outline"} onClick={props.toggleDeveloperMode}>
-                  <Shield size={16} />
+                <button
+                  type="button"
+                  class="bg-white hover:bg-gray-50 text-gray-7 border border-gray-6 rounded-md px-3 py-1.5 flex items-center gap-1.5 shadow-sm transition-all duration-200 active:bg-gray-3 text-xs font-medium"
+                  onClick={props.toggleDeveloperMode}
+                >
+                  <Zap size={14} class="text-gray-9" />
                   {props.developerMode ? "Disable Developer Mode" : "Enable Developer Mode"}
-                </Button>
+                </button>
                 <div class="text-xs text-gray-10">
                   {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
                 </div>
@@ -857,23 +861,35 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="text-xs text-gray-9">{props.headerStatus}</div>
               <div class="text-xs text-gray-8 font-mono">{props.baseUrl}</div>
               <div class="pt-2 flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
+                <button
+                  type="button"
+                  class="bg-white hover:bg-gray-50 text-gray-7 border border-gray-6 rounded-md px-3 py-1.5 flex items-center gap-1.5 shadow-sm transition-all duration-200 active:bg-gray-3 text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
                   onClick={handleReconnectOpenworkServer}
                   disabled={props.busy || props.openworkReconnectBusy || !props.openworkServerUrl.trim()}
                 >
-                  <RefreshCcw size={14} class={props.openworkReconnectBusy ? "animate-spin" : ""} />
+                  <RefreshCcw size={14} class={`text-gray-9 ${props.openworkReconnectBusy ? "animate-spin" : ""}`} />
                   {props.openworkReconnectBusy ? "Reconnecting..." : "Reconnect server"}
-                </Button>
+                </button>
                 <Show when={isLocalEngineRunning()}>
-                  <Button variant="danger" onClick={props.stopHost} disabled={props.busy}>
+                  <button
+                    type="button"
+                    class="bg-red-3 hover:bg-red-4 text-red-11 rounded-md px-3 py-1.5 flex items-center gap-1.5 transition-all duration-200 active:scale-[0.98] text-xs font-medium border border-transparent hover:border-red-7/30 disabled:opacity-60 disabled:cursor-not-allowed"
+                    onClick={props.stopHost}
+                    disabled={props.busy}
+                  >
+                    <CircleAlert size={14} />
                     Stop local server
-                  </Button>
+                  </button>
                 </Show>
                 <Show when={!isLocalEngineRunning() && props.openworkServerStatus === "connected"}>
-                  <Button variant="outline" onClick={props.stopHost} disabled={props.busy}>
+                  <button
+                    type="button"
+                    class="bg-white hover:bg-gray-50 text-gray-7 border border-gray-6 rounded-md px-3 py-1.5 flex items-center gap-1.5 shadow-sm transition-all duration-200 active:bg-gray-3 text-xs font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+                    onClick={props.stopHost}
+                    disabled={props.busy}
+                  >
                     Disconnect server
-                  </Button>
+                  </button>
                 </Show>
               </div>
               <Show when={openworkReconnectStatus()}>
