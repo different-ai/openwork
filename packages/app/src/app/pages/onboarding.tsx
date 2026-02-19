@@ -35,6 +35,9 @@ export type OnboardingViewProps = {
   engineDoctorCheckedAt: number | null;
   engineInstallLogs: string | null;
   error: string | null;
+  canRepairMigration: boolean;
+  migrationRepairBusy: boolean;
+  migrationRepairResult: { ok: boolean; message: string } | null;
   developerMode: boolean;
   isWindows: boolean;
   onClientDirectoryChange: (value: string) => void;
@@ -43,6 +46,7 @@ export type OnboardingViewProps = {
   onSelectStartup: (mode: StartupPreference) => void;
   onRememberStartupToggle: () => void;
   onStartHost: () => void;
+  onRepairMigration: () => void;
   onCreateWorkspace: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
   onPickWorkspaceFolder: () => Promise<string | null>;
   onImportWorkspaceConfig: () => void;
@@ -444,9 +448,39 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </div>
             </details>
 
-            <Show when={props.error}>
-              <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20">
-                {props.error}
+            <Show when={props.error || props.migrationRepairResult}>
+              <div class="rounded-2xl border border-red-7/20 bg-red-1/40 px-5 py-4 text-sm text-red-12 space-y-3">
+                <Show when={props.error}>
+                  <div>{props.error}</div>
+                </Show>
+                <Show when={props.migrationRepairResult}>
+                  {(result) => (
+                    <div
+                      class={`rounded-xl border px-3 py-2 text-xs ${
+                        result().ok
+                          ? "border-green-7/30 bg-green-2/30 text-green-12"
+                          : "border-red-7/30 bg-red-2/30 text-red-12"
+                      }`}
+                    >
+                      {result().message}
+                    </div>
+                  )}
+                </Show>
+                <Show when={props.canRepairMigration}>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      class="text-xs h-8 px-3"
+                      onClick={props.onRepairMigration}
+                      disabled={props.busy || props.migrationRepairBusy}
+                    >
+                      {props.migrationRepairBusy
+                        ? translate("onboarding.fixing_migration")
+                        : translate("onboarding.fix_migration")}
+                    </Button>
+                    <span class="text-xs text-red-12/80">{translate("onboarding.fix_migration_hint")}</span>
+                  </div>
+                </Show>
               </div>
             </Show>
           </div>

@@ -768,6 +768,23 @@ export async function setOpenCodeRouterGroupsEnabled(enabled: boolean): Promise<
   }
 }
 
+export async function opencodeDbMigrate(input: {
+  projectDir: string;
+  preferSidecar?: boolean;
+  opencodeBinPath?: string | null;
+}): Promise<ExecResult> {
+  const safeProjectDir = input.projectDir.trim();
+  if (!safeProjectDir) {
+    throw new Error("project_dir is required");
+  }
+
+  return invoke<ExecResult>("opencode_db_migrate", {
+    projectDir: safeProjectDir,
+    preferSidecar: input.preferSidecar ?? false,
+    opencodeBinPath: input.opencodeBinPath ?? null,
+  });
+}
+
 export async function opencodeMcpAuth(
   projectDir: string,
   serverName: string,

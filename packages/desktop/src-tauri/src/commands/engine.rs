@@ -1,17 +1,19 @@
 use tauri::{AppHandle, Manager, State};
 
+use crate::commands::opencode_router::opencodeRouter_start;
 use crate::config::{read_opencode_config, write_opencode_config};
 use crate::engine::doctor::{
     opencode_serve_help, opencode_version, resolve_engine_path, resolve_sidecar_candidate,
 };
 use crate::engine::manager::EngineManager;
 use crate::engine::spawn::{find_free_port, spawn_engine};
-use crate::commands::opencode_router::opencodeRouter_start;
-use crate::orchestrator::{self, OrchestratorSpawnOptions};
-use crate::orchestrator::manager::OrchestratorManager;
-use crate::openwork_server::{manager::OpenworkServerManager, resolve_connect_url, start_openwork_server};
 use crate::opencode_router::manager::OpenCodeRouterManager;
 use crate::opencode_router::spawn::resolve_opencode_router_health_port;
+use crate::openwork_server::{
+    manager::OpenworkServerManager, resolve_connect_url, start_openwork_server,
+};
+use crate::orchestrator::manager::OrchestratorManager;
+use crate::orchestrator::{self, OrchestratorSpawnOptions};
 use crate::types::{EngineDoctorResult, EngineInfo, EngineRuntime, ExecResult};
 use crate::utils::truncate_output;
 use serde_json::json;
@@ -56,7 +58,10 @@ struct OutputState {
 }
 
 #[tauri::command]
-pub fn engine_info(manager: State<EngineManager>, orchestrator_manager: State<OrchestratorManager>) -> EngineInfo {
+pub fn engine_info(
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+) -> EngineInfo {
     let mut state = manager.inner.lock().expect("engine mutex poisoned");
     if state.runtime == EngineRuntime::Orchestrator {
         let data_dir = orchestrator_manager
@@ -91,14 +96,16 @@ pub fn engine_info(manager: State<EngineManager>, orchestrator_manager: State<Or
         // EngineManager state (including opencode basic auth) is lost. Persist a small
         // auth snapshot next to openwork-orchestrator-state.json so the UI can reconnect.
         let auth_snapshot = orchestrator::read_orchestrator_auth(&data_dir);
-        let opencode_username = state
-            .opencode_username
-            .clone()
-            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_username.clone()));
-        let opencode_password = state
-            .opencode_password
-            .clone()
-            .or_else(|| auth_snapshot.as_ref().and_then(|auth| auth.opencode_password.clone()));
+        let opencode_username = state.opencode_username.clone().or_else(|| {
+            auth_snapshot
+                .as_ref()
+                .and_then(|auth| auth.opencode_username.clone())
+        });
+        let opencode_password = state.opencode_password.clone().or_else(|| {
+            auth_snapshot
+                .as_ref()
+                .and_then(|auth| auth.opencode_password.clone())
+        });
         let project_dir = project_dir.or_else(|| auth_snapshot.and_then(|auth| auth.project_dir));
         return EngineInfo {
             running: status.running,
@@ -300,8 +307,11 @@ pub fn engine_start(
         .and_then(|path| path.parent().map(|parent| parent.to_path_buf()));
     let prefer_sidecar = prefer_sidecar.unwrap_or(false);
     let _guard = EnvVarGuard::apply("OPENCODE_BIN_PATH", opencode_bin_path.as_deref());
-    let (program, _in_path, notes) =
-        resolve_engine_path(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
+    let (program, _in_path, notes) = resolve_engine_path(
+        prefer_sidecar,
+        resource_dir.as_deref(),
+        current_bin_dir.as_deref(),
+    );
     let Some(program) = program else {
         let notes_text = notes.join("\n");
         return Err(format!(
@@ -309,8 +319,11 @@ pub fn engine_start(
     ));
     };
 
-    let (sidecar_candidate, _sidecar_notes) =
-        resolve_sidecar_candidate(prefer_sidecar, resource_dir.as_deref(), current_bin_dir.as_deref());
+    let (sidecar_candidate, _sidecar_notes) = resolve_sidecar_candidate(
+        prefer_sidecar,
+        resource_dir.as_deref(),
+        current_bin_dir.as_deref(),
+    );
     let use_sidecar = prefer_sidecar
         && sidecar_candidate
             .as_ref()
@@ -364,11 +377,7 @@ pub fn engine_start(
                     CommandEvent::Stdout(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes).to_string();
                         if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            let next = state
-                                .last_stdout
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                            let next = state.last_stdout.as_deref().unwrap_or_default().to_string()
                                 + &line;
                             state.last_stdout = Some(truncate_output(&next, 8000));
                         }
@@ -376,11 +385,7 @@ pub fn engine_start(
                     CommandEvent::Stderr(line_bytes) => {
                         let line = String::from_utf8_lossy(&line_bytes).to_string();
                         if let Ok(mut state) = orchestrator_state_handle.try_lock() {
-                            let next = state
-                                .last_stderr
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
                                 + &line;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
@@ -393,11 +398,7 @@ pub fn engine_start(
                     CommandEvent::Error(message) => {
                         if let Ok(mut state) = orchestrator_state_handle.try_lock() {
                             state.child_exited = true;
-                            let next = state
-                                .last_stderr
-                                .as_deref()
-                                .unwrap_or_default()
-                                .to_string()
+                            let next = state.last_stderr.as_deref().unwrap_or_default().to_string()
                                 + &message;
                             state.last_stderr = Some(truncate_output(&next, 8000));
                         }
@@ -423,9 +424,7 @@ pub fn engine_start(
 
         let health = orchestrator::wait_for_orchestrator(&daemon_base_url, health_timeout_ms)
             .map_err(|e| {
-                format!(
-                    "Failed to start orchestrator (waited {health_timeout_ms}ms): {e}"
-                )
+                format!("Failed to start orchestrator (waited {health_timeout_ms}ms): {e}")
             })?;
         let opencode = health
             .opencode
@@ -453,7 +452,10 @@ pub fn engine_start(
             Ok(port) => Some(port),
             Err(error) => {
                 if let Ok(mut state) = manager.inner.lock() {
-                    state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter health port: {error}"), 8000));
+                    state.last_stderr = Some(truncate_output(
+                        &format!("OpenCodeRouter health port: {error}"),
+                        8000,
+                    ));
                 }
                 None
             }
@@ -469,7 +471,8 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr = Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
+                state.last_stderr =
+                    Some(truncate_output(&format!("OpenWork server: {error}"), 8000));
             }
         }
 
@@ -483,7 +486,8 @@ pub fn engine_start(
             opencode_router_health_port,
         ) {
             if let Ok(mut state) = manager.inner.lock() {
-                state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
+                state.last_stderr =
+                    Some(truncate_output(&format!("OpenCodeRouter: {error}"), 8000));
             }
         }
 
@@ -530,12 +534,8 @@ pub fn engine_start(
                         output.stdout.push_str(&line);
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stdout
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -545,12 +545,8 @@ pub fn engine_start(
                         output.stderr.push_str(&line);
                     }
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stderr
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -633,11 +629,15 @@ pub fn engine_start(
     state.opencode_username = opencode_username.clone();
     state.opencode_password = opencode_password.clone();
 
-    let opencode_connect_url = resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
+    let opencode_connect_url =
+        resolve_connect_url(port).unwrap_or_else(|| format!("http://{client_host}:{port}"));
     let opencode_router_health_port = match resolve_opencode_router_health_port() {
         Ok(port) => Some(port),
         Err(error) => {
-            state.last_stderr = Some(truncate_output(&format!("OpenCodeRouter health port: {error}"), 8000));
+            state.last_stderr = Some(truncate_output(
+                &format!("OpenCodeRouter health port: {error}"),
+                8000,
+            ));
             None
         }
     };

@@ -26,6 +26,7 @@ import {
   opencodeRouterStop,
   pickFile,
 } from "../lib/tauri";
+import { currentLocale, t } from "../../i18n";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -102,6 +103,10 @@ export type SettingsViewProps = {
   workspaceDebugEvents: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
+  repairOpencodeMigration: () => void;
+  migrationRepairBusy: boolean;
+  migrationRepairResult: { ok: boolean; message: string } | null;
+  migrationRepairAvailable: boolean;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
@@ -143,6 +148,7 @@ export function OpenCodeRouterSettings(_props: {
 
 
 export default function SettingsView(props: SettingsViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
   const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || "No binary selected.";
 
   const handlePickEngineBinary = async () => {
@@ -883,6 +889,41 @@ export default function SettingsView(props: SettingsViewProps) {
                 {(value) => <div class="text-xs text-red-11">{value()}</div>}
               </Show>
             </div>
+
+            <Show when={isTauriRuntime() && props.migrationRepairAvailable}>
+              <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+                <div>
+                  <div class="text-sm font-medium text-gray-12">{translate("settings.migration_recovery_label")}</div>
+                  <div class="text-xs text-gray-9">{translate("settings.migration_recovery_hint")}</div>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={props.repairOpencodeMigration}
+                    disabled={props.busy || props.migrationRepairBusy}
+                    title={isTauriRuntime() ? "" : translate("settings.migration_repair_requires_desktop")}
+                  >
+                    {props.migrationRepairBusy
+                      ? translate("settings.fixing_migration")
+                      : translate("settings.fix_migration")}
+                  </Button>
+                </div>
+                <Show when={props.migrationRepairResult}>
+                  {(result) => (
+                    <div
+                      class={`rounded-xl border px-3 py-2 text-xs ${
+                        result().ok
+                          ? "border-green-7/30 bg-green-2/30 text-green-12"
+                          : "border-red-7/30 bg-red-2/30 text-red-12"
+                      }`}
+                    >
+                      {result().message}
+                    </div>
+                  )}
+                </Show>
+              </div>
+            </Show>
 
             <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
               <div class="flex items-start justify-between gap-4">

@@ -40,10 +40,9 @@ pub async fn opencodeRouter_info(
     // If manager doesn't think opencodeRouter is running, check health endpoint as fallback
     // This handles cases where opencodeRouter was started externally or by a previous app instance
     if !info.running {
-        let health_port = {
-            manager.inner.lock().ok().and_then(|s| s.health_port)
-        }.unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
-        
+        let health_port = { manager.inner.lock().ok().and_then(|s| s.health_port) }
+            .unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
+
         if let Some(health) = check_health_endpoint(health_port) {
             info.running = true;
             if let Some(opencode) = health.get("opencode") {
@@ -76,7 +75,9 @@ pub async fn opencodeRouter_info(
                     }
                 }
                 if info.workspace_path.is_none() {
-                    if let Some(directory) = opencode.get("directory").and_then(|value| value.as_str()) {
+                    if let Some(directory) =
+                        opencode.get("directory").and_then(|value| value.as_str())
+                    {
                         let trimmed = directory.trim();
                         if !trimmed.is_empty() {
                             info.workspace_path = Some(trimmed.to_string());
@@ -135,24 +136,16 @@ pub fn opencodeRouter_start(
                 CommandEvent::Stdout(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stdout
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stdout = Some(truncate_output(&next, 8000));
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {
                     let line = String::from_utf8_lossy(&line_bytes).to_string();
                     if let Ok(mut state) = state_handle.try_lock() {
-                        let next = state
-                            .last_stderr
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &line;
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -168,12 +161,8 @@ pub fn opencodeRouter_start(
                 CommandEvent::Error(message) => {
                     if let Ok(mut state) = state_handle.try_lock() {
                         state.child_exited = true;
-                        let next = state
-                            .last_stderr
-                            .as_deref()
-                            .unwrap_or_default()
-                            .to_string()
-                            + &message;
+                        let next =
+                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;
                         state.last_stderr = Some(truncate_output(&next, 8000));
                     }
                 }
@@ -186,7 +175,9 @@ pub fn opencodeRouter_start(
 }
 
 #[tauri::command]
-pub fn opencodeRouter_stop(manager: State<OpenCodeRouterManager>) -> Result<OpenCodeRouterInfo, String> {
+pub fn opencodeRouter_stop(
+    manager: State<OpenCodeRouterManager>,
+) -> Result<OpenCodeRouterInfo, String> {
     let mut state = manager
         .inner
         .lock()
@@ -211,10 +202,8 @@ pub async fn opencodeRouter_status(
     };
 
     if !running {
-        let check_port = {
-            manager.inner.lock().ok().and_then(|s| s.health_port)
-        }
-        .unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
+        let check_port = { manager.inner.lock().ok().and_then(|s| s.health_port) }
+            .unwrap_or(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
 
         if check_health_endpoint(check_port).is_some() {
             running = true;
@@ -265,7 +254,10 @@ pub async fn opencodeRouter_status(
         .filter(|value| !value.is_empty());
 
     let mut opencode = serde_json::Map::new();
-    opencode.insert("url".to_string(), serde_json::Value::String(opencode_url.to_string()));
+    opencode.insert(
+        "url".to_string(),
+        serde_json::Value::String(opencode_url.to_string()),
+    );
     if let Some(directory) = opencode_directory {
         opencode.insert(
             "directory".to_string(),
