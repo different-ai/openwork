@@ -1,37 +1,53 @@
 ---
 name: give-me-a-soul
-description: Enable optional Soul Mode (persistent memory + scheduled heartbeat + easy revert)
+description: Enable optional Soul Mode (persistent memory + heartbeat + steering commands + easy revert)
 ---
 
 Give me a soul.
 
-Outcome: You remember my goals and preferences across sessions and can do lightweight check-ins on a schedule.
+Outcome: you remember my goals and preferences across sessions, run lightweight check-ins, and surface concrete self-improvements I can observe.
 Tradeoff: extra autonomy means occasional background runs and occasional wrong assumptions.
 
-Set this up in this workspace as optional Soul Mode using existing OpenCode primitives (commands, agents, scheduler).
+Set this up in this workspace as optional Soul Mode using OpenCode primitives only (commands, agents, scheduler, workspace files).
 
 Requirements:
-1) Ask me for confirmation (explicit "yes") before creating any files or scheduling any jobs.
+1) Ask me for confirmation (explicit "yes") before creating files or scheduling jobs.
 2) Keep it simple, safe, and reversible.
-3) Use workspace-local files for persistence. Prefer `.opencode/` so it's visible + portable.
-4) Scheduled runs must be non-interactive: they cannot wait on permission prompts.
+3) Persist in workspace-local files under `.opencode/`.
+4) Scheduled runs must be non-interactive (no waiting for permission prompts).
 
 After I confirm, implement Soul Mode by doing ALL of the following in THIS workspace:
 
-## A) Persistent memory
+## A) Bootstrap from real context first (do this before writing memory)
 
-Create `.opencode/soul.md` as human-editable memory.
+Collect context from:
+- `pwd` (workspace path)
+- existing `.opencode/soul.md` (if present)
+- `AGENTS.md` (and `_repos/openwork/AGENTS.md` if it exists)
+- OpenCode sqlite db via `sqlite3` for this workspace directory:
+  - recent sessions
+  - open todos
+  - recent transcript text snippets (from `part` + `message` tables)
 
-- Keep it short and structured.
-- Include a "Last updated" line.
-- Include sections for:
+Use this context to seed memory with non-empty, actionable bullets (do not leave everything blank).
+
+If sqlite lookup fails, continue with file context and mention degraded mode.
+
+## B) Persistent memory
+
+Create or refresh `.opencode/soul.md` as human-editable memory.
+
+- Keep it short, structured, and concrete.
+- Include a `Last updated` line (ISO-8601 timestamp).
+- Include sections:
   - Goals
   - Preferences (tone, format, boundaries)
   - Current focus
-  - Loose ends (things I started but didn't finish)
+  - Loose ends
   - Recurring chores / automations to consider
+- Seed at least one bullet in `Current focus` and `Loose ends` using the bootstrap context.
 
-Suggested initial contents:
+Suggested structure:
 
 ```markdown
 # Soul Memory
@@ -39,210 +55,225 @@ Suggested initial contents:
 Last updated: <ISO-8601 timestamp>
 
 ## Goals
-- 
+- <1-3 concrete goals>
 
 ## Preferences
-- 
+- <tone/format/boundary preference>
 
 ## Current focus
-- 
+- <current initiative>
 
 ## Loose ends
-- 
+- <unfinished thread>
 
 ## Recurring chores / automations to consider
-- 
+- <repeatable task worth automating>
 ```
 
-## B) Heartbeat log
+## C) Heartbeat log (observability)
 
-Create `.opencode/soul/heartbeat.jsonl` (create the directory and file if missing).
+Create `.opencode/soul/heartbeat.jsonl` (create directory/file if missing).
 
 - Append exactly ONE JSON object per heartbeat run (one line per run).
-- Minimum fields: `ts` (ISO string), `workspace` (string), `summary` (string).
+- Minimum keys: `ts`, `workspace`, `summary`, `loose_ends`, `next_action`.
+- Prefer adding these extra keys for observability when available: `session_titles`, `open_todo_count`, `signals`, `improvements`.
 
-## C) A dedicated Soul agent (so scheduled runs don't get blocked)
+## D) Dedicated Soul agent (for unattended runs)
 
-Create `.opencode/agents/soul.md` (a primary agent) with two goals:
+Create `.opencode/agents/soul.md` (primary agent).
 
-1) Behavior: be curious about closing loops (unfinished tasks, dangling threads, stale TODOs), and keep check-ins concise.
-2) Permissions: allow ONLY what's needed for heartbeat to run unattended.
+Goals:
+1) Behavior: close loops from unfinished work, keep check-ins concise, prioritize reversible improvements.
+2) Permissions: allow only what heartbeat/steering needs; avoid broad write access.
 
-The permissions must specifically avoid getting blocked by the global OpenCode sqlite database path (often at `$HOME/.local/share/opencode/opencode.db` or `$XDG_DATA_HOME/opencode/opencode.db`).
+Important: do NOT read `opencode.db` via `read`; query it via `sqlite3`.
 
-Note: do NOT try to read `opencode.db` with the `read` tool (it's a binary sqlite file). Query it via `sqlite3`.
-
-Use minimal permissions such as:
-- `bash` allow patterns for:
+Use narrow permissions like:
+- `bash` allow patterns:
+  - `pwd`
   - `pwd *`
   - `sqlite3 *opencode.db*`
-  - `mkdir *opencode/soul*` (optional hardening)
-  - `cat *heartbeat.jsonl*` (used ONLY to append a JSONL line via heredoc)
-- `read` allow patterns for:
+  - `mkdir *opencode/soul*`
+  - `cat *heartbeat.jsonl*`
+- `read` allow patterns:
   - `.opencode/soul.md`
-- `edit` allow patterns for:
-  - `.opencode/soul.md` (narrowly allow Soul to update its memory)
-- `glob` allow patterns for:
+  - `.opencode/soul/heartbeat.jsonl`
+  - `AGENTS.md`
+  - `_repos/openwork/AGENTS.md`
+- `edit` allow patterns:
+  - `.opencode/soul.md`
+- `glob` allow patterns:
   - `.opencode/skills/*/SKILL.md`
   - `.opencode/commands/*.md`
 
-Do NOT grant broad edit permissions. If Soul needs to self-improve, allow `edit` only for `.opencode/soul.md`.
+Do NOT grant broad edit permissions.
 
 Suggested agent file:
 
 ```markdown
 ---
-description: Soul Mode heartbeat (non-interactive)
+description: Soul Mode heartbeat + steering (non-interactive heartbeat)
 mode: primary
 permission:
   bash:
+    "*": deny
+    "pwd": allow
     "pwd *": allow
     "sqlite3 *opencode.db*": allow
     "mkdir *opencode/soul*": allow
     "cat *heartbeat.jsonl*": allow
   read:
+    "*": deny
     ".opencode/soul.md": allow
+    ".opencode/soul/heartbeat.jsonl": allow
+    "AGENTS.md": allow
+    "_repos/openwork/AGENTS.md": allow
   edit:
+    "*": deny
     ".opencode/soul.md": allow
   glob:
+    "*": deny
     ".opencode/skills/*/SKILL.md": allow
     ".opencode/commands/*.md": allow
 ---
 
 You are Soul Mode for this workspace.
 
-- You keep lightweight, durable memory in `.opencode/soul.md`.
-- You run periodic heartbeats to surface loose ends and suggest next actions.
-- You are curious, but you do not take destructive actions or make large changes without the user asking.
-- When uncertain, make a small, reversible suggestion.
+- Keep durable memory in `.opencode/soul.md`.
+- Use heartbeats to surface loose ends and concrete next actions.
+- Use recent sessions/todos/transcripts + AGENTS guidance to suggest improvements.
+- Stay safe and reversible; no destructive actions unless explicitly requested.
 ```
 
-## D) Load memory automatically in future sessions
+## E) Load memory automatically
 
 Update `opencode.json` or `opencode.jsonc` in the workspace root:
 
-- Ensure `instructions` includes `.opencode/soul.md` (add it without breaking existing instructions).
-- Ensure the scheduler plugin is available (add `opencode-scheduler` only if it is not already present).
+- Ensure `instructions` includes `.opencode/soul.md` (without breaking existing entries).
+- Ensure scheduler plugin is available (add `opencode-scheduler` only if missing).
 
-## E) Commands
+## F) Commands
 
-Create two workspace commands:
+Create FOUR workspace commands:
 
 1) `.opencode/commands/soul-heartbeat.md`
-   - Purpose: run a short check-in and append a JSONL record.
-   - Must be safe + non-interactive.
-   - Must "know about" OpenCode sessions in this workspace by querying the OpenCode sqlite db (via `sqlite3`) for recent sessions and open todos tied to this workspace directory.
-   - Must list 1-3 loose ends and 1 recommended next action.
-   - Must include a short "curiosity" section at the end with 2-3 options (work, topics, improvements).
-   - Append the JSONL line using a single bash command like:
-     
-     ```bash
-     cat <<'EOF' >> .opencode/soul/heartbeat.jsonl
-     <one-line-json>
-     EOF
-     ```
+   - Purpose: non-interactive check-in + JSONL append.
+   - Must read `.opencode/soul.md`, AGENTS guidance, and query sqlite for this workspace.
+   - Must look at:
+     - recent sessions (`session`)
+     - open todos (`todo` + `session`)
+     - recent text transcript snippets (`part` + `message` + `session` where part type is text)
+   - Output:
+     - one-sentence summary
+     - 1-3 loose ends
+     - one next action
+     - 2-3 improvement suggestions (process/skills/agents)
+   - Append one JSON line to `.opencode/soul/heartbeat.jsonl` using one heredoc `cat >>` command.
 
-   Suggested command file (you may tweak, but keep it non-interactive):
+   Suggested command file:
 
    ```markdown
    ---
-   description: Soul Mode heartbeat (non-interactive check-in)
+   description: Soul Mode heartbeat (non-interactive)
    agent: soul
    ---
 
    You are running Soul Mode heartbeat.
 
    Constraints:
-   - Non-interactive: do not ask questions and do not wait for permissions.
+   - Non-interactive: do not ask questions.
    - Safe: no destructive actions.
 
    Steps:
    1) Read `.opencode/soul.md`.
-   2) Get workspace path via `pwd`.
-   3) Try to query OpenCode's sqlite db for recent sessions + open todos for THIS workspace directory.
-      - Common db paths: `$XDG_DATA_HOME/opencode/opencode.db`, `$HOME/.local/share/opencode/opencode.db`, `$HOME/Library/Application Support/opencode/opencode.db`, `$HOME/.opencode/opencode.db`.
-      - If db lookup fails, continue without it.
-      - Prefer these queries (adjust if schema differs):
-        - Recent sessions:
-          `SELECT id, title, time_updated FROM session WHERE directory = '<pwd>' ORDER BY time_updated DESC LIMIT 8;`
-        - Open todos:
-          `SELECT s.title AS session_title, t.content, t.status, t.priority, t.time_updated FROM todo t JOIN session s ON s.id = t.session_id WHERE s.directory = '<pwd>' AND t.status != 'completed' ORDER BY t.time_updated DESC LIMIT 20;`
-   4) Output a concise check-in:
-      - 1 sentence summary
+   2) Read `AGENTS.md` (and `_repos/openwork/AGENTS.md` if present).
+   3) Get workspace path via `pwd`.
+   4) Query OpenCode sqlite db for this workspace directory (if available):
+      - Recent sessions:
+        `SELECT id, title, time_updated FROM session WHERE directory = '<pwd>' ORDER BY time_updated DESC LIMIT 8;`
+      - Open todos:
+        `SELECT s.title, t.content, t.status, t.priority, t.time_updated FROM todo t JOIN session s ON s.id = t.session_id WHERE s.directory = '<pwd>' AND t.status != 'completed' ORDER BY t.time_updated DESC LIMIT 20;`
+      - Recent transcript text:
+        `SELECT s.title, p.time_updated, json_extract(p.data, '$.text') AS text FROM part p JOIN message m ON m.id = p.message_id JOIN session s ON s.id = m.session_id WHERE s.directory = '<pwd>' AND json_extract(p.data, '$.type') = 'text' ORDER BY p.time_updated DESC LIMIT 60;`
+      - If db lookup fails, continue in degraded mode.
+   5) Optionally refresh `.opencode/soul.md` with small, deduped updates to Loose ends / Recurring chores when justified by evidence.
+   6) Output concise check-in:
+      - Summary (1 sentence)
       - Loose ends (1-3 bullets)
       - Next action (1 bullet)
-      - Curiosity paths (3 bullets: Work / Topics / Improvements)
-   5) Append ONE JSON line to `.opencode/soul/heartbeat.jsonl` with keys: `ts`, `workspace`, `summary`, `loose_ends`, `next_action`.
-   6) Append using a heredoc `cat >>` so quoting is safe.
+      - Improvements (2-3 bullets)
+   7) Append one JSON line with keys: `ts`, `workspace`, `summary`, `loose_ends`, `next_action` (and optional observability keys).
+
+   Append using one heredoc command:
+
+       cat <<'EOF' >> .opencode/soul/heartbeat.jsonl
+       {"ts":"...","workspace":"...","summary":"...","loose_ends":["..."],"next_action":"..."}
+       EOF
+
    ```
 
-2) `.opencode/commands/take-my-soul-back.md`
-   - Purpose: fully revert Soul Mode.
-   - Delete the `soul-heartbeat` scheduler job.
-   - Remove the files you created (`.opencode/soul.md`, `.opencode/soul/`, `.opencode/agents/soul.md`, and the two command files).
-   - Revert any changes you made to `opencode.json*` (remove the Soul instructions entry; remove the scheduler plugin only if you added it solely for Soul Mode).
+2) `.opencode/commands/soul-status.md`
+   - Purpose: read-only status report for observability.
+   - Read `.opencode/soul.md` + latest heartbeat entries + scheduler job state.
+   - Output: current focus, latest heartbeat age, top loose ends, next action.
 
-   Suggested command file (interactive is OK here):
+3) `.opencode/commands/steer-soul.md`
+   - Purpose: interactive steering.
+   - Can update current focus, boundaries/preferences, and heartbeat cadence.
+   - If user gives explicit values in the prompt, apply directly.
+   - If cadence changes, update the `soul-heartbeat` scheduler job.
+   - Always summarize exactly what changed.
 
-   ```markdown
-   ---
-   description: Remove Soul Mode (delete job + remove files)
-   ---
+4) `.opencode/commands/take-my-soul-back.md`
+   - Purpose: full revert.
+   - Delete scheduler job `soul-heartbeat`.
+   - Remove files created for Soul Mode:
+     - `.opencode/soul.md`
+     - `.opencode/soul/`
+     - `.opencode/agents/soul.md`
+     - `.opencode/commands/soul-heartbeat.md`
+     - `.opencode/commands/soul-status.md`
+     - `.opencode/commands/steer-soul.md`
+     - `.opencode/commands/take-my-soul-back.md`
+   - Revert `opencode.json*` changes you made:
+     - remove `.opencode/soul.md` from `instructions`
+     - remove `opencode-scheduler` only if added solely for Soul Mode
 
-   Take my soul back.
+## G) Schedule the heartbeat
 
-   Do the following in order:
-   1) Delete the scheduled job named `soul-heartbeat`.
-   2) Remove these files/directories if they exist:
-      - `.opencode/soul.md`
-      - `.opencode/soul/`
-      - `.opencode/agents/soul.md`
-      - `.opencode/commands/soul-heartbeat.md`
-      - `.opencode/commands/take-my-soul-back.md`
-   3) Update `opencode.json*`:
-      - Remove `.opencode/soul.md` from `instructions`.
-      - If you added `opencode-scheduler` only for Soul Mode, remove it.
-
-   When done, say exactly what you deleted/changed.
-   ```
-
-## F) Schedule the heartbeat
-
-Create ONE scheduler job named `soul-heartbeat`.
+Create one scheduler job named `soul-heartbeat`.
 
 - Default cadence: every 12 hours (`0 */12 * * *`). Ask me if I want a different cadence.
-- Workdir: this workspace root.
-- Run it as a command, not a raw prompt: `command=soul-heartbeat`.
-- Run it using the dedicated agent: `agent=soul`.
-- Set the session title to something stable like `Soul heartbeat` so I can find the check-ins.
-- Use a reasonable timeout (e.g. 120 seconds) to prevent runaway scheduled runs.
+- Workdir: workspace root.
+- Run as command: `command=soul-heartbeat`.
+- Run with dedicated agent: `agent=soul`.
+- Use stable title like `Soul heartbeat`.
+- Use timeout around 120s.
 
-Fast test mode (for debugging):
+Use scheduler tools if available (`schedule_job`, `run_job`, `delete_job`).
 
-- Cron schedules are minute-granularity (no seconds), so "every 30 seconds" is not a native cron schedule.
-- To test fast behavior anyway, do ONE of these:
-  1) Temporarily schedule every minute (`* * * * *`) and have the heartbeat run twice with a 30s pause in between (sleep 30, append a second JSONL line).
-  2) In container environments where launchd/systemd may not be available, skip scheduling and run a simple loop that appends a synthetic JSONL heartbeat entry every 30 seconds (pure bash) to validate filesystem behavior.
+If scheduler tools are unavailable:
+- still create files + commands,
+- tell me exact `opencode.json*` changes needed,
+- tell me to reload/restart engine and rerun this setup.
 
-Use the scheduler tools if available (`schedule_job`, `run_job`, `delete_job`).
+After scheduling, test once:
+- run the job immediately,
+- verify `.opencode/soul/heartbeat.jsonl` got a new entry,
+- if blocked by permissions, tighten/fix agent permissions and rerun until unattended.
 
-If scheduler tools are NOT available:
-- Still create the files + commands so Soul Mode is ready.
-- Tell me exactly what to add to `opencode.json*` to enable `opencode-scheduler`.
-- Tell me to reload/restart the engine and then rerun `/give-me-a-soul` (or run the schedule step only).
+## H) Final response format
 
-After scheduling, TEST it once:
-
-- Run the job immediately (e.g. `run_job` / "run soul-heartbeat now").
-- Verify it created/updated `.opencode/soul/heartbeat.jsonl`.
-- If it gets blocked by permissions, fix the `soul` agent permissions and re-test until it runs unattended.
-
-When you're done, respond with:
+When done, respond with:
 
 1) Two short bullets:
-   - What Soul Mode now does for me.
-   - Exactly how to revert.
-2) 2-3 "curiosity paths" I can choose next, phrased like:
-   - Curious about work: you'll scan the files in this worker/workspace (include the workspace path from `pwd`) and highlight loose ends.
-   - Curious about topics: you'll start tracking a few topics and check in.
-   - Curious about improvements: you'll spot repeated tasks and propose skills + automations.
+   - what Soul Mode now does,
+   - exactly how to revert.
+2) One short "How to interact" list including:
+   - `/soul-status`
+   - `/steer-soul`
+   - `run soul-heartbeat now`
+3) 2-3 curiosity paths:
+   - Curious about work
+   - Curious about topics
+   - Curious about improvements

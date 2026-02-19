@@ -2,7 +2,8 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { Activity, HeartPulse, RefreshCw, Sparkles } from "lucide-solid";
 
 import type { OpenworkSoulHeartbeatEntry, OpenworkSoulStatus } from "../lib/openwork-server";
-import { formatRelativeTime } from "../utils";
+import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
+import { formatRelativeTime, parseTemplateFrontmatter } from "../utils";
 
 type SoulViewProps = {
   workspaceName: string;
@@ -22,6 +23,12 @@ const cadenceOptions = [
   { label: "Every 12 hours", cron: "0 */12 * * *" },
   { label: "Every day", cron: "0 9 * * *" },
 ];
+
+const SOUL_SETUP_TEMPLATE = (() => {
+  const parsed = parseTemplateFrontmatter(soulSetupTemplate);
+  const body = (parsed?.body ?? soulSetupTemplate).trim();
+  return { body };
+})();
 
 const relativeTime = (value?: string | null) => {
   if (!value) return "Never";
@@ -224,7 +231,7 @@ export default function SoulView(props: SoulViewProps) {
                 : "bg-dls-text text-dls-surface hover:bg-dls-text/90"
             }`}
             disabled={props.newTaskDisabled}
-            onClick={() => runPrompt("Give me a soul.")}
+            onClick={() => runPrompt(SOUL_SETUP_TEMPLATE.body || "Give me a soul.")}
           >
             <Sparkles size={14} />
             Enable soul mode
@@ -308,11 +315,23 @@ export default function SoulView(props: SoulViewProps) {
               disabled={props.newTaskDisabled}
               onClick={() =>
                 runPrompt(
-                  `Review ${props.workspaceRoot || "this worker"} and recent heartbeats. Prioritize the top 3 loose ends and propose a clear plan.`,
+                  `Review ${props.workspaceRoot || "this worker"} with .opencode/soul.md, recent heartbeat entries, AGENTS.md guidance, recent sessions, open todos, and transcript snippets from opencode.db. Prioritize the top 3 loose ends and propose a concrete plan with one first step.`,
                 )
               }
             >
               Prioritize loose ends
+            </button>
+            <button
+              type="button"
+              class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
+              disabled={props.newTaskDisabled}
+              onClick={() =>
+                runPrompt(
+                  "Run a Soul improvement sweep: read .opencode/soul.md and AGENTS.md, query recent sessions/todos/transcript text for this workspace from opencode.db, then propose 3 concrete improvements for process/skills/agents. If safe, update Loose ends and Recurring chores in .opencode/soul.md and explain every change.",
+                )
+              }
+            >
+              Improvement sweep
             </button>
           </div>
 
@@ -336,7 +355,7 @@ export default function SoulView(props: SoulViewProps) {
               disabled={props.newTaskDisabled || !focusInput().trim()}
               onClick={() =>
                 runPrompt(
-                  `Update .opencode/soul.md so Current focus is: ${focusInput().trim()}. Keep the rest intact and explain what changed.`,
+                  `Update .opencode/soul.md so Current focus includes: ${focusInput().trim()}. Keep existing goals/preferences/loose ends, refresh the Last updated timestamp, and summarize what changed.`,
                 )
               }
             >
@@ -359,7 +378,7 @@ export default function SoulView(props: SoulViewProps) {
               disabled={props.newTaskDisabled || !boundariesInput().trim()}
               onClick={() =>
                 runPrompt(
-                  `Update .opencode/soul.md Preferences with this boundary: ${boundariesInput().trim()}. Keep existing preferences and append this one clearly.`,
+                  `Update .opencode/soul.md Preferences with this boundary: ${boundariesInput().trim()}. Keep existing preferences, append this as a clear guardrail, and summarize the final boundaries list.`,
                 )
               }
             >
@@ -388,7 +407,7 @@ export default function SoulView(props: SoulViewProps) {
                 disabled={props.newTaskDisabled}
                 onClick={() =>
                   runPrompt(
-                    `Update the soul-heartbeat scheduler job to ${cadenceLabel()} using cron ${cadence()}. Then confirm next expected heartbeat time.`,
+                    `Update the soul-heartbeat scheduler job to ${cadenceLabel()} using cron ${cadence()}. Confirm the scheduler update succeeded, report the next expected heartbeat window, and mention whether stale detection threshold changed.`,
                   )
                 }
               >
