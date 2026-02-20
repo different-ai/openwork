@@ -142,16 +142,39 @@ fn gather_skills(
         }
 
         let path = entry.path();
-        if !path.join("SKILL.md").is_file() {
-            continue;
-        }
-
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-
-        if seen.insert(name.to_string()) {
-            out.push(path);
+        if path.join("SKILL.md").is_file() {
+            // Direct skill: <root>/<name>/SKILL.md
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            if seen.insert(name.to_string()) {
+                out.push(path);
+            }
+        } else {
+            // Domain/category folder: <root>/<domain>/<name>/SKILL.md – scan one level deeper.
+            // This supports the convention where global skills are organised as
+            //   skills/<domain>/<skill-name>/SKILL.md
+            // in addition to the flat   skills/<skill-name>/SKILL.md  layout.
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.flatten() {
+                    let Ok(sub_ft) = sub_entry.file_type() else {
+                        continue;
+                    };
+                    if !sub_ft.is_dir() {
+                        continue;
+                    }
+                    let sub_path = sub_entry.path();
+                    if !sub_path.join("SKILL.md").is_file() {
+                        continue;
+                    }
+                    let Some(name) = sub_path.file_name().and_then(|s| s.to_str()) else {
+                        continue;
+                    };
+                    if seen.insert(name.to_string()) {
+                        out.push(sub_path);
+                    }
+                }
+            }
         }
     }
 
