@@ -524,7 +524,7 @@ jobs:
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
-          uploadUpdaterJson: true
+          uploadUpdaterJson: false
           updaterJsonPreferNsis: true
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
@@ -553,7 +553,7 @@ jobs:
           tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
           retryAttempts: 3
-          uploadUpdaterJson: true
+          uploadUpdaterJson: false
           updaterJsonPreferNsis: true
           releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
 
@@ -599,6 +599,39 @@ jobs:
           fi
 
           echo "Found bundled versions.json at $manifest_path"
+
+  publish-updater-json:
+    name: Publish consolidated latest.json
+    needs: [resolve-release, verify-release, publish-tauri]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Generate latest.json from release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/generate-latest-json.mjs \
+            --tag "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --output "$RUNNER_TEMP/latest.json"
+
+      - name: Upload latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/latest.json#latest.json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
 
   release-orchestrator-sidecars:
     name: Build + Upload openwork-orchestrator Sidecars
