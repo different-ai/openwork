@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
-import { Activity, HeartPulse, RefreshCw, Sparkles } from "lucide-solid";
+import { Activity, CheckCircle2, Circle, HeartPulse, RefreshCw, Sparkles } from "lucide-solid";
 
 import type { OpenworkSoulHeartbeatEntry, OpenworkSoulStatus } from "../lib/openwork-server";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -27,7 +27,8 @@ const cadenceOptions = [
 const SOUL_SETUP_TEMPLATE = (() => {
   const parsed = parseTemplateFrontmatter(soulSetupTemplate);
   const name = parsed?.data?.name?.trim() || "give-me-a-soul";
-  return { name };
+  const body = (parsed?.body ?? soulSetupTemplate).trim();
+  return { name, body };
 })();
 
 const relativeTime = (value?: string | null) => {
@@ -82,6 +83,94 @@ export default function SoulView(props: SoulViewProps) {
     if (props.newTaskDisabled) return;
     props.runSoulPrompt(prompt);
   };
+
+  const enableSoulPrompt = createMemo(() => {
+    const body = SOUL_SETUP_TEMPLATE.body.trim();
+    if (body) return body;
+    return `/${SOUL_SETUP_TEMPLATE.name}`;
+  });
+
+  const latestHeartbeat = createMemo(() => props.heartbeats[0] ?? null);
+
+  const setupAuditItems = createMemo(() => {
+    const status = props.status;
+    if (!status) {
+      return [
+        { id: "memory", label: "Soul memory file", passed: false, detail: "Waiting for Soul status." },
+        { id: "instructions", label: "Instructions wiring", passed: false, detail: "Waiting for Soul status." },
+        { id: "command", label: "Heartbeat command", passed: false, detail: "Waiting for Soul status." },
+        { id: "job", label: "Heartbeat schedule", passed: false, detail: "Waiting for Soul status." },
+        { id: "log", label: "Heartbeat log", passed: false, detail: "Waiting for Soul status." },
+        { id: "proof", label: "Recent heartbeat proof", passed: false, detail: "Run one heartbeat to verify setup." },
+      ];
+    }
+
+    return [
+      {
+        id: "memory",
+        label: "Soul memory file",
+        passed: status.memoryEnabled,
+        detail: status.memoryEnabled ? status.memoryPath : "Missing .opencode/soul.md",
+      },
+      {
+        id: "instructions",
+        label: "Instructions wiring",
+        passed: status.instructionsEnabled,
+        detail: status.instructionsEnabled
+          ? "opencode config loads soul memory"
+          : "Add .opencode/soul.md to instructions",
+      },
+      {
+        id: "command",
+        label: "Heartbeat command",
+        passed: status.heartbeatCommandExists,
+        detail: status.heartbeatCommandExists ? "/soul-heartbeat detected" : "Create /soul-heartbeat",
+      },
+      {
+        id: "job",
+        label: "Heartbeat schedule",
+        passed: Boolean(status.heartbeatJob),
+        detail: status.heartbeatJob?.schedule || "No soul-heartbeat job",
+      },
+      {
+        id: "log",
+        label: "Heartbeat log",
+        passed: status.heartbeatLogExists,
+        detail: status.heartbeatLogExists ? status.heartbeatPath : "Missing heartbeat.jsonl",
+      },
+      {
+        id: "proof",
+        label: "Recent heartbeat proof",
+        passed: Boolean(status.lastHeartbeatAt),
+        detail: status.lastHeartbeatAt ? `Latest check-in ${relativeTime(status.lastHeartbeatAt)}` : "No check-ins yet",
+      },
+    ];
+  });
+
+  const steeringAudit = createMemo(() => {
+    const latest = latestHeartbeat();
+    const looseEndCount = latest?.looseEnds.length ?? 0;
+    return [
+      {
+        id: "heartbeat",
+        label: "Heartbeat captured",
+        passed: props.heartbeats.length > 0,
+        detail: latest?.ts ? `Latest ${relativeTime(latest.ts)}` : "Run heartbeat now",
+      },
+      {
+        id: "loose-ends",
+        label: "Loose ends surfaced",
+        passed: looseEndCount > 0,
+        detail: looseEndCount > 0 ? `${looseEndCount} loose end${looseEndCount === 1 ? "" : "s"} tracked` : "No loose ends yet",
+      },
+      {
+        id: "next-action",
+        label: "Next action ready",
+        passed: Boolean(latest?.nextAction),
+        detail: latest?.nextAction || "Generate one with the steering actions",
+      },
+    ];
+  });
 
   const clearHeartbeatTimers = () => {
     if (heartbeatPollTimer) {
@@ -173,7 +262,7 @@ export default function SoulView(props: SoulViewProps) {
               </span>
             </div>
             <p class="text-sm text-dls-secondary max-w-2xl">
-              Track whether this worker has a soul, monitor heartbeat check-ins, and steer what Soul should focus on next.
+              Enable Soul from here, audit what is wired, and verify heartbeat proof before steering the next move.
             </p>
           </div>
           <button
@@ -223,28 +312,68 @@ export default function SoulView(props: SoulViewProps) {
         </div>
 
         <Show when={!props.status?.enabled}>
-          <button
-            type="button"
-            class={`mt-4 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-              props.newTaskDisabled
-                ? "bg-gray-3 text-gray-8"
-                : "bg-dls-text text-dls-surface hover:bg-dls-text/90"
-            }`}
-            disabled={props.newTaskDisabled}
-            onClick={() => runPrompt(`/${SOUL_SETUP_TEMPLATE.name}`)}
-          >
-            <Sparkles size={14} />
-            Enable soul mode
-          </button>
+          <div class="mt-4 rounded-xl border border-blue-7/40 bg-blue-3/20 p-3 flex flex-wrap items-center justify-between gap-3">
+            <div class="text-xs text-blue-11 max-w-lg">
+              Soul is currently off. Run setup once to create memory, scheduler wiring, and reversible commands for this worker.
+            </div>
+            <button
+              type="button"
+              class={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                props.newTaskDisabled
+                  ? "bg-gray-3 text-gray-8"
+                  : "bg-dls-text text-dls-surface hover:bg-dls-text/90"
+              }`}
+              disabled={props.newTaskDisabled}
+              onClick={() => runPrompt(enableSoulPrompt())}
+            >
+              <Sparkles size={14} />
+              Enable soul mode
+            </button>
+          </div>
         </Show>
+
+        <div class="mt-6 rounded-xl border border-dls-border bg-dls-hover/20 p-4 space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <h3 class="text-sm font-semibold text-dls-text">Soul activation audit</h3>
+            <div class="text-[11px] text-dls-secondary">
+              {setupAuditItems().filter((item) => item.passed).length}/{setupAuditItems().length} checks passing
+            </div>
+          </div>
+          <div class="grid gap-2 md:grid-cols-2">
+            <For each={setupAuditItems()}>
+              {(item) => (
+                <div
+                  class={`rounded-lg border px-3 py-2 ${
+                    item.passed
+                      ? "border-emerald-7/40 bg-emerald-3/20"
+                      : "border-dls-border bg-dls-hover/30"
+                  }`}
+                >
+                  <div class="flex items-start gap-2">
+                    <Show
+                      when={item.passed}
+                      fallback={<Circle size={14} class="mt-0.5 text-dls-secondary shrink-0" />}
+                    >
+                      <CheckCircle2 size={14} class="mt-0.5 text-emerald-11 shrink-0" />
+                    </Show>
+                    <div class="min-w-0">
+                      <div class="text-xs font-medium text-dls-text">{item.label}</div>
+                      <div class="text-[11px] text-dls-secondary truncate">{item.detail}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </For>
+          </div>
+        </div>
       </div>
 
       <div class="grid gap-6 lg:grid-cols-2">
         <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 space-y-4">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h3 class="text-base font-semibold text-dls-text">Follow up on heartbeats</h3>
-              <p class="text-xs text-dls-secondary">Recent check-ins, loose ends, and next actions.</p>
+              <h3 class="text-base font-semibold text-dls-text">Heartbeat proof</h3>
+              <p class="text-xs text-dls-secondary">Review recent check-ins, loose ends, and next actions.</p>
             </div>
             <Show when={props.loadingHeartbeats}>
               <span class="text-xs text-dls-secondary">Loading...</span>
@@ -252,38 +381,48 @@ export default function SoulView(props: SoulViewProps) {
           </div>
 
           <Show
-            when={props.heartbeats.length > 0}
+            when={latestHeartbeat()}
             fallback={
               <div class="rounded-xl border border-dls-border bg-dls-hover/40 px-4 py-6 text-sm text-dls-secondary">
-                No heartbeat entries yet. Run `/soul-heartbeat` to create the first check-in.
+                No heartbeat entries yet. Run heartbeat now (or `/soul-heartbeat`) to create proof.
               </div>
             }
           >
-            <div class="space-y-3 max-h-[22rem] overflow-y-auto pr-1">
-              <For each={props.heartbeats}>
+            {(entry) => (
+              <div class="rounded-xl border border-dls-border bg-dls-hover/30 px-4 py-3 space-y-2">
+                <div class="flex items-center gap-2 text-xs text-dls-secondary">
+                  <span class={`h-2 w-2 rounded-full ${statusMeta().dot}`} />
+                  Latest check-in {relativeTime(entry().ts)}
+                </div>
+                <div class="text-sm text-dls-text">{entry().summary}</div>
+                <Show when={entry().nextAction}>
+                  <div class="text-xs text-dls-text">
+                    <span class="text-dls-secondary">Next:</span> {entry().nextAction}
+                  </div>
+                </Show>
+                <Show when={entry().looseEnds.length > 0}>
+                  <div class="space-y-1">
+                    <div class="text-[11px] uppercase tracking-wide text-dls-secondary">Loose ends</div>
+                    <ul class="space-y-1 text-xs text-dls-secondary">
+                      <For each={entry().looseEnds.slice(0, 3)}>
+                        {(item) => <li>- {item}</li>}
+                      </For>
+                    </ul>
+                  </div>
+                </Show>
+              </div>
+            )}
+          </Show>
+
+          <Show when={props.heartbeats.length > 1}>
+            <div class="space-y-3 max-h-[18rem] overflow-y-auto pr-1">
+              <For each={props.heartbeats.slice(1)}>
                 {(entry) => (
-                  <div class="rounded-xl border border-dls-border bg-dls-hover/30 px-4 py-3 space-y-2">
-                    <div class="flex items-center justify-between gap-3">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <span class={`h-2 w-2 rounded-full ${statusMeta().dot}`} />
-                        <span class="text-xs text-dls-secondary truncate">{relativeTime(entry.ts)}</span>
-                      </div>
-                    </div>
+                  <div class="rounded-xl border border-dls-border bg-dls-hover/20 px-4 py-3 space-y-1.5">
+                    <div class="text-xs text-dls-secondary">{relativeTime(entry.ts)}</div>
                     <div class="text-sm text-dls-text">{entry.summary}</div>
-                    <Show when={entry.looseEnds.length > 0}>
-                      <div class="space-y-1">
-                        <div class="text-[11px] uppercase tracking-wide text-dls-secondary">Loose ends</div>
-                        <ul class="space-y-1 text-xs text-dls-secondary">
-                          <For each={entry.looseEnds.slice(0, 3)}>
-                            {(item) => <li>- {item}</li>}
-                          </For>
-                        </ul>
-                      </div>
-                    </Show>
                     <Show when={entry.nextAction}>
-                      <div class="text-xs text-dls-text">
-                        <span class="text-dls-secondary">Next:</span> {entry.nextAction}
-                      </div>
+                      <div class="text-xs text-dls-secondary truncate">Next: {entry.nextAction}</div>
                     </Show>
                   </div>
                 )}
@@ -292,127 +431,150 @@ export default function SoulView(props: SoulViewProps) {
           </Show>
         </div>
 
-        <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 space-y-4">
-          <div>
-            <h3 class="text-base font-semibold text-dls-text">Steer soul</h3>
-            <p class="text-xs text-dls-secondary">
-              Adjust focus, boundaries, and cadence. Actions open a task with the right steering prompt.
-            </p>
-          </div>
-
-          <div class="grid gap-2 sm:grid-cols-2">
-            <button
-              type="button"
-              class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled || heartbeatRunState() === "running"}
-              onClick={runHeartbeatNow}
-            >
-              {heartbeatRunState() === "running" ? "Running heartbeat..." : "Run heartbeat now"}
-            </button>
-            <button
-              type="button"
-              class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled}
-              onClick={() =>
-                runPrompt(
-                  `Review ${props.workspaceRoot || "this worker"} with .opencode/soul.md, recent heartbeat entries, AGENTS.md guidance, recent sessions, open todos, and transcript snippets from opencode.db. Prioritize the top 3 loose ends and propose a concrete plan with one first step.`,
-                )
-              }
-            >
-              Prioritize loose ends
-            </button>
-            <button
-              type="button"
-              class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled}
-              onClick={() =>
-                runPrompt(
-                  "Run a Soul improvement sweep: read .opencode/soul.md and AGENTS.md, query recent sessions/todos/transcript text for this workspace from opencode.db, then propose 3 concrete improvements for process/skills/agents. If safe, update Loose ends and Recurring chores in .opencode/soul.md and explain every change.",
-                )
-              }
-            >
-              Improvement sweep
-            </button>
-          </div>
-
-          <div class={`rounded-xl border px-3 py-2 text-xs ${heartbeatStatusCardTone()}`}>
-            <div class="font-medium">{heartbeatStatusTitle()}</div>
-            <div class="mt-1">{heartbeatRunMessage() || "Start a manual heartbeat and watch this card for live status."}</div>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-xs font-medium text-dls-secondary">Current focus</label>
-            <input
-              type="text"
-              value={focusInput()}
-              onInput={(event) => setFocusInput(event.currentTarget.value)}
-              placeholder="Ship soul UI for remote workers"
-              class="w-full rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
-            />
-            <button
-              type="button"
-              class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled || !focusInput().trim()}
-              onClick={() =>
-                runPrompt(
-                  `Update .opencode/soul.md so Current focus includes: ${focusInput().trim()}. Keep existing goals/preferences/loose ends, refresh the Last updated timestamp, and summarize what changed.`,
-                )
-              }
-            >
-              Update focus
-            </button>
-          </div>
-
-          <div class="space-y-2">
-            <label class="text-xs font-medium text-dls-secondary">Boundaries and guardrails</label>
-            <input
-              type="text"
-              value={boundariesInput()}
-              onInput={(event) => setBoundariesInput(event.currentTarget.value)}
-              placeholder="Keep heartbeat concise and non-destructive"
-              class="w-full rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
-            />
-            <button
-              type="button"
-              class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
-              disabled={props.newTaskDisabled || !boundariesInput().trim()}
-              onClick={() =>
-                runPrompt(
-                  `Update .opencode/soul.md Preferences with this boundary: ${boundariesInput().trim()}. Keep existing preferences, append this as a clear guardrail, and summarize the final boundaries list.`,
-                )
-              }
-            >
-              Update boundaries
-            </button>
-          </div>
-
-          <div class="space-y-2 rounded-xl border border-dls-border bg-dls-hover/30 p-3">
-            <div class="flex items-center gap-2 text-sm text-dls-text">
-              <Activity size={14} class="text-dls-secondary" />
-              Heartbeat cadence
+        <div class="space-y-6">
+          <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 space-y-4">
+            <div>
+              <h3 class="text-base font-semibold text-dls-text">Steering checklist</h3>
+              <p class="text-xs text-dls-secondary">
+                Trigger each steering step from here and confirm Soul outputs are visible in heartbeat proof.
+              </p>
             </div>
-            <div class="flex flex-wrap items-center gap-2">
-              <select
-                class="rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-xs text-dls-text"
-                value={cadence()}
-                onChange={(event) => setCadence(event.currentTarget.value)}
-              >
-                <For each={cadenceOptions}>
-                  {(option) => <option value={option.cron}>{option.label}</option>}
-                </For>
-              </select>
+
+            <div class="space-y-2">
+              <For each={steeringAudit()}>
+                {(item) => (
+                  <div class="rounded-lg border border-dls-border bg-dls-hover/20 px-3 py-2 flex items-start gap-2">
+                    <Show
+                      when={item.passed}
+                      fallback={<Circle size={14} class="mt-0.5 text-dls-secondary shrink-0" />}
+                    >
+                      <CheckCircle2 size={14} class="mt-0.5 text-emerald-11 shrink-0" />
+                    </Show>
+                    <div class="min-w-0">
+                      <div class="text-xs font-medium text-dls-text">{item.label}</div>
+                      <div class="text-[11px] text-dls-secondary truncate">{item.detail}</div>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+
+            <div class="grid gap-2 sm:grid-cols-2">
               <button
                 type="button"
-                class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
+                class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
+                disabled={props.newTaskDisabled || heartbeatRunState() === "running"}
+                onClick={runHeartbeatNow}
+              >
+                {heartbeatRunState() === "running" ? "Running heartbeat..." : "Run heartbeat now"}
+              </button>
+              <button
+                type="button"
+                class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60"
                 disabled={props.newTaskDisabled}
                 onClick={() =>
                   runPrompt(
-                    `Update the soul-heartbeat scheduler job to ${cadenceLabel()} using cron ${cadence()}. Confirm the scheduler update succeeded, report the next expected heartbeat window, and mention whether stale detection threshold changed.`,
+                    `Review ${props.workspaceRoot || "this worker"} with .opencode/soul.md, recent heartbeat entries, AGENTS.md guidance, recent sessions, open todos, and transcript snippets from opencode.db. Prioritize the top 3 loose ends and propose a concrete plan with one first step.`,
                   )
                 }
               >
-                Apply cadence
+                Prioritize loose ends
               </button>
+              <button
+                type="button"
+                class="rounded-xl border border-dls-border px-3 py-2 text-left text-sm text-dls-text hover:bg-dls-hover disabled:opacity-60 sm:col-span-2"
+                disabled={props.newTaskDisabled}
+                onClick={() =>
+                  runPrompt(
+                    "Run a Soul improvement sweep: read .opencode/soul.md and AGENTS.md, query recent sessions/todos/transcript text for this workspace from opencode.db, then propose 3 concrete improvements for process/skills/agents. If safe, update Loose ends and Recurring chores in .opencode/soul.md and explain every change.",
+                  )
+                }
+              >
+                Improvement sweep
+              </button>
+            </div>
+
+            <div class={`rounded-xl border px-3 py-2 text-xs ${heartbeatStatusCardTone()}`}>
+              <div class="font-medium">{heartbeatStatusTitle()}</div>
+              <div class="mt-1">{heartbeatRunMessage() || "Start a manual heartbeat and watch this card for live status."}</div>
+            </div>
+          </div>
+
+          <div class="rounded-2xl border border-dls-border bg-dls-surface p-6 space-y-4">
+            <div class="space-y-2">
+              <label class="text-xs font-medium text-dls-secondary">Current focus</label>
+              <input
+                type="text"
+                value={focusInput()}
+                onInput={(event) => setFocusInput(event.currentTarget.value)}
+                placeholder="Ship soul UI for remote workers"
+                class="w-full rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
+              />
+              <button
+                type="button"
+                class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
+                disabled={props.newTaskDisabled || !focusInput().trim()}
+                onClick={() =>
+                  runPrompt(
+                    `Update .opencode/soul.md so Current focus includes: ${focusInput().trim()}. Keep existing goals/preferences/loose ends, refresh the Last updated timestamp, and summarize what changed.`,
+                  )
+                }
+              >
+                Update focus
+              </button>
+            </div>
+
+            <div class="space-y-2">
+              <label class="text-xs font-medium text-dls-secondary">Boundaries and guardrails</label>
+              <input
+                type="text"
+                value={boundariesInput()}
+                onInput={(event) => setBoundariesInput(event.currentTarget.value)}
+                placeholder="Keep heartbeat concise and non-destructive"
+                class="w-full rounded-xl border border-dls-border bg-dls-hover/40 px-3 py-2 text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
+              />
+              <button
+                type="button"
+                class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
+                disabled={props.newTaskDisabled || !boundariesInput().trim()}
+                onClick={() =>
+                  runPrompt(
+                    `Update .opencode/soul.md Preferences with this boundary: ${boundariesInput().trim()}. Keep existing preferences, append this as a clear guardrail, and summarize the final boundaries list.`,
+                  )
+                }
+              >
+                Update boundaries
+              </button>
+            </div>
+
+            <div class="space-y-2 rounded-xl border border-dls-border bg-dls-hover/30 p-3">
+              <div class="flex items-center gap-2 text-sm text-dls-text">
+                <Activity size={14} class="text-dls-secondary" />
+                Heartbeat cadence
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <select
+                  class="rounded-lg border border-dls-border bg-dls-surface px-2 py-1.5 text-xs text-dls-text"
+                  value={cadence()}
+                  onChange={(event) => setCadence(event.currentTarget.value)}
+                >
+                  <For each={cadenceOptions}>
+                    {(option) => <option value={option.cron}>{option.label}</option>}
+                  </For>
+                </select>
+                <button
+                  type="button"
+                  class="rounded-lg border border-dls-border px-3 py-1.5 text-xs text-dls-text hover:bg-dls-hover disabled:opacity-60"
+                  disabled={props.newTaskDisabled}
+                  onClick={() =>
+                    runPrompt(
+                      `Update the soul-heartbeat scheduler job to ${cadenceLabel()} using cron ${cadence()}. Confirm the scheduler update succeeded, report the next expected heartbeat window, and mention whether stale detection threshold changed.`,
+                    )
+                  }
+                >
+                  Apply cadence
+                </button>
+              </div>
             </div>
           </div>
         </div>

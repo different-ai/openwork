@@ -1967,10 +1967,10 @@ export default function SessionView(props: SessionViewProps) {
         return;
       }
     } catch {
-      // Fall back to slash-command setup below.
+      // Fall back to prompt-based setup below.
     }
 
-    const text = slashCommand;
+    const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -2826,6 +2826,7 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
                     Keep your goals and preferences across sessions with light scheduled check-ins.
                     Tradeoff: more autonomy can create extra background runs, but revert is one command.
+                    Audit setup and heartbeat evidence from the Soul section.
                   </div>
                 </button>
               </div>

@@ -3926,8 +3926,21 @@ export default function App() {
   function runSoulPrompt(promptText: string) {
     const text = promptText.trim();
     if (!text) return;
-    setPrompt(text);
-    void createSessionAndOpen();
+    void (async () => {
+      const sessionId = await createSessionAndOpen();
+      if (!sessionId) {
+        setPrompt(text);
+        return;
+      }
+
+      await sendPrompt({
+        mode: "prompt",
+        text,
+        resolvedText: text,
+        parts: [{ type: "text", text }],
+        attachments: [],
+      });
+    })();
   }
 
 
