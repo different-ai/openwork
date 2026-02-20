@@ -2695,6 +2695,8 @@ export default function App() {
     return openworkServerStatus() === "connected" && Boolean(client && workspaceId);
   });
 
+  const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
+
   const refreshScheduledJobs = async (options?: { force?: boolean }) => {
     if (scheduledJobsBusy() && !options?.force) return;
 
@@ -2737,6 +2739,12 @@ export default function App() {
     }
 
     if (isWindowsPlatform()) {
+      setScheduledJobs([]);
+      setScheduledJobsStatus(null);
+      return;
+    }
+
+    if (!schedulerPluginInstalled()) {
       setScheduledJobs([]);
       setScheduledJobsStatus(null);
       return;
@@ -4801,6 +4809,7 @@ export default function App() {
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
+      schedulerPluginInstalled: schedulerPluginInstalled(),
       scheduledJobsStatus: scheduledJobsStatus(),
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),

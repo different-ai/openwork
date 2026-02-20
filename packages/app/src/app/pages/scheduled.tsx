@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Plus,
   Play,
+  PlugZap,
   RefreshCw,
   Terminal,
   Trash2,
@@ -36,6 +37,12 @@ export type ScheduledTasksViewProps = {
   createSessionAndOpen: () => void;
   setPrompt: (value: string) => void;
   newTaskDisabled: boolean;
+  schedulerInstalled: boolean;
+  canEditPlugins: boolean;
+  addPlugin: (pluginNameOverride?: string) => void;
+  reloadWorkspaceEngine: () => Promise<void>;
+  reloadBusy: boolean;
+  canReloadWorkspace: boolean;
 };
 
 const toRelative = (value?: string | null) => {
@@ -351,9 +358,9 @@ const AutomationJobCard = (props: {
           <button
             type="button"
             onClick={props.onRun}
-            disabled={props.busy}
+            disabled={!props.supported || props.busy}
             class={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${
-              props.busy
+              !props.supported || props.busy
                 ? "border-gray-5 text-gray-8"
                 : "border-gray-5 text-gray-10 hover:bg-gray-2/70 hover:text-gray-12"
             }`}
@@ -429,16 +436,31 @@ const AutomationJobCard = (props: {
 
 export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const platform = usePlatform();
+  const [installingScheduler, setInstallingScheduler] = createSignal(false);
+  const [schedulerInstallRequested, setSchedulerInstallRequested] = createSignal(false);
   const supported = createMemo(() => {
     if (props.source === "remote") return props.sourceReady;
-    return isTauriRuntime() && !props.isWindows;
+    return (
+      isTauriRuntime() &&
+      !props.isWindows &&
+      props.schedulerInstalled &&
+      !schedulerInstallRequested()
+    );
   });
+  const schedulerGateActive = createMemo(() => {
+    if (props.source !== "local") return false;
+    if (!isTauriRuntime() || props.isWindows) return false;
+    return !props.schedulerInstalled || schedulerInstallRequested();
+  });
+  const schedulerGateMode = createMemo(() => (props.schedulerInstalled ? "reload" : "install"));
+  const automationDisabled = createMemo(() => props.newTaskDisabled || schedulerGateActive());
   const supportNote = createMemo(() => {
     if (props.source === "remote") {
       return props.sourceReady ? null : "OpenWork server unavailable. Connect to sync scheduled tasks.";
     }
     if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
     if (props.isWindows) return "Scheduler is not supported on Windows yet.";
+    if (!props.schedulerInstalled || schedulerInstallRequested()) return null;
     return null;
   });
   const sourceDescription = createMemo(() =>
@@ -519,7 +541,19 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     platform.openLink("https://github.com/anomalyco/opencode-scheduler");
   };
 
+  const handleInstallScheduler = async () => {
+    if (installingScheduler() || !props.canEditPlugins) return;
+    setInstallingScheduler(true);
+    setSchedulerInstallRequested(true);
+    try {
+      await Promise.resolve(props.addPlugin("opencode-scheduler"));
+    } finally {
+      setInstallingScheduler(false);
+    }
+  };
+
   const openCreateModal = () => {
+    if (automationDisabled()) return;
     const root = props.activeWorkspaceRoot.trim();
     if (!automationProject().trim() && root) {
       setAutomationProject(root);
@@ -528,6 +562,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   };
 
   const openCreateModalFromTemplate = (template: (typeof automationTemplates)[number]) => {
+    if (automationDisabled()) return;
     const root = props.activeWorkspaceRoot.trim();
     if (root) {
       setAutomationProject(root);
@@ -545,6 +580,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   };
 
   const handleCreateAutomation = () => {
+    if (automationDisabled()) return;
     const promptValue = createPromptValue();
     if (!promptValue) return;
     props.setPrompt(promptValue);
@@ -625,9 +661,9 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         <button
           type="button"
           onClick={openCreateModal}
-          disabled={props.newTaskDisabled}
+          disabled={automationDisabled()}
           class={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-            props.newTaskDisabled
+            automationDisabled()
               ? "bg-gray-3 text-gray-8"
               : "bg-gray-12 text-gray-1 hover:bg-gray-11"
           }`}
@@ -650,6 +686,53 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
         <p class="mt-2 text-sm text-gray-9">{sourceDescription()}</p>
       </div>
 
+      <Show when={schedulerGateActive()}>
+        <div class="rounded-2xl border border-gray-5 bg-gradient-to-b from-gray-1 to-gray-2/70 px-5 py-5 shadow-sm">
+          <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div class="flex items-start gap-3">
+              <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-gray-4 bg-gray-1">
+                <PlugZap size={18} class="text-gray-10" />
+              </div>
+              <div>
+                <div class="text-sm font-semibold text-gray-12">
+                  {schedulerGateMode() === "reload"
+                    ? "Reload OpenWork to activate automations"
+                    : "Install the scheduler to unlock automations"}
+                </div>
+                <div class="mt-1 text-xs text-gray-9">
+                  {schedulerGateMode() === "reload"
+                    ? "OpenCode loads plugins at startup. Reload OpenWork to activate opencode-scheduler."
+                    : "Automations run through the opencode-scheduler plugin. Add it to this workspace to enable scheduling."}
+                </div>
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                variant="secondary"
+                onClick={handleInstallScheduler}
+                disabled={!props.canEditPlugins || installingScheduler()}
+              >
+                {installingScheduler() ? "Installing..." : "Install scheduler"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void props.reloadWorkspaceEngine()}
+                disabled={!props.canReloadWorkspace || props.reloadBusy || !props.schedulerInstalled}
+              >
+                {props.reloadBusy ? "Reloading..." : "Reload OpenWork"}
+              </Button>
+              <button
+                type="button"
+                onClick={openSchedulerDocs}
+                class="text-xs font-medium text-gray-9 transition-colors hover:text-gray-12"
+              >
+                View docs
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
+
       <Show when={supportNote()}>
         <div class="rounded-xl border border-gray-4 bg-gray-2/60 px-5 py-4 text-sm text-gray-10">
           {supportNote()}
@@ -671,7 +754,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
       <Show
         when={props.jobs.length > 0}
         fallback={
-          <div class="space-y-4">
+          <div class={`space-y-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
             <div class="text-center text-sm text-gray-9">
               No automations yet. Pick a template or create your own automation prompt.
             </div>
@@ -683,7 +766,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                     description={card.description}
                     tone={card.tone}
                     onClick={() => openCreateModalFromTemplate(card)}
-                    disabled={props.newTaskDisabled}
+                    disabled={automationDisabled()}
                   />
                 )}
               </For>
@@ -698,7 +781,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
           </div>
         }
       >
-        <div class="grid w-full grid-cols-1 gap-4">
+        <div class={`grid w-full grid-cols-1 gap-4 ${schedulerGateActive() ? "opacity-60 pointer-events-none" : ""}`}>
           <For each={props.jobs}>
             {(job) => (
               <AutomationJobCard
@@ -900,16 +983,16 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
                   Cancel
                 </button>
                 <button
-                  type="button"
-                  onClick={handleCreateAutomation}
-                  disabled={!canCreateAutomation() || props.newTaskDisabled}
-                  class={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
-                    !canCreateAutomation() || props.newTaskDisabled
-                      ? "bg-gray-3 text-gray-8 cursor-not-allowed"
-                      : "bg-gray-12 text-gray-1 hover:bg-gray-11"
-                  }`}
-                >
-                  Create
+                type="button"
+                onClick={handleCreateAutomation}
+                disabled={!canCreateAutomation() || automationDisabled()}
+                class={`px-4 py-2 text-xs font-medium rounded-lg transition-colors ${
+                  !canCreateAutomation() || automationDisabled()
+                    ? "bg-gray-3 text-gray-8 cursor-not-allowed"
+                    : "bg-gray-12 text-gray-1 hover:bg-gray-11"
+                }`}
+              >
+                Create
                 </button>
               </div>
             </div>

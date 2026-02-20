@@ -138,6 +138,7 @@ export type DashboardViewProps = {
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
+  schedulerPluginInstalled: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
@@ -1289,6 +1290,12 @@ export default function DashboardView(props: DashboardViewProps) {
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
                 newTaskDisabled={props.newTaskDisabled}
+                schedulerInstalled={props.schedulerPluginInstalled}
+                canEditPlugins={props.canEditPlugins}
+                addPlugin={props.addPlugin}
+                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadBusy={props.reloadBusy}
+                canReloadWorkspace={props.canReloadWorkspace}
               />
             </Match>
             <Match when={props.tab === "soul"}>
