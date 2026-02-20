@@ -12,7 +12,11 @@ It is designed to be deployed on Vercel and backed by Vercel Blob.
   - Returns `{ "url": "https://share.openwork.software/b/<id>" }`.
 
 - `GET /b/:id`
-  - Proxies the stored object back to the caller.
+  - Returns an HTML share page by default for browser requests.
+  - Returns raw JSON for API/programmatic requests:
+    - send `Accept: application/json`, or
+    - append `?format=json`.
+  - Supports `?format=json&download=1` to download the bundle as a file.
 
 ## Required Environment Variables
 
@@ -38,6 +42,16 @@ For local testing you can use:
 cd services/openwork-share
 pnpm install
 vercel dev
+```
+
+## Quick checks
+
+```bash
+# Human-friendly page
+curl -i "http://localhost:3000/b/<id>" -H "Accept: text/html"
+
+# Machine-readable payload (OpenWork parser path)
+curl -i "http://localhost:3000/b/<id>?format=json"
 ```
 
 ## Notes

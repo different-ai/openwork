@@ -1,4 +1,5 @@
 import { head } from "@vercel/blob";
+import { renderBundlePage, wantsDownload, wantsJsonResponse } from "./render-bundle-page.js";
 
 function setCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -40,9 +41,23 @@ export default async function handler(req, res) {
     return;
   }
 
-  res.setHeader("Content-Type", blob.contentType || response.headers.get("content-type") || "application/json");
+  const rawBuffer = Buffer.from(await response.arrayBuffer());
+  const rawJson = rawBuffer.toString("utf8");
+  const serveJson = wantsJsonResponse(req);
+
+  res.setHeader("Vary", "Accept");
   res.setHeader("Cache-Control", "public, max-age=3600");
 
-  const buffer = Buffer.from(await response.arrayBuffer());
-  res.status(200).send(buffer);
+  if (serveJson) {
+    res.setHeader("Content-Type", blob.contentType || response.headers.get("content-type") || "application/json");
+    if (wantsDownload(req)) {
+      res.setHeader("Content-Disposition", `attachment; filename="openwork-bundle-${id}.json"`);
+    }
+    res.status(200).send(rawBuffer);
+    return;
+  }
+
+  const html = renderBundlePage({ id, rawJson, req });
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.status(200).send(html);
 }
