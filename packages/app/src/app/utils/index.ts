@@ -800,6 +800,44 @@ const ARTIFACT_PATH_PATTERN =
 const ARTIFACT_OUTPUT_SCAN_LIMIT = 4000;
 const ARTIFACT_OUTPUT_SKIP_TOOLS = new Set(["webfetch"]);
 
+// Patterns that indicate a path is a truncated system/absolute path rather than a workspace-relative path
+const TRUNCATED_SYSTEM_PATH_PATTERNS = [
+  /com\.[^/]+\.(openwork|opencode)/i, // macOS app bundle identifiers
+  /\.openwork\.dev\//i, // OpenWork dev paths
+  /Application Support\//i, // macOS Application Support
+  /AppData[/\\]/i, // Windows AppData
+  /\.local\/share\//i, // Linux XDG data
+  /workspaces\/[^/]+\/workspaces\//i, // Nested workspaces paths (clearly malformed)
+];
+
+/**
+ * Clean up an artifact path to extract the workspace-relative portion.
+ * Returns null if the path should be rejected entirely.
+ */
+function cleanArtifactPath(rawPath: string): string | null {
+  const normalized = rawPath.trim().replace(/[\\/]+/g, "/");
+  if (!normalized) return null;
+
+  // Check if this looks like a truncated system path
+  for (const pattern of TRUNCATED_SYSTEM_PATH_PATTERNS) {
+    if (pattern.test(normalized)) {
+      // Try to extract just the relative part after "workspaces/<name>/"
+      const workspacesMatch = normalized.match(/workspaces\/[^/]+\/(.+)$/i);
+      if (workspacesMatch && workspacesMatch[1]) {
+        const relative = workspacesMatch[1];
+        // Validate the extracted path doesn't still contain system patterns
+        if (!TRUNCATED_SYSTEM_PATH_PATTERNS.some((p) => p.test(relative))) {
+          return relative;
+        }
+      }
+      // Reject the path entirely if we can't extract a clean relative path
+      return null;
+    }
+  }
+
+  return normalized;
+}
+
 type DeriveArtifactsOptions = {
   maxMessages?: number;
 };
@@ -906,19 +944,19 @@ export function deriveArtifacts(list: MessageWithParts[], options: DeriveArtifac
       if (matches.size === 0) return;
 
       matches.forEach((match) => {
-        const normalizedPath = match.trim().replace(/[\\/]+/g, "/");
-        if (!normalizedPath) return;
+        const cleanedPath = cleanArtifactPath(match);
+        if (!cleanedPath) return;
 
-        const key = normalizedPath.toLowerCase();
-        const name = normalizedPath.split("/").pop() ?? normalizedPath;
-        const id = `artifact-${encodeURIComponent(normalizedPath)}`;
+        const key = cleanedPath.toLowerCase();
+        const name = cleanedPath.split("/").pop() ?? cleanedPath;
+        const id = `artifact-${encodeURIComponent(cleanedPath)}`;
 
         // Delete and re-add to move to end (most recent)
         if (results.has(key)) results.delete(key);
         results.set(key, {
           id,
           name,
-          path: normalizedPath,
+          path: cleanedPath,
           kind: "file" as const,
           size: state.size ? String(state.size) : undefined,
           messageId: messageId || undefined,
