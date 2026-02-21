@@ -63,19 +63,14 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
     const client = props.client;
     const workspaceId = props.workspaceId;
 
-    console.debug("[ArtifactMarkdownEditor] load requested:", { target, workspaceId, hasClient: !!client });
-
     if (!client || !workspaceId) {
-      console.warn("[ArtifactMarkdownEditor] load blocked: no client or workspaceId", { workspaceId, hasClient: !!client });
       setError(writeDisabledReason());
       return;
     }
     if (!target) {
-      console.warn("[ArtifactMarkdownEditor] load blocked: empty target path");
       return;
     }
     if (!isMarkdown(target)) {
-      console.warn("[ArtifactMarkdownEditor] load blocked: not a markdown file:", target);
       setError("Only markdown files are supported.");
       return;
     }
@@ -87,9 +82,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
       let result: OpenworkWorkspaceFileContent;
       let actualPath = target;
       try {
-        console.debug("[ArtifactMarkdownEditor] fetching file:", { workspaceId, target });
         result = (await client.readWorkspaceFile(workspaceId, target)) as OpenworkWorkspaceFileContent;
-        console.debug("[ArtifactMarkdownEditor] file loaded successfully:", target);
       } catch (err) {
         // Artifacts are frequently referenced as workspace-relative paths (e.g. `learned/foo.md`),
         // but on disk they may live under the OpenWork outbox dir: `.opencode/openwork/outbox/`.
@@ -100,29 +93,14 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
           err instanceof OpenworkServerError &&
           err.status === 404;
 
-        console.debug("[ArtifactMarkdownEditor] primary fetch failed:", {
-          target,
-          error: err instanceof Error ? err.message : String(err),
-          status: err instanceof OpenworkServerError ? err.status : null,
-          willTryOutbox: shouldTryOutbox,
-          candidateOutbox,
-        });
-
         if (!shouldTryOutbox) {
           throw err;
         }
 
         actualPath = candidateOutbox;
         try {
-          console.debug("[ArtifactMarkdownEditor] trying outbox path:", actualPath);
           result = (await client.readWorkspaceFile(workspaceId, actualPath)) as OpenworkWorkspaceFileContent;
-          console.debug("[ArtifactMarkdownEditor] outbox file loaded successfully:", actualPath);
         } catch (second) {
-          console.warn("[ArtifactMarkdownEditor] outbox fetch also failed:", {
-            actualPath,
-            error: second instanceof Error ? second.message : String(second),
-            status: second instanceof OpenworkServerError ? second.status : null,
-          });
           if (second instanceof OpenworkServerError && second.status === 404) {
             throw new OpenworkServerError(404, "file_not_found", "File not found (workspace root or outbox).");
           }
@@ -137,7 +115,6 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
       setBaseUpdatedAt(typeof result.updatedAt === "number" ? result.updatedAt : null);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load file";
-      console.error("[ArtifactMarkdownEditor] load error:", { target, error: message, rawError: err });
       setError(message);
       setLoadedPath(target);
     } finally {
@@ -218,37 +195,20 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
     }
 
     const target = path();
-    if (!target) {
-      console.debug("[ArtifactMarkdownEditor] effect: no target path, skipping");
-      return;
-    }
-    if (loading()) {
-      console.debug("[ArtifactMarkdownEditor] effect: already loading, skipping");
-      return;
-    }
-    if (pendingReason() === "switch") {
-      console.debug("[ArtifactMarkdownEditor] effect: pending switch, skipping");
-      return;
-    }
+    if (!target || loading() || pendingReason() === "switch") return;
 
     const active = loadedPath();
     if (!active) {
-      console.debug("[ArtifactMarkdownEditor] effect: no active path, triggering load for:", target);
       void load(target);
       return;
     }
-    if (target === active) {
-      console.debug("[ArtifactMarkdownEditor] effect: target matches active, no-op");
-      return;
-    }
+    if (target === active) return;
 
     if (!dirty()) {
-      console.debug("[ArtifactMarkdownEditor] effect: different target, not dirty, loading:", target);
       void load(target);
       return;
     }
 
-    console.debug("[ArtifactMarkdownEditor] effect: different target with dirty content, prompting switch");
     setPendingPath(target);
     setPendingReason("switch");
   });

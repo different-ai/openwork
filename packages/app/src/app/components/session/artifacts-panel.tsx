@@ -133,12 +133,6 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                     openable() ? "hover:bg-dls-active" : "cursor-default"
                   }`}
                   onClick={() => {
-                    console.debug("[ArtifactsPanel] click:", {
-                      path: artifact.path,
-                      kind: artifact.kind,
-                      hasOnOpenMarkdown: typeof props.onOpenMarkdown === "function",
-                      hasOnOpenImage: typeof props.onOpenImage === "function",
-                    });
                     if (md()) props.onOpenMarkdown?.(artifact.path);
                     else if (img()) props.onOpenImage?.(artifact.path);
                   }}

@@ -709,143 +709,75 @@ export default function SessionView(props: SessionViewProps) {
 
   const toWorkspaceRelativeForApi = (file: string) => {
     const normalized = normalizeSidebarPath(file).replace(/^file:\/\//i, "");
-    if (!normalized) {
-      console.debug("[toWorkspaceRelativeForApi] empty after normalization:", { original: file });
-      return "";
-    }
+    if (!normalized) return "";
 
     const root = normalizeSidebarPath(props.activeWorkspaceRoot).replace(/\/+$/, "");
     const rootKey = root.toLowerCase();
     const fileKey = normalized.toLowerCase();
 
-    console.debug("[toWorkspaceRelativeForApi] processing:", { file, normalized, root, rootKey, fileKey });
-
-    // Case 1: Full absolute path that starts with workspace root
     if (root && fileKey.startsWith(`${rootKey}/`)) {
-      const result = normalized.slice(root.length + 1);
-      console.debug("[toWorkspaceRelativeForApi] stripped workspace root, result:", result);
-      return result;
+      return normalized.slice(root.length + 1);
     }
     if (root && fileKey === rootKey) {
-      console.debug("[toWorkspaceRelativeForApi] path equals workspace root, returning empty");
       return "";
     }
 
-    // Case 2: Truncated absolute path - check if any suffix of the workspace root
-    // matches a prefix of the file path. This handles cases like:
-    // - root: "/Users/foo/Library/Application Support/com.differentai.openwork.dev/workspaces/starter"
-    // - file: "Support/com.differentai.openwork.dev/workspaces/starter/test.md"
     if (root) {
       const rootSegments = root.split("/").filter(Boolean);
-      const fileSegments = normalized.split("/");
-
-      // Try to find where the file path overlaps with the workspace root
-      for (let i = 1; i < rootSegments.length; i++) {
-        const rootSuffix = rootSegments.slice(i).join("/").toLowerCase();
-        const rootSuffixWithSlash = `${rootSuffix}/`;
-
-        if (fileKey.startsWith(rootSuffixWithSlash)) {
-          const result = normalized.slice(rootSuffix.length + 1);
-          console.debug("[toWorkspaceRelativeForApi] found overlapping suffix, stripped:", {
-            rootSuffix,
-            result,
-          });
-          return result;
-        }
-        if (fileKey === rootSuffix) {
-          console.debug("[toWorkspaceRelativeForApi] file matches root suffix exactly");
-          return "";
-        }
-      }
-
-      // Also check for workspace name/id match in file path segments
-      // e.g., path contains "workspaces/starter/" where "starter" is the workspace folder name
       const workspaceFolderName = rootSegments[rootSegments.length - 1]?.toLowerCase();
       if (workspaceFolderName) {
-        const workspacesPattern = new RegExp(`workspaces/${workspaceFolderName}/`, "i");
-        const match = normalized.match(workspacesPattern);
-        if (match && match.index !== undefined) {
-          const result = normalized.slice(match.index + match[0].length);
-          console.debug("[toWorkspaceRelativeForApi] found workspaces/name pattern, result:", result);
-          return result;
-        }
+        const workspaceMarker = `workspaces/${workspaceFolderName}/`;
+        const markerIndex = fileKey.indexOf(workspaceMarker);
+        if (markerIndex >= 0) return normalized.slice(markerIndex + workspaceMarker.length);
+        if (fileKey.endsWith(`workspaces/${workspaceFolderName}`)) return "";
       }
     }
 
     let relative = normalized.replace(/^\.\/+/, "");
-    if (!relative) {
-      console.debug("[toWorkspaceRelativeForApi] empty after stripping ./");
-      return "";
-    }
+    if (!relative) return "";
 
     // Tool output paths sometimes carry git-style prefixes (a/ or b/).
     if (/^[ab]\/.+\.(md|mdx|markdown)$/i.test(relative)) {
       relative = relative.slice(2);
-      console.debug("[toWorkspaceRelativeForApi] stripped git prefix (a/ or b/):", relative);
     }
 
     // Some tool outputs include a leading "workspace/" prefix.
     if (/^workspace\//i.test(relative)) {
       relative = relative.replace(/^workspace\//i, "");
-      console.debug("[toWorkspaceRelativeForApi] stripped workspace/ prefix:", relative);
     }
 
     // Other surfaces include an absolute-style "/workspace/<path>" prefix.
     if (/^\/+workspace\//i.test(relative)) {
       relative = relative.replace(/^\/+workspace\//i, "");
-      console.debug("[toWorkspaceRelativeForApi] stripped /workspace/ prefix:", relative);
     }
 
-    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) {
-      console.debug("[toWorkspaceRelativeForApi] rejected absolute path:", relative);
-      return "";
-    }
-    if (relative.split("/").some((part) => part === "." || part === "..")) {
-      console.debug("[toWorkspaceRelativeForApi] rejected path with . or .. segments:", relative);
-      return "";
-    }
+    if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
+    if (relative.split("/").some((part) => part === "." || part === "..")) return "";
 
-    // Reject paths that look like truncated system paths (contain app bundle identifiers)
-    if (/com\.[^/]+\.(openwork|opencode)/i.test(relative)) {
-      console.debug("[toWorkspaceRelativeForApi] rejected truncated system path:", relative);
-      return "";
-    }
+    if (/com\.[^/]+\.(openwork|opencode)/i.test(relative)) return "";
 
-    console.debug("[toWorkspaceRelativeForApi] final result:", relative);
     return relative;
   };
 
   const openMarkdownEditor = (file: string) => {
-    console.debug("[openMarkdownEditor] requested file:", file, {
-      workspaceRoot: props.activeWorkspaceRoot,
-      hasClient: !!props.openworkServerClient,
-      workspaceId: props.openworkServerWorkspaceId,
-    });
-
-    // Check prerequisites before attempting to open
     if (!props.openworkServerClient) {
-      console.warn("[openMarkdownEditor] no openwork server client available");
       setToastMessage("Cannot open file: not connected to OpenWork server.");
       return;
     }
     if (!props.openworkServerWorkspaceId) {
-      console.warn("[openMarkdownEditor] no workspace ID available");
       setToastMessage("Cannot open file: no workspace selected.");
       return;
     }
 
     const relative = toWorkspaceRelativeForApi(file);
     if (!relative) {
-      console.warn("[openMarkdownEditor] path resolution failed for:", file);
       setToastMessage(`Cannot open file: path "${file}" is not within the workspace.`);
       return;
     }
     if (!/\.(md|mdx|markdown)$/i.test(relative)) {
-      console.warn("[openMarkdownEditor] not a markdown file:", relative);
       setToastMessage("Only markdown files can be edited here right now.");
       return;
     }
-    console.debug("[openMarkdownEditor] opening resolved path:", relative);
     setMarkdownEditorPath(relative);
     setMarkdownEditorOpen(true);
   };
