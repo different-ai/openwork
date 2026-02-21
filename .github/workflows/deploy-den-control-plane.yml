@@ -1,0 +1,131 @@
+name: Deploy Den Control Plane
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "services/den-control-plane/**"
+      - "services/den-worker-runtime/**"
+      - ".github/workflows/deploy-den-control-plane.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-den-control-plane-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.repository == 'different-ai/openwork'
+    steps:
+      - name: Validate required secrets
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+          RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+        run: |
+          missing=0
+          for key in RENDER_API_KEY RENDER_DEN_CONTROL_PLANE_SERVICE_ID RENDER_OWNER_ID DEN_DATABASE_URL DEN_BETTER_AUTH_SECRET; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required secret: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Sync Render env vars and deploy latest commit
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_DEN_CONTROL_PLANE_SERVICE_ID: ${{ secrets.RENDER_DEN_CONTROL_PLANE_SERVICE_ID }}
+          RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
+          DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
+          DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+
+          api_key = os.environ["RENDER_API_KEY"]
+          service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
+          owner_id = os.environ["RENDER_OWNER_ID"]
+          openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION") or "0.11.113"
+
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+          }
+
+          def request(method: str, path: str, body=None):
+              url = f"https://api.render.com/v1{path}"
+              data = None
+              if body is not None:
+                  data = json.dumps(body).encode("utf-8")
+              req = urllib.request.Request(url, data=data, method=method, headers=headers)
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      text = resp.read().decode("utf-8")
+                      return resp.status, json.loads(text) if text else None
+              except urllib.error.HTTPError as err:
+                  text = err.read().decode("utf-8", "replace")
+                  raise RuntimeError(f"{method} {path} failed ({err.code}): {text[:600]}")
+
+          _, service = request("GET", f"/services/{service_id}")
+          service_url = (service.get("serviceDetails") or {}).get("url")
+          if not service_url:
+              raise RuntimeError(f"Render service {service_id} has no public URL")
+
+          env_vars = [
+              {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
+              {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
+              {"key": "BETTER_AUTH_URL", "value": service_url},
+              {"key": "PROVISIONER_MODE", "value": "render"},
+              {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
+              {"key": "RENDER_API_KEY", "value": api_key},
+              {"key": "RENDER_OWNER_ID", "value": owner_id},
+              {"key": "RENDER_WORKER_REPO", "value": "https://github.com/different-ai/openwork"},
+              {"key": "RENDER_WORKER_BRANCH", "value": "dev"},
+              {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
+              {"key": "RENDER_WORKER_PLAN", "value": "starter"},
+              {"key": "RENDER_WORKER_REGION", "value": "oregon"},
+              {"key": "RENDER_WORKER_OPENWORK_VERSION", "value": openwork_version},
+              {"key": "RENDER_WORKER_NAME_PREFIX", "value": "den-worker-openwork"},
+              {"key": "RENDER_PROVISION_TIMEOUT_MS", "value": "900000"},
+              {"key": "RENDER_HEALTHCHECK_TIMEOUT_MS", "value": "180000"},
+              {"key": "RENDER_POLL_INTERVAL_MS", "value": "5000"},
+          ]
+
+          request("PUT", f"/services/{service_id}/env-vars", env_vars)
+          _, deploy = request("POST", f"/services/{service_id}/deploys", {})
+          deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
+          if not deploy_id:
+              raise RuntimeError(f"Unexpected deploy response: {deploy}")
+
+          terminal = {"live", "update_failed", "build_failed", "canceled"}
+          started = time.time()
+
+          while time.time() - started < 1800:
+              _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
+              latest = deploys[0]["deploy"] if deploys else None
+              if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
+                  status = latest.get("status")
+                  if status != "live":
+                      raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
+                  print(f"Render deploy {deploy_id} is live at {service_url}")
+                  break
+              time.sleep(10)
+          else:
+              raise RuntimeError(f"Timed out waiting for deploy {deploy_id}")
+          PY

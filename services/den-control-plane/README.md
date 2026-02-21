@@ -56,3 +56,19 @@ pnpm db:migrate
 - `POST /v1/workers`
 - `GET /v1/workers/:id`
 - `POST /v1/workers/:id/tokens`
+
+## CI deployment (dev == prod)
+
+The workflow `.github/workflows/deploy-den-control-plane.yml` updates Render env vars and deploys the service on every push to `dev` when this service changes.
+
+Required GitHub Actions secrets:
+
+- `RENDER_API_KEY`
+- `RENDER_DEN_CONTROL_PLANE_SERVICE_ID`
+- `RENDER_OWNER_ID`
+- `DEN_DATABASE_URL`
+- `DEN_BETTER_AUTH_SECRET`
+
+Optional GitHub Actions variable:
+
+- `DEN_RENDER_WORKER_OPENWORK_VERSION` (defaults to `0.11.113`)
