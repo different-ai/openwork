@@ -4,8 +4,10 @@ import { fromNodeHeaders } from "better-auth/node"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import { auth } from "../auth.js"
+import { requireCloudWorkerAccess } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { OrgMembershipTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
+import { env } from "../env.js"
 import { ensureDefaultOrg } from "../orgs.js"
 import { provisionWorker } from "../workers/provisioner.js"
 
@@ -58,6 +60,27 @@ workersRouter.post("/", async (req, res) => {
   if (parsed.data.destination === "local" && !parsed.data.workspacePath) {
     res.status(400).json({ error: "workspace_path_required" })
     return
+  }
+
+  if (parsed.data.destination === "cloud") {
+    const access = await requireCloudWorkerAccess({
+      userId: session.user.id,
+      email: session.user.email ?? `${session.user.id}@placeholder.local`,
+      name: session.user.name ?? session.user.email ?? "OpenWork User",
+    })
+
+    if (!access.allowed) {
+      res.status(402).json({
+        error: "payment_required",
+        message: "Cloud workers require an active Den Cloud plan.",
+        polar: {
+          checkoutUrl: access.checkoutUrl,
+          productId: env.polar.productId,
+          benefitId: env.polar.benefitId,
+        },
+      })
+      return
+    }
   }
 
   const orgId =

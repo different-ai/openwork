@@ -32,6 +32,13 @@ pnpm dev
 - `RENDER_PROVISION_TIMEOUT_MS` max time to wait for deploy to become live
 - `RENDER_HEALTHCHECK_TIMEOUT_MS` max time to wait for worker health checks
 - `RENDER_POLL_INTERVAL_MS` polling interval for deploy + health checks
+- `POLAR_FEATURE_GATE_ENABLED` enable cloud-worker paywall (`true` or `false`)
+- `POLAR_API_BASE` Polar API base URL (default `https://api.polar.sh`)
+- `POLAR_ACCESS_TOKEN` Polar organization access token (required when paywall enabled)
+- `POLAR_PRODUCT_ID` Polar product ID used for checkout sessions (required when paywall enabled)
+- `POLAR_BENEFIT_ID` Polar benefit ID required to unlock cloud workers (required when paywall enabled)
+- `POLAR_SUCCESS_URL` redirect URL after successful checkout (required when paywall enabled)
+- `POLAR_RETURN_URL` return URL shown in checkout (required when paywall enabled)
 
 ## Auth setup (Better Auth)
 
@@ -54,6 +61,7 @@ pnpm db:migrate
 - `GET /` demo web app (sign-up + auth + worker launch)
 - `GET /v1/me`
 - `POST /v1/workers`
+  - Returns `402 payment_required` with Polar checkout URL when paywall is enabled and entitlement is missing.
 - `GET /v1/workers/:id`
 - `POST /v1/workers/:id/tokens`
 

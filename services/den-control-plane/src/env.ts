@@ -21,6 +21,13 @@ const schema = z.object({
   RENDER_PROVISION_TIMEOUT_MS: z.string().optional(),
   RENDER_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
   RENDER_POLL_INTERVAL_MS: z.string().optional(),
+  POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
+  POLAR_API_BASE: z.string().optional(),
+  POLAR_ACCESS_TOKEN: z.string().optional(),
+  POLAR_PRODUCT_ID: z.string().optional(),
+  POLAR_BENEFIT_ID: z.string().optional(),
+  POLAR_SUCCESS_URL: z.string().optional(),
+  POLAR_RETURN_URL: z.string().optional(),
 })
 
 const parsed = schema.parse(process.env)
@@ -28,6 +35,8 @@ const parsed = schema.parse(process.env)
 const corsOrigins = parsed.CORS_ORIGINS?.split(",")
   .map((origin) => origin.trim())
   .filter(Boolean)
+
+const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
@@ -51,5 +60,14 @@ export const env = {
     provisionTimeoutMs: Number(parsed.RENDER_PROVISION_TIMEOUT_MS ?? "900000"),
     healthcheckTimeoutMs: Number(parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000"),
     pollIntervalMs: Number(parsed.RENDER_POLL_INTERVAL_MS ?? "5000"),
+  },
+  polar: {
+    featureGateEnabled: polarFeatureGateEnabled,
+    apiBase: parsed.POLAR_API_BASE ?? "https://api.polar.sh",
+    accessToken: parsed.POLAR_ACCESS_TOKEN,
+    productId: parsed.POLAR_PRODUCT_ID,
+    benefitId: parsed.POLAR_BENEFIT_ID,
+    successUrl: parsed.POLAR_SUCCESS_URL,
+    returnUrl: parsed.POLAR_RETURN_URL,
   },
 }

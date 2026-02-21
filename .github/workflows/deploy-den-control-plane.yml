@@ -29,6 +29,10 @@ jobs:
           RENDER_OWNER_ID: ${{ secrets.RENDER_OWNER_ID }}
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
+          POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
+          POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
+          POLAR_BENEFIT_ID: ${{ secrets.POLAR_BENEFIT_ID }}
+          DEN_POLAR_FEATURE_GATE_ENABLED: ${{ vars.DEN_POLAR_FEATURE_GATE_ENABLED }}
         run: |
           missing=0
           for key in RENDER_API_KEY RENDER_DEN_CONTROL_PLANE_SERVICE_ID RENDER_OWNER_ID DEN_DATABASE_URL DEN_BETTER_AUTH_SECRET; do
@@ -37,6 +41,18 @@ jobs:
               missing=1
             fi
           done
+
+          feature_enabled="${DEN_POLAR_FEATURE_GATE_ENABLED:-false}"
+          feature_enabled="$(echo "$feature_enabled" | tr '[:upper:]' '[:lower:]')"
+          if [ "$feature_enabled" = "true" ]; then
+            for key in POLAR_ACCESS_TOKEN POLAR_PRODUCT_ID POLAR_BENEFIT_ID; do
+              if [ -z "${!key}" ]; then
+                echo "::error::Missing required paywall secret: $key"
+                missing=1
+              fi
+            done
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -49,6 +65,11 @@ jobs:
           DEN_DATABASE_URL: ${{ secrets.DEN_DATABASE_URL }}
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
+          DEN_POLAR_FEATURE_GATE_ENABLED: ${{ vars.DEN_POLAR_FEATURE_GATE_ENABLED }}
+          DEN_POLAR_API_BASE: ${{ vars.DEN_POLAR_API_BASE }}
+          POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
+          POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
+          POLAR_BENEFIT_ID: ${{ secrets.POLAR_BENEFIT_ID }}
         run: |
           python3 <<'PY'
           import json
@@ -61,6 +82,16 @@ jobs:
           service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
           owner_id = os.environ["RENDER_OWNER_ID"]
           openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION") or "0.11.113"
+          paywall_enabled = (os.environ.get("DEN_POLAR_FEATURE_GATE_ENABLED") or "false").lower() == "true"
+          polar_api_base = os.environ.get("DEN_POLAR_API_BASE") or "https://api.polar.sh"
+          polar_access_token = os.environ.get("POLAR_ACCESS_TOKEN") or ""
+          polar_product_id = os.environ.get("POLAR_PRODUCT_ID") or ""
+          polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
+
+          if paywall_enabled and (not polar_access_token or not polar_product_id or not polar_benefit_id):
+              raise RuntimeError(
+                  "DEN_POLAR_FEATURE_GATE_ENABLED=true requires POLAR_ACCESS_TOKEN, POLAR_PRODUCT_ID, and POLAR_BENEFIT_ID"
+              )
 
           headers = {
               "Authorization": f"Bearer {api_key}",
@@ -105,6 +136,13 @@ jobs:
               {"key": "RENDER_PROVISION_TIMEOUT_MS", "value": "900000"},
               {"key": "RENDER_HEALTHCHECK_TIMEOUT_MS", "value": "180000"},
               {"key": "RENDER_POLL_INTERVAL_MS", "value": "5000"},
+              {"key": "POLAR_FEATURE_GATE_ENABLED", "value": "true" if paywall_enabled else "false"},
+              {"key": "POLAR_API_BASE", "value": polar_api_base},
+              {"key": "POLAR_ACCESS_TOKEN", "value": polar_access_token},
+              {"key": "POLAR_PRODUCT_ID", "value": polar_product_id},
+              {"key": "POLAR_BENEFIT_ID", "value": polar_benefit_id},
+              {"key": "POLAR_SUCCESS_URL", "value": service_url},
+              {"key": "POLAR_RETURN_URL", "value": service_url},
           ]
 
           request("PUT", f"/services/{service_id}/env-vars", env_vars)
