@@ -87,12 +87,7 @@ function latestStepPart(partsGroups: Part[][]): Part | undefined {
     const parts = partsGroups[groupIndex] ?? [];
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = parts[partIndex];
-      if (
-        part.type === "tool" ||
-        part.type === "reasoning" ||
-        part.type === "step-start" ||
-        part.type === "step-finish"
-      ) {
+      if (part.type === "tool" || part.type === "reasoning") {
         return part;
       }
     }
@@ -187,7 +182,7 @@ export default function MessageList(props: MessageListProps) {
       }
 
       if (part.type === "step-start" || part.type === "step-finish") {
-        return props.developerMode;
+        return false;
       }
 
       if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
@@ -225,22 +220,22 @@ export default function MessageList(props: MessageListProps) {
       const groupId = String((message.info as any).id ?? "message");
       const groups = groupMessageParts(renderableParts, groupId);
       const isUser = (message.info as any).role === "user";
-      const isStepsOnly = groups.length === 1 && groups[0].kind === "steps";
+      const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
+      const stepGroups = isStepsOnly ? (groups as { kind: "steps"; id: string; parts: Part[] }[]) : [];
       stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
 
       if (isStepsOnly) {
-        const stepGroup = groups[0] as { kind: "steps"; id: string; parts: Part[] };
         const lastBlock = blocks[blocks.length - 1];
         if (lastBlock && lastBlock.kind === "steps-cluster" && lastBlock.isUser === isUser) {
-          lastBlock.partsGroups.push(stepGroup.parts);
-          lastBlock.stepIds.push(stepGroup.id);
+          lastBlock.partsGroups.push(...stepGroups.map((group) => group.parts));
+          lastBlock.stepIds.push(...stepGroups.map((group) => group.id));
           lastBlock.messageIds.push(messageId);
         } else {
           blocks.push({
             kind: "steps-cluster",
-            id: stepGroup.id,
-            stepIds: [stepGroup.id],
-            partsGroups: [stepGroup.parts],
+            id: stepGroups[0].id,
+            stepIds: stepGroups.map((group) => group.id),
+            partsGroups: stepGroups.map((group) => group.parts),
             messageIds: [messageId],
             isUser,
           });

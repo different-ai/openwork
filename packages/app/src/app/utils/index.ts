@@ -494,13 +494,14 @@ export function lastUserModelFromMessages(list: MessageWithParts[]): ModelRef | 
 }
 
 export function isStepPart(part: Part) {
-  return part.type === "reasoning" || part.type === "tool" || part.type === "step-start" || part.type === "step-finish";
+  return part.type === "reasoning" || part.type === "tool";
 }
 
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
   const groups: MessageGroup[] = [];
   const steps: Part[] = [];
   let textBuffer = "";
+  let stepGroupIndex = 0;
 
   const flushText = () => {
     if (!textBuffer) return;
@@ -508,33 +509,49 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
     textBuffer = "";
   };
 
+  const flushSteps = () => {
+    if (!steps.length) return;
+    groups.push({ kind: "steps", id: `steps-${messageId}-${stepGroupIndex}`, parts: steps.splice(0, steps.length) });
+    stepGroupIndex += 1;
+  };
+
   parts.forEach((part) => {
     if (part.type === "text") {
+      flushSteps();
       textBuffer += (part as { text?: string }).text ?? "";
       return;
     }
 
     if (part.type === "agent") {
+      flushSteps();
       const name = (part as { name?: string }).name ?? "";
       textBuffer += name ? `@${name}` : "@agent";
       return;
     }
 
     if (part.type === "file") {
+      flushSteps();
       flushText();
       groups.push({ kind: "text", part });
       return;
     }
 
+    if (part.type === "step-start" || part.type === "step-finish") {
+      return;
+    }
+
     flushText();
+
+    if (part.type === "reasoning" && steps.length > 0) {
+      flushSteps();
+    }
+
     steps.push(part);
   });
 
   flushText();
 
-  if (steps.length) {
-    groups.push({ kind: "steps", id: `steps-${messageId}`, parts: steps });
-  }
+  flushSteps();
 
   return groups;
 }
