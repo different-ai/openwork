@@ -341,7 +341,7 @@ export default function MessageList(props: MessageListProps) {
         {(part) => (
           <div>
             <StepRow part={part} isUser={listProps.isUser} />
-            <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
+            <Show when={props.developerMode && part.type !== "reasoning" && (part.type !== "tool" || props.showThinking)}>
               <div class="pl-6 pb-2 text-xs text-gray-10">
                 <PartView
                   part={part}

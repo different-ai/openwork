@@ -829,8 +829,7 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
     const record = part as any;
     const text = typeof record.text === "string" ? record.text.trim() : "";
     if (!text) return { title: "Planning", toolCategory: "tool" };
-    const short = text.length > 80 ? `${text.slice(0, 77)}...` : text;
-    return { title: "Thinking", detail: short, toolCategory: "tool" };
+    return { title: "Thinking", toolCategory: "tool" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {
