@@ -233,6 +233,16 @@ const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 
+type CommandPaletteMode = "root" | "sessions" | "thinking";
+
+const COMMAND_PALETTE_THINKING_OPTIONS = [
+  { value: "none", label: "None", detail: "Fastest responses" },
+  { value: "low", label: "Low", detail: "Light reasoning" },
+  { value: "medium", label: "Medium", detail: "Balanced depth" },
+  { value: "high", label: "High", detail: "Deeper reasoning" },
+  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
+] as const;
+
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -266,6 +276,10 @@ export default function SessionView(props: SessionViewProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
   const [activeSearchHitIndex, setActiveSearchHitIndex] = createSignal(0);
+  const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
+  const [commandPaletteMode, setCommandPaletteMode] = createSignal<CommandPaletteMode>("root");
+  const [commandPaletteQuery, setCommandPaletteQuery] = createSignal("");
+  const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = createSignal(0);
   const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
   const [messageWindowStart, setMessageWindowStart] = createSignal(0);
   const [messageWindowSessionId, setMessageWindowSessionId] = createSignal<string | null>(null);
@@ -277,6 +291,8 @@ export default function SessionView(props: SessionViewProps) {
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
   const showRightSidebarSelection = createMemo(() => !props.selectedSessionId);
+  let commandPaletteInputEl: HTMLInputElement | undefined;
+  const commandPaletteOptionRefs: HTMLButtonElement[] = [];
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -299,8 +315,59 @@ export default function SessionView(props: SessionViewProps) {
     todoList().filter((todo) => todo.status === "completed").length
   );
 
+  const commandPaletteSessionOptions = createMemo(() => {
+    const out: Array<{
+      workspaceId: string;
+      sessionId: string;
+      title: string;
+      workspaceTitle: string;
+      updatedAt: number;
+      searchText: string;
+    }> = [];
+
+    for (const group of props.workspaceSessionGroups) {
+      const workspaceId = group.workspace.id?.trim() ?? "";
+      if (!workspaceId) continue;
+      const workspaceTitle = workspaceLabel(group.workspace);
+      for (const session of group.sessions) {
+        const sessionId = session.id?.trim() ?? "";
+        if (!sessionId) continue;
+        const title = session.title?.trim() || "Untitled session";
+        const slug = session.slug?.trim() ?? "";
+        const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
+        out.push({
+          workspaceId,
+          sessionId,
+          title,
+          workspaceTitle,
+          updatedAt,
+          searchText: [title, workspaceTitle, slug].join(" ").toLowerCase(),
+        });
+      }
+    }
+
+    out.sort((a, b) => {
+      const aActive = a.workspaceId === props.activeWorkspaceId;
+      const bActive = b.workspaceId === props.activeWorkspaceId;
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+
+    return out;
+  });
+
+  const totalSessionCount = createMemo(() => commandPaletteSessionOptions().length);
+
   type SearchHit = {
     messageId: string;
+  };
+
+  type CommandPaletteItem = {
+    id: string;
+    title: string;
+    detail?: string;
+    meta?: string;
+    action: () => void;
   };
 
   const messageIdFromInfo = (message: MessageWithParts) => {
@@ -1251,8 +1318,72 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    focusCommandPaletteInput();
+  });
+
+  createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    const total = commandPaletteItems().length;
+    if (total === 0) {
+      setCommandPaletteActiveIndex(0);
+      return;
+    }
+    setCommandPaletteActiveIndex((current) => Math.max(0, Math.min(current, total - 1)));
+  });
+
+  createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    const idx = commandPaletteActiveIndex();
+    requestAnimationFrame(() => {
+      commandPaletteOptionRefs[idx]?.scrollIntoView({ block: "nearest" });
+    });
+  });
+
+  createEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
+      if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (commandPaletteOpen()) {
+          closeCommandPalette();
+        } else {
+          openCommandPalette();
+        }
+        return;
+      }
+
+      if (commandPaletteOpen()) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeCommandPalette();
+          return;
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          stepCommandPaletteIndex(1, commandPaletteItems().length);
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          stepCommandPaletteIndex(-1, commandPaletteItems().length);
+          return;
+        }
+        if (event.key === "Enter") {
+          if (event.isComposing || event.keyCode === 229) return;
+          const item = commandPaletteItems()[commandPaletteActiveIndex()];
+          if (!item) return;
+          event.preventDefault();
+          item.action();
+          return;
+        }
+        if (event.key === "Backspace" && !commandPaletteQuery().trim() && commandPaletteMode() !== "root") {
+          event.preventDefault();
+          returnToCommandRoot();
+        }
+        return;
+      }
+
       if (mod && !event.altKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openSearch();
@@ -1446,6 +1577,47 @@ export default function SessionView(props: SessionViewProps) {
       searchInputEl?.focus();
       searchInputEl?.select();
     });
+  };
+
+  const focusCommandPaletteInput = () => {
+    queueMicrotask(() => {
+      commandPaletteInputEl?.focus();
+      commandPaletteInputEl?.select();
+    });
+  };
+
+  const openCommandPalette = (mode: CommandPaletteMode = "root") => {
+    setCommandPaletteMode(mode);
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+    setCommandPaletteOpen(true);
+    focusCommandPaletteInput();
+  };
+
+  const closeCommandPalette = () => {
+    setCommandPaletteOpen(false);
+    setCommandPaletteMode("root");
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+  };
+
+  const stepCommandPaletteIndex = (delta: number, total: number) => {
+    if (total <= 0) {
+      setCommandPaletteActiveIndex(0);
+      return;
+    }
+    setCommandPaletteActiveIndex((current) => {
+      const normalized = ((current % total) + total) % total;
+      return (normalized + delta + total) % total;
+    });
+  };
+
+  const returnToCommandRoot = () => {
+    if (commandPaletteMode() === "root") return;
+    setCommandPaletteMode("root");
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+    focusCommandPaletteInput();
   };
 
   const openSearch = () => {
@@ -2055,6 +2227,123 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
+  const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [
+      {
+        id: "sessions",
+        title: "Search sessions",
+        detail: `${totalSessionCount().toLocaleString()} available across workers`,
+        meta: "Jump",
+        action: () => {
+          setCommandPaletteMode("sessions");
+          setCommandPaletteQuery("");
+          setCommandPaletteActiveIndex(0);
+          focusCommandPaletteInput();
+        },
+      },
+      {
+        id: "model",
+        title: "Change model",
+        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
+        meta: "Open",
+        action: () => {
+          closeCommandPalette();
+          props.openSessionModelPicker();
+        },
+      },
+      {
+        id: "thinking",
+        title: "Change thinking",
+        detail: `Current: ${props.modelVariantLabel}`,
+        meta: "Adjust",
+        action: () => {
+          setCommandPaletteMode("thinking");
+          setCommandPaletteQuery("");
+          setCommandPaletteActiveIndex(0);
+          focusCommandPaletteInput();
+        },
+      },
+    ];
+
+    const query = commandPaletteQuery().trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => `${item.title} ${item.detail ?? ""}`.toLowerCase().includes(query));
+  });
+
+  const commandPaletteSessionItems = createMemo<CommandPaletteItem[]>(() => {
+    const query = commandPaletteQuery().trim().toLowerCase();
+    const candidates = query
+      ? commandPaletteSessionOptions().filter((item) => item.searchText.includes(query))
+      : commandPaletteSessionOptions();
+
+    return candidates.slice(0, 80).map((item) => ({
+      id: `session:${item.workspaceId}:${item.sessionId}`,
+      title: item.title,
+      detail: item.workspaceTitle,
+      meta: item.workspaceId === props.activeWorkspaceId ? "Current worker" : "Switch",
+      action: () => {
+        closeCommandPalette();
+        openSessionFromList(item.workspaceId, item.sessionId);
+      },
+    }));
+  });
+
+  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
+    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
+    const activeVariant =
+      normalizedRaw === "balanced" || normalizedRaw === "balance" ? "none" : normalizedRaw;
+    const query = commandPaletteQuery().trim().toLowerCase();
+
+    return COMMAND_PALETTE_THINKING_OPTIONS
+      .filter((option) => {
+        if (!query) return true;
+        return `${option.label} ${option.detail}`.toLowerCase().includes(query);
+      })
+      .map((option) => ({
+        id: `thinking:${option.value}`,
+        title: option.label,
+        detail: option.detail,
+        meta: activeVariant === option.value ? "Current" : undefined,
+        action: () => {
+          props.setModelVariant(option.value);
+          closeCommandPalette();
+          setToastMessage(`Thinking set to ${option.label}.`);
+        },
+      }));
+  });
+
+  const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return commandPaletteSessionItems();
+    if (mode === "thinking") return commandPaletteThinkingItems();
+    return commandPaletteRootItems();
+  });
+
+  const commandPaletteTitle = createMemo(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return "Search sessions";
+    if (mode === "thinking") return "Change thinking";
+    return "Quick actions";
+  });
+
+  const commandPalettePlaceholder = createMemo(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return "Find by session title or worker";
+    if (mode === "thinking") return "Filter thinking options";
+    return "Search actions";
+  });
+
+  createEffect(
+    on(
+      () => [commandPaletteMode(), commandPaletteQuery()],
+      () => {
+        if (!commandPaletteOpen()) return;
+        commandPaletteOptionRefs.length = 0;
+        setCommandPaletteActiveIndex(0);
+      },
+    ),
+  );
+
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
     props.setTab("settings");
@@ -2621,6 +2910,27 @@ export default function SessionView(props: SessionViewProps) {
           <div class="flex items-center gap-2">
             <button
               type="button"
+              class={`h-9 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-mono transition-colors ${
+                commandPaletteOpen()
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              }`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (commandPaletteOpen()) {
+                  closeCommandPalette();
+                  return;
+                }
+                window.setTimeout(() => openCommandPalette(), 0);
+              }}
+              title="Quick actions (Ctrl/Cmd+K)"
+              aria-label="Quick actions"
+            >
+              Cmd+K
+            </button>
+            <button
+              type="button"
               class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
                 searchOpen()
                   ? "bg-dls-active text-dls-text"
@@ -3146,6 +3456,100 @@ export default function SessionView(props: SessionViewProps) {
           />
         </div>
       </aside>
+
+      <Show when={commandPaletteOpen()}>
+        <div
+          class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+          onClick={closeCommandPalette}
+        >
+          <div
+            class="w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div class="border-b border-dls-border px-4 py-3 space-y-2">
+              <div class="flex items-center gap-2">
+                <Show when={commandPaletteMode() !== "root"}>
+                  <button
+                    type="button"
+                    class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                    onClick={returnToCommandRoot}
+                  >
+                    Back
+                  </button>
+                </Show>
+                <Search size={14} class="text-dls-secondary shrink-0" />
+                <input
+                  ref={(el) => (commandPaletteInputEl = el)}
+                  type="text"
+                  value={commandPaletteQuery()}
+                  onInput={(event) => setCommandPaletteQuery(event.currentTarget.value)}
+                  placeholder={commandPalettePlaceholder()}
+                  class="min-w-0 flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
+                  aria-label={commandPaletteTitle()}
+                />
+                <button
+                  type="button"
+                  class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                  onClick={closeCommandPalette}
+                  aria-label="Close quick actions"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div class="text-[11px] text-dls-secondary">{commandPaletteTitle()}</div>
+            </div>
+
+            <div class="max-h-[56vh] overflow-y-auto p-2">
+              <Show
+                when={commandPaletteItems().length > 0}
+                fallback={
+                  <div class="px-3 py-6 text-sm text-dls-secondary text-center">
+                    No matches.
+                  </div>
+                }
+              >
+                <For each={commandPaletteItems()}>
+                  {(item, index) => {
+                    const idx = () => index();
+                    return (
+                      <button
+                        ref={(el) => {
+                          commandPaletteOptionRefs[idx()] = el;
+                        }}
+                        type="button"
+                        class={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
+                          idx() === commandPaletteActiveIndex()
+                            ? "bg-dls-active text-dls-text"
+                            : "text-dls-text hover:bg-dls-hover"
+                        }`}
+                        onMouseEnter={() => setCommandPaletteActiveIndex(idx())}
+                        onClick={item.action}
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium truncate">{item.title}</div>
+                            <Show when={item.detail}>
+                              <div class="text-xs text-dls-secondary mt-1 truncate">{item.detail}</div>
+                            </Show>
+                          </div>
+                          <Show when={item.meta}>
+                            <span class="text-[10px] uppercase tracking-wide text-dls-secondary shrink-0">{item.meta}</span>
+                          </Show>
+                        </div>
+                      </button>
+                    );
+                  }}
+                </For>
+              </Show>
+            </div>
+
+            <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
+              <span>Arrow keys to navigate</span>
+              <span>Enter to run · Esc to close</span>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <ProviderAuthModal
         open={props.providerAuthModalOpen}
