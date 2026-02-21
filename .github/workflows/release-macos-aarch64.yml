@@ -122,7 +122,15 @@ jobs:
             RELEASE_BODY="See the assets to download this version and install."
           fi
 
-          draft="${INPUT_DRAFT:-false}"
+          draft="${INPUT_DRAFT:-}"
+          if [ -z "$draft" ]; then
+            if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+              # Keep tag-triggered releases out of /releases/latest until assets + latest.json are ready.
+              draft="true"
+            else
+              draft="false"
+            fi
+          fi
           prerelease="${INPUT_PRERELEASE:-false}"
           notarize="${INPUT_NOTARIZE:-}"
           if [ -z "$notarize" ]; then
@@ -926,3 +934,40 @@ jobs:
             exit 0
           fi
           scripts/aur/publish-aur.sh "$RELEASE_TAG"
+
+  publish-release:
+    name: Publish GitHub Release
+    needs:
+      - resolve-release
+      - verify-release
+      - publish-tauri
+      - publish-updater-json
+      - release-orchestrator-sidecars
+      - publish-npm
+      - aur-publish
+    if: |
+      always() &&
+      needs.resolve-release.outputs.draft == 'true' &&
+      needs.resolve-release.result == 'success' &&
+      needs.verify-release.result == 'success' &&
+      (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
+      (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
+      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
+      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') &&
+      (needs.aur-publish.result == 'success' || needs.aur-publish.result == 'skipped')
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
+    steps:
+      - name: Publish release after assets are ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
+          else
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          fi
