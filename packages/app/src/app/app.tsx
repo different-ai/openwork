@@ -14,6 +14,7 @@ import { useLocation, useNavigate } from "@solidjs/router";
 import type {
   Agent,
   Part,
+  ProviderAuthAuthorization,
   Session,
   TextPartInput,
   FilePartInput,
@@ -181,6 +182,10 @@ export default function App() {
     }
   };
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
+  type ProviderOAuthStartResult = {
+    methodIndex: number;
+    authorization: ProviderAuthAuthorization;
+  };
 
   const location = useLocation();
   const navigate = useNavigate();
@@ -1375,7 +1380,7 @@ export default function App() {
     return buildProviderAuthMethods(methods as Record<string, ProviderAuthMethod[]>, providers());
   };
 
-  async function startProviderAuth(providerId?: string) {
+  async function startProviderAuth(providerId?: string): Promise<ProviderOAuthStartResult> {
     setProviderAuthError(null);
     const c = client();
     if (!c) {
@@ -1407,16 +1412,46 @@ export default function App() {
       }
 
       const auth = unwrap(await c.provider.oauth.authorize({ providerID: resolved, method: oauthIndex }));
-      if (isTauriRuntime()) {
-        const { openUrl } = await import("@tauri-apps/plugin-opener");
-        await openUrl(auth.url);
-      } else {
-        window.open(auth.url, "_blank", "noopener,noreferrer");
-      }
-
-      return auth.instructions || `Opened ${resolved} auth in browser`;
+      return {
+        methodIndex: oauthIndex,
+        authorization: auth,
+      };
     } catch (error) {
       const message = describeProviderError(error, "Failed to connect provider");
+      setProviderAuthError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
+  async function completeProviderAuthOAuth(providerId: string, methodIndex: number, code?: string) {
+    setProviderAuthError(null);
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    const resolved = providerId?.trim();
+    if (!resolved) {
+      throw new Error("Provider ID is required");
+    }
+
+    if (!Number.isInteger(methodIndex) || methodIndex < 0) {
+      throw new Error("OAuth method is required");
+    }
+
+    try {
+      const trimmedCode = code?.trim();
+      const result = await c.provider.oauth.callback({
+        providerID: resolved,
+        method: methodIndex,
+        code: trimmedCode || undefined,
+      });
+      assertNoClientError(result);
+      const updated = unwrap(await c.provider.list());
+      globalSync.set("provider", updated);
+      return `Connected ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to complete OAuth");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -4742,6 +4777,7 @@ export default function App() {
       openProviderAuthModal,
       closeProviderAuthModal,
       startProviderAuth,
+      completeProviderAuthOAuth,
       submitProviderApiKey,
       view: currentView(),
       setView,
@@ -5058,6 +5094,7 @@ export default function App() {
     safeStringify: safeStringify,
     showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
     startProviderAuth: startProviderAuth,
+    completeProviderAuthOAuth: completeProviderAuthOAuth,
     submitProviderApiKey: submitProviderApiKey,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,

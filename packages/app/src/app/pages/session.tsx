@@ -52,7 +52,7 @@ import {
 import Button from "../components/button";
 import ConfirmModal from "../components/confirm-modal";
 import RenameSessionModal from "../components/rename-session-modal";
-import ProviderAuthModal from "../components/provider-auth-modal";
+import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
@@ -187,7 +187,8 @@ export type SessionViewProps = {
   error: string | null;
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
-  startProviderAuth: (providerId?: string) => Promise<string>;
+  startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
+  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
@@ -1918,15 +1919,27 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.removeEventListener("mousedown", handler));
   });
 
-  const handleProviderAuthSelect = async (providerId: string) => {
+  const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
+    if (providerAuthActionBusy()) {
+      throw new Error("Provider auth is already in progress.");
+    }
+    setProviderAuthActionBusy(true);
+    try {
+      return await props.startProviderAuth(providerId);
+    } finally {
+      setProviderAuthActionBusy(false);
+    }
+  };
+
+  const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
     if (providerAuthActionBusy()) return;
     setProviderAuthActionBusy(true);
     try {
-      const message = await props.startProviderAuth(providerId);
-      setToastMessage(message || "Auth flow started");
+      const message = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
+      setToastMessage(message || "Provider connected");
       props.closeProviderAuthModal();
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Auth failed";
+      const message = error instanceof Error ? error.message : "OAuth failed";
       setToastMessage(message);
     } finally {
       setProviderAuthActionBusy(false);
@@ -2273,6 +2286,19 @@ export default function SessionView(props: SessionViewProps) {
         action: () => {
           closeCommandPalette();
           props.openSessionModelPicker();
+        },
+      },
+      {
+        id: "provider",
+        title: "Connect provider",
+        detail: "Open provider connection flow",
+        meta: "Open",
+        action: () => {
+          closeCommandPalette();
+          void props.openProviderAuthModal().catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to load providers";
+            setToastMessage(message);
+          });
         },
       },
       {
@@ -3585,6 +3611,7 @@ export default function SessionView(props: SessionViewProps) {
         authMethods={props.providerAuthMethods}
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
+        onSubmitOAuth={handleProviderAuthOAuth}
         onClose={props.closeProviderAuthModal}
       />
 

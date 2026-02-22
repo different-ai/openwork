@@ -1,6 +1,8 @@
-import { CheckCircle2, X } from "lucide-solid";
+import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
+import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { isTauriRuntime } from "../utils";
 
 import Button from "./button";
 import TextInput from "./text-input";
@@ -12,6 +14,15 @@ type ProviderAuthEntry = {
   methods: ProviderAuthMethod[];
   connected: boolean;
   env: string[];
+};
+
+export type ProviderOAuthStartResult = {
+  methodIndex: number;
+  authorization: ProviderAuthAuthorization;
+};
+
+type ProviderOAuthSession = ProviderOAuthStartResult & {
+  providerId: string;
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -30,8 +41,9 @@ export type ProviderAuthModalProps = {
   providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
-  onSelect: (providerId: string) => void;
+  onSelect: (providerId: string) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  onSubmitOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
   onClose: () => void;
 };
 
@@ -89,10 +101,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const actionDisabled = () => props.loading || props.submitting;
 
-  const [view, setView] = createSignal<"list" | "method" | "api">("list");
+  const [view, setView] = createSignal<"list" | "method" | "api" | "oauth-code" | "oauth-auto">("list");
   const [selectedProviderId, setSelectedProviderId] = createSignal<string | null>(null);
   const [apiKeyInput, setApiKeyInput] = createSignal("");
+  const [oauthCodeInput, setOauthCodeInput] = createSignal("");
+  const [oauthSession, setOauthSession] = createSignal<ProviderOAuthSession | null>(null);
+  const [searchQuery, setSearchQuery] = createSignal("");
+  const [activeEntryIndex, setActiveEntryIndex] = createSignal(0);
   const [localError, setLocalError] = createSignal<string | null>(null);
+  let searchInputEl: HTMLInputElement | undefined;
 
   const selectedEntry = createMemo(() =>
     entries().find((entry) => entry.id === selectedProviderId()) ?? null,
@@ -101,10 +118,36 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const resolvedView = createMemo(() => (selectedEntry() ? view() : "list"));
   const errorMessage = createMemo(() => localError() ?? props.error);
 
+  const filteredEntries = createMemo(() => {
+    const query = searchQuery().trim().toLowerCase();
+    if (!query) return entries();
+    return entries().filter((entry) => {
+      const methodText = entry.methods.map((method) => methodLabel(method)).join(" ");
+      return `${entry.name} ${entry.id} ${methodText}`.toLowerCase().includes(query);
+    });
+  });
+
+  const oauthInstructions = createMemo(() => oauthSession()?.authorization.instructions?.trim() ?? "");
+
+  const oauthDisplayCode = createMemo(() => {
+    const instructions = oauthInstructions();
+    if (!instructions) return "";
+    const matched = instructions.match(/[A-Z0-9]{4}-[A-Z0-9]{4,5}/)?.[0];
+    if (matched) return matched;
+    if (instructions.includes(":")) {
+      return instructions.split(":").slice(1).join(":").trim();
+    }
+    return instructions;
+  });
+
   const resetState = () => {
     setView("list");
     setSelectedProviderId(null);
     setApiKeyInput("");
+    setOauthCodeInput("");
+    setOauthSession(null);
+    setSearchQuery("");
+    setActiveEntryIndex(0);
     setLocalError(null);
   };
 
@@ -114,12 +157,79 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   });
 
+  createEffect(() => {
+    if (!props.open || resolvedView() !== "list") return;
+    const total = filteredEntries().length;
+    if (total <= 0) {
+      setActiveEntryIndex(0);
+      return;
+    }
+    setActiveEntryIndex((current) => Math.max(0, Math.min(current, total - 1)));
+  });
+
+  createEffect(() => {
+    if (!props.open || resolvedView() !== "list") return;
+    queueMicrotask(() => {
+      searchInputEl?.focus();
+    });
+  });
+
   const hasMethod = (entry: ProviderAuthEntry | null, type: ProviderAuthMethod["type"]) =>
     !!entry?.methods?.some((method) => method.type === type);
 
   const handleClose = () => {
     resetState();
     props.onClose();
+  };
+
+  const openOauthUrl = async (url: string) => {
+    if (!url) return;
+    if (isTauriRuntime()) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const submitOauth = async (providerId: string, methodIndex: number, code?: string) => {
+    const trimmedCode = code?.trim();
+    setLocalError(null);
+    try {
+      await props.onSubmitOAuth(providerId, methodIndex, trimmedCode || undefined);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to complete OAuth";
+      setLocalError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  };
+
+  const startOauth = async (entry: ProviderAuthEntry) => {
+    if (actionDisabled()) return;
+    setLocalError(null);
+    setOauthCodeInput("");
+    setOauthSession(null);
+    try {
+      const started = await props.onSelect(entry.id);
+      const nextSession: ProviderOAuthSession = {
+        providerId: entry.id,
+        methodIndex: started.methodIndex,
+        authorization: started.authorization,
+      };
+      setOauthSession(nextSession);
+      await openOauthUrl(started.authorization.url);
+
+      if (started.authorization.method === "code") {
+        setView("oauth-code");
+        return;
+      }
+
+      setView("oauth-auto");
+      await submitOauth(entry.id, started.methodIndex);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start OAuth";
+      setLocalError(message);
+    }
   };
 
   const handleEntrySelect = (entry: ProviderAuthEntry) => {
@@ -131,7 +241,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const hasApi = hasMethod(entry, "api");
 
     if (hasOauth && !hasApi) {
-      props.onSelect(entry.id);
+      void startOauth(entry);
       return;
     }
 
@@ -145,7 +255,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       return;
     }
 
-    props.onSelect(entry.id);
+    setLocalError(`No authentication methods available for ${entry.name}.`);
   };
 
   const handleMethodSelect = (method: ProviderAuthMethod["type"]) => {
@@ -154,7 +264,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setLocalError(null);
 
     if (method === "oauth") {
-      props.onSelect(entry.id);
+      void startOauth(entry);
       return;
     }
 
@@ -180,7 +290,40 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
   };
 
+  const handleOauthCodeSubmit = async () => {
+    const entry = selectedEntry();
+    const session = oauthSession();
+    if (!entry || !session || actionDisabled()) return;
+
+    const trimmed = oauthCodeInput().trim();
+    if (!trimmed) {
+      setLocalError("Authorization code is required.");
+      return;
+    }
+
+    await submitOauth(entry.id, session.methodIndex, trimmed);
+  };
+
+  const handleOauthAutoRetry = async () => {
+    const entry = selectedEntry();
+    const session = oauthSession();
+    if (!entry || !session || actionDisabled()) return;
+    await submitOauth(entry.id, session.methodIndex);
+  };
+
   const handleBack = () => {
+    if (resolvedView() === "oauth-code" || resolvedView() === "oauth-auto") {
+      if (hasMethod(selectedEntry(), "api")) {
+        setView("method");
+      } else {
+        setView("list");
+      }
+      setOauthSession(null);
+      setOauthCodeInput("");
+      setLocalError(null);
+      return;
+    }
+
     if (resolvedView() === "api" && hasMethod(selectedEntry(), "oauth")) {
       setView("method");
       setApiKeyInput("");
@@ -192,7 +335,48 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const submittingLabel = () => {
     if (!props.submitting) return null;
-    return resolvedView() === "api" ? "Saving API key..." : "Opening authentication...";
+    if (resolvedView() === "api") return "Saving API key...";
+    if (resolvedView() === "oauth-code") return "Verifying authorization code...";
+    if (resolvedView() === "oauth-auto") return "Waiting for OAuth confirmation...";
+    return "Opening authentication...";
+  };
+
+  const stepEntryIndex = (delta: number) => {
+    const total = filteredEntries().length;
+    if (total <= 0) {
+      setActiveEntryIndex(0);
+      return;
+    }
+    setActiveEntryIndex((current) => {
+      const normalized = ((current % total) + total) % total;
+      return (normalized + delta + total) % total;
+    });
+  };
+
+  const handleListKeyDown = (event: KeyboardEvent) => {
+    if (resolvedView() !== "list") return;
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      stepEntryIndex(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      stepEntryIndex(-1);
+      return;
+    }
+    if (event.key === "Enter") {
+      if (event.isComposing || (event as KeyboardEvent & { keyCode?: number }).keyCode === 229) return;
+      const entry = filteredEntries()[activeEntryIndex()];
+      if (!entry) return;
+      event.preventDefault();
+      handleEntrySelect(entry);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      handleClose();
+    }
   };
 
   return (
@@ -235,54 +419,86 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
             <Show when={!props.loading}>
               <div class="flex-1 space-y-2 overflow-y-auto pr-1 -mr-1">
                 <Show when={resolvedView() === "list"}>
-                  <Show
-                    when={entries().length}
-                    fallback={<div class="text-sm text-gray-10">No providers available.</div>}
-                  >
-                    <For each={entries()}>
-                      {(entry) => (
-                        <button
-                          type="button"
-                          class="w-full rounded-xl border border-gray-6 bg-gray-1/40 px-4 py-3 text-left transition-colors hover:bg-gray-1/70 disabled:opacity-60 disabled:cursor-not-allowed"
-                          disabled={actionDisabled()}
-                          onClick={() => handleEntrySelect(entry)}
-                        >
-                          <div class="flex items-center justify-between gap-3">
-                            <div class="min-w-0">
-                              <div class="text-sm font-medium text-gray-12 truncate">{entry.name}</div>
-                              <div class="text-[11px] text-gray-8 font-mono truncate">{entry.id}</div>
-                            </div>
-                            <div class="flex items-center justify-end gap-2 shrink-0 min-w-[108px]">
-                              <Show
-                                when={entry.connected}
-                                fallback={<span class="text-xs text-gray-9">Connect</span>}
-                              >
-                                <div class="flex items-center gap-1 text-[11px] text-green-11 bg-green-7/10 border border-green-7/20 px-2 py-1 rounded-full">
-                                  <CheckCircle2 size={12} />
-                                  Connected
+                  <div class="space-y-3" onKeyDown={handleListKeyDown}>
+                    <TextInput
+                      ref={searchInputEl}
+                      label="Search"
+                      type="text"
+                      placeholder="Filter providers by name or ID"
+                      value={searchQuery()}
+                      onInput={(event) => {
+                        setSearchQuery(event.currentTarget.value);
+                        setActiveEntryIndex(0);
+                      }}
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck={false}
+                      disabled={actionDisabled()}
+                    />
+
+                    <Show
+                      when={filteredEntries().length}
+                      fallback={
+                        <div class="text-sm text-gray-10">
+                          {entries().length ? "No providers match your search." : "No providers available."}
+                        </div>
+                      }
+                    >
+                      <For each={filteredEntries()}>
+                        {(entry, index) => {
+                          const idx = () => index();
+                          return (
+                            <button
+                              type="button"
+                              class={`w-full rounded-xl border px-4 py-3 text-left transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                                idx() === activeEntryIndex()
+                                  ? "border-gray-8 bg-gray-1/80"
+                                  : "border-gray-6 bg-gray-1/40 hover:bg-gray-1/70"
+                              }`}
+                              disabled={actionDisabled()}
+                              onMouseEnter={() => setActiveEntryIndex(idx())}
+                              onClick={() => handleEntrySelect(entry)}
+                            >
+                              <div class="flex items-center justify-between gap-3">
+                                <div class="min-w-0">
+                                  <div class="text-sm font-medium text-gray-12 truncate">{entry.name}</div>
+                                  <div class="text-[11px] text-gray-8 font-mono truncate">{entry.id}</div>
                                 </div>
-                              </Show>
-                            </div>
-                          </div>
-                          <div class="mt-2 flex flex-wrap gap-2">
-                            <For each={entry.methods}>
-                              {(method) => (
-                                <span
-                                  class={`text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-full border ${
-                                    method.type === "oauth"
-                                      ? "bg-indigo-7/15 text-indigo-11 border-indigo-7/30"
-                                      : "bg-gray-3 text-gray-11 border-gray-6"
-                                  }`}
-                                >
-                                  {methodLabel(method)}
-                                </span>
-                              )}
-                            </For>
-                          </div>
-                        </button>
-                      )}
-                    </For>
-                  </Show>
+                                <div class="flex items-center justify-end gap-2 shrink-0 min-w-[108px]">
+                                  <Show
+                                    when={entry.connected}
+                                    fallback={<span class="text-xs text-gray-9">Connect</span>}
+                                  >
+                                    <div class="flex items-center gap-1 text-[11px] text-green-11 bg-green-7/10 border border-green-7/20 px-2 py-1 rounded-full">
+                                      <CheckCircle2 size={12} />
+                                      Connected
+                                    </div>
+                                  </Show>
+                                </div>
+                              </div>
+                              <div class="mt-2 flex flex-wrap gap-2">
+                                <For each={entry.methods}>
+                                  {(method) => (
+                                    <span
+                                      class={`text-[10px] uppercase tracking-[0.2em] px-2 py-1 rounded-full border ${
+                                        method.type === "oauth"
+                                          ? "bg-indigo-7/15 text-indigo-11 border-indigo-7/30"
+                                          : "bg-gray-3 text-gray-11 border-gray-6"
+                                      }`}
+                                    >
+                                      {methodLabel(method)}
+                                    </span>
+                                  )}
+                                </For>
+                              </div>
+                            </button>
+                          );
+                        }}
+                      </For>
+                    </Show>
+
+                    <div class="text-[11px] text-gray-9">Arrow keys to navigate, Enter to select.</div>
+                  </div>
                 </Show>
 
                 <Show when={resolvedView() === "method" && selectedEntry()}>
@@ -300,7 +516,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <Show when={hasMethod(selectedEntry(), "oauth")}>
                         <Button
                           variant="secondary"
-                          onClick={() => handleMethodSelect("oauth")}
+                          onClick={() => void handleMethodSelect("oauth")}
                           disabled={actionDisabled()}
                         >
                           Continue with OAuth
@@ -359,6 +575,103 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                         disabled={actionDisabled() || !apiKeyInput().trim()}
                       >
                         {props.submitting ? "Saving..." : "Save key"}
+                      </Button>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={resolvedView() === "oauth-code" && selectedEntry() && oauthSession()}>
+                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-4">
+                    <div class="flex items-center justify-between gap-4">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
+                        <div class="text-xs text-gray-10 mt-1">Finish OAuth by pasting the authorization code.</div>
+                      </div>
+                      <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
+                        Back
+                      </Button>
+                    </div>
+                    <div class="text-xs text-gray-9">
+                      Complete sign-in in your browser, then paste the code here.
+                    </div>
+                    <Show when={oauthInstructions()}>
+                      <div class="rounded-lg border border-gray-6/60 bg-gray-1/60 px-3 py-2 text-[11px] text-gray-9 font-mono break-all">
+                        {oauthInstructions()}
+                      </div>
+                    </Show>
+                    <TextInput
+                      label="Authorization code"
+                      type="text"
+                      placeholder="Paste code"
+                      value={oauthCodeInput()}
+                      onInput={(event) => {
+                        setOauthCodeInput(event.currentTarget.value);
+                        if (localError()) setLocalError(null);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        void handleOauthCodeSubmit();
+                      }}
+                      autocomplete="off"
+                      autocapitalize="off"
+                      spellcheck={false}
+                      disabled={actionDisabled()}
+                    />
+                    <div class="flex items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const url = oauthSession()?.authorization.url ?? "";
+                          void openOauthUrl(url);
+                        }}
+                        disabled={actionDisabled()}
+                      >
+                        Open browser again
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => void handleOauthCodeSubmit()}
+                        disabled={actionDisabled() || !oauthCodeInput().trim()}
+                      >
+                        {props.submitting ? "Verifying..." : "Complete connection"}
+                      </Button>
+                    </div>
+                  </div>
+                </Show>
+
+                <Show when={resolvedView() === "oauth-auto" && selectedEntry() && oauthSession()}>
+                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-4">
+                    <div class="flex items-center justify-between gap-4">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">{selectedEntry()!.name}</div>
+                        <div class="text-xs text-gray-10 mt-1">Waiting for browser confirmation.</div>
+                      </div>
+                      <Button variant="ghost" onClick={handleBack} disabled={actionDisabled()}>
+                        Back
+                      </Button>
+                    </div>
+                    <div class="text-xs text-gray-9">Sign in in the browser tab we just opened. We will complete the connection automatically.</div>
+                    <Show when={oauthDisplayCode()}>
+                      <TextInput label="Confirmation code" value={oauthDisplayCode()} readOnly class="font-mono" />
+                    </Show>
+                    <div class="flex items-center gap-2 text-xs text-gray-9">
+                      <Loader2 size={14} class={props.submitting ? "animate-spin" : ""} />
+                      <span>{props.submitting ? "Waiting for confirmation..." : "Ready to retry completion."}</span>
+                    </div>
+                    <div class="flex items-center justify-between gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const url = oauthSession()?.authorization.url ?? "";
+                          void openOauthUrl(url);
+                        }}
+                        disabled={actionDisabled()}
+                      >
+                        Open browser again
+                      </Button>
+                      <Button variant="secondary" onClick={() => void handleOauthAutoRetry()} disabled={actionDisabled()}>
+                        {props.submitting ? "Waiting..." : "Retry completion"}
                       </Button>
                     </div>
                   </div>
