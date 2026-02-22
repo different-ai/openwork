@@ -85,6 +85,7 @@ jobs:
           service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
           owner_id = os.environ["RENDER_OWNER_ID"]
           openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION") or "0.11.113"
+          worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
           paywall_enabled = (os.environ.get("DEN_POLAR_FEATURE_GATE_ENABLED") or "false").lower() == "true"
           polar_api_base = os.environ.get("DEN_POLAR_API_BASE") or "https://api.polar.sh"
           polar_success_url = os.environ.get("DEN_POLAR_SUCCESS_URL") or "https://app.openwork.software"
@@ -142,7 +143,7 @@ jobs:
               {"key": "RENDER_WORKER_REPO", "value": "https://github.com/different-ai/openwork"},
               {"key": "RENDER_WORKER_BRANCH", "value": "dev"},
               {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
-              {"key": "RENDER_WORKER_PLAN", "value": "starter"},
+              {"key": "RENDER_WORKER_PLAN", "value": worker_plan},
               {"key": "RENDER_WORKER_REGION", "value": "oregon"},
               {"key": "RENDER_WORKER_OPENWORK_VERSION", "value": openwork_version},
               {"key": "RENDER_WORKER_NAME_PREFIX", "value": "den-worker-openwork"},

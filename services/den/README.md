@@ -81,6 +81,7 @@ Required GitHub Actions secrets:
 
 Optional GitHub Actions variable:
 
+- `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
 - `DEN_RENDER_WORKER_OPENWORK_VERSION` (defaults to `0.11.113`)
 - `DEN_POLAR_FEATURE_GATE_ENABLED` (`true`/`false`, defaults to `false`)
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)

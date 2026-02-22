@@ -53,7 +53,7 @@ export const env = {
     workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
-    workerPlan: parsed.RENDER_WORKER_PLAN ?? "starter",
+    workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",
     workerRegion: parsed.RENDER_WORKER_REGION ?? "oregon",
     workerOpenworkVersion: parsed.RENDER_WORKER_OPENWORK_VERSION ?? "0.11.113",
     workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
