@@ -3,6 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import {
   ArrowRight,
   ChevronRight,
+  Copy,
   Link,
   RefreshCcw,
   Shield,
@@ -144,6 +145,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [telegramStatus, setTelegramStatus] = createSignal<string | null>(null);
   const [telegramError, setTelegramError] = createSignal<string | null>(null);
   const [telegramBotUsername, setTelegramBotUsername] = createSignal<string | null>(null);
+  const [telegramPairingCode, setTelegramPairingCode] = createSignal<string | null>(null);
 
   const [slackBotToken, setSlackBotToken] = createSignal("");
   const [slackAppToken, setSlackAppToken] = createSignal("");
@@ -152,7 +154,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
   const [slackStatus, setSlackStatus] = createSignal<string | null>(null);
   const [slackError, setSlackError] = createSignal<string | null>(null);
 
-  const [expandedChannel, setExpandedChannel] = createSignal<string | null>(null);
+  const [expandedChannel, setExpandedChannel] = createSignal<string | null>("telegram");
   const [activeTab, setActiveTab] = createSignal<"general" | "advanced">("general");
 
   const [agentLoading, setAgentLoading] = createSignal(false);
@@ -416,6 +418,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
         setHealth(null);
         setTelegramIdentities([]);
         setTelegramBotUsername(null);
+        setTelegramPairingCode(null);
         setSlackIdentities([]);
         setHealthError("Worker scope unavailable. Reconnect using a worker URL or switch to a known worker.");
         setTelegramIdentitiesError("Worker scope unavailable.");
@@ -451,8 +454,12 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
       if (isOpenCodeRouterIdentities(tgRes)) {
         setTelegramIdentities(tgRes.items ?? []);
+        if (!tgRes.items?.length) {
+          setTelegramPairingCode(null);
+        }
       } else {
         setTelegramIdentities([]);
+        setTelegramPairingCode(null);
         setTelegramIdentitiesError("Telegram identities unavailable.");
       }
 
@@ -496,7 +503,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setReconnectStatus("Reconnected.");
   };
 
-  const upsertTelegram = async () => {
+  const upsertTelegram = async (access: "public" | "private") => {
     if (telegramSaving()) return;
     if (!serverReady()) return;
     const id = workspaceId();
@@ -511,15 +518,30 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramStatus(null);
     setTelegramError(null);
     try {
-      const result = await client.upsertOpenCodeRouterTelegramIdentity(id, { token, enabled: telegramEnabled() });
+      const result = await client.upsertOpenCodeRouterTelegramIdentity(id, {
+        token,
+        enabled: telegramEnabled(),
+        access,
+      });
       if (result.ok) {
+        const pairingCode = typeof result.telegram?.pairingCode === "string" ? result.telegram.pairingCode.trim() : "";
+        if (access === "private" && pairingCode) {
+          setTelegramPairingCode(pairingCode);
+          setTelegramStatus(`Private bot saved. Pair via /pair ${pairingCode}`);
+        } else {
+          setTelegramPairingCode(null);
+        }
         const username = (result.telegram as any)?.bot?.username;
         if (username) {
           const normalized = String(username).trim().replace(/^@+/, "");
           setTelegramBotUsername(normalized || null);
-          setTelegramStatus(`Saved (@${normalized || String(username)})`);
+          if (access !== "private" || !pairingCode) {
+            setTelegramStatus(`Saved (@${normalized || String(username)})`);
+          }
         } else {
-          setTelegramStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
+          if (access !== "private" || !pairingCode) {
+            setTelegramStatus(result.applied === false ? "Saved (pending apply)." : "Saved.");
+          }
         }
       } else {
         setTelegramError("Failed to save.");
@@ -552,6 +574,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       const result = await client.deleteOpenCodeRouterTelegramIdentity(id, identityId);
       if (result.ok) {
         setTelegramBotUsername(null);
+        setTelegramPairingCode(null);
         setTelegramStatus(result.applied === false ? "Deleted (pending apply)." : "Deleted.");
       } else {
         setTelegramError("Failed to delete.");
@@ -564,6 +587,17 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       setTelegramError(formatRequestError(error));
     } finally {
       setTelegramSaving(false);
+    }
+  };
+
+  const copyTelegramPairingCode = async () => {
+    const code = telegramPairingCode();
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code);
+      setTelegramStatus("Pairing code copied.");
+    } catch {
+      setTelegramError("Could not copy pairing code. Copy it manually.");
     }
   };
 
@@ -644,6 +678,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setTelegramIdentities([]);
     setTelegramIdentitiesError(null);
     setTelegramBotUsername(null);
+    setTelegramPairingCode(null);
     setSlackIdentities([]);
     setSlackIdentitiesError(null);
     resetAgentState();
@@ -653,6 +688,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
     setReconnectStatus(null);
     setReconnectError(null);
     setActiveTab("general");
+    setExpandedChannel("telegram");
   });
 
   onMount(() => {
@@ -836,7 +872,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                     </Show>
                   </div>
                   <div class="text-[13px] text-gray-9 mt-0.5 leading-snug">
-                    Create a Telegram bot that anyone can message. Great for personal automations and external contacts.
+                    Connect a Telegram bot in public mode (open inbox) or private mode (pairing code required).
                   </div>
                 </div>
                 <ChevronRight
@@ -870,7 +906,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                                 </span>
                               </div>
                               <div class="text-[11px] text-gray-9 mt-0.5 pl-3.5">
-                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"}
+                                {item.enabled ? "Enabled" : "Disabled"} · {item.running ? "Running" : "Stopped"} · {item.access === "private" ? "Private" : "Public"}
                               </div>
                             </div>
                             <div class="flex items-center gap-2 flex-shrink-0">
@@ -941,7 +977,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                           </li>
                           <li class="flex items-start gap-2">
                             <span class="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-gray-4 text-[10px] font-semibold text-gray-11">3</span>
-                            <span>Connect, then send <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/start</code> to your bot to activate the chat.</span>
+                            <span>Choose <span class="font-medium text-gray-12">Public</span> for open inbox or <span class="font-medium text-gray-12">Private</span> to require <code class="rounded bg-gray-3 px-1 py-0.5 font-mono text-[11px]">/pair &lt;code&gt;</code>.</span>
                           </li>
                         </ol>
                       </div>
@@ -967,26 +1003,75 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       Enabled
                     </label>
 
-                    <button
-                      onClick={() => void upsertTelegram()}
-                      disabled={telegramSaving() || !workspaceId() || !telegramToken().trim()}
-                      class={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white border-none transition-opacity ${
-                        telegramSaving() || !workspaceId() || !telegramToken().trim()
-                          ? "opacity-50 cursor-not-allowed"
-                          : "opacity-100 cursor-pointer hover:opacity-90"
-                      }`}
-                      style={{ background: "#229ED9" }}
-                    >
-                      <Show
-                        when={!telegramSaving()}
-                        fallback={
-                          <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        }
+                    <div class="rounded-lg border border-gray-4 bg-gray-2/50 px-3 py-2 text-[11px] text-gray-10 leading-relaxed">
+                      Public bot: first Telegram chat auto-links. Private bot: requires a pairing code before any messages run tools.
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <button
+                        onClick={() => void upsertTelegram("public")}
+                        disabled={telegramSaving() || !workspaceId() || !telegramToken().trim()}
+                        class={`flex items-center justify-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                          telegramSaving() || !workspaceId() || !telegramToken().trim()
+                            ? "cursor-not-allowed border-gray-5 bg-gray-3 text-gray-8"
+                            : "cursor-pointer border-gray-6 bg-gray-12 text-gray-1 hover:bg-gray-11"
+                        }`}
                       >
-                        <Link size={15} />
-                      </Show>
-                      {telegramSaving() ? "Connecting..." : "Connect Telegram"}
-                    </button>
+                        <Show
+                          when={!telegramSaving()}
+                          fallback={
+                            <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          }
+                        >
+                          <Link size={15} />
+                        </Show>
+                        {telegramSaving() ? "Connecting..." : "Create public bot"}
+                      </button>
+
+                      <button
+                        onClick={() => void upsertTelegram("private")}
+                        disabled={telegramSaving() || !workspaceId() || !telegramToken().trim()}
+                        class={`flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold text-white border-none transition-opacity ${
+                          telegramSaving() || !workspaceId() || !telegramToken().trim()
+                            ? "opacity-50 cursor-not-allowed"
+                            : "opacity-100 cursor-pointer hover:opacity-90"
+                        }`}
+                        style={{ background: "#229ED9" }}
+                      >
+                        <Show
+                          when={!telegramSaving()}
+                          fallback={
+                            <div class="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                          }
+                        >
+                          <Shield size={15} />
+                        </Show>
+                        {telegramSaving() ? "Connecting..." : "Create private bot"}
+                      </button>
+                    </div>
+
+                    <Show when={telegramPairingCode()}>
+                      {(code) => (
+                        <div class="rounded-xl border border-sky-7/25 bg-sky-1/40 px-3.5 py-3 space-y-2">
+                          <div class="text-[12px] font-semibold text-sky-11">Private pairing code</div>
+                          <div class="rounded-md border border-sky-7/20 bg-white/80 px-3 py-2 font-mono text-[13px] tracking-[0.08em] text-sky-12">
+                            {code()}
+                          </div>
+                          <div class="text-[11px] text-sky-11/90 leading-relaxed">
+                            In Telegram, open the chat that should control this worker and send <code class="rounded bg-sky-3/60 px-1 py-0.5 font-mono text-[10px]">/pair {code()}</code>.
+                          </div>
+                          <div class="flex items-center gap-2">
+                            <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => void copyTelegramPairingCode()}>
+                              <Copy size={12} />
+                              <span class="ml-1">Copy code</span>
+                            </Button>
+                            <Button variant="outline" class="h-7 px-2.5 text-[11px]" onClick={() => setTelegramPairingCode(null)}>
+                              Hide
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </Show>
 
                     <Show when={telegramBotLink()}>
                       {(value) => (

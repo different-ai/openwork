@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -194,6 +195,34 @@ function invalidTelegramPeerIdError(): Error & { status?: number } {
   return error;
 }
 
+const PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+function normalizeTelegramAccess(value: unknown): "public" | "private" {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return raw === "private" ? "private" : "public";
+}
+
+function normalizePairingCodeHash(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
+  return raw;
+}
+
+function normalizePairingCodeValue(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function hashPairingCode(value: string): string {
+  return createHash("sha256").update(normalizePairingCodeValue(value)).digest("hex");
+}
+
+function extractPairingCodeFromCommand(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\/pair(?:@[A-Za-z0-9_]+)?\s+(.+)$/i);
+  if (!match?.[1]) return "";
+  return normalizePairingCodeValue(match[1]);
+}
+
 function normalizeIdentityId(value: string | undefined): string {
   const trimmed = (value ?? "").trim();
   if (!trimmed) return "default";
@@ -303,6 +332,25 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     }
     const app = config.slackApps.find((entry) => entry.id === id);
     return typeof (app as any)?.directory === "string" ? String((app as any).directory).trim() : "";
+  };
+
+  const resolveTelegramIdentityAccess = (
+    identityId: string,
+  ): { access: "public" | "private"; pairingCodeHash: string } => {
+    const id = identityId.trim();
+    if (!id) {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    const bot = config.telegramBots.find((entry) => entry.id === id);
+    if (!bot) {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    const access = normalizeTelegramAccess((bot as any).access);
+    const pairingCodeHash = normalizePairingCodeHash((bot as any).pairingCodeHash);
+    if (access !== "private") {
+      return { access: "public", pairingCodeHash: "" };
+    }
+    return { access: "private", pairingCodeHash };
   };
 
   const listIdentityConfigs = (channel: ChannelName): Array<{ id: string; directory: string }> => {
@@ -602,16 +650,28 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               id: bot.id,
               enabled: bot.enabled !== false,
               running: adapters.has(adapterKey("telegram", bot.id)),
+              access: normalizeTelegramAccess((bot as any).access),
+              pairingRequired: normalizeTelegramAccess((bot as any).access) === "private",
             })),
           };
         },
-        upsertTelegramIdentity: async (input: { id?: string; token: string; enabled?: boolean; directory?: string }) => {
+        upsertTelegramIdentity: async (input: {
+          id?: string;
+          token: string;
+          enabled?: boolean;
+          directory?: string;
+          access?: "public" | "private";
+          pairingCodeHash?: string;
+        }) => {
           const token = input.token?.trim() ?? "";
           if (!token) throw new Error("token is required");
           const id = normalizeIdentityId(input.id);
           if (id === "env") throw new Error("identity id 'env' is reserved");
           const enabled = input.enabled !== false;
           const directoryInput = typeof input.directory === "string" ? input.directory.trim() : "";
+          const requestedAccess =
+            typeof input.access === "string" && input.access.trim() ? normalizeTelegramAccess(input.access) : undefined;
+          const requestedPairingCodeHash = normalizePairingCodeHash(input.pairingCodeHash);
 
           // Persist to config file.
           const { config: current } = readConfigFile(config.configPath);
@@ -630,10 +690,36 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             found = true;
             const existingDirectory = typeof record.directory === "string" ? record.directory.trim() : "";
             const directory = directoryInput || existingDirectory;
-            nextBots.push({ id, token, enabled, ...(directory ? { directory } : {}) });
+            const existingAccess = normalizeTelegramAccess(record.access);
+            const existingPairingCodeHash = normalizePairingCodeHash(record.pairingCodeHash);
+            const access = requestedAccess ?? existingAccess;
+            const pairingCodeHash = access === "private" ? requestedPairingCodeHash || existingPairingCodeHash : "";
+            if (access === "private" && !pairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            nextBots.push({
+              id,
+              token,
+              enabled,
+              ...(directory ? { directory } : {}),
+              access,
+              ...(access === "private" ? { pairingCodeHash } : {}),
+            });
           }
           if (!found) {
-            nextBots.push({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
+            const access = requestedAccess ?? "public";
+            const pairingCodeHash = access === "private" ? requestedPairingCodeHash : "";
+            if (access === "private" && !pairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            nextBots.push({
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access,
+              ...(access === "private" ? { pairingCodeHash } : {}),
+            });
           }
 
           const next: OpenCodeRouterConfigFile = {
@@ -653,12 +739,40 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
           // Update runtime identity list.
           const existingIdx = config.telegramBots.findIndex((bot) => bot.id === id);
+          let runtimeAccess: "public" | "private" = requestedAccess ?? "public";
+          let runtimePairingCodeHash = requestedPairingCodeHash;
           if (existingIdx >= 0) {
             const prev = config.telegramBots[existingIdx];
             const nextDirectory = directoryInput || (prev as any)?.directory || undefined;
-            config.telegramBots[existingIdx] = { id, token, enabled, ...(nextDirectory ? { directory: String(nextDirectory).trim() } : {}) };
+            const prevAccess = normalizeTelegramAccess((prev as any)?.access);
+            const prevPairingCodeHash = normalizePairingCodeHash((prev as any)?.pairingCodeHash);
+            runtimeAccess = requestedAccess ?? prevAccess;
+            runtimePairingCodeHash = runtimeAccess === "private" ? requestedPairingCodeHash || prevPairingCodeHash : "";
+            if (runtimeAccess === "private" && !runtimePairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            config.telegramBots[existingIdx] = {
+              id,
+              token,
+              enabled,
+              ...(nextDirectory ? { directory: String(nextDirectory).trim() } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" ? { pairingCodeHash: runtimePairingCodeHash } : {}),
+            };
           } else {
-            config.telegramBots.push({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) });
+            runtimeAccess = requestedAccess ?? "public";
+            runtimePairingCodeHash = runtimeAccess === "private" ? requestedPairingCodeHash : "";
+            if (runtimeAccess === "private" && !runtimePairingCodeHash) {
+              throw new Error("pairingCodeHash is required when Telegram access is private");
+            }
+            config.telegramBots.push({
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" ? { pairingCodeHash: runtimePairingCodeHash } : {}),
+            });
           }
 
           // Start/stop adapter.
@@ -673,7 +787,13 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               }
               adapters.delete(key);
             }
-            return { id, enabled: false, applied: true };
+            return {
+              id,
+              enabled: false,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: true,
+            };
           }
 
           if (existing) {
@@ -684,7 +804,21 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             adapters.delete(key);
           }
-          const base = createTelegramAdapter({ id, token, enabled, ...(directoryInput ? { directory: directoryInput } : {}) }, config, logger, handleInbound);
+          const base = createTelegramAdapter(
+            {
+              id,
+              token,
+              enabled,
+              ...(directoryInput ? { directory: directoryInput } : {}),
+              access: runtimeAccess,
+              ...(runtimeAccess === "private" && runtimePairingCodeHash
+                ? { pairingCodeHash: runtimePairingCodeHash }
+                : {}),
+            },
+            config,
+            logger,
+            handleInbound,
+          );
           const adapter = { ...base, key };
           adapters.set(key, adapter);
 
@@ -697,12 +831,32 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           });
 
           if (startResult.status === "timeout") {
-            return { id, enabled: true, applied: false, starting: true };
+            return {
+              id,
+              enabled: true,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: false,
+              starting: true,
+            };
           }
           if (startResult.status === "error") {
-            return { id, enabled: true, applied: false, error: String(startResult.error) };
+            return {
+              id,
+              enabled: true,
+              access: runtimeAccess,
+              pairingRequired: runtimeAccess === "private",
+              applied: false,
+              error: String(startResult.error),
+            };
           }
-          return { id, enabled: true, applied: true };
+          return {
+            id,
+            enabled: true,
+            access: runtimeAccess,
+            pairingRequired: runtimeAccess === "private",
+            applied: true,
+          };
         },
         deleteTelegramIdentity: async (rawId: string) => {
           const id = normalizeIdentityId(rawId);
@@ -1306,6 +1460,92 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     }
   }
 
+  async function handleTelegramPairingGate(input: {
+    identityId: string;
+    peerKey: string;
+    peerId: string;
+    text: string;
+    bindingDirectory?: string;
+    sessionDirectory?: string;
+  }): Promise<"continue" | "handled"> {
+    const access = resolveTelegramIdentityAccess(input.identityId);
+    if (access.access !== "private") {
+      return "continue";
+    }
+
+    const hasKnownBinding = Boolean(input.bindingDirectory?.trim() || input.sessionDirectory?.trim());
+    if (hasKnownBinding) {
+      return "continue";
+    }
+
+    const pairingCode = extractPairingCodeFromCommand(input.text);
+    if (!pairingCode) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "This Telegram bot is private. Ask your OpenWork host for the pairing code, then send /pair <code>.",
+        { kind: "system" },
+      );
+      return "handled";
+    }
+
+    if (!access.pairingCodeHash) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "This Telegram bot is private but missing a pairing code. Ask your OpenWork host to reconnect it.",
+        { kind: "system" },
+      );
+      return "handled";
+    }
+
+    if (hashPairingCode(pairingCode) !== access.pairingCodeHash) {
+      await sendText("telegram", input.identityId, input.peerId, "Invalid pairing code. Try again with /pair <code>.", {
+        kind: "system",
+      });
+      return "handled";
+    }
+
+    const identityDirectory = resolveIdentityDirectory("telegram", input.identityId);
+    const boundDirectoryCandidate = identityDirectory || defaultDirectory;
+    const hasExplicitBinding = Boolean(identityDirectory);
+    if (!boundDirectoryCandidate || (!hasExplicitBinding && isDangerousRootDirectory(boundDirectoryCandidate))) {
+      await sendText(
+        "telegram",
+        input.identityId,
+        input.peerId,
+        "No workspace directory configured for this identity. Ask your OpenWork host to set it, or reply with /dir <path>.",
+        { kind: "system" },
+      );
+      return "handled";
+    }
+
+    const scopedBound = resolveScopedDirectory(boundDirectoryCandidate);
+    if (!scopedBound.ok) {
+      await sendText("telegram", input.identityId, input.peerId, scopedBound.error, { kind: "system" });
+      return "handled";
+    }
+
+    const boundDirectory = scopedBound.directory;
+    store.upsertBinding("telegram", input.identityId, input.peerKey, boundDirectory);
+    store.deleteSession("telegram", input.identityId, input.peerKey);
+    ensureEventSubscription(boundDirectory);
+    logger.info(
+      { channel: "telegram", identityId: input.identityId, peerId: input.peerKey, directory: boundDirectory },
+      "telegram private identity paired",
+    );
+    await sendText(
+      "telegram",
+      input.identityId,
+      input.peerId,
+      "Pairing successful. This chat is now linked to your worker.",
+      { kind: "system" },
+    );
+    return "handled";
+  }
+
   async function handleInbound(message: InboundMessage) {
     const adapter = adapters.get(adapterKey(message.channel, message.identityId));
     if (!adapter) return;
@@ -1327,9 +1567,25 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       "received message",
     );
     const peerKey = inbound.peerId;
+    const trimmedText = inbound.text.trim();
+    let binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
+    let session = store.getSession(inbound.channel, inbound.identityId, peerKey);
+
+    if (inbound.channel === "telegram") {
+      const pairingGate = await handleTelegramPairingGate({
+        identityId: inbound.identityId,
+        peerKey,
+        peerId: inbound.peerId,
+        text: trimmedText,
+        ...(binding?.directory?.trim() ? { bindingDirectory: binding.directory } : {}),
+        ...(session?.directory?.trim() ? { sessionDirectory: session.directory ?? undefined } : {}),
+      });
+      if (pairingGate === "handled") return;
+      binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
+      session = store.getSession(inbound.channel, inbound.identityId, peerKey);
+    }
 
     // Handle bot commands
-    const trimmedText = inbound.text.trim();
     if (trimmedText.startsWith("/")) {
       const commandHandled = await handleCommand(
         inbound.channel,
@@ -1348,9 +1604,6 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       text: inbound.text,
       fromMe: inbound.fromMe,
     });
-
-    const binding = store.getBinding(inbound.channel, inbound.identityId, peerKey);
-    const session = store.getSession(inbound.channel, inbound.identityId, peerKey);
 
     const identityDirectory = resolveIdentityDirectory(inbound.channel, inbound.identityId);
 
@@ -1376,7 +1629,10 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     }
     const boundDirectory = scopedBound.directory;
 
-    if (!binding?.directory?.trim()) {
+    const shouldAutoBind = !(
+      inbound.channel === "telegram" && resolveTelegramIdentityAccess(inbound.identityId).access === "private"
+    );
+    if (shouldAutoBind && !binding?.directory?.trim()) {
       store.upsertBinding(inbound.channel, inbound.identityId, peerKey, boundDirectory);
     }
 
@@ -1566,6 +1822,28 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       return true;
     }
 
+    if (command === "pair") {
+      if (channel !== "telegram") {
+        await sendText(channel, identityId, peerId, "Pairing is only available for Telegram private bots.", {
+          kind: "system",
+        });
+        return true;
+      }
+      const binding = store.getBinding(channel, identityId, peerKey);
+      const session = store.getSession(channel, identityId, peerKey);
+      const pairingGate = await handleTelegramPairingGate({
+        identityId,
+        peerKey,
+        peerId,
+        text,
+        ...(binding?.directory?.trim() ? { bindingDirectory: binding.directory } : {}),
+        ...(session?.directory?.trim() ? { sessionDirectory: session.directory ?? undefined } : {}),
+      });
+      if (pairingGate === "handled") return true;
+      await sendText(channel, identityId, peerId, "This chat is already paired.", { kind: "system" });
+      return true;
+    }
+
     if (command === "dir" || command === "cd") {
       const next = args.join(" ").trim();
       if (!next) {
@@ -1607,7 +1885,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
 
     // /help command
     if (command === "help") {
-      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/dir <path> - bind this chat to a workspace directory\n/dir - show current directory\n/agent - show workspace agent scope/path\n/model - show current\n/reset - start fresh\n/help - this`;
+      const helpText = `/opus - Claude Opus 4.5\n/codex - GPT 5.2 Codex\n/pair <code> - pair this chat with a private Telegram bot\n/dir <path> - bind this chat to a workspace directory\n/dir - show current directory\n/agent - show workspace agent scope/path\n/model - show current\n/reset - start fresh\n/help - this`;
       await sendText(channel, identityId, peerId, helpText, { kind: "system" });
       return true;
     }

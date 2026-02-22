@@ -41,6 +41,8 @@ export type TelegramIdentityItem = {
   id: string;
   enabled: boolean;
   running: boolean;
+  access?: "public" | "private";
+  pairingRequired?: boolean;
 };
 
 export type SlackIdentityItem = {
@@ -60,6 +62,8 @@ export type SlackIdentitiesResult = {
 export type UpsertIdentityResult = {
   id: string;
   enabled: boolean;
+  access?: "public" | "private";
+  pairingRequired?: boolean;
   applied?: boolean;
   starting?: boolean;
   error?: string;
@@ -78,6 +82,8 @@ export type TelegramIdentityUpsertInput = {
   token: string;
   enabled?: boolean;
   directory?: string;
+  access?: "public" | "private";
+  pairingCodeHash?: string;
 };
 
 export type SlackIdentityUpsertInput = {
@@ -303,6 +309,8 @@ export async function startHealthServer(
           const token = typeof payload.token === "string" ? payload.token.trim() : "";
           const id = typeof payload.id === "string" ? payload.id.trim() : undefined;
           const directory = typeof payload.directory === "string" ? payload.directory.trim() : undefined;
+          const access = typeof payload.access === "string" ? payload.access.trim() : undefined;
+          const pairingCodeHash = typeof payload.pairingCodeHash === "string" ? payload.pairingCodeHash.trim() : undefined;
           const enabled = payload.enabled === undefined ? undefined : payload.enabled === true || payload.enabled === "true";
           if (!token) {
             res.writeHead(400, { "Content-Type": "application/json" });
@@ -314,13 +322,17 @@ export async function startHealthServer(
             token,
             ...(enabled === undefined ? {} : { enabled }),
             ...(directory ? { directory } : {}),
+            ...(access ? { access: access as "public" | "private" } : {}),
+            ...(pairingCodeHash ? { pairingCodeHash } : {}),
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, telegram: result }));
           return;
         } catch (error) {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ ok: false, error: String(error) }));
+          const statusRaw = (error as any)?.status;
+          const status = typeof statusRaw === "number" && statusRaw >= 400 && statusRaw < 600 ? statusRaw : 500;
+          res.writeHead(status, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: false, error: String(error instanceof Error ? error.message : error) }));
           return;
         }
       }

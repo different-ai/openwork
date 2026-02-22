@@ -1,4 +1,5 @@
 import { readFile, writeFile, rm, readdir, rename, stat } from "node:fs/promises";
+import { createHash, randomInt } from "node:crypto";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor, ReloadReason, ReloadTrigger, TokenScope } from "./types.js";
@@ -1620,7 +1621,11 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
             const id = normalizeOpenCodeRouterIdentityId(entry.id);
             const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
             const running = entry.running === true || entry.running === "true";
-            return { id, enabled, running };
+            const access = normalizeTelegramAccessMode(
+              entry.access,
+              entry.pairingRequired === true || entry.pairingRequired === "true" ? "private" : "public",
+            );
+            return { id, enabled, running, access, pairingRequired: access === "private" };
           })
           .filter((item) => item.id === workspaceIdentityId);
         return jsonResponse({ ...payload, items });
@@ -1638,7 +1643,8 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       .map((entry) => {
         const id = normalizeOpenCodeRouterIdentityId(entry.id);
         const enabled = entry.enabled === undefined ? true : entry.enabled === true || entry.enabled === "true";
-        return { id, enabled, running: false };
+        const { access } = resolveTelegramAccessFromRecord(entry);
+        return { id, enabled, running: false, access, pairingRequired: access === "private" };
       })
       .filter((item) => item.id === workspaceIdentityId);
     return jsonResponse({ ok: true, items });
@@ -1651,6 +1657,25 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     const body = await readJsonBody(ctx.request);
     const token = typeof body.token === "string" ? body.token.trim() : "";
     const enabled = body.enabled === undefined ? true : body.enabled === true || body.enabled === "true";
+    const access = normalizeTelegramAccessMode(body.access, "public");
+    const pairingCodeInput = typeof body.pairingCode === "string" ? body.pairingCode : "";
+    const normalizedPairingCodeInput = normalizeTelegramPairingCode(pairingCodeInput);
+    if (
+      access === "private" &&
+      pairingCodeInput.trim() &&
+      (normalizedPairingCodeInput.length < 6 || normalizedPairingCodeInput.length > 24)
+    ) {
+      throw new ApiError(
+        400,
+        "invalid_pairing_code",
+        "Pairing code must be 6-24 letters or numbers",
+      );
+    }
+    const pairingCode =
+      access === "private"
+        ? (normalizedPairingCodeInput || normalizeTelegramPairingCode(generateTelegramPairingCode()))
+        : "";
+    const pairingCodeHash = access === "private" ? hashTelegramPairingCode(pairingCode) : "";
     const workspaceIdentityId = normalizeOpenCodeRouterIdentityId(workspace.id);
     const requestedId = typeof body.id === "string" ? normalizeOpenCodeRouterIdentityId(body.id) : "";
     if (requestedId && requestedId !== workspaceIdentityId) {
@@ -1678,12 +1703,26 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       paths: [resolveOpenCodeRouterConfigPath()],
     });
 
-    await persistOpenCodeRouterTelegramIdentity({ id: identityId, token, enabled, directory: workspace.path });
+    await persistOpenCodeRouterTelegramIdentity({
+      id: identityId,
+      token,
+      enabled,
+      directory: workspace.path,
+      access,
+      ...(access === "private" ? { pairingCodeHash } : {}),
+    });
 
     const port = healthPort ?? resolveOpenCodeRouterHealthPort();
     const apply = await tryPostOpenCodeRouterHealth(
       "/identities/telegram",
-      { id: identityId, token, enabled, directory: workspace.path },
+      {
+        id: identityId,
+        token,
+        enabled,
+        directory: workspace.path,
+        access,
+        ...(access === "private" ? { pairingCodeHash } : {}),
+      },
       { port, requestHost, timeoutMs: 3_000 },
     );
 
@@ -1691,7 +1730,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       ok: true,
       persisted: true,
       applied: apply.applied,
-      telegram: { id: identityId, enabled },
+      telegram: {
+        id: identityId,
+        enabled,
+        access,
+        pairingRequired: access === "private",
+        ...(access === "private" ? { pairingCode } : {}),
+      },
     };
 
     const bot = await fetchTelegramBotInfo(token);
@@ -1702,7 +1747,13 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (apply.body && typeof apply.body === "object") {
       const record = apply.body as Record<string, unknown>;
       if (record.telegram && typeof record.telegram === "object") {
-        response.telegram = record.telegram;
+        response.telegram = {
+          ...(response.telegram as Record<string, unknown>),
+          ...(record.telegram as Record<string, unknown>),
+          access,
+          pairingRequired: access === "private",
+          ...(access === "private" ? { pairingCode } : {}),
+        };
       }
     }
 
@@ -3327,6 +3378,55 @@ function normalizeOpenCodeRouterIdentityId(value: unknown): string {
   return cleaned || "default";
 }
 
+type TelegramAccessMode = "public" | "private";
+
+const TELEGRAM_PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const TELEGRAM_PAIRING_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function normalizeTelegramAccessMode(value: unknown, fallback: TelegramAccessMode = "public"): TelegramAccessMode {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (raw === "private") return "private";
+  if (raw === "public") return "public";
+  return fallback;
+}
+
+function normalizeTelegramPairingCode(value: string): string {
+  return value.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeTelegramPairingCodeHash(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!TELEGRAM_PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
+  return raw;
+}
+
+function hashTelegramPairingCode(value: string): string {
+  return createHash("sha256").update(normalizeTelegramPairingCode(value)).digest("hex");
+}
+
+function generateTelegramPairingCode(): string {
+  let code = "";
+  for (let index = 0; index < 8; index += 1) {
+    code += TELEGRAM_PAIRING_CODE_ALPHABET[randomInt(0, TELEGRAM_PAIRING_CODE_ALPHABET.length)] ?? "";
+  }
+  if (code.length !== 8) {
+    throw new ApiError(500, "pairing_code_generation_failed", "Failed to generate Telegram pairing code");
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
+function resolveTelegramAccessFromRecord(record: Record<string, unknown>): {
+  access: TelegramAccessMode;
+  pairingCodeHash: string;
+} {
+  const pairingCodeHash = normalizeTelegramPairingCodeHash(record.pairingCodeHash);
+  const access = normalizeTelegramAccessMode(record.access, pairingCodeHash ? "private" : "public");
+  return {
+    access,
+    pairingCodeHash: access === "private" ? pairingCodeHash : "",
+  };
+}
+
 async function readOpenCodeRouterConfigFile(configPath: string): Promise<OpenCodeRouterConfigFile> {
   if (!(await exists(configPath))) {
     return { version: 1 };
@@ -3418,6 +3518,8 @@ async function persistOpenCodeRouterTelegramIdentity(identity: {
   token: string;
   enabled: boolean;
   directory?: string;
+  access?: TelegramAccessMode;
+  pairingCodeHash?: string;
 }): Promise<void> {
   const configPath = resolveOpenCodeRouterConfigPath();
   const current = await readOpenCodeRouterConfigFile(configPath);
@@ -3427,6 +3529,8 @@ async function persistOpenCodeRouterTelegramIdentity(identity: {
   const id = normalizeOpenCodeRouterIdentityId(identity.id);
   const token = identity.token.trim();
   const directory = typeof identity.directory === "string" ? identity.directory.trim() : "";
+  const requestedAccess = identity.access ? normalizeTelegramAccessMode(identity.access, "public") : undefined;
+  const requestedPairingCodeHash = normalizeTelegramPairingCodeHash(identity.pairingCodeHash);
   if (!token) {
     throw new ApiError(400, "token_required", "Telegram token is required");
   }
@@ -3446,10 +3550,37 @@ async function persistOpenCodeRouterTelegramIdentity(identity: {
     found = true;
     const prevDir = typeof record.directory === "string" ? record.directory.trim() : "";
     const nextDir = directory || prevDir;
-    nextBots.push({ id, token, enabled: identity.enabled, ...(nextDir ? { directory: nextDir } : {}) });
+    const existingAccessState = resolveTelegramAccessFromRecord(record);
+    const access = requestedAccess ?? existingAccessState.access;
+    const pairingCodeHash = access === "private"
+      ? (requestedPairingCodeHash || existingAccessState.pairingCodeHash)
+      : "";
+    if (access === "private" && !pairingCodeHash) {
+      throw new ApiError(400, "pairing_code_required", "Telegram private access requires a pairing code hash");
+    }
+    nextBots.push({
+      id,
+      token,
+      enabled: identity.enabled,
+      ...(nextDir ? { directory: nextDir } : {}),
+      access,
+      ...(access === "private" ? { pairingCodeHash } : {}),
+    });
   }
   if (!found) {
-    nextBots.push({ id, token, enabled: identity.enabled, ...(directory ? { directory } : {}) });
+    const access = requestedAccess ?? "public";
+    const pairingCodeHash = access === "private" ? requestedPairingCodeHash : "";
+    if (access === "private" && !pairingCodeHash) {
+      throw new ApiError(400, "pairing_code_required", "Telegram private access requires a pairing code hash");
+    }
+    nextBots.push({
+      id,
+      token,
+      enabled: identity.enabled,
+      ...(directory ? { directory } : {}),
+      access,
+      ...(access === "private" ? { pairingCodeHash } : {}),
+    });
   }
 
   const nextTelegram: Record<string, unknown> = {

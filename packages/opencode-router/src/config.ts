@@ -19,6 +19,10 @@ export type TelegramIdentity = {
   // Optional default workspace directory to route peers into.
   // When set, opencodeRouter will auto-bind new peerIds to this directory.
   directory?: string;
+  // Optional access mode. Private mode requires `/pair <code>` before first use.
+  access?: "public" | "private";
+  // sha256 hash (hex) of normalized pairing code for private mode.
+  pairingCodeHash?: string;
 };
 
 export type SlackIdentity = {
@@ -146,6 +150,19 @@ function normalizeId(value: string): string {
   return safe.replace(/^-+|-+$/g, "").slice(0, 48) || "default";
 }
 
+const PAIRING_CODE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+function normalizeTelegramAccess(value: unknown): "public" | "private" {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return raw === "private" ? "private" : "public";
+}
+
+function normalizePairingCodeHash(value: unknown): string {
+  const raw = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!PAIRING_CODE_HASH_PATTERN.test(raw)) return "";
+  return raw;
+}
+
 function coerceTelegramBots(file: OpenCodeRouterConfigFile): TelegramIdentity[] {
   const telegram = file.channels?.telegram;
   const bots = Array.isArray((telegram as any)?.bots) ? ((telegram as any).bots as unknown[]) : [];
@@ -157,11 +174,14 @@ function coerceTelegramBots(file: OpenCodeRouterConfigFile): TelegramIdentity[] 
     if (!token) continue;
     const id = normalizeId(typeof record.id === "string" ? record.id : "default");
     const directory = typeof record.directory === "string" ? record.directory.trim() : "";
+    const access = normalizeTelegramAccess(record.access);
+    const pairingCodeHash = normalizePairingCodeHash(record.pairingCodeHash);
     normalized.push({
       id,
       token,
       enabled: record.enabled === undefined ? true : record.enabled === true,
       ...(directory ? { directory } : {}),
+      ...(access === "private" ? { access, ...(pairingCodeHash ? { pairingCodeHash } : {}) } : { access: "public" }),
     });
   }
   if (normalized.length) return normalized;

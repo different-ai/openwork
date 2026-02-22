@@ -63,6 +63,7 @@ Important for direct sends and bindings:
 - Telegram targets must use numeric `chat_id` values.
 - `@username` values are not valid direct `peerId` targets for router sends.
 - If a user has not started a chat with the bot yet, Telegram may return `chat not found`.
+- Private Telegram identities can require first-chat pairing with `/pair <code>` before commands are accepted.
 
 ## Slack (Socket Mode)
 

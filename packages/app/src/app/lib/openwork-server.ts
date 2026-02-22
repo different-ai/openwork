@@ -255,6 +255,8 @@ export type OpenworkOpenCodeRouterIdentityItem = {
   id: string;
   enabled: boolean;
   running: boolean;
+  access?: "public" | "private";
+  pairingRequired?: boolean;
 };
 
 export type OpenworkOpenCodeRouterTelegramIdentitiesResult = {
@@ -276,6 +278,9 @@ export type OpenworkOpenCodeRouterTelegramIdentityUpsertResult = {
   telegram?: {
     id: string;
     enabled: boolean;
+    access?: "public" | "private";
+    pairingRequired?: boolean;
+    pairingCode?: string;
     applied?: boolean;
     starting?: boolean;
     error?: string;
@@ -969,7 +974,7 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     },
     upsertOpenCodeRouterTelegramIdentity: (
       workspaceId: string,
-      input: { id?: string; token: string; enabled?: boolean },
+      input: { id?: string; token: string; enabled?: boolean; access?: "public" | "private"; pairingCode?: string },
       options?: { healthPort?: number | null },
     ) =>
       requestJson<OpenworkOpenCodeRouterTelegramIdentityUpsertResult>(
@@ -983,6 +988,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
             ...(input.id?.trim() ? { id: input.id.trim() } : {}),
             token: input.token,
             ...(typeof input.enabled === "boolean" ? { enabled: input.enabled } : {}),
+            ...(input.access ? { access: input.access } : {}),
+            ...(input.pairingCode?.trim() ? { pairingCode: input.pairingCode.trim() } : {}),
             healthPort: options?.healthPort ?? null,
           },
         },
