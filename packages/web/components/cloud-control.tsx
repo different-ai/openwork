@@ -499,6 +499,7 @@ export function CloudControlPanel() {
 
   const [events, setEvents] = useState<LaunchEvent[]>([]);
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [tokenFetchedForWorkerId, setTokenFetchedForWorkerId] = useState<string | null>(null);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
 
@@ -715,7 +716,7 @@ export function CloudControlPanel() {
 
       setWorker(restored);
       setWorkerLookupId(restored.workerId);
-      setLaunchStatus(`Recovered worker ${restored.workerName}. Generate a new API key if needed.`);
+      setLaunchStatus(`Recovered worker ${restored.workerName}. Get an access token if needed.`);
       appendEvent("info", "Recovered worker context", `Worker ID ${restored.workerId}`);
     } catch {
       return;
@@ -749,6 +750,24 @@ export function CloudControlPanel() {
 
     setStep(1);
   }, [worker, user, checkoutUrl, paymentReturned]);
+
+  useEffect(() => {
+    if (!user || !worker) {
+      return;
+    }
+    if (worker.clientToken) {
+      return;
+    }
+    if (actionBusy !== null || launchBusy) {
+      return;
+    }
+    if (tokenFetchedForWorkerId === worker.workerId) {
+      return;
+    }
+
+    setTokenFetchedForWorkerId(worker.workerId);
+    void handleGenerateKey();
+  }, [actionBusy, launchBusy, tokenFetchedForWorkerId, user, worker]);
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -959,13 +978,13 @@ export function CloudControlPanel() {
 
   async function handleGenerateKey() {
     if (!user) {
-      setLaunchError("Sign in before generating a worker API key.");
+      setLaunchError("Sign in before fetching a worker access token.");
       return;
     }
 
     const id = workerLookupId.trim() || worker?.workerId || workers[0]?.workerId || "";
     if (!id) {
-      setLaunchError("No worker selected yet. Launch one first, then generate a key.");
+      setLaunchError("No worker selected yet. Launch one first, then fetch a token.");
       return;
     }
 
@@ -982,16 +1001,16 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        const message = getErrorMessage(payload, `Key generation failed with ${response.status}.`);
+        const message = getErrorMessage(payload, `Token fetch failed with ${response.status}.`);
         setLaunchError(message);
-        appendEvent("error", "Key generation failed", message);
+        appendEvent("error", "Token fetch failed", message);
         return;
       }
 
       const tokens = getWorkerTokens(payload);
       if (!tokens) {
-        setLaunchError("Key generation returned no token values.");
-        appendEvent("error", "Key generation failed", "Missing token payload");
+        setLaunchError("Token response returned no token values.");
+        appendEvent("error", "Token fetch failed", "Missing token payload");
         return;
       }
 
@@ -1017,13 +1036,13 @@ export function CloudControlPanel() {
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
       setWorker(resolvedWorker);
 
-      setLaunchStatus("Generated a fresh access token.");
-      appendEvent("success", "Generated new access token", `Worker ID ${id}`);
+      setLaunchStatus("Access token is ready for this worker.");
+      appendEvent("success", "Access token ready", `Worker ID ${id}`);
       void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setLaunchError(message);
-      appendEvent("error", "Key generation failed", message);
+      appendEvent("error", "Token fetch failed", message);
     } finally {
       setActionBusy(null);
     }
@@ -1243,7 +1262,7 @@ export function CloudControlPanel() {
                   onClick={handleGenerateKey}
                   disabled={actionBusy !== null || !selectedWorker}
                 >
-                  {actionBusy === "token" ? "Generating..." : "New access token"}
+                  {actionBusy === "token" ? "Fetching..." : "Get access token"}
                 </button>
               </div>
             </div>
@@ -1287,7 +1306,7 @@ export function CloudControlPanel() {
             <CredentialRow
               label="Access token"
               value={worker?.clientToken ?? null}
-              placeholder="Click New access token to generate credentials."
+              placeholder="Click Get access token to retrieve credentials."
               canCopy={Boolean(worker?.clientToken)}
               copied={copiedField === "access-token"}
               onCopy={() => void copyToClipboard("access-token", worker?.clientToken ?? null)}
@@ -1327,7 +1346,7 @@ export function CloudControlPanel() {
                 {actionBusy === "status" ? "Checking..." : "Check status"}
               </button>
               <button type="button" className="ow-btn-secondary" onClick={handleGenerateKey} disabled={actionBusy !== null}>
-                {actionBusy === "token" ? "Generating..." : "New access token"}
+                {actionBusy === "token" ? "Fetching..." : "Get access token"}
               </button>
               <button
                 type="button"

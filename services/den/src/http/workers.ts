@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "crypto"
 import express from "express"
 import { fromNodeHeaders } from "better-auth/node"
-import { and, desc, eq } from "drizzle-orm"
+import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { auth } from "../auth.js"
 import { requireCloudWorkerAccess } from "../billing/polar.js"
@@ -318,22 +318,22 @@ workersRouter.post("/:id/tokens", async (req, res) => {
     return
   }
 
-  const hostToken = token()
-  const clientToken = token()
-  await db.insert(WorkerTokenTable).values([
-    {
-      id: randomUUID(),
-      worker_id: rows[0].id,
-      scope: "host",
-      token: hostToken,
-    },
-    {
-      id: randomUUID(),
-      worker_id: rows[0].id,
-      scope: "client",
-      token: clientToken,
-    },
-  ])
+  const tokenRows = await db
+    .select()
+    .from(WorkerTokenTable)
+    .where(and(eq(WorkerTokenTable.worker_id, rows[0].id), isNull(WorkerTokenTable.revoked_at)))
+    .orderBy(asc(WorkerTokenTable.created_at))
+
+  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+  const clientToken = tokenRows.find((entry) => entry.scope === "client")?.token ?? null
+
+  if (!hostToken || !clientToken) {
+    res.status(409).json({
+      error: "worker_tokens_unavailable",
+      message: "Worker tokens are missing for this worker. Launch a new worker and try again.",
+    })
+    return
+  }
 
   res.json({
     tokens: {
