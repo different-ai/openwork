@@ -47,6 +47,21 @@ Evidence:
 - Take a Chrome MCP screenshot after the response appears.
 - If something fails, capture console logs and (optionally) Docker logs.
 
+### Verification checklist (copy into PR)
+
+- [ ] Started stack with `packaging/docker/dev-up.sh` from repo root.
+- [ ] Used the printed Web UI URL (not a guessed port).
+- [ ] Completed one full user flow in the UI (input -> action -> visible result).
+- [ ] Captured at least one screenshot for the success state.
+- [ ] Captured failure evidence when relevant (console and/or Docker logs).
+- [ ] Stopped stack with the exact printed `docker compose -p ... down` command.
+
+Suggested screenshot set for user-facing changes:
+- Before action state.
+- During action/progress state.
+- Success state.
+- Failure or recovery state (if applicable).
+
 ### 3) Stop the stack
 
 Use the exact `docker compose -p ... down` command printed by `dev-up.sh`.

@@ -1,0 +1,25 @@
+{
+  "name": "@different-ai/openwork-web",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "next dev --hostname 0.0.0.0 --port 3005",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0 --port 3005",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "14.2.5",
+    "react": "18.2.0",
+    "react-dom": "18.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "20.12.12",
+    "@types/react": "18.2.79",
+    "@types/react-dom": "18.2.25",
+    "autoprefixer": "10.4.19",
+    "postcss": "8.4.38",
+    "tailwindcss": "3.4.7",
+    "typescript": "5.4.5"
+  }
+}

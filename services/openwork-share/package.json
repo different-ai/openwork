@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
+  "scripts": {
+    "build": "node -e \"console.log('openwork-share: no build step')\""
+  },
   "dependencies": {
     "@vercel/blob": "^0.27.0",
     "ulid": "^2.3.0"

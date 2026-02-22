@@ -5,17 +5,20 @@ import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSear
 
 import { t } from "../../../i18n";
 import type { MessageGroup, MessageWithParts } from "../../types";
-import { classifyTool, groupMessageParts, summarizeStep } from "../../utils";
+import { groupMessageParts, summarizeStep } from "../../utils";
 import PartView from "../part-view";
+import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
+  isStreaming?: boolean;
   developerMode: boolean;
   showThinking: boolean;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
+  workspaceRoot?: string;
   footer?: JSX.Element;
 };
 
@@ -80,22 +83,12 @@ function statusDotClass(status?: string): string {
   }
 }
 
-/** Count total steps in a parts group array */
-function countSteps(partsGroups: Part[][]): number {
-  return partsGroups.reduce((sum, parts) => sum + parts.length, 0);
-}
-
 function latestStepPart(partsGroups: Part[][]): Part | undefined {
   for (let groupIndex = partsGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
     const parts = partsGroups[groupIndex] ?? [];
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = parts[partIndex];
-      if (
-        part.type === "tool" ||
-        part.type === "reasoning" ||
-        part.type === "step-start" ||
-        part.type === "step-finish"
-      ) {
+      if (part.type === "tool" || part.type === "reasoning") {
         return part;
       }
     }
@@ -105,6 +98,7 @@ function latestStepPart(partsGroups: Part[][]): Part | undefined {
 
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
+  let previousMessagePartCountById = new Map<string, number>();
   let copyTimeout: number | undefined;
   const isAttachmentPart = (part: Part) => {
     if (part.type !== "file") return false;
@@ -189,7 +183,7 @@ export default function MessageList(props: MessageListProps) {
       }
 
       if (part.type === "step-start" || part.type === "step-finish") {
-        return props.developerMode;
+        return false;
       }
 
       if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
@@ -200,36 +194,54 @@ export default function MessageList(props: MessageListProps) {
     });
 
   const messageBlocks = createMemo<MessageBlockItem[]>(() => {
+    const startedAt = perfNow();
     const blocks: MessageBlockItem[] = [];
+    const nextMessagePartCountById = new Map<string, number>();
+    let changedMessageCount = 0;
+    let addedMessageCount = 0;
+    let toolPartCount = 0;
+    let stepGroupCount = 0;
 
-    for (const message of props.messages) {
+    props.messages.forEach((message, index) => {
       const renderableParts = renderablePartsForMessage(message);
-      if (!renderableParts.length) continue;
+      if (!renderableParts.length) return;
 
       const messageId = String((message.info as any).id ?? "");
+      const idKey = messageId || `idx:${index}`;
+      const totalParts = message.parts.length;
+      nextMessagePartCountById.set(idKey, totalParts);
+      const previousPartCount = previousMessagePartCountById.get(idKey);
+      if (previousPartCount === undefined) {
+        addedMessageCount += 1;
+      } else if (previousPartCount !== totalParts) {
+        changedMessageCount += 1;
+      }
+
+      toolPartCount += renderableParts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0);
       const groupId = String((message.info as any).id ?? "message");
       const groups = groupMessageParts(renderableParts, groupId);
       const isUser = (message.info as any).role === "user";
-      const isStepsOnly = groups.length === 1 && groups[0].kind === "steps";
+      const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
+      const stepGroups = isStepsOnly ? (groups as { kind: "steps"; id: string; parts: Part[] }[]) : [];
+      stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
 
       if (isStepsOnly) {
-        const stepGroup = groups[0] as { kind: "steps"; id: string; parts: Part[] };
         const lastBlock = blocks[blocks.length - 1];
         if (lastBlock && lastBlock.kind === "steps-cluster" && lastBlock.isUser === isUser) {
-          lastBlock.partsGroups.push(stepGroup.parts);
-          lastBlock.stepIds.push(stepGroup.id);
+          lastBlock.partsGroups.push(...stepGroups.map((group) => group.parts));
+          lastBlock.stepIds.push(...stepGroups.map((group) => group.id));
           lastBlock.messageIds.push(messageId);
         } else {
           blocks.push({
             kind: "steps-cluster",
-            id: stepGroup.id,
-            stepIds: [stepGroup.id],
-            partsGroups: [stepGroup.parts],
+            id: stepGroups[0].id,
+            stepIds: stepGroups.map((group) => group.id),
+            partsGroups: stepGroups.map((group) => group.parts),
             messageIds: [messageId],
             isUser,
           });
         }
-        continue;
+        return;
       }
 
       blocks.push({
@@ -240,28 +252,56 @@ export default function MessageList(props: MessageListProps) {
         isUser,
         messageId,
       });
+    });
+
+    let removedMessageCount = 0;
+    previousMessagePartCountById.forEach((_partCount, id) => {
+      if (!nextMessagePartCountById.has(id)) {
+        removedMessageCount += 1;
+      }
+    });
+    previousMessagePartCountById = nextMessagePartCountById;
+
+    const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+    if (
+      props.developerMode &&
+      (
+        elapsedMs >= 6 ||
+        (Boolean(props.isStreaming) && props.messages.length >= 16 && changedMessageCount <= 2 && addedMessageCount <= 1 && removedMessageCount === 0) ||
+        (Boolean(props.isStreaming) && toolPartCount >= 10)
+      )
+    ) {
+      recordPerfLog(true, "session.render", "message-blocks", {
+        messageCount: props.messages.length,
+        blockCount: blocks.length,
+        changedMessageCount,
+        addedMessageCount,
+        removedMessageCount,
+        toolPartCount,
+        stepGroupCount,
+        streaming: Boolean(props.isStreaming),
+        ms: elapsedMs,
+      });
     }
 
     return blocks;
   });
 
+  const latestAssistantMessageId = createMemo(() => {
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index];
+      if ((message.info as any).role === "assistant") {
+        return String((message.info as any).id ?? "");
+      }
+    }
+    return "";
+  });
+
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean }) => {
-    const summary = () => summarizeStep(rowProps.part);
-    const category = () => {
-      if (rowProps.part.type === "tool") {
-        const toolName = (rowProps.part as any).tool ? String((rowProps.part as any).tool) : "";
-        return classifyTool(toolName);
-      }
-      return "tool";
-    };
-    const status = () => {
-      if (rowProps.part.type === "tool") {
-        const state = (rowProps.part as any).state ?? {};
-        return state.status ? String(state.status) : undefined;
-      }
-      return undefined;
-    };
+    const summary = createMemo(() => summarizeStep(rowProps.part));
+    const category = createMemo(() => summary().toolCategory ?? "tool");
+    const status = createMemo(() => summary().status);
 
     return (
       <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">
@@ -302,12 +342,13 @@ export default function MessageList(props: MessageListProps) {
         {(part) => (
           <div>
             <StepRow part={part} isUser={listProps.isUser} />
-            <Show when={props.developerMode && (part.type !== "tool" || props.showThinking)}>
+            <Show when={props.developerMode && part.type !== "reasoning" && (part.type !== "tool" || props.showThinking)}>
               <div class="pl-6 pb-2 text-xs text-gray-10">
                 <PartView
                   part={part}
                   developerMode={props.developerMode}
                   showThinking={props.showThinking}
+                  workspaceRoot={props.workspaceRoot}
                   tone={listProps.isUser ? "dark" : "light"}
                 />
               </div>
@@ -328,8 +369,125 @@ export default function MessageList(props: MessageListProps) {
   }) => {
     const relatedIds = () => containerProps.relatedIds ?? [];
     const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
-    const totalSteps = () => countSteps(containerProps.partsGroups);
     const latestStep = () => latestStepPart(containerProps.partsGroups);
+
+    const compactPathToken = (value: string) => {
+      const token = value
+        .trim()
+        .replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
+      const segments = token.split(/[\\/]/).filter(Boolean);
+      return segments.length > 0 ? segments[segments.length - 1] : token;
+    };
+
+    const compactText = (value: string, max = 42) => {
+      const singleLine = value.replace(/\s+/g, " ").trim();
+      if (!singleLine) return "";
+      return singleLine.length > max ? `${singleLine.slice(0, Math.max(0, max - 3))}...` : singleLine;
+    };
+
+    const isPathLike = (value: string) =>
+      /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
+      /[\\/](?:\.opencode|Users|Library|workspaces)[\\/]/.test(value);
+
+    const toolHeadline = (part: Part) => {
+      if (part.type !== "tool") return "";
+
+      const record = part as any;
+      const state = record.state ?? {};
+      const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+      const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
+
+      const pick = (...keys: string[]) => {
+        for (const key of keys) {
+          const value = input[key];
+          if (typeof value === "string" && value.trim()) return value.trim();
+        }
+        return "";
+      };
+
+      const target = (...keys: string[]) => {
+        const raw = pick(...keys);
+        if (!raw) return "";
+        return isPathLike(raw) ? compactPathToken(raw) : raw;
+      };
+
+      if (tool === "bash") {
+        const description = pick("description");
+        if (description) return compactText(description);
+        const command = pick("command", "cmd");
+        return command ? compactText(`Run ${command}`, 48) : "Run command";
+      }
+
+      if (tool === "read") {
+        const file = target("filePath", "path", "file");
+        return file ? `Read ${file}` : "Read file";
+      }
+
+      if (tool === "edit") {
+        const file = target("filePath", "path", "file");
+        return file ? `Edit ${file}` : "Edit file";
+      }
+
+      if (tool === "write" || tool === "apply_patch") {
+        const file = target("filePath", "path", "file");
+        return file ? `Update ${file}` : "Update file";
+      }
+
+      if (tool === "grep" || tool === "glob") {
+        const pattern = pick("pattern", "query");
+        return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
+      }
+
+      if (tool === "list") {
+        const path = target("path");
+        return path ? `List ${path}` : "List files";
+      }
+
+      if (tool === "task") {
+        const description = pick("description");
+        if (description) return compactText(description);
+        const agent = pick("subagent_type");
+        return agent ? `Delegate ${agent}` : "Delegate task";
+      }
+
+      if (tool === "webfetch") {
+        const url = pick("url");
+        return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
+      }
+
+      if (tool === "skill") {
+        const name = pick("name");
+        return name ? `Load skill ${name}` : "Load skill";
+      }
+
+      return "";
+    };
+
+    const latestStepLabel = () => {
+      const step = latestStep();
+      if (!step) return "Last step";
+
+      const fromTool = toolHeadline(step);
+      if (fromTool) return compactText(fromTool);
+
+      if (step.type === "tool") {
+        const toolName = String((step as any).tool ?? "").trim();
+        if (toolName) {
+          const friendlyTool = toolName.replace(/[_-]+/g, " ");
+          return compactText(friendlyTool);
+        }
+      }
+
+      const summary = summarizeStep(step);
+      const title = compactText(summary.title);
+      const detail = compactText(summary.detail ?? "");
+      const generic = /^(application|tool|step|working|done|completed|success)$/i.test(title);
+
+      if (title && !generic) return title;
+      if (detail) return isPathLike(detail) ? compactPathToken(detail) : detail;
+      if (title) return title;
+      return "Last step";
+    };
     const hasRunning = () =>
       containerProps.partsGroups.some((parts) =>
         parts.some((part) => {
@@ -354,28 +512,13 @@ export default function MessageList(props: MessageListProps) {
             size={14}
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
-          <span class="font-medium">
-            {expanded() ? t("session.hide_steps") : t("session.show_steps").replace("{count}", String(totalSteps())).replace("{plural}", totalSteps() === 1 ? "" : "s")}
-          </span>
-          <Show when={hasRunning()}>
-            <span class="flex items-center gap-1.5 text-[11px] text-blue-11">
-              <span class="w-1.5 h-1.5 rounded-full bg-blue-9 animate-pulse" />
-              {t("session.step_running")}
-            </span>
-          </Show>
-        </button>
-
-        <Show when={!expanded()}>
-          <div
-            class={`mt-1 ml-1 pl-3 border-l-2 ${
-              containerProps.isUser ? "border-gray-6" : "border-gray-6/60"
-            }`}
-          >
-            <Show when={latestStep()}>
-              {(part) => <StepRow part={part()} isUser={containerProps.isUser} />}
+          <span class="font-medium inline-flex items-center gap-1.5 text-xs sm:text-[13px] text-gray-11">
+            <Show when={hasRunning()}>
+              <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
             </Show>
-          </div>
-        </Show>
+            <span class="truncate max-w-[58ch]">{latestStepLabel()}</span>
+          </span>
+        </button>
 
         {/* Expanded content */}
         <Show when={expanded()}>
@@ -487,13 +630,22 @@ export default function MessageList(props: MessageListProps) {
                   {(group, idx) => (
                     <div class={idx() === block.groups.length - 1 ? "" : groupSpacing}>
                       <Show when={group.kind === "text"}>
-                        <PartView
-                          part={(group as { kind: "text"; part: Part }).part}
-                          developerMode={props.developerMode}
-                          showThinking={props.showThinking}
-                          tone={block.isUser ? "dark" : "light"}
-                          renderMarkdown={!block.isUser}
-                        />
+                        {(() => {
+                          const isStreamingLatestAssistant =
+                            !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId();
+                          const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
+                          return (
+                            <PartView
+                              part={(group as { kind: "text"; part: Part }).part}
+                              developerMode={props.developerMode}
+                              showThinking={props.showThinking}
+                              workspaceRoot={props.workspaceRoot}
+                              tone={block.isUser ? "dark" : "light"}
+                              renderMarkdown={!block.isUser}
+                              markdownThrottleMs={markdownThrottleMs}
+                            />
+                          );
+                        })()}
                       </Show>
                       {group.kind === "steps" &&
                         (() => {

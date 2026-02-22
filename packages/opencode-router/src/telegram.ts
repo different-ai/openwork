@@ -24,6 +24,20 @@ export type TelegramAdapter = {
 
 const MAX_TEXT_LENGTH = 4096;
 
+const TELEGRAM_CHAT_ID_PATTERN = /^-?\d+$/;
+
+export function isTelegramPeerId(peerId: string): boolean {
+  return TELEGRAM_CHAT_ID_PATTERN.test(peerId.trim());
+}
+
+export function parseTelegramPeerId(peerId: string): number | null {
+  const trimmed = peerId.trim();
+  if (!isTelegramPeerId(trimmed)) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  return parsed;
+}
+
 export function createTelegramAdapter(
   identity: TelegramIdentity,
   config: Config,
@@ -113,7 +127,15 @@ export function createTelegramAdapter(
       log.info("telegram adapter stopped");
     },
     async sendText(peerId: string, text: string) {
-      await bot.api.sendMessage(Number(peerId), text);
+      const chatId = parseTelegramPeerId(peerId);
+      if (chatId === null) {
+        const error = new Error(
+          "Telegram peerId must be a numeric chat_id. Usernames like @name are not valid direct targets.",
+        ) as Error & { status?: number };
+        error.status = 400;
+        throw error;
+      }
+      await bot.api.sendMessage(chatId, text);
     },
   };
 }

@@ -1,0 +1,24 @@
+{
+  "service": {
+    "id": "srv-d6ck5utm5p6s73er2av0",
+    "name": "den-control-plane-openwork-1771651835",
+    "repo": "https://github.com/different-ai/openwork",
+    "branch": "feat/den-cloud-worker-openwork-repo",
+    "rootDir": "services/den",
+    "url": "https://den-control-plane-openwork-1771651835.onrender.com"
+  },
+  "latestDeploy": {
+    "id": "dep-d6ckfgjh46gs73cjgq9g",
+    "commit": {
+      "id": "9ce8ec57806dfff085f49946b228bec8e37ad40c",
+      "message": "fix: redact sensitive tokens in demo output",
+      "createdAt": "2026-02-21T05:50:51Z"
+    },
+    "status": "live",
+    "trigger": "api",
+    "createdAt": "2026-02-21T05:50:58.801414Z",
+    "updatedAt": "2026-02-21T05:53:34.758793Z",
+    "startedAt": "2026-02-21T05:50:58.770331Z",
+    "finishedAt": "2026-02-21T05:53:02.333454Z"
+  }
+}

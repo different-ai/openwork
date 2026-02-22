@@ -2,14 +2,230 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { File } from "lucide-solid";
-import { safeStringify } from "../utils";
+import { isTauriRuntime, safeStringify, summarizeStep } from "../utils";
+import { usePlatform } from "../context/platform";
+import { perfNow, recordPerfLog } from "../lib/perf-log";
 
 type Props = {
   part: Part;
   developerMode?: boolean;
   showThinking?: boolean;
   tone?: "light" | "dark";
+  workspaceRoot?: string;
   renderMarkdown?: boolean;
+  markdownThrottleMs?: number;
+};
+
+type LinkType = "url" | "file";
+
+type TextSegment =
+  | { kind: "text"; value: string }
+  | { kind: "link"; value: string; href: string; type: LinkType };
+
+const WEB_LINK_RE = /^(?:https?:\/\/|www\.)/i;
+const FILE_URI_RE = /^file:\/\//i;
+const WINDOWS_PATH_RE = /^[A-Za-z]:[\\/][^\s"'`\)\]\}>]+$/;
+const POSIX_PATH_RE = /^\/(?!\/)[^\s"'`\)\]\}>][^\s"'`\)\]\}>]*$/;
+const TILDE_PATH_RE = /^~\/[^\s"'`\)\]\}>][^\s"'`\)\]\}>]*$/;
+const BARE_FILENAME_RE = /^(?!\.)(?!.*\.\.)(?:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)$/;
+const SAFE_PATH_CHAR_RE = /[^\s"'`\)\]\}>]/;
+
+const isRelativeFilePath = (value: string) => {
+  if (value === "." || value === "..") return false;
+
+  const normalized = value.replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  const hasNonTraversalSegment = segments.some((segment) => segment && segment !== "." && segment !== "..");
+
+  if (normalized.startsWith("./") || normalized.startsWith("../")) {
+    return hasNonTraversalSegment;
+  }
+
+  const [firstSegment, secondSegment] = normalized.split("/");
+  if (!secondSegment || firstSegment.length <= 1) return false;
+  if (secondSegment === "." || secondSegment === "..") return false;
+  return firstSegment.startsWith(".") && SAFE_PATH_CHAR_RE.test(secondSegment);
+};
+
+const isBareRelativeFilePath = (value: string) => {
+  if (value.includes("/") || value.includes("\\") || value.includes(":")) return false;
+  if (!BARE_FILENAME_RE.test(value)) return false;
+
+  const extension = value.split(".").pop() ?? "";
+  if (!/[A-Za-z]/.test(extension)) return false;
+
+  const dotCount = (value.match(/\./g) ?? []).length;
+  if (dotCount === 1 && !value.includes("_") && !value.includes("-")) {
+    const [name, tld] = value.split(".");
+    if (/^[A-Za-z]{2,24}$/.test(name ?? "") && /^[A-Za-z]{2,10}$/.test(tld ?? "")) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const LEADING_PUNCTU = /[\"'`\(\[\{<]/;
+const TRAILING_PUNCTU = /[\"'`\)\]}>.,:;!?]/;
+
+const isLikelyWebLink = (value: string) => WEB_LINK_RE.test(value);
+
+const isLikelyFilePath = (value: string) => {
+  if (FILE_URI_RE.test(value)) return true;
+  if (WINDOWS_PATH_RE.test(value)) return true;
+  if (POSIX_PATH_RE.test(value)) return true;
+  if (TILDE_PATH_RE.test(value)) return true;
+  if (isRelativeFilePath(value)) return true;
+  if (isBareRelativeFilePath(value)) return true;
+
+  return false;
+};
+
+const parseLinkFromToken = (token: string): { href: string; type: LinkType; value: string } | null => {
+  let start = 0;
+  let end = token.length;
+
+  while (start < end && LEADING_PUNCTU.test(token[start] ?? "")) {
+    start += 1;
+  }
+
+  while (end > start && TRAILING_PUNCTU.test(token[end - 1] ?? "")) {
+    end -= 1;
+  }
+
+  const value = token.slice(start, end);
+  if (!value) return null;
+
+  if (isLikelyWebLink(value)) {
+    return {
+      value,
+      type: "url",
+      href: value.toLowerCase().startsWith("www.") ? `https://${value}` : value,
+    };
+  }
+
+  if (isLikelyFilePath(value)) {
+    return {
+      value,
+      type: "file",
+      href: value,
+    };
+  }
+
+  return null;
+};
+
+const splitTextTokens = (text: string): TextSegment[] => {
+  const tokens: TextSegment[] = [];
+  const matches = text.matchAll(/\S+/g);
+  let position = 0;
+
+  for (const match of matches) {
+    const token = match[0] ?? "";
+    const index = match.index ?? 0;
+
+    if (index > position) {
+      tokens.push({ kind: "text", value: text.slice(position, index) });
+    }
+
+    const link = parseLinkFromToken(token);
+    if (!link) {
+      tokens.push({ kind: "text", value: token });
+    } else {
+      const start = token.indexOf(link.value);
+      if (start > 0) {
+        tokens.push({ kind: "text", value: token.slice(0, start) });
+      }
+      tokens.push({ kind: "link", value: link.value, href: link.href, type: link.type });
+      const end = start + link.value.length;
+      if (end < token.length) {
+        tokens.push({ kind: "text", value: token.slice(end) });
+      }
+    }
+
+    position = index + token.length;
+  }
+
+  if (position < text.length) {
+    tokens.push({ kind: "text", value: text.slice(position) });
+  }
+
+  return tokens;
+};
+
+const escapeHtml = (value: string) =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+const renderInlineTextWithLinks = (text: string) => {
+  const tokens = splitTextTokens(text);
+  return tokens
+    .map((token) => {
+      if (token.kind === "text") return escapeHtml(token.value);
+      return `<a href="${escapeHtml(token.href)}" target="_blank" rel="noopener noreferrer" class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]">${escapeHtml(token.value)}</a>`;
+    })
+    .join("");
+};
+
+const normalizeRelativePath = (relativePath: string, workspaceRoot: string) => {
+  const root = workspaceRoot.trim().replace(/\\/g, "/").replace(/\/+$/g, "");
+  if (!root) return null;
+
+  const relative = relativePath.trim().replace(/\\/g, "/");
+  if (!relative) return null;
+
+  const isPosixRoot = root.startsWith("/");
+  const rootValue = isPosixRoot ? root.slice(1) : root;
+  const rootParts = rootValue.split("/").filter((value) => value.length > 0);
+  const isWindowsDrive = /^[A-Za-z]:$/.test(rootParts[0] ?? "");
+  const resolved: string[] = [...rootParts];
+  const segments = relative.split("/");
+
+  for (const segment of segments) {
+    if (!segment || segment === ".") continue;
+
+    if (segment === "..") {
+      if (!(isWindowsDrive && resolved.length === 1)) {
+        resolved.pop();
+      }
+      continue;
+    }
+
+    resolved.push(segment);
+  }
+
+  const normalized = resolved.join("/");
+  if (isPosixRoot) return `/${normalized || ""}` || "/";
+  return normalized;
+};
+
+const normalizeFilePath = (href: string, workspaceRoot: string): string | null => {
+  if (FILE_URI_RE.test(href)) {
+    try {
+      const parsed = new URL(href);
+      if (parsed.protocol !== "file:") return null;
+      const raw = decodeURIComponent(parsed.pathname || "");
+      if (!raw) return null;
+      if (/^\/[A-Za-z]:\//.test(raw)) {
+        return raw.slice(1);
+      }
+      if (parsed.hostname && !parsed.pathname.startsWith(`/${parsed.hostname}`) && !raw.startsWith("/")) {
+        return `/${parsed.hostname}${raw}`;
+      }
+      return raw;
+    } catch {
+      const raw = decodeURIComponent(href.replace(/^file:\/\//, ""));
+      if (!raw) return null;
+      return raw;
+    }
+  }
+
+  const trimmed = href.trim();
+  if (isRelativeFilePath(trimmed) || isBareRelativeFilePath(trimmed)) {
+    if (!workspaceRoot) return null;
+    return normalizeRelativePath(trimmed, workspaceRoot);
+  }
+
+  return href;
 };
 
 function clampText(text: string, max = 800) {
@@ -17,13 +233,14 @@ function clampText(text: string, max = 800) {
   return `${text.slice(0, max)}\n\n… (truncated)`;
 }
 
-function useThrottledValue<T>(value: () => T, delayMs = 80) {
+function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) = 80) {
   const [state, setState] = createSignal<T>(value());
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   createEffect(() => {
     const next = value();
-    if (!delayMs) {
+    const delay = typeof delayMs === "function" ? delayMs() : delayMs;
+    if (!delay) {
       setState(() => next);
       return;
     }
@@ -31,7 +248,7 @@ function useThrottledValue<T>(value: () => T, delayMs = 80) {
     timer = setTimeout(() => {
       setState(() => next);
       timer = undefined;
-    }, delayMs);
+    }, delay);
   });
 
   onCleanup(() => {
@@ -52,9 +269,6 @@ function createCustomRenderer(tone: "light" | "dark") {
       ? "bg-gray-12/15 text-gray-12"
       : "bg-gray-2/70 text-gray-12";
   
-  const escapeHtml = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
   const isSafeUrl = (url: string) => {
     const normalized = (url || "").trim().toLowerCase();
     if (normalized.startsWith("javascript:")) return false;
@@ -65,6 +279,8 @@ function createCustomRenderer(tone: "light" | "dark") {
   };
 
   renderer.html = ({ text }) => escapeHtml(text);
+
+  renderer.text = ({ text }) => renderInlineTextWithLinks(text);
 
   renderer.code = ({ text, lang }) => {
     const language = lang || "";
@@ -121,11 +337,13 @@ function createCustomRenderer(tone: "light" | "dark") {
 }
 
 export default function PartView(props: Props) {
+  const platform = usePlatform();
   const p = () => props.part;
   const developerMode = () => props.developerMode ?? false;
   const tone = () => props.tone ?? "light";
   const showThinking = () => props.showThinking ?? true;
   const renderMarkdown = () => props.renderMarkdown ?? false;
+  const markdownThrottleMs = () => Math.max(0, props.markdownThrottleMs ?? 100);
   const fileInfo = () => {
     if (p().type !== "file") return null;
     const part = p() as {
@@ -174,13 +392,14 @@ export default function PartView(props: Props) {
     if (!renderMarkdown() || p().type !== "text") return "";
     return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
   });
-  const throttledMarkdownSource = useThrottledValue(markdownSource, 100);
+  const throttledMarkdownSource = useThrottledValue(markdownSource, markdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     const text = throttledMarkdownSource();
     if (!text.trim()) return "";
     
     try {
+      const startedAt = perfNow();
       const renderer = createCustomRenderer(tone());
       const result = marked.parse(text, { 
         breaks: true, 
@@ -188,6 +407,16 @@ export default function PartView(props: Props) {
         renderer,
         async: false
       });
+      const parseMs = Math.round((perfNow() - startedAt) * 100) / 100;
+      if (developerMode() && (parseMs >= 12 || text.length >= 6_000)) {
+        const record = p() as { id?: string; messageID?: string };
+        recordPerfLog(true, "session.render", "markdown-parse", {
+          partID: record.id ?? null,
+          messageID: record.messageID ?? null,
+          chars: text.length,
+          ms: parseMs,
+        });
+      }
       
       return typeof result === 'string' ? result : '';
     } catch (error) {
@@ -196,19 +425,122 @@ export default function PartView(props: Props) {
     }
   });
 
+  const openLink = async (href: string, type: LinkType) => {
+    if (type === "url") {
+      platform.openLink(href);
+      return;
+    }
+
+    const filePath = normalizeFilePath(href, props.workspaceRoot ?? "");
+    if (!filePath) return;
+
+    if (!isTauriRuntime()) {
+      platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
+      return;
+    }
+
+    try {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      await revealItemInDir(filePath).catch(() => openPath(filePath));
+    } catch {
+      platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
+    }
+  };
+
+  const openMarkdownLink = async (event: MouseEvent) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const anchor = target.closest("a");
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+
+    const href = anchor.getAttribute("href")?.trim();
+    if (!href) return;
+    const link = parseLinkFromToken(href);
+    if (!link) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    await openLink(link.href, link.type);
+  };
+
+  const renderTextWithLinks = () => {
+    const text = "text" in p() ? String((p() as { text: string }).text) : "";
+    if (!text) return <span>{""}</span>;
+
+    const tokens = splitTextTokens(text);
+    return (
+      <span>
+        <For each={tokens}>
+          {(token) =>
+            token.kind === "link" ? (
+              <a
+                href={token.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  void openLink(token.href, token.type);
+                }}
+              >
+                {token.value}
+              </a>
+            ) : (
+              token.value
+            )
+          }
+        </For>
+      </span>
+    );
+  };
+
   const toolData = () => {
     if (p().type !== "tool") return null;
     return p() as any;
   };
 
+  let toolSummaryRuns = 0;
+  let lastToolSummaryAt = 0;
+  const toolSummary = createMemo(() => {
+    if (p().type !== "tool") return null;
+    const startedAt = perfNow();
+    const summary = summarizeStep(p());
+    const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+    toolSummaryRuns += 1;
+    const now = Date.now();
+    const sinceLastMs = lastToolSummaryAt > 0 ? now - lastToolSummaryAt : null;
+    lastToolSummaryAt = now;
+
+    if (developerMode() && (elapsedMs >= 4 || (toolSummaryRuns >= 6 && (sinceLastMs ?? 0) < 300))) {
+      const record = p() as { id?: string; messageID?: string };
+      recordPerfLog(true, "session.render", "tool-summary", {
+        partID: record.id ?? null,
+        messageID: record.messageID ?? null,
+        runs: toolSummaryRuns,
+        sinceLastMs,
+        ms: elapsedMs,
+      });
+    }
+
+    return summary;
+  });
   const toolState = () => toolData()?.state ?? {};
   const toolName = () => (toolData()?.tool ? String(toolData()?.tool) : "tool");
-  const toolTitle = () => (toolState()?.title ? String(toolState().title) : toolName());
+  const toolTitle = () => {
+    const title = toolSummary()?.title;
+    if (title) return title;
+    return toolState()?.title ? String(toolState().title) : toolName();
+  };
   const toolStatus = () => (toolState()?.status ? String(toolState().status) : "unknown");
-  const toolSubtitle = () =>
-    toolState()?.subtitle || toolState()?.detail || toolState()?.summary
-      ? String(toolState().subtitle ?? toolState().detail ?? toolState().summary)
-      : "";
+  const toolSubtitle = () => {
+    const detail = toolSummary()?.detail;
+    if (detail) return detail;
+    if (toolState()?.subtitle || toolState()?.detail || toolState()?.summary) {
+      return String(toolState().subtitle ?? toolState().detail ?? toolState().summary);
+    }
+    return "";
+  };
 
   const extractDiff = () => {
     const state = toolState();
@@ -237,6 +569,11 @@ export default function PartView(props: Props) {
   };
 
   const toolOutput = () => normalizeToolText(toolState()?.output);
+  const hasReadXmlOutput = createMemo(() => {
+    if (toolName().toLowerCase() !== "read") return false;
+    const output = toolOutput().trimStart();
+    return output.startsWith("<path>") || output.startsWith("<type>") || output.startsWith("<content>");
+  });
 
   const toolError = () => {
     const error = toolState()?.error;
@@ -320,7 +657,7 @@ export default function PartView(props: Props) {
           when={renderMarkdown()}
           fallback={
             <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
-              {"text" in p() ? (p() as { text: string }).text : ""}
+              {renderTextWithLinks()}
             </div>
           }
         >
@@ -328,7 +665,7 @@ export default function PartView(props: Props) {
             when={renderedMarkdown()}
             fallback={
               <div class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}>
-                {"text" in p() ? (p() as { text: string }).text : ""}
+                {renderTextWithLinks()}
               </div>
             }
           >
@@ -347,6 +684,7 @@ export default function PartView(props: Props) {
                 [&_td]:border [&_td]:border-dls-border [&_td]:p-2
               `.trim()}
               innerHTML={renderedMarkdown()!}
+              onClick={openMarkdownLink}
             />
           </Show>
         </Show>
@@ -504,12 +842,21 @@ export default function PartView(props: Props) {
               </div>
             </Show>
 
-            <Show when={showToolOutput() && toolOutput() && toolOutput() !== diffTextNormalized()}>
+            <Show when={showToolOutput() && toolOutput() && toolOutput() !== diffTextNormalized() && !hasReadXmlOutput()}>
               <pre
                 class={`whitespace-pre-wrap break-words rounded-lg ${panelBgClass()} p-2 text-xs text-gray-12`.trim()}
               >
                 {outputPreview()}
               </pre>
+            </Show>
+
+            <Show when={showToolOutput() && hasReadXmlOutput()}>
+              <details class={`rounded-lg ${panelBgClass()} p-2`.trim()}>
+                <summary class={`cursor-pointer text-xs ${subtleTextClass()}`.trim()}>Raw read output</summary>
+                <pre class={`mt-2 whitespace-pre-wrap break-words text-xs text-gray-12`.trim()}>
+                  {outputPreview()}
+                </pre>
+              </details>
             </Show>
 
             <Show when={showToolOutput() && isLargeOutput()}>

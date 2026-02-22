@@ -135,6 +135,7 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export type DashboardTab =
   | "scheduled"
+  | "soul"
   | "skills"
   | "plugins"
   | "mcp"

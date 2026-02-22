@@ -359,6 +359,46 @@ export type OpenworkInboxList = {
   items: OpenworkInboxItem[];
 };
 
+export type OpenworkInboxUploadResult = {
+  ok: boolean;
+  path: string;
+  bytes: number;
+};
+
+export type OpenworkSoulHeartbeatEntry = {
+  id: string;
+  ts: string | null;
+  workspace: string | null;
+  summary: string;
+  looseEnds: string[];
+  nextAction: string | null;
+};
+
+export type OpenworkSoulStatus = {
+  enabled: boolean;
+  state: "off" | "healthy" | "stale" | "error";
+  memoryEnabled: boolean;
+  instructionsEnabled: boolean;
+  heartbeatLogExists: boolean;
+  heartbeatCommandExists: boolean;
+  heartbeatJob: {
+    name: string;
+    slug: string;
+    schedule: string;
+    lastRunAt: string | null;
+    lastRunStatus: string | null;
+    lastRunError: string | null;
+  } | null;
+  heartbeatCount: number;
+  lastHeartbeatAt: string | null;
+  lastHeartbeatSummary: string | null;
+  staleAfterMs: number | null;
+  overdue: boolean;
+  summary: string;
+  memoryPath: string;
+  heartbeatPath: string;
+};
+
 type RawJsonResponse<T> = {
   ok: boolean;
   status: number;
@@ -1239,6 +1279,17 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           method: "DELETE",
         },
       ),
+    getSoulStatus: (workspaceId: string) =>
+      requestJson<OpenworkSoulStatus>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/soul/status`, {
+        token,
+        hostToken,
+      }),
+    listSoulHeartbeats: (workspaceId: string, limit = 20) =>
+      requestJson<{ items: OpenworkSoulHeartbeatEntry[]; total: number; path: string }>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/soul/heartbeats?limit=${encodeURIComponent(String(limit))}`,
+        { token, hostToken },
+      ),
 
     uploadInbox: async (workspaceId: string, file: File, options?: { path?: string }) => {
       const id = workspaceId.trim();
@@ -1271,7 +1322,27 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         throw new OpenworkServerError(result.status, "request_failed", message || "Inbox upload failed");
       }
 
-      return result.text;
+      const body = result.text.trim();
+      if (body) {
+        try {
+          const parsed = JSON.parse(body) as Partial<OpenworkInboxUploadResult>;
+          if (typeof parsed.path === "string" && parsed.path.trim()) {
+            return {
+              ok: parsed.ok ?? true,
+              path: parsed.path.trim(),
+              bytes: typeof parsed.bytes === "number" ? parsed.bytes : file.size,
+            } satisfies OpenworkInboxUploadResult;
+          }
+        } catch {
+          // ignore invalid JSON and fall back
+        }
+      }
+
+      return {
+        ok: true,
+        path: options?.path?.trim() || file.name,
+        bytes: file.size,
+      } satisfies OpenworkInboxUploadResult;
     },
 
     listInbox: (workspaceId: string) =>

@@ -39,6 +39,16 @@ import ProtoWorkspacesView from "./pages/proto-workspaces";
 import ProtoV1UxView from "./pages/proto-v1-ux";
 import { createClient, unwrap, waitForHealthy, type OpencodeAuth } from "./lib/opencode";
 import {
+  abortSession as abortSessionTyped,
+  abortSessionSafe,
+  compactSession as compactSessionTyped,
+  revertSession,
+  unrevertSession,
+  shellInSession,
+  listCommands as listCommandsTyped,
+} from "./lib/opencode-session";
+import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import {
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
@@ -139,6 +149,8 @@ import {
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
   type OpenworkAuditEntry,
+  type OpenworkSoulHeartbeatEntry,
+  type OpenworkSoulStatus,
   type OpenworkServerCapabilities,
   type OpenworkServerDiagnostics,
   type OpenworkServerStatus,
@@ -579,6 +591,11 @@ export default function App() {
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
 
+  createEffect(() => {
+    if (developerMode()) return;
+    clearPerfLogs();
+  });
+
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
@@ -676,7 +693,10 @@ export default function App() {
     setPendingPermissions,
   } = sessionStore;
 
-  const artifacts = createMemo(() => deriveArtifacts(messages()));
+  const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
+  const artifacts = createMemo(() =>
+    deriveArtifacts(messages(), { maxMessages: ARTIFACT_SCAN_MESSAGE_WINDOW }),
+  );
   const workingFiles = createMemo(() => deriveWorkingFiles(artifacts()));
   const activeSessionId = createMemo(() => selectedSessionId());
   const activeSessions = createMemo(() => sessions());
@@ -812,16 +832,85 @@ export default function App() {
   const assertNoClientError = (result: unknown) => {
     const maybe = result as { error?: unknown } | null | undefined;
     if (!maybe || maybe.error === undefined) return;
-    const message =
-      maybe.error instanceof Error
-        ? maybe.error.message
-        : typeof maybe.error === "string"
-          ? maybe.error
-          : JSON.stringify(maybe.error);
-    throw new Error(message || "Unknown error");
+    throw new Error(describeProviderError(maybe.error, "Request failed"));
+  };
+
+  const describeProviderError = (error: unknown, fallback: string) => {
+    const readString = (value: unknown, max = 700) => {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (trimmed.length <= max) return trimmed;
+      return `${trimmed.slice(0, Math.max(0, max - 3))}...`;
+    };
+
+    const records: Record<string, unknown>[] = [];
+    const root = error && typeof error === "object" ? (error as Record<string, unknown>) : null;
+    if (root) {
+      records.push(root);
+      if (root.data && typeof root.data === "object") records.push(root.data as Record<string, unknown>);
+      if (root.cause && typeof root.cause === "object") {
+        const cause = root.cause as Record<string, unknown>;
+        records.push(cause);
+        if (cause.data && typeof cause.data === "object") records.push(cause.data as Record<string, unknown>);
+      }
+    }
+
+    const firstString = (keys: string[]) => {
+      for (const record of records) {
+        for (const key of keys) {
+          const value = readString(record[key]);
+          if (value) return value;
+        }
+      }
+      return null;
+    };
+
+    const firstNumber = (keys: string[]) => {
+      for (const record of records) {
+        for (const key of keys) {
+          const value = record[key];
+          if (typeof value === "number" && Number.isFinite(value)) return value;
+        }
+      }
+      return null;
+    };
+
+    const status = firstNumber(["statusCode", "status"]);
+    const provider = firstString(["providerID", "providerId", "provider"]);
+    const code = firstString(["code", "errorCode"]);
+    const response = firstString(["responseBody", "body", "response"]);
+    const raw =
+      (error instanceof Error ? readString(error.message) : null) ||
+      firstString(["message", "detail", "reason", "error"]) ||
+      (typeof error === "string" ? readString(error) : null);
+
+    const generic = raw && /^unknown\s+error$/i.test(raw);
+    const heading = (() => {
+      if (status === 401 || status === 403) return "Authentication failed";
+      if (status === 429) return "Rate limit exceeded";
+      if (provider) return `Provider error (${provider})`;
+      return fallback;
+    })();
+
+    const lines = [heading];
+    if (raw && !generic && raw !== heading) lines.push(raw);
+    if (status && !heading.includes(String(status))) lines.push(`Status: ${status}`);
+    if (provider && !heading.includes(provider)) lines.push(`Provider: ${provider}`);
+    if (code) lines.push(`Code: ${code}`);
+    if (response) lines.push(`Response: ${response}`);
+    if (lines.length > 1) return lines.join("\n");
+
+    if (raw && !generic) return raw;
+    if (error && typeof error === "object") {
+      const serialized = safeStringify(error);
+      if (serialized && serialized !== "{}") return serialized;
+    }
+    return fallback;
   };
 
   async function sendPrompt(draft?: ComposerDraft) {
+    const hasExplicitDraft = Boolean(draft);
     const fallbackText = prompt().trim();
     const resolvedDraft: ComposerDraft = draft ?? {
       mode: "prompt",
@@ -834,6 +923,15 @@ export default function App() {
 
     const c = client();
     if (!c) return;
+
+    const compactShortcut = /^\/compact(?:\s+.*)?$/i.test(content);
+    const compactCommand = resolvedDraft.command?.name === "compact" || compactShortcut;
+    const commandName = compactCommand ? "compact" : (resolvedDraft.command?.name ?? null);
+    if (compactCommand && !selectedSessionId()) {
+      setError("Select a session with messages before running /compact.");
+      return;
+    }
+
     let sessionID = selectedSessionId();
     if (!sessionID) {
       await createSessionAndOpen();
@@ -846,33 +944,50 @@ export default function App() {
     setBusyStartedAt(Date.now());
     setError(null);
 
+    const perfEnabled = developerMode();
+    const startedAt = perfNow();
+    const visible = messages();
+    const visibleParts = visible.reduce((total, message) => total + message.parts.length, 0);
+    recordPerfLog(perfEnabled, "session.prompt", "start", {
+      sessionID,
+      mode: resolvedDraft.mode,
+      command: commandName,
+      charCount: content.length,
+      attachmentCount: resolvedDraft.attachments.length,
+      messageCount: visible.length,
+      partCount: visibleParts,
+    });
+
     try {
-      setLastPromptSent(content);
-      setPrompt("");
+      if (!compactCommand) {
+        setLastPromptSent(content);
+      }
+      if (!hasExplicitDraft) {
+        setPrompt("");
+      }
 
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = buildPromptParts(resolvedDraft);
 
       if (resolvedDraft.mode === "shell") {
-        const sessionApi = c.session as any;
-        if (sessionApi.shellAsync) {
-          const result = await sessionApi.shellAsync({ sessionID, command: content });
-          assertNoClientError(result);
-        } else if (sessionApi.shell) {
-          const result = await sessionApi.shell({ sessionID, command: content });
-          assertNoClientError(result);
-        } else {
-          const result = await c.session.promptAsync({
+        await shellInSession(c, sessionID, content);
+      } else if (resolvedDraft.command || compactCommand) {
+        if (compactCommand) {
+          await compactCurrentSession(sessionID);
+          finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
             sessionID,
-            model,
-            agent: agent ?? undefined,
-            variant: modelVariant() ?? undefined,
-            parts: [{ type: "text", text: `!${content}` }],
+            mode: resolvedDraft.mode,
+            command: commandName,
           });
-          assertNoClientError(result);
+          return;
         }
-      } else if (resolvedDraft.command) {
+
+        const command = resolvedDraft.command;
+        if (!command) {
+          throw new Error("Command was not resolved.");
+        }
+
         // Slash command: route through session.command() API
         const selected = selectedSessionModel();
         const modelString = `${selected.providerID}/${selected.modelID}`;
@@ -882,8 +997,8 @@ export default function App() {
         unwrap(
           await c.session.command({
             sessionID,
-            command: resolvedDraft.command.name,
-            arguments: resolvedDraft.command.arguments,
+            command: command.name,
+            arguments: command.arguments,
             agent: agent ?? undefined,
             model: modelString,
             variant: modelVariant() ?? undefined,
@@ -913,7 +1028,19 @@ export default function App() {
           return copy;
         });
       }
+
+      finishPerf(perfEnabled, "session.prompt", "done", startedAt, {
+        sessionID,
+        mode: resolvedDraft.mode,
+        command: commandName,
+      });
     } catch (e) {
+      finishPerf(perfEnabled, "session.prompt", "error", startedAt, {
+        sessionID,
+        mode: resolvedDraft.mode,
+        command: commandName,
+        error: e instanceof Error ? e.message : safeStringify(e),
+      });
       const message = e instanceof Error ? e.message : safeStringify(e);
       setError(addOpencodeCacheHint(message));
     } finally {
@@ -931,7 +1058,7 @@ export default function App() {
     // OpenCode exposes session.abort which interrupts the active prompt/run.
     // We intentionally don't mutate global busy state here; the SessionView
     // provides local UX (button disabled + toast) for cancellation.
-    unwrap(await (c.session as any).abort({ sessionID: id }));
+    await abortSessionTyped(c, id);
   }
 
   function retryLastPrompt() {
@@ -943,6 +1070,52 @@ export default function App() {
       parts: [{ type: "text", text }],
       attachments: [],
     });
+  }
+
+  async function compactCurrentSession(sessionIdOverride?: string) {
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    const sessionID = (sessionIdOverride ?? selectedSessionId() ?? "").trim();
+    if (!sessionID) {
+      throw new Error("Select a session before compacting.");
+    }
+
+    const visible = messages();
+    if (!visible.length) {
+      throw new Error("Nothing to compact yet.");
+    }
+
+    const model = selectedSessionModel();
+    const startedAt = perfNow();
+    const modelLabel = `${model.providerID}/${model.modelID}`;
+    recordPerfLog(developerMode(), "session.compact", "start", {
+      sessionID,
+      messageCount: visible.length,
+      model: modelLabel,
+      variant: modelVariant() ?? null,
+    });
+
+    try {
+      await compactSessionTyped(c, sessionID, model, {
+        directory: workspaceProjectDir().trim() || undefined,
+      });
+      finishPerf(developerMode(), "session.compact", "done", startedAt, {
+        sessionID,
+        messageCount: visible.length,
+        model: modelLabel,
+      });
+    } catch (error) {
+      finishPerf(developerMode(), "session.compact", "error", startedAt, {
+        sessionID,
+        messageCount: visible.length,
+        model: modelLabel,
+        error: error instanceof Error ? error.message : safeStringify(error),
+      });
+      throw error;
+    }
   }
 
   const messageIdFromInfo = (message: MessageWithParts) => {
@@ -996,7 +1169,7 @@ export default function App() {
     // Revert is rejected while the session is busy. We *usually* have an accurate
     // session status via SSE, but to be resilient to transient desync we attempt
     // an abort even when we think we're idle.
-    await (c.session as any).abort({ sessionID }).catch(() => undefined);
+    await abortSessionSafe(c, sessionID);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     const users = messages().filter((message) => {
@@ -1019,8 +1192,8 @@ export default function App() {
     const messageID = messageIdFromInfo(target);
     if (!messageID) return;
 
-    const next = unwrap(await (c.session as any).revert({ sessionID, messageID }));
-    upsertLocalSession(next as Session);
+    const next = await revertSession(c, sessionID, messageID);
+    upsertLocalSession(next);
     restorePromptFromUserMessage(target);
   }
 
@@ -1029,7 +1202,7 @@ export default function App() {
     const sessionID = (selectedSessionId() ?? "").trim();
     if (!c || !sessionID) return;
 
-    await (c.session as any).abort({ sessionID }).catch(() => undefined);
+    await abortSessionSafe(c, sessionID);
 
     const revertMessageID = selectedSession()?.revert?.messageID ?? null;
     if (!revertMessageID) return;
@@ -1045,8 +1218,8 @@ export default function App() {
     });
 
     if (!next) {
-      const session = unwrap(await (c.session as any).unrevert({ sessionID }));
-      upsertLocalSession(session as Session);
+      const session = await unrevertSession(c, sessionID);
+      upsertLocalSession(session);
       setPrompt("");
       return;
     }
@@ -1054,8 +1227,8 @@ export default function App() {
     const messageID = messageIdFromInfo(next);
     if (!messageID) return;
 
-    const nextSession = unwrap(await (c.session as any).revert({ sessionID, messageID }));
-    upsertLocalSession(nextSession as Session);
+    const nextSession = await revertSession(c, sessionID, messageID);
+    upsertLocalSession(nextSession);
 
     let prior: MessageWithParts | null = null;
     for (let idx = users.length - 1; idx >= 0; idx -= 1) {
@@ -1147,24 +1320,21 @@ export default function App() {
     return list.filter((agent) => !agent.hidden && agent.mode !== "subagent");
   }
 
+  const BUILTIN_COMPACT_COMMAND = {
+    id: "builtin:compact",
+    name: "compact",
+    description: "Summarize this session to reduce context size.",
+    source: "command" as const,
+  };
+
   async function listCommands(): Promise<{ id: string; name: string; description?: string; source?: "command" | "mcp" | "skill" }[]> {
     const c = client();
     if (!c) return [];
-    try {
-      const commandApi = c.command as any;
-      if (!commandApi?.list) return [];
-      const result = await commandApi.list({ directory: workspaceStore.activeWorkspaceRoot().trim() || undefined });
-      const list = result?.data ?? result ?? [];
-      if (!Array.isArray(list)) return [];
-      return list.map((cmd: any) => ({
-        id: `cmd:${cmd.name}`,
-        name: cmd.name,
-        description: cmd.description,
-        source: cmd.source,
-      }));
-    } catch {
-      return [];
+    const list = await listCommandsTyped(c, workspaceStore.activeWorkspaceRoot().trim() || undefined);
+    if (list.some((entry) => entry.name === "compact")) {
+      return list;
     }
+    return [BUILTIN_COMPACT_COMMAND, ...list];
   }
 
   function setSessionAgent(sessionID: string, agent: string | null) {
@@ -1246,7 +1416,7 @@ export default function App() {
 
       return auth.instructions || `Opened ${resolved} auth in browser`;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to connect provider";
+      const message = describeProviderError(error, "Failed to connect provider");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -1273,7 +1443,7 @@ export default function App() {
       globalSync.set("provider", updated);
       return `Connected ${providerId}`;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to save API key";
+      const message = describeProviderError(error, "Failed to save API key");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -1287,7 +1457,7 @@ export default function App() {
       setProviderAuthMethods(methods);
       setProviderAuthModalOpen(true);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load providers";
+      const message = describeProviderError(error, "Failed to load providers");
       setProviderAuthError(message);
       throw error;
     } finally {
@@ -1374,6 +1544,13 @@ export default function App() {
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
+  const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
+    Record<string, OpenworkSoulStatus | null>
+  >({});
+  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<OpenworkSoulHeartbeatEntry[]>([]);
+  const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
+  const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
+  const [soulError, setSoulError] = createSignal<string | null>(null);
 
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
@@ -1912,12 +2089,22 @@ export default function App() {
 
   createEffect(() => {
     const allSessions = sessions(); // reactive dependency on session store
-    const wsId = workspaceStore.activeWorkspaceId();
+    const wsId = workspaceStore.activeWorkspaceId().trim();
+    if (!wsId) return;
     const status = sidebarSessionStatusByWorkspaceId()[wsId];
 
     // Only sync if sidebar is already in 'ready' state (not during initial load)
     if (status === "ready") {
-      const sorted = sortSessionsByActivity(allSessions);
+      const activeWorkspace = workspaceStore.workspaces().find((workspace) => workspace.id === wsId) ?? null;
+      const activeWorkspaceRoot = normalizeDirectoryPath(
+        activeWorkspace?.workspaceType === "local"
+          ? activeWorkspace.path
+          : activeWorkspace?.directory ?? activeWorkspace?.path,
+      );
+      const scopedSessions = activeWorkspaceRoot
+        ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
+        : allSessions;
+      const sorted = sortSessionsByActivity(scopedSessions);
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: sorted.map((s) => ({
@@ -1959,9 +2146,11 @@ export default function App() {
   });
 
   createEffect(() => {
-    // Only auto-select a session when the user is on the session route.
-    // Switching workspaces while on the dashboard should not force navigation.
+    // Only auto-select on bare /session. If the URL already includes /session/:id,
+    // let the route-driven selector own the fetch to avoid duplicate selection runs.
     if (currentView() !== "session") return;
+    const normalizedPath = location.pathname.toLowerCase().replace(/\/+$/, "");
+    if (normalizedPath !== "/session") return;
     if (!client()) return;
     if (!sessionsLoaded()) return;
     if (creatingSession()) return;
@@ -2506,6 +2695,8 @@ export default function App() {
     return openworkServerStatus() === "connected" && Boolean(client && workspaceId);
   });
 
+  const schedulerPluginInstalled = createMemo(() => isPluginInstalledByName("opencode-scheduler"));
+
   const refreshScheduledJobs = async (options?: { force?: boolean }) => {
     if (scheduledJobsBusy() && !options?.force) return;
 
@@ -2553,6 +2744,12 @@ export default function App() {
       return;
     }
 
+    if (!schedulerPluginInstalled()) {
+      setScheduledJobs([]);
+      setScheduledJobsStatus(null);
+      return;
+    }
+
     setScheduledJobsBusy(true);
     setScheduledJobsStatus(null);
 
@@ -2593,6 +2790,163 @@ export default function App() {
     return;
   };
 
+  const resolveSoulWorkspaceMap = async () => {
+    const client = openworkServerClient();
+    if (!client || openworkServerStatus() !== "connected") {
+      return {} as Record<string, string>;
+    }
+
+    const response = await client.listWorkspaces();
+    const items = Array.isArray(response.items) ? response.items : [];
+    const map: Record<string, string> = {};
+
+    const idByLocalPath = new Map<string, string>();
+    for (const item of items) {
+      const path = normalizeDirectoryPath(item.path ?? "");
+      if (!path) continue;
+      idByLocalPath.set(path, item.id);
+    }
+
+    for (const workspace of workspaceStore.workspaces()) {
+      if (workspace.workspaceType === "local") {
+        const key = normalizeDirectoryPath(workspace.path ?? "");
+        if (!key) continue;
+        const found = idByLocalPath.get(key);
+        if (found) {
+          map[workspace.id] = found;
+        }
+        continue;
+      }
+
+      if (workspace.remoteType !== "openwork") {
+        continue;
+      }
+
+      const explicitId =
+        workspace.openworkWorkspaceId?.trim() ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "");
+      if (explicitId) {
+        map[workspace.id] = explicitId;
+        continue;
+      }
+
+      const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
+      if (!directoryHint) continue;
+      const match = items.find((entry) => {
+        const entryPath = normalizeDirectoryPath(
+          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
+        );
+        return Boolean(entryPath && entryPath === directoryHint);
+      });
+      if (match?.id) {
+        map[workspace.id] = match.id;
+      }
+    }
+
+    return map;
+  };
+
+  const refreshSoulData = async (options?: { force?: boolean }) => {
+    if (soulStatusBusy() && !options?.force) return;
+
+    const client = openworkServerClient();
+    if (!client || openworkServerStatus() !== "connected") {
+      setSoulStatusByWorkspaceId({});
+      setActiveSoulHeartbeats([]);
+      setSoulHeartbeatsBusy(false);
+      setSoulError(null);
+      return;
+    }
+
+    setSoulStatusBusy(true);
+    setSoulError(null);
+    try {
+      const workspaceMap = await resolveSoulWorkspaceMap();
+      const workspaceIds = Object.entries(workspaceMap);
+
+      const nextStatusByWorkspace: Record<string, OpenworkSoulStatus | null> = {};
+      for (const workspace of workspaceStore.workspaces()) {
+        nextStatusByWorkspace[workspace.id] = null;
+      }
+
+      let hadStatusError = false;
+      await Promise.all(
+        workspaceIds.map(async ([workspaceId, openworkId]) => {
+          try {
+            const status = await client.getSoulStatus(openworkId);
+            nextStatusByWorkspace[workspaceId] = status;
+          } catch {
+            hadStatusError = true;
+            nextStatusByWorkspace[workspaceId] = null;
+          }
+        }),
+      );
+      setSoulStatusByWorkspaceId(nextStatusByWorkspace);
+
+      const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+      const activeOpenworkId = workspaceMap[activeWorkspaceId];
+      if (!activeOpenworkId) {
+        setActiveSoulHeartbeats([]);
+        setSoulHeartbeatsBusy(false);
+        if (hadStatusError) {
+          setSoulError("Soul status is partially unavailable.");
+        }
+        return;
+      }
+
+      setSoulHeartbeatsBusy(true);
+      try {
+        const response = await client.listSoulHeartbeats(activeOpenworkId, 30);
+        setActiveSoulHeartbeats(Array.isArray(response.items) ? response.items : []);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to load soul heartbeats.";
+        setActiveSoulHeartbeats([]);
+        setSoulError(message);
+      } finally {
+        setSoulHeartbeatsBusy(false);
+      }
+
+      if (hadStatusError && !soulError()) {
+        setSoulError("Soul status is partially unavailable.");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load soul status.";
+      setSoulStatusByWorkspaceId({});
+      setActiveSoulHeartbeats([]);
+      setSoulHeartbeatsBusy(false);
+      setSoulError(message);
+    } finally {
+      setSoulStatusBusy(false);
+    }
+  };
+
+  const activeSoulStatus = createMemo(() => {
+    const id = workspaceStore.activeWorkspaceId();
+    if (!id) return null;
+    return soulStatusByWorkspaceId()[id] ?? null;
+  });
+
+  let lastSoulRefreshKey = "";
+  createEffect(() => {
+    const status = openworkServerStatus();
+    const hasClient = Boolean(openworkServerClient());
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId();
+    const workspacesKey = workspaceStore
+      .workspaces()
+      .map((workspace) => {
+        const root = workspace.workspaceType === "local"
+          ? workspace.path?.trim() ?? ""
+          : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
+        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.openworkWorkspaceId ?? ""].join("|");
+      })
+      .join(";");
+    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
+    if (key === lastSoulRefreshKey) return;
+    lastSoulRefreshKey = key;
+    void refreshSoulData().catch(() => undefined);
+  });
+
   createEffect(() => {
     if (!isTauriRuntime()) return;
     workspaceStore.activeWorkspaceId();
@@ -2603,6 +2957,22 @@ export default function App() {
   const activeAuthorizedDirs = createMemo(() => workspaceStore.authorizedDirs());
   const activeWorkspaceDisplay = createMemo(() => workspaceStore.activeWorkspaceDisplay());
   const activePermissionMemo = createMemo(() => activePermission());
+  const migrationRepairUnavailableReason = createMemo<string | null>(() => {
+    if (workspaceStore.canRepairOpencodeMigration()) return null;
+    if (!isTauriRuntime()) {
+      return t("app.migration.desktop_required", currentLocale());
+    }
+
+    if (activeWorkspaceDisplay().workspaceType !== "local") {
+      return t("app.migration.local_only", currentLocale());
+    }
+
+    if (!workspaceStore.activeWorkspacePath().trim()) {
+      return t("app.migration.workspace_required", currentLocale());
+    }
+
+    return t("app.migration.local_only", currentLocale());
+  });
 
   const [expandedStepIds, setExpandedStepIds] = createSignal<Set<string>>(
     new Set()
@@ -3061,13 +3431,19 @@ export default function App() {
   }
 
   async function connectMcp(entry: (typeof MCP_QUICK_CONNECT)[number]) {
-    console.log("[connectMcp] called with entry:", entry);
-
+    const startedAt = perfNow();
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
       (!isTauriRuntime() && openworkServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
-    console.log("[connectMcp] projectDir:", projectDir);
+    const entryType = entry.type ?? "remote";
+
+    recordPerfLog(developerMode(), "mcp.connect", "start", {
+      name: entry.name,
+      type: entryType,
+      workspaceType: isRemoteWorkspace ? "remote" : "local",
+      projectDir: projectDir || null,
+    });
 
     const openworkClient = openworkServerClient();
     let openworkWorkspaceId = openworkServerWorkspaceId();
@@ -3091,26 +3467,30 @@ export default function App() {
       openworkCapabilities?.mcp?.write;
 
     if (isRemoteWorkspace && !canUseOpenworkServer) {
-      console.log("[connectMcp] ❌ openwork server unavailable");
       setMcpStatus("OpenWork server unavailable. MCP config is read-only.");
+      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "openwork-server-unavailable",
+      });
       return;
     }
 
     if (!canUseOpenworkServer && !isTauriRuntime()) {
-      console.log("[connectMcp] ❌ not Tauri runtime");
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
+      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "desktop-required",
+      });
       return;
     }
-    console.log("[connectMcp] ✓ runtime ready");
 
     if (!isRemoteWorkspace && !projectDir) {
-      console.log("[connectMcp] ❌ no projectDir");
       setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
+      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "missing-workspace",
+      });
       return;
     }
 
     let activeClient = client();
-    console.log("[connectMcp] activeClient:", activeClient ? "exists" : "null");
     if (!activeClient) {
       const openworkBaseUrl = openworkServerBaseUrl().trim();
       const auth = openworkServerAuth();
@@ -3121,8 +3501,10 @@ export default function App() {
       }
     }
     if (!activeClient) {
-      console.log("[connectMcp] ❌ no activeClient");
       setMcpStatus(t("mcp.connect_server_first", currentLocale()));
+      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "no-active-client",
+      });
       return;
     }
 
@@ -3141,24 +3523,24 @@ export default function App() {
       }
     }
     if (!resolvedProjectDir) {
-      console.log("[connectMcp] ❌ no projectDir after lookup");
       setMcpStatus(t("mcp.pick_workspace_first", currentLocale()));
+      finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
+        reason: "missing-workspace-after-discovery",
+      });
       return;
     }
 
     const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const entryType = entry.type ?? "remote";
-    console.log("[connectMcp] slug:", slug);
 
     try {
       setMcpStatus(null);
       setMcpConnectingName(entry.name);
-      console.log("[connectMcp] connecting name set to:", entry.name);
 
       const mcpEntryConfig: Record<string, unknown> = {
         type: entryType,
         enabled: true,
       };
+
       if (entryType === "remote") {
         if (!entry.url) {
           throw new Error("Missing MCP URL.");
@@ -3168,62 +3550,52 @@ export default function App() {
           mcpEntryConfig["oauth"] = {};
         }
       }
+
       if (entryType === "local") {
         if (!entry.command?.length) {
           throw new Error("Missing MCP command.");
         }
         mcpEntryConfig["command"] = entry.command;
       }
+
       if (canUseOpenworkServer && openworkClient && openworkWorkspaceId) {
         await openworkClient.addMcp(openworkWorkspaceId, {
           name: slug,
           config: mcpEntryConfig,
         });
-        console.log("[connectMcp] added MCP via OpenWork server");
       } else {
-        // Step 1: Read existing opencode.json config
-        console.log("[connectMcp] reading opencode config for projectDir:", projectDir);
         const configFile = await readOpencodeConfig("project", resolvedProjectDir);
-        console.log("[connectMcp] config file result:", configFile);
 
-        // Step 2: Parse and merge the MCP entry into the config
         let existingConfig: Record<string, unknown> = {};
         if (configFile.exists && configFile.content?.trim()) {
           try {
             existingConfig = parse(configFile.content) ?? {};
-            console.log("[connectMcp] parsed existing config:", existingConfig);
           } catch (parseErr) {
-            console.warn("[connectMcp] failed to parse existing config, starting fresh:", parseErr);
+            recordPerfLog(developerMode(), "mcp.connect", "config-parse-failed", {
+              error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+            });
             existingConfig = {};
           }
         }
 
-        // Ensure base structure
         if (!existingConfig["$schema"]) {
           existingConfig["$schema"] = "https://opencode.ai/config.json";
         }
 
-        // Ensure mcp object exists
         const mcpSection = (existingConfig["mcp"] as Record<string, unknown>) ?? {};
         existingConfig["mcp"] = mcpSection;
-
-        // Add the new MCP server entry
         mcpSection[slug] = mcpEntryConfig;
-        console.log("[connectMcp] merged MCP config:", existingConfig);
 
-        // Step 3: Write the updated config back
         const writeResult = await writeOpencodeConfig(
           "project",
           resolvedProjectDir,
           `${JSON.stringify(existingConfig, null, 2)}\n`
         );
-        console.log("[connectMcp] writeOpencodeConfig result:", writeResult);
         if (!writeResult.ok) {
           throw new Error(writeResult.stderr || writeResult.stdout || "Failed to write opencode.json");
         }
       }
 
-      // Step 4: Call SDK mcp.add to update runtime state
       const mcpAddConfig =
         entryType === "remote"
           ? {
@@ -3238,25 +3610,18 @@ export default function App() {
             enabled: true,
           };
 
-      const mcpAddPayload = {
-        directory: resolvedProjectDir,
-        name: slug,
-        config: mcpAddConfig,
-      };
-      console.log("[connectMcp] calling activeClient.mcp.add with:", mcpAddPayload);
-
-      const rawResult = await activeClient.mcp.add(mcpAddPayload);
-      console.log("[connectMcp] mcp.add raw result:", rawResult);
-
-      const status = unwrap(rawResult);
-      console.log("[connectMcp] mcp.add unwrapped status:", status);
+      const status = unwrap(
+        await activeClient.mcp.add({
+          directory: resolvedProjectDir,
+          name: slug,
+          config: mcpAddConfig,
+        }),
+      );
 
       setMcpStatuses(status as McpStatusMap);
       await refreshMcpServers();
 
-      // Step 5: If OAuth, open the auth modal (modal handles the auth flow)
       if (entry.oauth) {
-        console.log("[connectMcp] entry has OAuth, opening auth modal for:", entry.name);
         setMcpAuthEntry(entry);
         setMcpAuthModalOpen(true);
       } else {
@@ -3264,13 +3629,20 @@ export default function App() {
       }
 
       await refreshMcpServers();
-      console.log("[connectMcp] ✓ done");
+      finishPerf(developerMode(), "mcp.connect", "done", startedAt, {
+        name: entry.name,
+        type: entryType,
+        slug,
+      });
     } catch (e) {
-      console.error("[connectMcp] ❌ error:", e);
       setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
+      finishPerf(developerMode(), "mcp.connect", "error", startedAt, {
+        name: entry.name,
+        type: entryType,
+        error: e instanceof Error ? e.message : safeStringify(e),
+      });
     } finally {
       setMcpConnectingName(null);
-      console.log("[connectMcp] finally block, connecting name cleared");
     }
   }
 
@@ -3408,35 +3780,46 @@ export default function App() {
   }
 
   async function createSessionAndOpen() {
-    console.log("[DEBUG] createSessionAndOpen");
-    console.log("[DEBUG] current baseUrl:", baseUrl());
-    console.log("[DEBUG] engine info:", engine());
-    console.log("[DEBUG] creating session");
     const c = client();
     if (!c) {
-      console.log("[DEBUG] no client available!");
       return;
     }
 
+    const perfEnabled = developerMode();
+    const startedAt = perfNow();
+    const runId = (() => {
+      const key = "__openwork_create_session_run__";
+      const w = window as typeof window & { [key]?: number };
+      w[key] = (w[key] ?? 0) + 1;
+      return w[key];
+    })();
+
+    const mark = (event: string, payload?: Record<string, unknown>) => {
+      const elapsed = Math.round((perfNow() - startedAt) * 100) / 100;
+      recordPerfLog(perfEnabled, "session.create", event, {
+        runId,
+        elapsedMs: elapsed,
+        ...(payload ?? {}),
+      });
+    };
+
+    mark("start", {
+      baseUrl: baseUrl(),
+      workspace: workspaceStore.activeWorkspaceRoot().trim() || null,
+    });
+
     // Abort any in-flight refresh operations to free up connection resources
-    console.log("[DEBUG] aborting in-flight refreshes");
     abortRefreshes();
 
     // Small delay to allow pending requests to settle
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    console.log("[DEBUG] client found");
     setBusy(true);
-    console.log("[DEBUG] busy set");
     setBusyLabel("status.creating_task");
-    console.log("[DEBUG] busy label set");
     setBusyStartedAt(Date.now());
-    console.log("[DEBUG] busy started at set");
     setError(null);
-    console.log("[DEBUG] error set");
     setCreatingSession(true);
 
-    console.log("[DEBUG] with timeout defined");
     const withTimeout = async <T,>(
       promise: Promise<T>,
       ms: number,
@@ -3458,55 +3841,39 @@ export default function App() {
       }
     };
 
-    const runId = (() => {
-      const key = "__openwork_create_session_run__";
-      const w = window as typeof window & { [key]?: number };
-      w[key] = (w[key] ?? 0) + 1;
-      return w[key];
-    })();
-
-    const mark = (() => {
-      const start = Date.now();
-      return (label: string, payload?: unknown) => {
-        const elapsedMs = Date.now() - start;
-        if (payload === undefined) {
-          console.log(`[run ${runId}] ${label} (+${elapsedMs}ms)`);
-        } else {
-          console.log(`[run ${runId}] ${label} (+${elapsedMs}ms)`, payload);
-        }
-      };
-    })();
-
     try {
       // Quick health check to detect stale connection
-      mark("checking health");
+      mark("health:start");
       try {
-        const healthResult = await withTimeout(c.global.health(), 3_000, "health");
-        mark("health ok", healthResult);
+        await withTimeout(c.global.health(), 3_000, "health");
+        mark("health:ok");
       } catch (healthErr) {
-        mark("health FAILED", healthErr);
+        mark("health:error", {
+          error: healthErr instanceof Error ? healthErr.message : safeStringify(healthErr),
+        });
         throw new Error(t("app.connection_lost", currentLocale()));
       }
 
       let rawResult: Awaited<ReturnType<typeof c.session.create>>;
       try {
-        mark("creating session");
+        mark("session:create:start");
         rawResult = await c.session.create({
           directory: workspaceStore.activeWorkspaceRoot().trim(),
         });
-        mark("session created");
+        mark("session:create:ok");
       } catch (createErr) {
-        mark("session create error", createErr);
+        mark("session:create:error", {
+          error: createErr instanceof Error ? createErr.message : safeStringify(createErr),
+        });
         throw createErr;
       }
-      mark("raw result received");
+
       const session = unwrap(rawResult);
-      mark("session unwrapped");
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
+      mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
-      mark("selectSession (immediate)");
-      mark("session selected");
+      mark("session:select:ok", { sessionID: session.id });
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -3515,7 +3882,6 @@ export default function App() {
       if (!currentStoreSessions.some((s) => s.id === session.id)) {
         setSessions([session, ...currentStoreSessions]);
       }
-      mark("session injected into store");
 
       const newItem: SidebarSessionItem = {
         id: session.id,
@@ -3536,9 +3902,7 @@ export default function App() {
           [wsId]: "ready",
         }));
       }
-      mark("sidebar injected");
 
-      mark("view set to session");
       // setSessionViewLockUntil(Date.now() + 1200);
       goToSession(session.id);
 
@@ -3548,10 +3912,16 @@ export default function App() {
       // race with the store injection — the server may not have indexed the
       // session yet, so reconcile() would wipe it from the store, causing
       // the sidebar to flash and the route guard to bounce back.
-      mark("done (SSE will sync)");
+      finishPerf(perfEnabled, "session.create", "done", startedAt, {
+        runId,
+        sessionID: session.id,
+      });
       return session.id;
     } catch (e) {
-      mark("error caught", e);
+      finishPerf(perfEnabled, "session.create", "error", startedAt, {
+        runId,
+        error: e instanceof Error ? e.message : safeStringify(e),
+      });
       const message = e instanceof Error ? e.message : t("app.unknown_error", currentLocale());
       setError(addOpencodeCacheHint(message));
       return undefined;
@@ -3559,6 +3929,26 @@ export default function App() {
       setCreatingSession(false);
       setBusy(false);
     }
+  }
+
+  function runSoulPrompt(promptText: string) {
+    const text = promptText.trim();
+    if (!text) return;
+    void (async () => {
+      const sessionId = await createSessionAndOpen();
+      if (!sessionId) {
+        setPrompt(text);
+        return;
+      }
+
+      await sendPrompt({
+        mode: "prompt",
+        text,
+        resolvedText: text,
+        parts: [{ type: "text", text }],
+        attachments: [],
+      });
+    })();
   }
 
 
@@ -3743,6 +4133,11 @@ export default function App() {
         setUpdateEnv(await updaterEnvironment());
       } catch {
         // ignore
+      }
+
+      if (!launchUpdateCheckTriggered()) {
+        setLaunchUpdateCheckTriggered(true);
+        checkForUpdates({ quiet: true }).catch(() => undefined);
       }
     }
 
@@ -4132,9 +4527,29 @@ export default function App() {
     downloadUpdate().catch(() => undefined);
   });
 
+  const headerConnectedVersion = createMemo(() => {
+    const fallbackVersion = connectedVersion()?.trim() ?? "";
+    if (!developerMode()) {
+      return fallbackVersion || null;
+    }
+
+    const openworkVersion =
+      appVersion()?.trim() ||
+      openworkServerDiagnostics()?.version?.trim() ||
+      "";
+    if (!openworkVersion) {
+      return fallbackVersion || null;
+    }
+
+    const normalizedVersion = openworkVersion.startsWith("v")
+      ? openworkVersion
+      : `v${openworkVersion}`;
+    return `OpenWork ${normalizedVersion}`;
+  });
+
   const headerStatus = createMemo(() => {
-    if (!client() || !connectedVersion()) return t("status.disconnected", currentLocale());
-    const bits = [`${t("status.connected", currentLocale())} · ${connectedVersion()}`];
+    if (!client() || !headerConnectedVersion()) return t("status.disconnected", currentLocale());
+    const bits = [`${t("status.connected", currentLocale())} · ${headerConnectedVersion()}`];
     if (sseConnected()) bits.push(t("status.live", currentLocale()));
     return bits.join(" · ");
   });
@@ -4232,6 +4647,10 @@ export default function App() {
     engineDoctorCheckedAt: engineDoctorCheckedAt(),
     engineInstallLogs: engineInstallLogs(),
     error: error(),
+    canRepairMigration: workspaceStore.canRepairOpencodeMigration(),
+    migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
+    migrationRepairBusy: workspaceStore.migrationRepairBusy(),
+    migrationRepairResult: workspaceStore.migrationRepairResult(),
     isWindows: isWindowsPlatform(),
     onClientDirectoryChange: setClientDirectory,
     onOpenworkHostUrlChange: (value: string) =>
@@ -4247,6 +4666,7 @@ export default function App() {
     onSelectStartup: workspaceStore.onSelectStartup,
     onRememberStartupToggle: workspaceStore.onRememberStartupToggle,
     onStartHost: workspaceStore.onStartHost,
+    onRepairMigration: workspaceStore.onRepairOpencodeMigration,
     onCreateWorkspace: workspaceStore.createWorkspaceFlow,
     onPickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
     onImportWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -4389,12 +4809,21 @@ export default function App() {
       scheduledJobs: scheduledJobs(),
       scheduledJobsSource: scheduledJobsSource(),
       scheduledJobsSourceReady: scheduledJobsSourceReady(),
+      schedulerPluginInstalled: schedulerPluginInstalled(),
       scheduledJobsStatus: scheduledJobsStatus(),
       scheduledJobsBusy: scheduledJobsBusy(),
       scheduledJobsUpdatedAt: scheduledJobsUpdatedAt(),
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
+      soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
+      activeSoulStatus: activeSoulStatus(),
+      activeSoulHeartbeats: activeSoulHeartbeats(),
+      soulStatusBusy: soulStatusBusy(),
+      soulHeartbeatsBusy: soulHeartbeatsBusy(),
+      soulError: soulError(),
+      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
+      runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
@@ -4483,6 +4912,11 @@ export default function App() {
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
       clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
+      repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
+      migrationRepairBusy: workspaceStore.migrationRepairBusy(),
+      migrationRepairResult: workspaceStore.migrationRepairResult(),
+      migrationRepairAvailable: workspaceStore.canRepairOpencodeMigration(),
+      migrationRepairUnavailableReason: migrationRepairUnavailableReason(),
       repairOpencodeCache,
       cacheRepairBusy: cacheRepairBusy(),
       cacheRepairResult: cacheRepairResult(),
@@ -4589,10 +5023,12 @@ export default function App() {
     sessionRevertMessageId: selectedSession()?.revert?.messageID ?? null,
     undoLastUserMessage: undoLastUserMessage,
     redoLastUserMessage: redoLastUserMessage,
+    compactSession: compactCurrentSession,
     lastPromptSent: lastPromptSent(),
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
+    soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
     messages: visibleMessages(),
@@ -4656,6 +5092,7 @@ export default function App() {
 
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
+    "soul",
     "skills",
     "plugins",
     "mcp",

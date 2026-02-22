@@ -16,10 +16,17 @@ import type {
 } from "../types";
 import { t } from "../../i18n";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import {
+  formatRelativeTime,
+  getWorkspaceTaskLoadErrorDisplay,
+  isTauriRuntime,
+  normalizeDirectoryPath,
+} from "../utils";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
+  OpenworkSoulHeartbeatEntry,
+  OpenworkSoulStatus,
   OpenworkServerClient,
   OpenworkServerCapabilities,
   OpenworkServerDiagnostics,
@@ -31,6 +38,7 @@ import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouter
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
+import SoulView from "./soul";
 import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
@@ -42,7 +50,9 @@ import {
   Box,
   ChevronDown,
   ChevronRight,
+  Circle,
   History,
+  HeartPulse,
   Loader2,
   MessageCircle,
   MoreHorizontal,
@@ -129,11 +139,20 @@ export type DashboardViewProps = {
   scheduledJobs: ScheduledJob[];
   scheduledJobsSource: "local" | "remote";
   scheduledJobsSourceReady: boolean;
+  schedulerPluginInstalled: boolean;
   scheduledJobsStatus: string | null;
   scheduledJobsBusy: boolean;
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
+  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
+  activeSoulStatus: OpenworkSoulStatus | null;
+  activeSoulHeartbeats: OpenworkSoulHeartbeatEntry[];
+  soulStatusBusy: boolean;
+  soulHeartbeatsBusy: boolean;
+  soulError: string | null;
+  refreshSoulData: (options?: { force?: boolean }) => void;
+  runSoulPrompt: (prompt: string) => void;
   activeWorkspaceRoot: string;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
@@ -249,6 +268,11 @@ export type DashboardViewProps = {
   workspaceDebugEvents: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
+  repairOpencodeMigration: () => void;
+  migrationRepairBusy: boolean;
+  migrationRepairResult: { ok: boolean; message: string } | null;
+  migrationRepairAvailable: boolean;
+  migrationRepairUnavailableReason: string | null;
   repairOpencodeCache: () => void;
   cacheRepairBusy: boolean;
   cacheRepairResult: string | null;
@@ -267,6 +291,8 @@ export default function DashboardView(props: DashboardViewProps) {
     switch (props.tab) {
       case "scheduled":
         return t("dashboard.tab_automations");
+      case "soul":
+        return "Soul";
       case "skills":
         return t("dashboard.tab_skills");
       case "plugins":
@@ -274,7 +300,7 @@ export default function DashboardView(props: DashboardViewProps) {
       case "mcp":
         return t("dashboard.tab_extensions");
       case "identities":
-        return t("dashboard.tab_identities");
+        return "Messaging";
       case "config":
         return t("dashboard.tab_advanced");
       case "settings":
@@ -300,20 +326,16 @@ export default function DashboardView(props: DashboardViewProps) {
       : t("dashboard.workspace_local");
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
-    // For same-workspace clicks, just select the session without workspace activation
+    // Route-driven selection: navigate first and let the route effect own selectSession.
     if (workspaceId === props.activeWorkspaceId) {
-      void props.selectSession(sessionId);
       props.setView("session", sessionId);
       return;
     }
     // For different workspace, activate workspace first
-    window.setTimeout(() => {
-      void (async () => {
-        await Promise.resolve(props.activateWorkspace(workspaceId));
-        void props.selectSession(sessionId);
-        props.setView("session", sessionId);
-      })();
-    }, 0);
+    void (async () => {
+      await Promise.resolve(props.activateWorkspace(workspaceId));
+      props.setView("session", sessionId);
+    })();
   };
 
   const createTaskInWorkspace = (workspaceId: string) => {
@@ -477,6 +499,9 @@ export default function DashboardView(props: DashboardViewProps) {
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
         }
+        if (currentTab === "soul" && !cancelled) {
+          await props.refreshSoulData();
+        }
       } catch {
         // Ignore errors during navigation
       } finally {
@@ -493,6 +518,13 @@ export default function DashboardView(props: DashboardViewProps) {
       setRefreshInProgress(false);
     });
   });
+
+  const soulModeEnabled = createMemo(() => {
+    const status = props.soulStatusByWorkspaceId[props.activeWorkspaceId];
+    return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
+  });
+
+  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
   const navItem = (t: DashboardTab, label: any, icon: any) => {
     const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
@@ -517,8 +549,25 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const openConfig = () => {
-    props.setTab("config");
+    props.setTab(props.developerMode ? "config" : "identities");
   };
+
+  const openSoulForWorkspace = (workspaceId?: string) => {
+    const id = (workspaceId ?? props.activeWorkspaceId).trim();
+    if (!id) return;
+    void (async () => {
+      if (id !== props.activeWorkspaceId) {
+        await Promise.resolve(props.activateWorkspace(id));
+      }
+      props.setTab("soul");
+    })();
+  };
+
+  createEffect(() => {
+    if (props.developerMode) return;
+    if (props.tab !== "config") return;
+    props.setTab("identities");
+  });
 
   const shareWorkspace = createMemo(() => {
     const id = shareWorkspaceId();
@@ -708,12 +757,50 @@ export default function DashboardView(props: DashboardViewProps) {
     return t("dashboard.update_available_btn");
   });
 
-  const updatePillTone = createMemo(() => {
+  const updatePillButtonTone = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return "border-transparent bg-green-9 text-white shadow-[0_2px_10px_rgba(22,163,74,0.35)] hover:bg-green-10";
+      return props.anyActiveRuns
+        ? "text-amber-11 hover:text-amber-11 hover:bg-amber-3/30"
+        : "text-green-11 hover:text-green-11 hover:bg-green-3/30";
     }
-    return "border-transparent bg-dls-accent text-white shadow-[0_2px_10px_rgba(var(--dls-accent-rgb),0.35)] hover:bg-[var(--dls-accent-hover)]";
+    if (state === "downloading") {
+      return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
+    }
+    return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
+  });
+
+  const updatePillBorderTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "border-amber-7/35" : "border-green-7/35";
+    }
+    if (state === "downloading") {
+      return "border-blue-7/35";
+    }
+    return "border-dls-border";
+  });
+
+  const updatePillDotTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "text-amber-10 fill-amber-10" : "text-green-10 fill-green-10";
+    }
+    if (state === "downloading") {
+      return "text-blue-10";
+    }
+    return "text-emerald-10 fill-emerald-10";
+  });
+
+  const updatePillVersionTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "text-amber-11/75" : "text-green-11/75";
+    }
+    if (state === "downloading") {
+      return "text-blue-11/75";
+    }
+    return "text-dls-secondary";
   });
 
   const updatePillTitle = createMemo(() => {
@@ -744,7 +831,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <Show when={showUpdatePill()}>
             <button
               type="button"
-              class={`mb-3 w-full flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-medium transition-all hover:-translate-y-[1px] ${updatePillTone()}`}
+              class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
               onClick={handleUpdatePillClick}
               title={updatePillTitle()}
               aria-label={updatePillTitle()}
@@ -752,22 +839,22 @@ export default function DashboardView(props: DashboardViewProps) {
               <Show
                 when={props.updateStatus?.state === "downloading"}
                 fallback={
-                  <span class="w-2 h-2 rounded-full bg-white/85" />
+                  <Circle
+                    size={8}
+                    class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
+                  />
                 }
               >
-                <Loader2 size={14} class="animate-spin text-white/90" />
+                <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
               </Show>
-              <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
+              <span class="flex-1 text-left">{updatePillLabel()}</span>
               <Show when={props.updateStatus?.version}>
                 {(version) => (
-                  <span class="ml-auto text-[11px] text-white/80 font-mono">v{version()}</span>
+                  <span class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
                 )}
               </Show>
             </button>
           </Show>
-          <div class="flex items-center text-[11px] font-bold text-dls-secondary uppercase px-3 mb-3 pt-2 tracking-tight">
-            <span>{t("dashboard.tasks_header")}</span>
-          </div>
 
           <div class="space-y-3 mb-3">
             <For each={props.workspaceSessionGroups}>
@@ -775,6 +862,9 @@ export default function DashboardView(props: DashboardViewProps) {
                 const workspace = () => group.workspace;
                 const isConnecting = () => props.connectingWorkspaceId === workspace().id;
                 const isMenuOpen = () => workspaceMenuId() === workspace().id;
+                const taskLoadError = () => getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
+                const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                const soulEnabled = () => Boolean(soulStatus()?.enabled);
 
                 return (
                   <div class="space-y-1">
@@ -813,8 +903,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         </button>
                         <div class="min-w-0 flex-1">
                           <div class="text-sm font-medium truncate">{workspaceLabel(workspace())}</div>
-                          <div class="text-[11px] text-dls-secondary">
-                            {workspaceKindLabel(workspace())}
+                          <div class="text-[11px] text-dls-secondary flex items-center gap-1.5">
+                            <span>{workspaceKindLabel(workspace())}</span>
+                            <Show when={soulEnabled()}>
+                              <span class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-1.5 py-0.5 text-[10px] text-rose-11">
+                                <HeartPulse size={10} />
+                                Soul
+                              </span>
+                            </Show>
                           </div>
                         </div>
                         <Show when={group.status === "loading"}>
@@ -822,10 +918,14 @@ export default function DashboardView(props: DashboardViewProps) {
                         </Show>
                         <Show when={group.status === "error"}>
                           <span
-                            class="text-[10px] px-2 py-0.5 rounded-full border border-red-7/50 text-red-11 bg-red-3/30"
-                            title={group.error ?? t("dashboard.tasks_error")}
+                            class={`text-[10px] px-2 py-0.5 rounded-full border ${
+                              taskLoadError().tone === "offline"
+                                ? "border-amber-7/50 text-amber-11 bg-amber-3/30"
+                                : "border-red-7/50 text-red-11 bg-red-3/30"
+                            }`}
+                            title={taskLoadError().title}
                           >
-                            {t("dashboard.tasks_error_badge")}
+                            {taskLoadError().label}
                           </span>
                         </Show>
                         {/* Session count intentionally hidden (not a useful signal and it can crowd the header actions). */}
@@ -885,6 +985,16 @@ export default function DashboardView(props: DashboardViewProps) {
                             }}
                           >
                             {t("dashboard.menu_share")}
+                          </button>
+                          <button
+                            type="button"
+                            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                            onClick={() => {
+                              openSoulForWorkspace(workspace().id);
+                              setWorkspaceMenuId(null);
+                            }}
+                          >
+                            {soulEnabled() ? "Soul settings" : "Enable soul"}
                           </button>
                           <Show when={workspace().workspaceType === "remote"}>
                             <button
@@ -982,10 +1092,14 @@ export default function DashboardView(props: DashboardViewProps) {
                               fallback={
                                 <Show when={group.status === "error"}>
                                   <div
-                                    class="w-full px-3 py-2 text-xs text-red-11 ml-2 text-left rounded-lg bg-red-3/20 border border-red-7/40"
-                                    title={group.error ?? t("dashboard.tasks_error")}
+                                    class={`w-full px-3 py-2 text-xs ml-2 text-left rounded-lg border ${
+                                      taskLoadError().tone === "offline"
+                                        ? "text-amber-11 bg-amber-3/20 border-amber-7/40"
+                                        : "text-red-11 bg-red-3/20 border-red-7/40"
+                                    }`}
+                                    title={taskLoadError().title}
                                   >
-                                    {t("dashboard.tasks_error")}
+                                    {taskLoadError().message}
                                   </div>
                                 </Show>
                               }
@@ -1116,7 +1230,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Show when={showUpdatePill()}>
               <button
                 type="button"
-                class={`md:hidden flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${updatePillTone()}`}
+                class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
                 onClick={handleUpdatePillClick}
                 title={updatePillTitle()}
                 aria-label={updatePillTitle()}
@@ -1124,15 +1238,18 @@ export default function DashboardView(props: DashboardViewProps) {
                 <Show
                   when={props.updateStatus?.state === "downloading"}
                   fallback={
-                    <span class="w-2 h-2 rounded-full bg-white/85" />
+                    <Circle
+                      size={8}
+                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
+                    />
                   }
                 >
-                  <Loader2 size={14} class="animate-spin text-white/90" />
+                  <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
                 </Show>
-                <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
+                <span class="text-[11px]">{updatePillLabel()}</span>
                 <Show when={props.updateStatus?.version}>
                   {(version) => (
-                    <span class="hidden sm:inline text-[11px] text-white/80 font-mono">v{version()}</span>
+                    <span class={`hidden sm:inline font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
                   )}
                 </Show>
               </button>
@@ -1140,6 +1257,12 @@ export default function DashboardView(props: DashboardViewProps) {
             <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
               {props.activeWorkspaceDisplay.name}
             </div>
+            <Show when={props.activeSoulStatus?.enabled}>
+              <div class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-[11px] text-rose-11">
+                <HeartPulse size={11} />
+                Soul on
+              </div>
+            </Show>
             <h1 class="text-lg font-medium">{title()}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
@@ -1168,6 +1291,26 @@ export default function DashboardView(props: DashboardViewProps) {
                 createSessionAndOpen={props.createSessionAndOpen}
                 setPrompt={props.setPrompt}
                 newTaskDisabled={props.newTaskDisabled}
+                schedulerInstalled={props.schedulerPluginInstalled}
+                canEditPlugins={props.canEditPlugins}
+                addPlugin={props.addPlugin}
+                reloadWorkspaceEngine={props.reloadWorkspaceEngine}
+                reloadBusy={props.reloadBusy}
+                canReloadWorkspace={props.canReloadWorkspace}
+              />
+            </Match>
+            <Match when={props.tab === "soul"}>
+              <SoulView
+                workspaceName={props.activeWorkspaceDisplay.name}
+                workspaceRoot={props.activeWorkspaceRoot}
+                status={props.activeSoulStatus}
+                heartbeats={props.activeSoulHeartbeats}
+                loading={props.soulStatusBusy}
+                loadingHeartbeats={props.soulHeartbeatsBusy}
+                error={props.soulError}
+                newTaskDisabled={props.newTaskDisabled}
+                refresh={props.refreshSoulData}
+                runSoulPrompt={props.runSoulPrompt}
               />
             </Match>
             <Match when={props.tab === "skills"}>
@@ -1198,6 +1341,7 @@ export default function DashboardView(props: DashboardViewProps) {
             <Match when={props.tab === "plugins" || props.tab === "mcp"}>
               <ExtensionsView
                 initialSection={props.tab === "plugins" ? "plugins" : "mcp"}
+                setDashboardTab={props.setTab}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
                 refreshMcpServers={props.refreshMcpServers}
@@ -1248,7 +1392,7 @@ export default function DashboardView(props: DashboardViewProps) {
               />
             </Match>
 
-            <Match when={props.tab === "config"}>
+            <Match when={props.tab === "config" && props.developerMode}>
               <ConfigView
                 busy={props.busy}
                 clientConnected={props.clientConnected}
@@ -1342,6 +1486,11 @@ export default function DashboardView(props: DashboardViewProps) {
                   workspaceDebugEvents={props.workspaceDebugEvents}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
+                  repairOpencodeMigration={props.repairOpencodeMigration}
+                  migrationRepairBusy={props.migrationRepairBusy}
+                  migrationRepairResult={props.migrationRepairResult}
+                  migrationRepairAvailable={props.migrationRepairAvailable}
+                  migrationRepairUnavailableReason={props.migrationRepairUnavailableReason}
                   repairOpencodeCache={props.repairOpencodeCache}
                   cacheRepairBusy={props.cacheRepairBusy}
                   cacheRepairResult={props.cacheRepairResult}
@@ -1438,7 +1587,7 @@ export default function DashboardView(props: DashboardViewProps) {
           mcpStatuses={props.mcpStatuses}
         />
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class="mx-auto max-w-5xl px-4 py-3 grid grid-cols-5 gap-2">
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-6" : "grid-cols-5"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1447,6 +1596,15 @@ export default function DashboardView(props: DashboardViewProps) {
             >
               <History size={18} />
               {t("dashboard.tab_automations")}
+            </button>
+            <button
+              class={`flex flex-col items-center gap-1 text-xs ${
+                props.tab === "soul" ? "text-gray-12" : "text-gray-10"
+              }`}
+              onClick={() => props.setTab("soul")}
+            >
+              <HeartPulse size={18} class={soulNavIconClass()} />
+              Soul
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1475,15 +1633,17 @@ export default function DashboardView(props: DashboardViewProps) {
               <MessageCircle size={18} />
               {t("dashboard.nav_ids")}
             </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "config" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("config")}
-            >
-              <SlidersHorizontal size={18} />
-              {t("dashboard.tab_advanced")}
-            </button>
+            <Show when={props.developerMode}>
+              <button
+                class={`flex flex-col items-center gap-1 text-xs ${
+                  props.tab === "config" ? "text-gray-12" : "text-gray-10"
+                }`}
+                onClick={() => props.setTab("config")}
+              >
+                <SlidersHorizontal size={18} />
+                {t("dashboard.tab_advanced")}
+              </button>
+            </Show>
           </div>
         </nav>
       </main>
@@ -1491,6 +1651,7 @@ export default function DashboardView(props: DashboardViewProps) {
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
           {navItem("scheduled", t("dashboard.tab_automations"), <History size={18} />)}
+          {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
           {navItem("skills", t("dashboard.tab_skills"), <Zap size={18} />)}
           {navItem("mcp", t("dashboard.tab_extensions"), <Box size={18} />)}
           {navItem("identities", t("dashboard.tab_identities"), <MessageCircle size={18} />)}

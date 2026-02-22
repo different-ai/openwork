@@ -7,7 +7,7 @@
     "dev:ui": "pnpm --filter @different-ai/openwork-ui dev",
     "dev:web": "pnpm --filter @different-ai/openwork-ui dev",
     "dev:headless-web": "bun scripts/dev-headless-web.ts",
-    "build": "pnpm --filter @different-ai/openwork build",
+    "build": "node scripts/build.mjs",
     "build:ui": "pnpm --filter @different-ai/openwork-ui build",
     "build:web": "pnpm --filter @different-ai/openwork-ui build",
     "preview": "pnpm --filter @different-ai/openwork-ui preview",

@@ -1,0 +1,127 @@
+{
+  "signup": {
+    "status": 200,
+    "body": {
+      "token": "REDACTED_SESSION_TOKEN",
+      "user": {
+        "name": "Den OpenWork",
+        "email": "den-openwork-1771653211@example.com",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-02-21T05:53:32.550Z",
+        "updatedAt": "2026-02-21T05:53:32.550Z",
+        "id": "jhaaa6Gw9nqIL0KMdRicskHnYlCuBMNI"
+      }
+    }
+  },
+  "bearerTokenPresent": true,
+  "me_cookie": {
+    "status": 200,
+    "body": {
+      "session": {
+        "expiresAt": "2026-02-28T05:53:32.639Z",
+        "token": "REDACTED_SESSION_TOKEN",
+        "createdAt": "2026-02-21T05:53:32.639Z",
+        "updatedAt": "2026-02-21T05:53:32.639Z",
+        "ipAddress": "REDACTED_IP",
+        "userAgent": "Python-urllib/3.9",
+        "userId": "jhaaa6Gw9nqIL0KMdRicskHnYlCuBMNI",
+        "id": "REDACTED_SESSION_ID"
+      },
+      "user": {
+        "name": "Den OpenWork",
+        "email": "den-openwork-1771653211@example.com",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-02-21T05:53:32.550Z",
+        "updatedAt": "2026-02-21T05:53:32.550Z",
+        "id": "jhaaa6Gw9nqIL0KMdRicskHnYlCuBMNI"
+      }
+    }
+  },
+  "me_bearer": {
+    "status": 200,
+    "body": {
+      "session": {
+        "expiresAt": "2026-02-28T05:53:32.639Z",
+        "token": "REDACTED_SESSION_TOKEN",
+        "createdAt": "2026-02-21T05:53:32.639Z",
+        "updatedAt": "2026-02-21T05:53:32.639Z",
+        "ipAddress": "REDACTED_IP",
+        "userAgent": "Python-urllib/3.9",
+        "userId": "jhaaa6Gw9nqIL0KMdRicskHnYlCuBMNI",
+        "id": "REDACTED_SESSION_ID"
+      },
+      "user": {
+        "name": "Den OpenWork",
+        "email": "den-openwork-1771653211@example.com",
+        "emailVerified": false,
+        "image": null,
+        "createdAt": "2026-02-21T05:53:32.550Z",
+        "updatedAt": "2026-02-21T05:53:32.550Z",
+        "id": "jhaaa6Gw9nqIL0KMdRicskHnYlCuBMNI"
+      }
+    }
+  },
+  "create_worker": {
+    "status": 201,
+    "body": {
+      "worker": {
+        "id": "92500aab-e73a-437e-96a6-13210a555c39",
+        "orgId": "6187652b-cd56-49c5-82a3-78f3c4731b41",
+        "name": "openwork-nonstub-1771653211",
+        "description": "openwork repo render e2e worker",
+        "destination": "cloud",
+        "status": "healthy",
+        "imageVersion": "den-worker-v1",
+        "workspacePath": null,
+        "sandboxBackend": null
+      },
+      "tokens": {
+        "host": "REDACTED_HOST_TOKEN",
+        "client": "REDACTED_CLIENT_TOKEN"
+      },
+      "instance": {
+        "provider": "render",
+        "url": "https://den-worker-openwork-openwork-nonstub-wnpt.onrender.com",
+        "status": "healthy",
+        "region": "oregon"
+      }
+    },
+    "payload": {
+      "name": "openwork-nonstub-1771653211",
+      "description": "openwork repo render e2e worker",
+      "destination": "cloud",
+      "imageVersion": "den-worker-v1"
+    }
+  },
+  "worker_url": "https://den-worker-openwork-openwork-nonstub-wnpt.onrender.com",
+  "worker_id": "92500aab-e73a-437e-96a6-13210a555c39",
+  "get_worker": {
+    "status": 200,
+    "body": {
+      "worker": {
+        "id": "92500aab-e73a-437e-96a6-13210a555c39",
+        "orgId": "6187652b-cd56-49c5-82a3-78f3c4731b41",
+        "name": "openwork-nonstub-1771653211",
+        "description": "openwork repo render e2e worker",
+        "destination": "cloud",
+        "status": "healthy",
+        "imageVersion": "den-worker-v1",
+        "workspacePath": null,
+        "sandboxBackend": null,
+        "createdAt": "2026-02-21T05:53:33.000Z",
+        "updatedAt": "2026-02-21T05:55:00.546Z"
+      }
+    }
+  },
+  "worker_health": {
+    "status": 200,
+    "body": {
+      "ok": true,
+      "version": "0.11.113",
+      "uptimeMs": 21378
+    },
+    "url": "https://den-worker-openwork-openwork-nonstub-wnpt.onrender.com/health"
+  }
+}

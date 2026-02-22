@@ -1,0 +1,519 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --ow-bg: #fafafa;
+  --ow-ink: #0f172a;
+  --ow-muted: #475569;
+  --ow-line: #dce2f4;
+  --ow-card: rgba(255, 255, 255, 0.94);
+  --ow-accent: #1b29ff;
+  --ow-accent-strong: #1722d1;
+  --ow-success: #0f9f66;
+  --ow-warning: #b45309;
+  --ow-danger: #b42318;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-space-grotesk), "Avenir Next", "Segoe UI", sans-serif;
+  color: var(--ow-ink);
+  background: #fafafa;
+}
+
+.ow-shell {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+  padding: 1.5rem;
+  overflow: hidden;
+}
+
+.ow-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ow-blob {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(115px);
+  mix-blend-mode: multiply;
+  opacity: 0.45;
+}
+
+.ow-blob-one {
+  width: 46rem;
+  height: 46rem;
+  top: -22%;
+  left: -12%;
+  background: rgba(99, 102, 241, 0.42);
+}
+
+.ow-blob-two {
+  width: 34rem;
+  height: 34rem;
+  top: 8%;
+  right: -8%;
+  background: rgba(59, 130, 246, 0.3);
+}
+
+.ow-blob-three {
+  width: 40rem;
+  height: 40rem;
+  bottom: -28%;
+  left: 18%;
+  background: rgba(147, 197, 253, 0.34);
+}
+
+.ow-brand {
+  position: absolute;
+  top: 1.75rem;
+  left: 1.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  z-index: 5;
+}
+
+.ow-brand-icon {
+  width: 1.95rem;
+  height: 1.95rem;
+  border-radius: 0.65rem;
+  background: rgba(27, 41, 255, 0.13);
+  border: 1px solid rgba(27, 41, 255, 0.24);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ow-brand-icon-core {
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 999px;
+  background: var(--ow-accent);
+  box-shadow: 0 0 0 0.3rem rgba(27, 41, 255, 0.2);
+}
+
+.ow-brand-text {
+  font-size: 1.03rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ow-card {
+  width: min(100%, 30rem);
+  background: var(--ow-card);
+  border: 1px solid rgba(220, 226, 244, 0.95);
+  border-radius: 1.8rem;
+  box-shadow: 0 18px 55px rgba(15, 23, 42, 0.09);
+  backdrop-filter: blur(14px);
+  position: relative;
+  z-index: 4;
+  overflow: hidden;
+}
+
+.ow-progress-track {
+  width: 100%;
+  height: 0.28rem;
+  background: #e8edf8;
+}
+
+.ow-progress-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #1b29ff 0%, #3b82f6 100%);
+  transition: width 320ms ease;
+}
+
+.ow-card-body {
+  padding: 2rem 1.7rem;
+}
+
+.ow-stack {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.ow-heading-block {
+  display: grid;
+  gap: 0.45rem;
+  text-align: center;
+  margin-bottom: 0.35rem;
+}
+
+.ow-icon-chip {
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 0.9rem;
+  background: rgba(27, 41, 255, 0.11);
+  border: 1px solid rgba(27, 41, 255, 0.2);
+  color: var(--ow-accent);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 0.2rem;
+}
+
+.ow-title {
+  margin: 0;
+  font-size: clamp(1.7rem, 5vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.ow-subtitle {
+  margin: 0;
+  color: var(--ow-muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.ow-field-block {
+  display: grid;
+  gap: 0.38rem;
+}
+
+.ow-field-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5f6f91;
+  padding-left: 0.2rem;
+}
+
+.ow-input {
+  width: 100%;
+  border-radius: 0.78rem;
+  border: 1px solid #d9e1f2;
+  background: #fff;
+  color: var(--ow-ink);
+  padding: 0.82rem 0.9rem;
+  font-size: 0.93rem;
+  line-height: 1.35;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.ow-input:focus-visible {
+  outline: none;
+  border-color: rgba(27, 41, 255, 0.55);
+  box-shadow: 0 0 0 0.22rem rgba(27, 41, 255, 0.16);
+}
+
+.ow-mono {
+  font-family: var(--font-ibm-plex-mono), "JetBrains Mono", "SF Mono", monospace;
+  font-size: 0.8rem;
+}
+
+.ow-btn-primary,
+.ow-btn-secondary,
+.ow-btn-icon,
+.ow-link {
+  appearance: none;
+  cursor: pointer;
+  border: 0;
+  font: inherit;
+}
+
+.ow-btn-primary {
+  width: 100%;
+  border-radius: 0.82rem;
+  border: 1px solid rgba(27, 41, 255, 0.28);
+  background: linear-gradient(135deg, #1b29ff 0%, #2639ff 58%, #1a2bd0 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.92rem;
+  padding: 0.84rem 0.96rem;
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  box-shadow: 0 12px 24px rgba(27, 41, 255, 0.2);
+}
+
+.ow-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.ow-btn-primary:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.ow-btn-secondary {
+  border-radius: 0.78rem;
+  border: 1px solid #ced8ef;
+  background: #fff;
+  color: #1f3a8a;
+  font-size: 0.84rem;
+  font-weight: 600;
+  padding: 0.72rem 0.84rem;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.ow-btn-secondary:hover:not(:disabled),
+.ow-btn-icon:hover:not(:disabled) {
+  border-color: #9fb2eb;
+  background: #f5f8ff;
+}
+
+.ow-btn-secondary:disabled,
+.ow-btn-icon:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ow-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.ow-caption {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.76rem;
+}
+
+.ow-link {
+  background: transparent;
+  color: #1e3a8a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 0.2rem;
+}
+
+.ow-link:hover {
+  text-decoration-color: currentColor;
+}
+
+.ow-note-box,
+.ow-paywall-box,
+.ow-lookup-box,
+.ow-log-box {
+  border-radius: 0.92rem;
+  border: 1px solid #dbe3f4;
+  background: #f9fbff;
+  padding: 0.78rem;
+}
+
+.ow-note-box p,
+.ow-paywall-box p,
+.ow-log-item p,
+.ow-step-detail {
+  margin: 0;
+}
+
+.ow-note-box {
+  display: grid;
+  gap: 0.42rem;
+  color: #334155;
+  font-size: 0.82rem;
+}
+
+.ow-error-text {
+  color: var(--ow-danger);
+  font-weight: 600;
+}
+
+.ow-step-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ow-step-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  border-radius: 0.8rem;
+  border: 1px solid #dbe3f4;
+  background: #fff;
+  padding: 0.58rem 0.6rem;
+}
+
+.ow-step-item.is-done {
+  border-color: #bfd0f8;
+  background: #f7faff;
+}
+
+.ow-step-index {
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid #b9caef;
+  background: #eef4ff;
+  color: #1f3a8a;
+  font-size: 0.66rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ow-step-title {
+  margin: 0;
+  font-size: 0.78rem;
+  color: #1e293b;
+  font-weight: 700;
+}
+
+.ow-step-detail {
+  color: #64748b;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.ow-paywall-title,
+.ow-section-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #1e3a8a;
+}
+
+.ow-full {
+  width: 100%;
+  justify-content: center;
+  display: inline-flex;
+}
+
+.ow-lookup-box {
+  display: grid;
+  gap: 0.58rem;
+}
+
+.ow-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.48rem;
+}
+
+.ow-inline-actions > .ow-input {
+  flex: 1 1 14rem;
+}
+
+.ow-copy-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.46rem;
+}
+
+.ow-btn-icon {
+  border-radius: 0.76rem;
+  border: 1px solid #ced8ef;
+  background: #fff;
+  color: #1f3a8a;
+  font-size: 0.74rem;
+  font-weight: 700;
+  padding: 0.66rem 0.75rem;
+  min-width: 4.2rem;
+}
+
+.ow-log-box {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.ow-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ow-log-item {
+  border-radius: 0.72rem;
+  border: 1px solid #e1e8f7;
+  background: #fff;
+  padding: 0.52rem 0.56rem;
+  display: grid;
+  gap: 0.2rem;
+  color: #334155;
+  font-size: 0.74rem;
+}
+
+.ow-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.ow-log-item.level-success .ow-log-head {
+  color: var(--ow-success);
+}
+
+.ow-log-item.level-warning .ow-log-head {
+  color: var(--ow-warning);
+}
+
+.ow-log-item.level-error .ow-log-head {
+  color: var(--ow-danger);
+}
+
+.ow-footer {
+  margin: 0;
+  position: relative;
+  z-index: 3;
+  max-width: 28rem;
+  text-align: center;
+  color: #64748b;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 640px) {
+  .ow-shell {
+    justify-content: flex-start;
+    padding-top: 5rem;
+    padding-bottom: 2.2rem;
+  }
+
+  .ow-brand {
+    top: 1rem;
+    left: 1rem;
+  }
+
+  .ow-card {
+    border-radius: 1.45rem;
+  }
+
+  .ow-card-body {
+    padding: 1.25rem 1.05rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ow-progress-fill,
+  .ow-btn-primary,
+  .ow-btn-secondary,
+  .ow-btn-icon,
+  .ow-link,
+  .ow-input {
+    transition: none;
+  }
+}

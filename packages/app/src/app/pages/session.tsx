@@ -28,7 +28,9 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Circle,
   Cpu,
+  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -55,9 +57,21 @@ import ProviderAuthModal from "../components/provider-auth-modal";
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import StatusBar from "../components/status-bar";
 import { buildOpenworkWorkspaceBaseUrl, createOpenworkServerClient } from "../lib/openwork-server";
-import type { OpenworkServerClient, OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
+import type {
+  OpenworkServerClient,
+  OpenworkServerSettings,
+  OpenworkServerStatus,
+  OpenworkSoulStatus,
+} from "../lib/openwork-server";
 import { join } from "@tauri-apps/api/path";
-import { formatRelativeTime, isTauriRuntime, normalizeDirectoryPath, parseTemplateFrontmatter } from "../utils";
+import {
+  formatRelativeTime,
+  getWorkspaceTaskLoadErrorDisplay,
+  isTauriRuntime,
+  normalizeDirectoryPath,
+  parseTemplateFrontmatter,
+} from "../utils";
+import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -87,6 +101,7 @@ export type SessionViewProps = {
   testWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
+  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
@@ -122,6 +137,7 @@ export type SessionViewProps = {
   sessionRevertMessageId: string | null;
   undoLastUserMessage: () => Promise<void>;
   redoLastUserMessage: () => Promise<void>;
+  compactSession: () => Promise<void>;
   lastPromptSent: string;
   retryLastPrompt: () => void;
   newTaskDisabled: boolean;
@@ -210,7 +226,23 @@ const SOUL_SETUP_TEMPLATE = (() => {
   return { name, description, body };
 })();
 
-const INITIAL_MESSAGE_WINDOW = 140;
+const MESSAGE_WINDOW_LOAD_CHUNK = 120;
+const MAX_SEARCH_MESSAGE_CHARS = 4_000;
+const MAX_SEARCH_HITS = 2_000;
+const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
+const STREAM_RENDER_BATCH_MS = 220;
+const MAIN_THREAD_LAG_INTERVAL_MS = 200;
+const MAIN_THREAD_LAG_WARN_MS = 180;
+
+type CommandPaletteMode = "root" | "sessions" | "thinking";
+
+const COMMAND_PALETTE_THINKING_OPTIONS = [
+  { value: "none", label: "None", detail: "Fastest responses" },
+  { value: "low", label: "Low", detail: "Light reasoning" },
+  { value: "medium", label: "Medium", detail: "Balanced depth" },
+  { value: "high", label: "High", detail: "Deeper reasoning" },
+  { value: "xhigh", label: "X-High", detail: "Maximum effort" },
+] as const;
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
@@ -218,6 +250,13 @@ export default function SessionView(props: SessionViewProps) {
   let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
+  let scrollFrame: number | undefined;
+  let pendingScrollBehavior: ScrollBehavior = "auto";
+  let lastAutoScrollAt = 0;
+  let streamRenderBatchTimer: number | undefined;
+  let streamRenderBatchQueuedAt = 0;
+  let streamRenderBatchReschedules = 0;
+  const topInitializedSessionIds = new Set<string>();
 
   const [toastMessage, setToastMessage] = createSignal<string | null>(null);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
@@ -233,12 +272,16 @@ export default function SessionView(props: SessionViewProps) {
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
   const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
-  const [autoScrollEnabled, setAutoScrollEnabled] = createSignal(false);
-  const [scrollOnNextUpdate, setScrollOnNextUpdate] = createSignal(false);
+  const [nearBottom, setNearBottom] = createSignal(true);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
+  const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
   const [activeSearchHitIndex, setActiveSearchHitIndex] = createSignal(0);
-  const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = createSignal(false);
+  const [commandPaletteMode, setCommandPaletteMode] = createSignal<CommandPaletteMode>("root");
+  const [commandPaletteQuery, setCommandPaletteQuery] = createSignal("");
+  const [commandPaletteActiveIndex, setCommandPaletteActiveIndex] = createSignal(0);
+  const [historyActionBusy, setHistoryActionBusy] = createSignal<"undo" | "redo" | "compact" | null>(null);
   const [messageWindowStart, setMessageWindowStart] = createSignal(0);
   const [messageWindowSessionId, setMessageWindowSessionId] = createSignal<string | null>(null);
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
@@ -249,6 +292,8 @@ export default function SessionView(props: SessionViewProps) {
   // When a session is selected (i.e. we are in SessionView), the right sidebar is
   // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
   const showRightSidebarSelection = createMemo(() => !props.selectedSessionId);
+  let commandPaletteInputEl: HTMLInputElement | undefined;
+  const commandPaletteOptionRefs: HTMLButtonElement[] = [];
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? t("session.default_agent"));
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -271,8 +316,59 @@ export default function SessionView(props: SessionViewProps) {
     todoList().filter((todo) => todo.status === "completed").length
   );
 
+  const commandPaletteSessionOptions = createMemo(() => {
+    const out: Array<{
+      workspaceId: string;
+      sessionId: string;
+      title: string;
+      workspaceTitle: string;
+      updatedAt: number;
+      searchText: string;
+    }> = [];
+
+    for (const group of props.workspaceSessionGroups) {
+      const workspaceId = group.workspace.id?.trim() ?? "";
+      if (!workspaceId) continue;
+      const workspaceTitle = workspaceLabel(group.workspace);
+      for (const session of group.sessions) {
+        const sessionId = session.id?.trim() ?? "";
+        if (!sessionId) continue;
+        const title = session.title?.trim() || "Untitled session";
+        const slug = session.slug?.trim() ?? "";
+        const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
+        out.push({
+          workspaceId,
+          sessionId,
+          title,
+          workspaceTitle,
+          updatedAt,
+          searchText: [title, workspaceTitle, slug].join(" ").toLowerCase(),
+        });
+      }
+    }
+
+    out.sort((a, b) => {
+      const aActive = a.workspaceId === props.activeWorkspaceId;
+      const bActive = b.workspaceId === props.activeWorkspaceId;
+      if (aActive !== bActive) return aActive ? -1 : 1;
+      return b.updatedAt - a.updatedAt;
+    });
+
+    return out;
+  });
+
+  const totalSessionCount = createMemo(() => commandPaletteSessionOptions().length);
+
   type SearchHit = {
     messageId: string;
+  };
+
+  type CommandPaletteItem = {
+    id: string;
+    title: string;
+    detail?: string;
+    meta?: string;
+    action: () => void;
   };
 
   const messageIdFromInfo = (message: MessageWithParts) => {
@@ -284,39 +380,68 @@ export default function SessionView(props: SessionViewProps) {
 
   const messageTextForSearch = (message: MessageWithParts) => {
     const chunks: string[] = [];
+    let used = 0;
+    const push = (value: string) => {
+      const next = value.trim();
+      if (!next) return;
+      if (used >= MAX_SEARCH_MESSAGE_CHARS) return;
+      const remaining = MAX_SEARCH_MESSAGE_CHARS - used;
+      if (next.length > remaining) {
+        chunks.push(next.slice(0, Math.max(0, remaining)));
+        used = MAX_SEARCH_MESSAGE_CHARS;
+        return;
+      }
+      chunks.push(next);
+      used += next.length;
+    };
+
     for (const part of message.parts) {
       if (part.type === "text") {
         const text = (part as { text?: string }).text ?? "";
-        if (text) chunks.push(text);
+        push(text);
         continue;
       }
       if (part.type === "agent") {
         const name = (part as { name?: string }).name ?? "";
-        if (name) chunks.push(`@${name}`);
+        push(name ? `@${name}` : "");
         continue;
       }
       if (part.type === "file") {
         const file = part as { label?: string; path?: string; filename?: string };
         const label = file.label ?? file.path ?? file.filename ?? "";
-        if (label) chunks.push(label);
+        push(label);
         continue;
       }
       if (part.type === "tool") {
         const state = (part as { state?: { title?: string; output?: string; error?: string } }).state;
-        if (state?.title) chunks.push(state.title);
-        if (state?.output) chunks.push(state.output);
-        if (state?.error) chunks.push(state.error);
+        push(state?.title ?? "");
+        push(state?.output ?? "");
+        push(state?.error ?? "");
       }
     }
     return chunks.join("\n");
   };
 
+  createEffect(() => {
+    const value = searchQuery();
+    if (typeof window === "undefined") {
+      setSearchQueryDebounced(value);
+      return;
+    }
+    const id = window.setTimeout(() => setSearchQueryDebounced(value), 90);
+    onCleanup(() => window.clearTimeout(id));
+  });
+
   const searchHits = createMemo<SearchHit[]>(() => {
-    const query = searchQuery().trim().toLowerCase();
+    if (!searchOpen()) return [];
+    const query = searchQueryDebounced().trim().toLowerCase();
     if (!query) return [];
 
+    const startedAt = perfNow();
     const hits: SearchHit[] = [];
-    for (const message of props.messages) {
+    let capped = false;
+
+    outer: for (const message of props.messages) {
       const messageId = messageIdFromInfo(message);
       if (!messageId) continue;
       const haystack = messageTextForSearch(message).toLowerCase();
@@ -324,9 +449,25 @@ export default function SessionView(props: SessionViewProps) {
       let index = haystack.indexOf(query);
       while (index !== -1) {
         hits.push({ messageId });
+        if (hits.length >= MAX_SEARCH_HITS) {
+          capped = true;
+          break outer;
+        }
         index = haystack.indexOf(query, index + Math.max(1, query.length));
       }
     }
+
+    const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
+    if (props.developerMode && (elapsedMs >= 8 || capped)) {
+      recordPerfLog(true, "session.search", "scan", {
+        queryLength: query.length,
+        messageCount: props.messages.length,
+        hitCount: hits.length,
+        capped,
+        ms: elapsedMs,
+      });
+    }
+
     return hits;
   });
 
@@ -355,6 +496,8 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const searchActive = createMemo(() => searchOpen() && searchQuery().trim().length > 0);
+  const totalPartCount = createMemo(() => props.messages.reduce((total, message) => total + message.parts.length, 0));
+
   const renderedMessages = createMemo(() => {
     if (messageWindowExpanded() || searchActive()) return props.messages;
 
@@ -364,10 +507,149 @@ export default function SessionView(props: SessionViewProps) {
     return props.messages.slice(start);
   });
 
+  const [batchedRenderedMessages, setBatchedRenderedMessages] = createSignal<MessageWithParts[]>(renderedMessages());
+
+  createEffect(() => {
+    const next = renderedMessages();
+    const sourceMessageCount = props.messages.length;
+    const sourcePartCount = totalPartCount();
+    if (props.sessionStatus === "idle") {
+      if (streamRenderBatchTimer !== undefined) {
+        window.clearTimeout(streamRenderBatchTimer);
+        streamRenderBatchTimer = undefined;
+      }
+      setBatchedRenderedMessages(next);
+      streamRenderBatchQueuedAt = 0;
+      streamRenderBatchReschedules = 0;
+      return;
+    }
+
+    if (streamRenderBatchQueuedAt <= 0) {
+      streamRenderBatchQueuedAt = perfNow();
+    } else {
+      streamRenderBatchReschedules += 1;
+    }
+
+    if (streamRenderBatchTimer !== undefined) {
+      window.clearTimeout(streamRenderBatchTimer);
+      streamRenderBatchTimer = undefined;
+    }
+
+    streamRenderBatchTimer = window.setTimeout(() => {
+      const applyStartedAt = perfNow();
+      setBatchedRenderedMessages(next);
+      streamRenderBatchTimer = undefined;
+      const applyMs = Math.round((perfNow() - applyStartedAt) * 100) / 100;
+      const queuedMs = streamRenderBatchQueuedAt > 0 ? Math.round((perfNow() - streamRenderBatchQueuedAt) * 100) / 100 : 0;
+      const reschedules = streamRenderBatchReschedules;
+      streamRenderBatchQueuedAt = 0;
+      streamRenderBatchReschedules = 0;
+
+      if (props.developerMode) {
+        window.requestAnimationFrame(() => {
+          const paintMs = Math.round((perfNow() - applyStartedAt) * 100) / 100;
+          if (queuedMs >= 180 || applyMs >= 8 || paintMs >= 24 || reschedules >= 3) {
+            recordPerfLog(true, "session.render", "batch-commit", {
+              queuedMs,
+              applyMs,
+              paintMs,
+              reschedules,
+              sessionID: props.selectedSessionId,
+              status: props.sessionStatus,
+              sourceMessageCount,
+              sourcePartCount,
+              renderedMessageCount: next.length,
+            });
+          }
+        });
+      }
+    }, STREAM_RENDER_BATCH_MS);
+  });
+
+  createEffect(() => {
+    if (!props.developerMode) return;
+    if (typeof window === "undefined") return;
+
+    let expectedAt = perfNow() + MAIN_THREAD_LAG_INTERVAL_MS;
+    const interval = window.setInterval(() => {
+      const now = perfNow();
+      const lagMs = Math.round((now - expectedAt) * 100) / 100;
+      expectedAt = now + MAIN_THREAD_LAG_INTERVAL_MS;
+      if (lagMs < MAIN_THREAD_LAG_WARN_MS) return;
+
+      recordPerfLog(true, "session.main-thread", "lag", {
+        lagMs,
+        sessionID: props.selectedSessionId,
+        status: props.sessionStatus,
+        messageCount: props.messages.length,
+        partCount: totalPartCount(),
+        renderedMessageCount: batchedRenderedMessages().length,
+      });
+    }, MAIN_THREAD_LAG_INTERVAL_MS);
+
+    onCleanup(() => {
+      window.clearInterval(interval);
+    });
+  });
+
   const hiddenMessageCount = createMemo(() => {
     if (messageWindowExpanded() || searchActive()) return 0;
     const hidden = props.messages.length - renderedMessages().length;
     return hidden > 0 ? hidden : 0;
+  });
+
+  const nextRevealCount = createMemo(() => {
+    const hidden = hiddenMessageCount();
+    if (hidden <= 0) return 0;
+    return Math.min(hidden, MESSAGE_WINDOW_LOAD_CHUNK);
+  });
+
+  const revealEarlierMessages = () => {
+    const hidden = hiddenMessageCount();
+    if (hidden <= 0) return;
+    const nextStart = Math.max(0, messageWindowStart() - MESSAGE_WINDOW_LOAD_CHUNK);
+    if (props.developerMode) {
+      recordPerfLog(true, "session.window", "reveal", {
+        sessionID: props.selectedSessionId,
+        hiddenBefore: hidden,
+        nextStart,
+      });
+    }
+    setMessageWindowStart(nextStart);
+    if (nextStart === 0) {
+      setMessageWindowExpanded(true);
+    }
+  };
+
+  let lastWindowPerfSignature = "";
+  createEffect(() => {
+    if (!props.developerMode) {
+      lastWindowPerfSignature = "";
+      return;
+    }
+
+    const signature = [
+      props.selectedSessionId ?? "",
+      props.messages.length,
+      totalPartCount(),
+      renderedMessages().length,
+      hiddenMessageCount(),
+      messageWindowExpanded() ? "1" : "0",
+      searchActive() ? "1" : "0",
+    ].join("|");
+
+    if (signature === lastWindowPerfSignature) return;
+    lastWindowPerfSignature = signature;
+
+    recordPerfLog(true, "session.window", "state", {
+      sessionID: props.selectedSessionId,
+      messageCount: props.messages.length,
+      renderedMessageCount: renderedMessages().length,
+      hiddenMessageCount: hiddenMessageCount(),
+      partCount: totalPartCount(),
+      expanded: messageWindowExpanded(),
+      searchActive: searchActive(),
+    });
   });
 
   const canUndoLastMessage = createMemo(() => {
@@ -383,10 +665,16 @@ export default function SessionView(props: SessionViewProps) {
     return false;
   });
 
+  const hasUserMessages = createMemo(() =>
+    props.messages.some((message) => (message.info as { role?: string }).role === "user"),
+  );
+
   const canRedoLastMessage = createMemo(() => {
     if (!props.selectedSessionId) return false;
     return Boolean(props.sessionRevertMessageId);
   });
+
+  const canCompactSession = createMemo(() => Boolean(props.selectedSessionId) && hasUserMessages());
 
   const touchedFiles = createMemo(() => {
     const out: string[] = [];
@@ -435,6 +723,17 @@ export default function SessionView(props: SessionViewProps) {
       return "";
     }
 
+    if (root) {
+      const rootSegments = root.split("/").filter(Boolean);
+      const workspaceFolderName = rootSegments[rootSegments.length - 1]?.toLowerCase();
+      if (workspaceFolderName) {
+        const workspaceMarker = `workspaces/${workspaceFolderName}/`;
+        const markerIndex = fileKey.indexOf(workspaceMarker);
+        if (markerIndex >= 0) return normalized.slice(markerIndex + workspaceMarker.length);
+        if (fileKey.endsWith(`workspaces/${workspaceFolderName}`)) return "";
+      }
+    }
+
     let relative = normalized.replace(/^\.\/+/, "");
     if (!relative) return "";
 
@@ -452,15 +751,28 @@ export default function SessionView(props: SessionViewProps) {
     if (/^\/+workspace\//i.test(relative)) {
       relative = relative.replace(/^\/+workspace\//i, "");
     }
+
     if (relative.startsWith("/") || relative.startsWith("~") || /^[a-zA-Z]:\//.test(relative)) return "";
     if (relative.split("/").some((part) => part === "." || part === "..")) return "";
+
+    if (/com\.[^/]+\.(openwork|opencode)/i.test(relative)) return "";
+
     return relative;
   };
 
   const openMarkdownEditor = (file: string) => {
+    if (!props.openworkServerClient) {
+      setToastMessage("Cannot open file: not connected to OpenWork server.");
+      return;
+    }
+    if (!props.openworkServerWorkspaceId) {
+      setToastMessage("Cannot open file: no workspace selected.");
+      return;
+    }
+
     const relative = toWorkspaceRelativeForApi(file);
     if (!relative) {
-      setToastMessage(t("session.toast_relative_only"));
+      setToastMessage(`Cannot open file: path "${file}" is not within the workspace.`);
       return;
     }
     if (!/\.(md|mdx|markdown)$/i.test(relative)) {
@@ -606,36 +918,45 @@ export default function SessionView(props: SessionViewProps) {
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
 
+  const scheduleScrollToLatest = (behavior: ScrollBehavior = "auto") => {
+    if (behavior === "smooth") {
+      pendingScrollBehavior = "smooth";
+    }
+    if (scrollFrame !== undefined) return;
+    scrollFrame = window.requestAnimationFrame(() => {
+      scrollFrame = undefined;
+      const nextBehavior = pendingScrollBehavior;
+      pendingScrollBehavior = "auto";
+      const now = Date.now();
+      if (nextBehavior === "auto" && now - lastAutoScrollAt < STREAM_SCROLL_MIN_INTERVAL_MS) {
+        return;
+      }
+      lastAutoScrollAt = now;
+      scrollToLatest(nextBehavior);
+    });
+  };
+
+  onCleanup(() => {
+    if (scrollFrame !== undefined) {
+      window.cancelAnimationFrame(scrollFrame);
+      scrollFrame = undefined;
+    }
+    if (streamRenderBatchTimer !== undefined) {
+      window.clearTimeout(streamRenderBatchTimer);
+      streamRenderBatchTimer = undefined;
+    }
+    streamRenderBatchQueuedAt = 0;
+    streamRenderBatchReschedules = 0;
+  });
+
   createEffect(
     on(
-      () => [props.selectedSessionId, props.messages.length] as const,
-      ([sessionId, count], previous) => {
-        const previousSessionId = previous?.[0] ?? null;
+      () => props.selectedSessionId,
+      (sessionId, previousSessionId) => {
         if (sessionId !== previousSessionId) {
-          setMessageWindowSessionId(null);
+          setMessageWindowSessionId(sessionId ?? null);
           setMessageWindowExpanded(false);
           setMessageWindowStart(0);
-        }
-
-        if (!sessionId) return;
-        if (messageWindowExpanded()) return;
-        if (count === 0) return;
-
-        const targetStart = count > INITIAL_MESSAGE_WINDOW ? count - INITIAL_MESSAGE_WINDOW : 0;
-        if (messageWindowSessionId() !== sessionId) {
-          setMessageWindowStart(targetStart);
-          setMessageWindowSessionId(sessionId);
-          return;
-        }
-
-        const currentStart = messageWindowStart();
-        if (currentStart <= 0 && targetStart > 0) {
-          setMessageWindowStart(targetStart);
-          return;
-        }
-
-        if (autoScrollEnabled() && targetStart > currentStart) {
-          setMessageWindowStart(targetStart);
         }
       },
       { defer: true },
@@ -722,7 +1043,6 @@ export default function SessionView(props: SessionViewProps) {
     partCount: 0,
   });
   const [abortBusy, setAbortBusy] = createSignal(false);
-  const [thinkingExpanded, setThinkingExpanded] = createSignal(false);
   const [todoExpanded, setTodoExpanded] = createSignal(false);
 
   const lastAssistantSnapshot = createMemo(() => {
@@ -761,7 +1081,7 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const runPhase = createMemo(() => {
-    if (props.error) return "error";
+    if (props.error && (runStartedAt() !== null || runHasBegun())) return "error";
     const status = props.sessionStatus;
     const started = runStartedAt() !== null;
     if (status === "idle") {
@@ -785,11 +1105,43 @@ export default function SessionView(props: SessionViewProps) {
       const messageId =
         typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
       if (!messageId) continue;
-      if (baseline.assistantId && messageId === baseline.assistantId && msg.parts.length <= baseline.partCount) {
-        continue;
+      if (baseline.assistantId && messageId === baseline.assistantId) {
+        if (msg.parts.length <= baseline.partCount) {
+          return null;
+        }
+        return msg.parts[msg.parts.length - 1] ?? null;
       }
       if (!msg.parts.length) continue;
       return msg.parts[msg.parts.length - 1] ?? null;
+    }
+    return null;
+  });
+
+  const cleanReasoning = (value: string) => value.replace(/\[REDACTED\]/g, "").trim();
+
+  const latestRunReasoning = createMemo<string | null>(() => {
+    if (!showRunIndicator()) return null;
+    const baseline = runBaseline();
+    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
+      const msg = props.messages[i];
+      const info = msg?.info as { id?: string | number; role?: string } | undefined;
+      if (info?.role !== "assistant") continue;
+      const messageId =
+        typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
+      if (!messageId) continue;
+
+      const minIndex = baseline.assistantId && messageId === baseline.assistantId ? baseline.partCount - 1 : -1;
+      for (let partIndex = msg.parts.length - 1; partIndex > minIndex; partIndex -= 1) {
+        const part = msg.parts[partIndex];
+        if (part?.type !== "reasoning") continue;
+        const raw = typeof (part as { text?: unknown }).text === "string" ? String((part as { text?: string }).text) : "";
+        const text = cleanReasoning(raw);
+        if (text) return text;
+      }
+
+      if (baseline.assistantId && messageId === baseline.assistantId) {
+        break;
+      }
     }
     return null;
   });
@@ -842,6 +1194,17 @@ export default function SessionView(props: SessionViewProps) {
     return `${trimmed.slice(0, max)}...`;
   };
 
+  const formatRunErrorDetail = (message: string) => {
+    const lines = message
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (!lines.length) return "Run failed";
+    const compact = lines.slice(0, 4).join("\n");
+    if (lines.length <= 4) return compact;
+    return `${compact}\n...`;
+  };
+
   const thinkingStatus = createMemo(() => {
     const status = computeStatusFromPart(latestRunPart());
     if (status) return status;
@@ -850,6 +1213,18 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const thinkingDetail = createMemo<null | { title: string; detail?: string }>(() => {
+    if (runPhase() === "error") {
+      if (!props.error) return { title: "Error" };
+      const detail = truncateDetail(formatRunErrorDetail(props.error), 420);
+      return detail ? { title: "Error", detail } : { title: "Error" };
+    }
+
+    const reasoning = latestRunReasoning();
+    if (reasoning) {
+      const detail = truncateDetail(reasoning);
+      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
+    }
+
     const part = latestRunPart();
     if (!part) return null;
     if (part.type === "tool") {
@@ -862,7 +1237,7 @@ export default function SessionView(props: SessionViewProps) {
       return { title, detail: output ?? error ?? undefined };
     }
     if (part.type === "reasoning") {
-      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      const text = cleanReasoning(typeof (part as any).text === "string" ? (part as any).text : "");
       const detail = truncateDetail(text);
       return detail ? { title: t("session.status_reasoning"), detail } : { title: t("session.status_reasoning") };
     }
@@ -903,10 +1278,14 @@ export default function SessionView(props: SessionViewProps) {
     setTimeout(() => setIsInitialLoad(false), 2000);
   });
 
+  const jumpToLatest = (behavior: ScrollBehavior = "smooth") => {
+    scheduleScrollToLatest(behavior);
+  };
+
   onMount(() => {
     const container = chatContainerEl;
     if (!container) return;
-    const update = () => setAutoScrollEnabled(isNearBottom(container));
+    const update = () => setNearBottom(isNearBottom(container));
     update();
     container.addEventListener("scroll", update, { passive: true });
     onCleanup(() => container.removeEventListener("scroll", update));
@@ -915,10 +1294,31 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(
     on(
       () => props.selectedSessionId,
-      () => {
+      (sessionId) => {
         setSearchOpen(false);
         setSearchQuery("");
+        setSearchQueryDebounced("");
         setActiveSearchHitIndex(0);
+
+        if (!sessionId) return;
+        const firstVisit = !topInitializedSessionIds.has(sessionId);
+        topInitializedSessionIds.add(sessionId);
+
+        if (!firstVisit) {
+          queueMicrotask(() => {
+            const container = chatContainerEl;
+            if (!container) return;
+            setNearBottom(isNearBottom(container));
+          });
+          return;
+        }
+
+        queueMicrotask(() => {
+          const container = chatContainerEl;
+          if (!container) return;
+          container.scrollTop = 0;
+          setNearBottom(isNearBottom(container));
+        });
       },
     ),
   );
@@ -947,8 +1347,72 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    focusCommandPaletteInput();
+  });
+
+  createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    const total = commandPaletteItems().length;
+    if (total === 0) {
+      setCommandPaletteActiveIndex(0);
+      return;
+    }
+    setCommandPaletteActiveIndex((current) => Math.max(0, Math.min(current, total - 1)));
+  });
+
+  createEffect(() => {
+    if (!commandPaletteOpen()) return;
+    const idx = commandPaletteActiveIndex();
+    requestAnimationFrame(() => {
+      commandPaletteOptionRefs[idx]?.scrollIntoView({ block: "nearest" });
+    });
+  });
+
+  createEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const mod = event.metaKey || event.ctrlKey;
+      if (mod && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (commandPaletteOpen()) {
+          closeCommandPalette();
+        } else {
+          openCommandPalette();
+        }
+        return;
+      }
+
+      if (commandPaletteOpen()) {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closeCommandPalette();
+          return;
+        }
+        if (event.key === "ArrowDown") {
+          event.preventDefault();
+          stepCommandPaletteIndex(1, commandPaletteItems().length);
+          return;
+        }
+        if (event.key === "ArrowUp") {
+          event.preventDefault();
+          stepCommandPaletteIndex(-1, commandPaletteItems().length);
+          return;
+        }
+        if (event.key === "Enter") {
+          if (event.isComposing || event.keyCode === 229) return;
+          const item = commandPaletteItems()[commandPaletteActiveIndex()];
+          if (!item) return;
+          event.preventDefault();
+          item.action();
+          return;
+        }
+        if (event.key === "Backspace" && !commandPaletteQuery().trim() && commandPaletteMode() !== "root") {
+          event.preventDefault();
+          returnToCommandRoot();
+        }
+        return;
+      }
+
       if (mod && !event.altKey && event.key.toLowerCase() === "f") {
         event.preventDefault();
         openSearch();
@@ -986,7 +1450,7 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!runStartedAt()) return;
-    if (props.sessionStatus === "idle" && runHasBegun() && !props.error) {
+    if (props.sessionStatus === "idle" && runHasBegun()) {
       setRunStartedAt(null);
       setRunHasBegun(false);
       setRunLastProgressAt(null);
@@ -1001,18 +1465,12 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.clearInterval(id));
   });
 
-  createEffect(() => {
-    if (!thinkingStatus()) {
-      setThinkingExpanded(false);
-    }
-  });
-
   createEffect(
     on(
       () => [
         props.messages.length,
         props.todos.length,
-        props.messages.reduce((acc, m) => acc + m.parts.length, 0),
+        totalPartCount(),
       ],
       (current, previous) => {
         if (!previous) return;
@@ -1021,13 +1479,6 @@ export default function SessionView(props: SessionViewProps) {
         if (mLen > prevM || tLen > prevT || pCount > prevP) {
           if (showRunIndicator()) {
             setRunLastProgressAt(Date.now());
-          }
-          const shouldScroll = scrollOnNextUpdate() || autoScrollEnabled();
-          if (shouldScroll) {
-            scrollToLatest(scrollOnNextUpdate() ? "smooth" : "auto");
-          }
-          if (scrollOnNextUpdate()) {
-            setScrollOnNextUpdate(false);
           }
         }
       },
@@ -1067,6 +1518,44 @@ export default function SessionView(props: SessionViewProps) {
     if (ms >= hardMs) return "hard";
     if (ms >= softMs) return "soft";
     return "none";
+  });
+
+  let lastStallPerfStage: "none" | "soft" | "hard" = "none";
+  createEffect(() => {
+    if (!props.developerMode) {
+      lastStallPerfStage = "none";
+      return;
+    }
+
+    const stage = stallStage();
+    if (stage === lastStallPerfStage) return;
+
+    const previous = lastStallPerfStage;
+    lastStallPerfStage = stage;
+
+    if (stage === "none") {
+      if (previous !== "none") {
+        recordPerfLog(true, "session.run", "stall-recovered", {
+          sessionID: props.selectedSessionId,
+          phase: runPhase(),
+          elapsedMs: runElapsedMs(),
+          messageCount: props.messages.length,
+          partCount: totalPartCount(),
+        });
+      }
+      return;
+    }
+
+    recordPerfLog(true, "session.run", stage === "soft" ? "stall-soft" : "stall-hard", {
+      sessionID: props.selectedSessionId,
+      phase: runPhase(),
+      stallMs: runStallMs(),
+      elapsedMs: runElapsedMs(),
+      messageCount: props.messages.length,
+      renderedMessageCount: renderedMessages().length,
+      hiddenMessageCount: hiddenMessageCount(),
+      partCount: totalPartCount(),
+    });
   });
 
   const cancelRun = async () => {
@@ -1119,6 +1608,47 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const focusCommandPaletteInput = () => {
+    queueMicrotask(() => {
+      commandPaletteInputEl?.focus();
+      commandPaletteInputEl?.select();
+    });
+  };
+
+  const openCommandPalette = (mode: CommandPaletteMode = "root") => {
+    setCommandPaletteMode(mode);
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+    setCommandPaletteOpen(true);
+    focusCommandPaletteInput();
+  };
+
+  const closeCommandPalette = () => {
+    setCommandPaletteOpen(false);
+    setCommandPaletteMode("root");
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+  };
+
+  const stepCommandPaletteIndex = (delta: number, total: number) => {
+    if (total <= 0) {
+      setCommandPaletteActiveIndex(0);
+      return;
+    }
+    setCommandPaletteActiveIndex((current) => {
+      const normalized = ((current % total) + total) % total;
+      return (normalized + delta + total) % total;
+    });
+  };
+
+  const returnToCommandRoot = () => {
+    if (commandPaletteMode() === "root") return;
+    setCommandPaletteMode("root");
+    setCommandPaletteQuery("");
+    setCommandPaletteActiveIndex(0);
+    focusCommandPaletteInput();
+  };
+
   const openSearch = () => {
     setSearchOpen(true);
     focusSearchInput();
@@ -1126,6 +1656,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const closeSearch = () => {
     setSearchOpen(false);
+    setSearchQueryDebounced("");
   };
 
   const moveSearchHit = (offset: number) => {
@@ -1170,6 +1701,35 @@ export default function SessionView(props: SessionViewProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
       setToastMessage(message || t("session.toast_redo_failed"));
+    } finally {
+      setHistoryActionBusy(null);
+    }
+  };
+
+  const compactSessionHistory = async () => {
+    if (historyActionBusy()) return;
+    if (!canCompactSession()) {
+      setToastMessage("Nothing to compact yet.");
+      return;
+    }
+
+    const sessionID = props.selectedSessionId;
+    const startedAt = perfNow();
+    setHistoryActionBusy("compact");
+    setToastMessage("Compacting session context...");
+    try {
+      await props.compactSession();
+      setToastMessage("Session compacted.");
+      finishPerf(props.developerMode, "session.compact", "ui-done", startedAt, {
+        sessionID,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : props.safeStringify(error);
+      setToastMessage(message || "Failed to compact session");
+      finishPerf(props.developerMode, "session.compact", "ui-error", startedAt, {
+        sessionID,
+        error: message,
+      });
     } finally {
       setHistoryActionBusy(null);
     }
@@ -1516,7 +2076,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Advanced",
+          placeholder: token ? undefined : "Set token in workspace settings",
           hint: "This token grants access to the worker on that host.",
         },
       ];
@@ -1556,8 +2116,6 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleSendPrompt = (draft: ComposerDraft) => {
-    setScrollOnNextUpdate(true);
-    scrollToLatest("auto");
     startRun();
     props.sendPromptAsync(draft).catch(() => undefined);
   };
@@ -1594,15 +2152,16 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleSoulQuickstart = async () => {
     const name = SOUL_SETUP_TEMPLATE.name;
+    const slashCommand = `/${name}`;
     try {
       const commands = await props.listCommands();
       const hasCommand = commands.some((cmd) => cmd.name === name);
       if (hasCommand) {
         handleSendPrompt({
           mode: "prompt",
-          text: `/${name}`,
-          resolvedText: `/${name}`,
-          parts: [{ type: "text", text: `/${name}` }],
+          text: slashCommand,
+          resolvedText: slashCommand,
+          parts: [{ type: "text", text: slashCommand }],
           attachments: [],
           command: { name, arguments: "" },
         });
@@ -1624,27 +2183,44 @@ export default function SessionView(props: SessionViewProps) {
 
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
 
-  const uploadInboxFiles = async (files: File[]) => {
+  const uploadInboxFiles = async (
+    files: File[],
+    options?: { notify?: boolean },
+  ): Promise<Array<{ name: string; path: string }>> => {
+    const notify = options?.notify ?? true;
     const client = props.openworkServerClient;
     const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
-      setToastMessage(t("session.toast_upload_connect"));
-      return;
+      if (notify) {
+        setToastMessage(t("session.toast_upload_connect"));
+      }
+      return [];
     }
-    if (!files.length) return;
+    if (!files.length) return [];
 
     const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-    setToastMessage(t("session.toast_uploading").replace("{label}", label));
+    if (notify) {
+      setToastMessage(t("session.toast_uploading").replace("{label}", label));
+    }
 
     try {
+      const uploaded: Array<{ name: string; path: string }> = [];
       for (const file of files) {
-        await client.uploadInbox(workspaceId, file);
+        const result = await client.uploadInbox(workspaceId, file);
+        const path = result.path?.trim() || file.name;
+        uploaded.push({ name: file.name || path, path });
       }
-      const summary = files.map((file) => file.name).filter(Boolean).join(", ");
-      setToastMessage(summary ? t("session.toast_uploaded_summary").replace("{summary}", summary) : t("session.toast_uploaded"));
+      if (notify) {
+        const summary = uploaded.map((file) => file.name).filter(Boolean).join(", ");
+        setToastMessage(summary ? t("session.toast_uploaded_summary").replace("{summary}", summary) : t("session.toast_uploaded"));
+      }
+      return uploaded;
     } catch (error) {
-      const message = error instanceof Error ? error.message : t("session.toast_upload_failed");
-      setToastMessage(message);
+      if (notify) {
+        const message = error instanceof Error ? error.message : t("session.toast_upload_failed");
+        setToastMessage(message);
+      }
+      return [];
     }
   };
 
@@ -1654,16 +2230,14 @@ export default function SessionView(props: SessionViewProps) {
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     if (!sessionId) return;
-    // For same-workspace clicks, just select the session without workspace activation
+    // Route-driven selection: navigate first and let the route effect own selectSession.
     if (workspaceId === props.activeWorkspaceId) {
-      void props.selectSession(sessionId);
       props.setView("session", sessionId);
       return;
     }
     // For different workspace, activate workspace first
     void (async () => {
       await Promise.resolve(props.activateWorkspace(workspaceId));
-      void props.selectSession(sessionId);
       props.setView("session", sessionId);
     })();
   };
@@ -1682,6 +2256,123 @@ export default function SessionView(props: SessionViewProps) {
     })();
   };
 
+  const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {
+    const items: CommandPaletteItem[] = [
+      {
+        id: "sessions",
+        title: "Search sessions",
+        detail: `${totalSessionCount().toLocaleString()} available across workers`,
+        meta: "Jump",
+        action: () => {
+          setCommandPaletteMode("sessions");
+          setCommandPaletteQuery("");
+          setCommandPaletteActiveIndex(0);
+          focusCommandPaletteInput();
+        },
+      },
+      {
+        id: "model",
+        title: "Change model",
+        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
+        meta: "Open",
+        action: () => {
+          closeCommandPalette();
+          props.openSessionModelPicker();
+        },
+      },
+      {
+        id: "thinking",
+        title: "Change thinking",
+        detail: `Current: ${props.modelVariantLabel}`,
+        meta: "Adjust",
+        action: () => {
+          setCommandPaletteMode("thinking");
+          setCommandPaletteQuery("");
+          setCommandPaletteActiveIndex(0);
+          focusCommandPaletteInput();
+        },
+      },
+    ];
+
+    const query = commandPaletteQuery().trim().toLowerCase();
+    if (!query) return items;
+    return items.filter((item) => `${item.title} ${item.detail ?? ""}`.toLowerCase().includes(query));
+  });
+
+  const commandPaletteSessionItems = createMemo<CommandPaletteItem[]>(() => {
+    const query = commandPaletteQuery().trim().toLowerCase();
+    const candidates = query
+      ? commandPaletteSessionOptions().filter((item) => item.searchText.includes(query))
+      : commandPaletteSessionOptions();
+
+    return candidates.slice(0, 80).map((item) => ({
+      id: `session:${item.workspaceId}:${item.sessionId}`,
+      title: item.title,
+      detail: item.workspaceTitle,
+      meta: item.workspaceId === props.activeWorkspaceId ? "Current worker" : "Switch",
+      action: () => {
+        closeCommandPalette();
+        openSessionFromList(item.workspaceId, item.sessionId);
+      },
+    }));
+  });
+
+  const commandPaletteThinkingItems = createMemo<CommandPaletteItem[]>(() => {
+    const normalizedRaw = (props.modelVariant ?? "none").trim().toLowerCase();
+    const activeVariant =
+      normalizedRaw === "balanced" || normalizedRaw === "balance" ? "none" : normalizedRaw;
+    const query = commandPaletteQuery().trim().toLowerCase();
+
+    return COMMAND_PALETTE_THINKING_OPTIONS
+      .filter((option) => {
+        if (!query) return true;
+        return `${option.label} ${option.detail}`.toLowerCase().includes(query);
+      })
+      .map((option) => ({
+        id: `thinking:${option.value}`,
+        title: option.label,
+        detail: option.detail,
+        meta: activeVariant === option.value ? "Current" : undefined,
+        action: () => {
+          props.setModelVariant(option.value);
+          closeCommandPalette();
+          setToastMessage(`Thinking set to ${option.label}.`);
+        },
+      }));
+  });
+
+  const commandPaletteItems = createMemo<CommandPaletteItem[]>(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return commandPaletteSessionItems();
+    if (mode === "thinking") return commandPaletteThinkingItems();
+    return commandPaletteRootItems();
+  });
+
+  const commandPaletteTitle = createMemo(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return "Search sessions";
+    if (mode === "thinking") return "Change thinking";
+    return "Quick actions";
+  });
+
+  const commandPalettePlaceholder = createMemo(() => {
+    const mode = commandPaletteMode();
+    if (mode === "sessions") return "Find by session title or worker";
+    if (mode === "thinking") return "Filter thinking options";
+    return "Search actions";
+  });
+
+  createEffect(
+    on(
+      () => [commandPaletteMode(), commandPaletteQuery()],
+      () => {
+        if (!commandPaletteOpen()) return;
+        commandPaletteOptionRefs.length = 0;
+        setCommandPaletteActiveIndex(0);
+      },
+    ),
+  );
+
   const openSettings = (tab: SettingsTab = "general") => {
     props.setSettingsTab(tab);
     props.setTab("settings");
@@ -1689,7 +2380,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openConfig = () => {
-    props.setTab("config");
+    props.setTab(props.developerMode ? "config" : "identities");
     props.setView("dashboard");
   };
 
@@ -1719,12 +2410,50 @@ export default function SessionView(props: SessionViewProps) {
     return "Update available";
   });
 
-  const updatePillTone = createMemo(() => {
+  const updatePillButtonTone = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return "border-transparent bg-green-9 text-white shadow-[0_2px_10px_rgba(22,163,74,0.35)] hover:bg-green-10";
+      return props.anyActiveRuns
+        ? "text-amber-11 hover:text-amber-11 hover:bg-amber-3/30"
+        : "text-green-11 hover:text-green-11 hover:bg-green-3/30";
     }
-    return "border-transparent bg-dls-accent text-white shadow-[0_2px_10px_rgba(var(--dls-accent-rgb),0.35)] hover:bg-[var(--dls-accent-hover)]";
+    if (state === "downloading") {
+      return "text-blue-11 hover:text-blue-11 hover:bg-blue-3/30";
+    }
+    return "text-dls-secondary hover:text-emerald-11 hover:bg-emerald-3/25";
+  });
+
+  const updatePillBorderTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "border-amber-7/35" : "border-green-7/35";
+    }
+    if (state === "downloading") {
+      return "border-blue-7/35";
+    }
+    return "border-dls-border";
+  });
+
+  const updatePillDotTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "text-amber-10 fill-amber-10" : "text-green-10 fill-green-10";
+    }
+    if (state === "downloading") {
+      return "text-blue-10";
+    }
+    return "text-emerald-10 fill-emerald-10";
+  });
+
+  const updatePillVersionTone = createMemo(() => {
+    const state = props.updateStatus?.state;
+    if (state === "ready") {
+      return props.anyActiveRuns ? "text-amber-11/75" : "text-green-11/75";
+    }
+    if (state === "downloading") {
+      return "text-blue-11/75";
+    }
+    return "text-dls-secondary";
   });
 
   const updatePillTitle = createMemo(() => {
@@ -1753,6 +2482,24 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
+  const openSoul = (workspaceId?: string) => {
+    const id = (workspaceId ?? props.activeWorkspaceId).trim();
+    if (!id) return;
+    void (async () => {
+      if (id !== props.activeWorkspaceId) {
+        await Promise.resolve(props.activateWorkspace(id));
+      }
+      props.setTab("soul");
+      props.setView("dashboard");
+    })();
+  };
+
+  const soulModeEnabled = createMemo(() =>
+    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
+  );
+
+  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
+
   const openProviderAuth = () => {
     void props.openProviderAuthModal().catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
@@ -1767,7 +2514,7 @@ export default function SessionView(props: SessionViewProps) {
           <Show when={showUpdatePill()}>
             <button
               type="button"
-              class={`mb-3 w-full flex h-9 items-center gap-2 rounded-xl border px-3 text-xs font-medium transition-all hover:-translate-y-[1px] ${updatePillTone()}`}
+              class={`group mb-3 w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillButtonTone()}`}
               onClick={handleUpdatePillClick}
               title={updatePillTitle()}
               aria-label={updatePillTitle()}
@@ -1775,29 +2522,31 @@ export default function SessionView(props: SessionViewProps) {
               <Show
                 when={props.updateStatus?.state === "downloading"}
                 fallback={
-                  <span class="w-2 h-2 rounded-full bg-white/85" />
+                  <Circle
+                    size={8}
+                    class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "group-hover:animate-pulse" : ""}`}
+                  />
                 }
               >
-                <Loader2 size={14} class="animate-spin text-white/90" />
+                <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
               </Show>
-              <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
+              <span class="flex-1 text-left">{updatePillLabel()}</span>
               <Show when={props.updateStatus?.version}>
                 {(version) => (
-                  <span class="ml-auto text-[11px] text-white/80 font-mono">v{version()}</span>
+                  <span class={`ml-auto font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
                 )}
               </Show>
             </button>
           </Show>
-          <div class="flex items-center text-[11px] font-bold text-dls-secondary uppercase px-3 mb-3 pt-2 tracking-tight">
-            <span>{t("dashboard.tasks_header")}</span>
-          </div>
-
           <div class="space-y-3 mb-3">
             <For each={props.workspaceSessionGroups}>
               {(group) => {
                 const workspace = () => group.workspace;
                 const isConnecting = () => props.connectingWorkspaceId === workspace().id;
                 const isMenuOpen = () => workspaceMenuId() === workspace().id;
+                const taskLoadError = () => getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
+                const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
+                const soulEnabled = () => Boolean(soulStatus()?.enabled);
 
                 return (
                   <div class="space-y-1">
@@ -1836,8 +2585,14 @@ export default function SessionView(props: SessionViewProps) {
                           </button>
                           <div class="min-w-0 flex-1">
                             <div class="text-sm font-medium truncate">{workspaceLabel(workspace())}</div>
-                            <div class="text-[11px] text-dls-secondary">
-                              {workspaceKindLabel(workspace())}
+                            <div class="text-[11px] text-dls-secondary flex items-center gap-1.5">
+                              <span>{workspaceKindLabel(workspace())}</span>
+                              <Show when={soulEnabled()}>
+                                <span class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-1.5 py-0.5 text-[10px] text-rose-11">
+                                  <HeartPulse size={10} />
+                                  Soul
+                                </span>
+                              </Show>
                             </div>
                           </div>
                           <Show when={group.status === "loading"}>
@@ -1845,10 +2600,14 @@ export default function SessionView(props: SessionViewProps) {
                           </Show>
                           <Show when={group.status === "error"}>
                             <span
-                              class="text-[10px] px-2 py-0.5 rounded-full border border-red-7/50 text-red-11 bg-red-3/30"
-                              title={group.error ?? t("dashboard.tasks_error")}
+                              class={`text-[10px] px-2 py-0.5 rounded-full border ${
+                                taskLoadError().tone === "offline"
+                                  ? "border-amber-7/50 text-amber-11 bg-amber-3/30"
+                                  : "border-red-7/50 text-red-11 bg-red-3/30"
+                              }`}
+                              title={taskLoadError().title}
                             >
-                              {t("dashboard.tasks_error_badge")}
+                              {taskLoadError().label}
                             </span>
                           </Show>
                           <Show when={isConnecting()}>
@@ -1907,6 +2666,16 @@ export default function SessionView(props: SessionViewProps) {
                             }}
                           >
                             {t("dashboard.menu_share")}
+                          </button>
+                          <button
+                            type="button"
+                            class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
+                            onClick={() => {
+                              openSoul(workspace().id);
+                              setWorkspaceMenuId(null);
+                            }}
+                          >
+                            {soulEnabled() ? "Soul settings" : "Enable soul"}
                           </button>
                           <Show when={workspace().workspaceType === "remote"}>
                             <button
@@ -1994,10 +2763,14 @@ export default function SessionView(props: SessionViewProps) {
                               fallback={
                                 <Show when={group.status === "error"}>
                                   <div
-                                    class="w-full px-3 py-2 text-xs text-red-11 ml-2 text-left rounded-lg bg-red-3/20 border border-red-7/40"
-                                    title={group.error ?? t("dashboard.tasks_error")}
+                                    class={`w-full px-3 py-2 text-xs ml-2 text-left rounded-lg border ${
+                                      taskLoadError().tone === "offline"
+                                        ? "text-amber-11 bg-amber-3/20 border-amber-7/40"
+                                        : "text-red-11 bg-red-3/20 border-red-7/40"
+                                    }`}
+                                    title={taskLoadError().title}
                                   >
-                                    {t("dashboard.tasks_error")}
+                                    {taskLoadError().message}
                                   </div>
                                 </Show>
                               }
@@ -2129,7 +2902,7 @@ export default function SessionView(props: SessionViewProps) {
             <Show when={showUpdatePill()}>
               <button
                 type="button"
-                class={`md:hidden flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors ${updatePillTone()}`}
+                class={`md:hidden flex items-center gap-1.5 rounded-full border bg-dls-surface px-2.5 py-1 text-xs font-medium shadow-sm transition-colors active:scale-[0.99] focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.2)] ${updatePillBorderTone()} ${updatePillButtonTone()}`}
                 onClick={handleUpdatePillClick}
                 title={updatePillTitle()}
                 aria-label={updatePillTitle()}
@@ -2137,15 +2910,18 @@ export default function SessionView(props: SessionViewProps) {
                 <Show
                   when={props.updateStatus?.state === "downloading"}
                   fallback={
-                    <span class="w-2 h-2 rounded-full bg-white/85" />
+                    <Circle
+                      size={8}
+                      class={`${updatePillDotTone()} shrink-0 ${props.updateStatus?.state === "available" ? "animate-pulse" : ""}`}
+                    />
                   }
                 >
-                  <Loader2 size={14} class="animate-spin text-white/90" />
+                  <Loader2 size={13} class={`animate-spin shrink-0 ${updatePillDotTone()}`} />
                 </Show>
-                <span class="text-[11px] font-semibold text-white">{updatePillLabel()}</span>
+                <span class="text-[11px]">{updatePillLabel()}</span>
                 <Show when={props.updateStatus?.version}>
                   {(version) => (
-                    <span class="hidden sm:inline text-[11px] text-white/80 font-mono">v{version()}</span>
+                    <span class={`hidden sm:inline font-mono text-[10px] ${updatePillVersionTone()}`}>v{version()}</span>
                   )}
                 </Show>
               </button>
@@ -2161,6 +2937,27 @@ export default function SessionView(props: SessionViewProps) {
           </div>
 
           <div class="flex items-center gap-2">
+            <button
+              type="button"
+              class={`h-9 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-mono transition-colors ${
+                commandPaletteOpen()
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              }`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (commandPaletteOpen()) {
+                  closeCommandPalette();
+                  return;
+                }
+                window.setTimeout(() => openCommandPalette(), 0);
+              }}
+              title="Quick actions (Ctrl/Cmd+K)"
+              aria-label="Quick actions"
+            >
+              Cmd+K
+            </button>
             <button
               type="button"
               class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
@@ -2204,6 +3001,18 @@ export default function SessionView(props: SessionViewProps) {
                 <Loader2 size={16} class="animate-spin" />
               </Show>
             </button>
+            <button
+              type="button"
+              class="h-9 w-9 flex items-center justify-center rounded-lg text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              onClick={compactSessionHistory}
+              disabled={!canCompactSession() || historyActionBusy() !== null}
+              title="Compact session context"
+              aria-label="Compact session context"
+            >
+              <Show when={historyActionBusy() === "compact"} fallback={<Maximize2 size={16} />}>
+                <Loader2 size={16} class="animate-spin" />
+              </Show>
+            </button>
             <div ref={(el) => (sessionMenuRef = el)} class="relative">
               <button
                 type="button"
@@ -2222,9 +3031,20 @@ export default function SessionView(props: SessionViewProps) {
 
               <Show when={sessionMenuOpen() && props.selectedSessionId}>
                 <div
-                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-dls-border bg-dls-surface shadow-lg p-1"
+                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-dls-border bg-dls-surface shadow-lg p-1"
                   onClick={(event) => event.stopPropagation()}
                 >
+                  <button
+                    type="button"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover disabled:opacity-60"
+                    onClick={() => {
+                      setSessionMenuOpen(false);
+                      void compactSessionHistory();
+                    }}
+                    disabled={!canCompactSession() || historyActionBusy() !== null}
+                  >
+                    Compact session context
+                  </button>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-dls-hover"
@@ -2303,14 +3123,6 @@ export default function SessionView(props: SessionViewProps) {
           </div>
         </Show>
 
-      <Show when={props.error}>
-        <div class="mx-auto max-w-5xl w-full px-6 md:px-10 pt-4">
-          <div class="rounded-2xl bg-red-1/40 px-5 py-4 text-sm text-red-12 border border-red-7/20">
-            {props.error}
-          </div>
-        </div>
-      </Show>
-
        <div class="flex-1 flex overflow-hidden">
          <div class="flex-1 min-w-0 relative overflow-hidden">
            <div
@@ -2351,8 +3163,9 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <div class="text-sm font-semibold text-dls-text">{t("dashboard.quick_start_soul")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    {t("dashboard.quick_start_soul_desc")}
-                    {t("dashboard.quick_start_soul_note")}
+                    Keep your goals and preferences across sessions with light scheduled check-ins.
+                    Tradeoff: more autonomy can create extra background runs, but revert is one command.
+                    Audit setup and heartbeat evidence from the Soul section.
                   </div>
                 </button>
               </div>
@@ -2364,22 +3177,20 @@ export default function SessionView(props: SessionViewProps) {
               <button
                 type="button"
                 class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-                onClick={() => {
-                  setMessageWindowExpanded(true);
-                  setMessageWindowStart(0);
-                }}
+                onClick={revealEarlierMessages}
               >
-                {t("session.show_earlier_messages")
-                  .replace("{count}", hiddenMessageCount().toLocaleString())
-                  .replace("{plural}", hiddenMessageCount() === 1 ? "" : "s")}
+                Show {nextRevealCount().toLocaleString()} earlier message
+                {nextRevealCount() === 1 ? "" : "s"}
               </button>
             </div>
           </Show>
 
           <MessageList
-            messages={renderedMessages()}
+            messages={batchedRenderedMessages()}
+            isStreaming={showRunIndicator()}
             developerMode={props.developerMode}
             showThinking={props.showThinking}
+            workspaceRoot={props.activeWorkspaceRoot}
             expandedStepIds={props.expandedStepIds}
             setExpandedStepIds={props.setExpandedStepIds}
             searchMatchMessageIds={searchMatchMessageIds()}
@@ -2403,6 +3214,13 @@ export default function SessionView(props: SessionViewProps) {
                         <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                       </Show>
                     </div>
+                    <Show when={thinkingDetail()?.detail}>
+                      {(detail) => (
+                        <div class="pl-3 pr-2 pt-0.5 text-[11px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
+                          {thinkingDetail()?.title === "Reasoning" ? detail() : `${thinkingDetail()?.title}: ${detail()}`}
+                        </div>
+                      )}
+                    </Show>
                   </div>
                 </div>
               ) : undefined
@@ -2413,17 +3231,19 @@ export default function SessionView(props: SessionViewProps) {
            </div>
            </div>
 
-           <Show when={!autoScrollEnabled() && props.messages.length > 0}>
-             <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
-               <button
-                 type="button"
-                 class="pointer-events-auto rounded-full border border-gray-6 bg-gray-1/90 px-4 py-2 text-xs text-gray-11 shadow-lg shadow-gray-12/5 backdrop-blur-md hover:bg-gray-2 transition-colors"
-                 onClick={() => scrollToLatest("smooth")}
-               >
-                 {t("session.jump_to_latest")}
-               </button>
-             </div>
-           </Show>
+            <Show when={props.messages.length > 0 && !nearBottom()}>
+              <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
+                <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1/90 p-1 shadow-lg shadow-gray-12/5 backdrop-blur-md">
+                  <button
+                    type="button"
+                    class="rounded-full px-3 py-1.5 text-xs text-gray-11 hover:bg-gray-2 transition-colors"
+                    onClick={() => jumpToLatest("smooth")}
+                  >
+                    {t("session.jump_to_latest")}
+                  </button>
+                </div>
+              </div>
+            </Show>
          </div>
 
           <Show when={markdownEditorOpen()}>
@@ -2506,6 +3326,7 @@ export default function SessionView(props: SessionViewProps) {
 
       <Composer
         prompt={props.prompt}
+        developerMode={props.developerMode}
         busy={props.busy}
         isStreaming={showRunIndicator()}
         onSend={handleSendPrompt}
@@ -2579,6 +3400,18 @@ export default function SessionView(props: SessionViewProps) {
           <button
             type="button"
             class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+              showRightSidebarSelection() && props.tab === "soul"
+                ? "bg-dls-active text-dls-text"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+            onClick={() => openSoul()}
+          >
+            <HeartPulse size={18} class={soulNavIconClass()} />
+            Soul
+          </button>
+          <button
+            type="button"
+            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "skills"
                 ? "bg-dls-active text-dls-text"
                 : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
@@ -2619,20 +3452,22 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <MessageCircle size={18} />
-            {t("dashboard.tab_identities")}
+            Messaging
           </button>
-          <button
-            type="button"
-            class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "config"
-                ? "bg-dls-active text-dls-text"
-                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-            }`}
-            onClick={openConfig}
-          >
-            <SlidersHorizontal size={18} />
-            {t("dashboard.tab_advanced")}
-          </button>
+          <Show when={props.developerMode}>
+            <button
+              type="button"
+              class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+                showRightSidebarSelection() && props.tab === "config"
+                  ? "bg-dls-active text-dls-text"
+                  : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+              }`}
+              onClick={openConfig}
+            >
+              <SlidersHorizontal size={18} />
+              {t("dashboard.tab_advanced")}
+            </button>
+          </Show>
           </div>
 
           <InboxPanel
@@ -2650,6 +3485,100 @@ export default function SessionView(props: SessionViewProps) {
           />
         </div>
       </aside>
+
+      <Show when={commandPaletteOpen()}>
+        <div
+          class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto"
+          onClick={closeCommandPalette}
+        >
+          <div
+            class="w-full max-w-2xl mt-12 rounded-2xl border border-dls-border bg-dls-surface shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div class="border-b border-dls-border px-4 py-3 space-y-2">
+              <div class="flex items-center gap-2">
+                <Show when={commandPaletteMode() !== "root"}>
+                  <button
+                    type="button"
+                    class="h-8 px-2 rounded-md text-xs text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                    onClick={returnToCommandRoot}
+                  >
+                    Back
+                  </button>
+                </Show>
+                <Search size={14} class="text-dls-secondary shrink-0" />
+                <input
+                  ref={(el) => (commandPaletteInputEl = el)}
+                  type="text"
+                  value={commandPaletteQuery()}
+                  onInput={(event) => setCommandPaletteQuery(event.currentTarget.value)}
+                  placeholder={commandPalettePlaceholder()}
+                  class="min-w-0 flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
+                  aria-label={commandPaletteTitle()}
+                />
+                <button
+                  type="button"
+                  class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
+                  onClick={closeCommandPalette}
+                  aria-label="Close quick actions"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <div class="text-[11px] text-dls-secondary">{commandPaletteTitle()}</div>
+            </div>
+
+            <div class="max-h-[56vh] overflow-y-auto p-2">
+              <Show
+                when={commandPaletteItems().length > 0}
+                fallback={
+                  <div class="px-3 py-6 text-sm text-dls-secondary text-center">
+                    No matches.
+                  </div>
+                }
+              >
+                <For each={commandPaletteItems()}>
+                  {(item, index) => {
+                    const idx = () => index();
+                    return (
+                      <button
+                        ref={(el) => {
+                          commandPaletteOptionRefs[idx()] = el;
+                        }}
+                        type="button"
+                        class={`w-full text-left rounded-xl px-3 py-2.5 transition-colors ${
+                          idx() === commandPaletteActiveIndex()
+                            ? "bg-dls-active text-dls-text"
+                            : "text-dls-text hover:bg-dls-hover"
+                        }`}
+                        onMouseEnter={() => setCommandPaletteActiveIndex(idx())}
+                        onClick={item.action}
+                      >
+                        <div class="flex items-start justify-between gap-3">
+                          <div class="min-w-0">
+                            <div class="text-sm font-medium truncate">{item.title}</div>
+                            <Show when={item.detail}>
+                              <div class="text-xs text-dls-secondary mt-1 truncate">{item.detail}</div>
+                            </Show>
+                          </div>
+                          <Show when={item.meta}>
+                            <span class="text-[10px] uppercase tracking-wide text-dls-secondary shrink-0">{item.meta}</span>
+                          </Show>
+                        </div>
+                      </button>
+                    );
+                  }}
+                </For>
+              </Show>
+            </div>
+
+            <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
+              <span>Arrow keys to navigate</span>
+              <span>Enter to run · Esc to close</span>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <ProviderAuthModal
         open={props.providerAuthModalOpen}

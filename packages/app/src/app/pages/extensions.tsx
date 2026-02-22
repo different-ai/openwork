@@ -1,4 +1,4 @@
-import { Show, createEffect, createMemo, createSignal } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, on } from "solid-js";
 
 import { Box, Cpu } from "lucide-solid";
 
@@ -13,15 +13,21 @@ export type ExtensionsViewProps = McpViewProps &
   PluginsViewProps & {
     refreshMcpServers: () => void;
     initialSection?: ExtensionsSection;
+    setDashboardTab?: (tab: "mcp" | "plugins") => void;
   };
 
 export default function ExtensionsView(props: ExtensionsViewProps) {
   const [section, setSection] = createSignal<ExtensionsSection>(props.initialSection ?? "all");
 
-  createEffect(() => {
-    if (!props.initialSection) return;
-    setSection(props.initialSection);
-  });
+  createEffect(
+    on(
+      () => props.initialSection,
+      (nextSection, previousSection) => {
+        if (!nextSection || nextSection === previousSection) return;
+        setSection(nextSection);
+      },
+    ),
+  );
 
   const connectedAppsCount = createMemo(() =>
     props.mcpServers.filter((entry) => {
@@ -36,6 +42,13 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
   const refreshAll = () => {
     props.refreshMcpServers();
     props.refreshPlugins();
+  };
+
+  const selectSection = (nextSection: ExtensionsSection) => {
+    setSection(nextSection);
+    if (nextSection === "mcp" || nextSection === "plugins") {
+      props.setDashboardTab?.(nextSection);
+    }
   };
 
   const pillClass = (active: boolean) =>
@@ -77,7 +90,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               type="button"
               class={pillClass(section() === "all")}
               aria-pressed={section() === "all"}
-              onClick={() => setSection("all")}
+              onClick={() => selectSection("all")}
             >
               {t("extensions.tab_all")}
             </button>
@@ -85,7 +98,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               type="button"
               class={pillClass(section() === "mcp")}
               aria-pressed={section() === "mcp"}
-              onClick={() => setSection("mcp")}
+              onClick={() => selectSection("mcp")}
             >
               <Box size={14} />
               {t("extensions.tab_apps")}
@@ -94,7 +107,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               type="button"
               class={pillClass(section() === "plugins")}
               aria-pressed={section() === "plugins"}
-              onClick={() => setSection("plugins")}
+              onClick={() => selectSection("plugins")}
             >
               <Cpu size={14} />
               {t("extensions.tab_plugins")}

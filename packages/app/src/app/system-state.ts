@@ -493,27 +493,50 @@ export function createSystemState(options: {
     });
 
     try {
+      let totalBytes: number | null = null;
+      let downloadedBytes = 0;
+      let lastPublishedBytes = 0;
+      let lastPublishedAt = 0;
+
+      const publishProgress = (force = false) => {
+        const now = Date.now();
+        const elapsed = now - lastPublishedAt;
+        const movedBytes = downloadedBytes - lastPublishedBytes;
+        if (!force && elapsed < 180 && movedBytes < 256 * 1024) {
+          return;
+        }
+        lastPublishedAt = now;
+        lastPublishedBytes = downloadedBytes;
+        setUpdateStatus((current) => {
+          if (current.state !== "downloading") return current;
+          return {
+            ...current,
+            totalBytes,
+            downloadedBytes,
+          };
+        });
+      };
+
       await pending.update.download((event: any) => {
         if (!event || typeof event !== "object") return;
         const record = event as Record<string, any>;
 
-        setUpdateStatus((current) => {
-          if (current.state !== "downloading") return current;
+        if (record.event === "Started") {
+          totalBytes =
+            record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
+          publishProgress(true);
+          return;
+        }
 
-          if (record.event === "Started") {
-            const total =
-              record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
-            return { ...current, totalBytes: total };
-          }
-
-          if (record.event === "Progress") {
-            const chunk = record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
-            return { ...current, downloadedBytes: current.downloadedBytes + chunk };
-          }
-
-          return current;
-        });
+        if (record.event === "Progress") {
+          const chunk = record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
+          downloadedBytes += chunk;
+          publishProgress(false);
+          return;
+        }
       });
+
+      publishProgress(true);
 
       setUpdateStatus({
         state: "ready",

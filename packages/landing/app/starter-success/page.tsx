@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
@@ -10,6 +9,19 @@ export const metadata = {
 
 export default async function StarterSuccessPage() {
   const github = await getGithubData();
+  const calBase = process.env.NEXT_PUBLIC_CAL_URL ?? "";
+  const calHref = (() => {
+    if (!calBase) return "/enterprise#book";
+    try {
+      const url = new URL(calBase);
+      url.searchParams.set("source", "starter-success");
+      url.searchParams.set("notes", "Paid customer: OpenWork Team Starter (12 months). Priority onboarding requested.");
+      url.searchParams.set("description", "Paid customer - Team Starter (12 months). Please prioritize onboarding.");
+      return url.toString();
+    } catch {
+      return calBase;
+    }
+  })();
 
   return (
     <div className="min-h-screen">
@@ -27,8 +39,7 @@ export default async function StarterSuccessPage() {
             </h1>
 
             <p className="max-w-2xl text-[16px] leading-relaxed text-gray-700">
-              We&apos;re launching the first hosted version in about one week. I
-              will reach out to you right away with next steps.
+              You&apos;re on track for getting access to OpenWork Hosted in 7 days.
             </p>
           </section>
 
@@ -43,14 +54,14 @@ export default async function StarterSuccessPage() {
             </div>
 
             <div className="feature-card bg-gradient-to-br from-blue-50 to-orange-50">
-              <h2 className="mb-2 text-[15px] font-bold">Need faster onboarding?</h2>
+              <h2 className="mb-2 text-[15px] font-bold">Want to accelerate?</h2>
               <p className="mb-4 text-[14px] leading-relaxed text-gray-600">
-                If you want to move now, we can help you plan your first workers
-                and permissions model.
+                Schedule a call with the founder to accelerate and share your
+                use case.
               </p>
-              <Link href="/enterprise#book" className="doc-button">
-                Book onboarding call
-              </Link>
+              <a href={calHref} className="doc-button">
+                Schedule founder call
+              </a>
             </div>
           </section>
 

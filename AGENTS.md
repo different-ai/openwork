@@ -37,6 +37,18 @@ Read INFRASTRUCTURE.md
 * **Slick and fluid**: 60fps animations, micro-interactions, premium feel.
 * **Mobile-native**: touch targets, gestures, and layouts optimized for small screens.
 
+## Task Intake (Required)
+
+Before making changes, explicitly confirm the target repository in your first task update.
+
+Required format:
+
+1. `Target repo: <path>` (for example: `_repos/openwork`)
+2. `Out of scope repos: <list>` (for example: `_repos/opencode`)
+3. `Planned output: <what will be changed/tested>`
+
+If the user request references multiple repos and the intended edit location is ambiguous, stop after discovery and ask for a single repo target before editing files.
+
 ## New Feature Workflow (Required)
 
 When the user asks to create a new feature, follow this exact procedure:

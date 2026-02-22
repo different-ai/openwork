@@ -1,4 +1,5 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import type { SkillItem } from "./types.js";
@@ -49,6 +50,37 @@ const extractTriggerFromBody = (body: string) => {
   return "";
 };
 
+async function parseSkillEntry(
+  skillPath: string,
+  entryName: string,
+  scope: "project" | "global",
+): Promise<SkillItem | null> {
+  const content = await readFile(skillPath, "utf8");
+  const { data, body } = parseFrontmatter(content);
+  const name = typeof data.name === "string" ? data.name : entryName;
+  const description = typeof data.description === "string" ? data.description : "";
+  const trigger =
+    typeof data.trigger === "string"
+      ? data.trigger
+      : typeof data.when === "string"
+        ? data.when
+        : extractTriggerFromBody(body);
+  try {
+    validateSkillName(name);
+    validateDescription(description);
+  } catch {
+    return null;
+  }
+  if (name !== entryName) return null;
+  return {
+    name,
+    description,
+    path: skillPath,
+    scope,
+    trigger: trigger.trim() || undefined,
+  };
+}
+
 async function listSkillsInDir(dir: string, scope: "project" | "global"): Promise<SkillItem[]> {
   if (!(await exists(dir))) return [];
   const entries = await readdir(dir, { withFileTypes: true });
@@ -56,31 +88,30 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const skillPath = join(dir, entry.name, "SKILL.md");
-    if (!(await exists(skillPath))) continue;
-    const content = await readFile(skillPath, "utf8");
-    const { data, body } = parseFrontmatter(content);
-    const name = typeof data.name === "string" ? data.name : entry.name;
-    const description = typeof data.description === "string" ? data.description : "";
-    const trigger =
-      typeof data.trigger === "string"
-        ? data.trigger
-        : typeof data.when === "string"
-          ? data.when
-          : extractTriggerFromBody(body);
-    try {
-      validateSkillName(name);
-      validateDescription(description);
-    } catch {
-      continue;
+    if (await exists(skillPath)) {
+      // Direct skill: <dir>/<name>/SKILL.md
+      const item = await parseSkillEntry(skillPath, entry.name, scope);
+      if (item) items.push(item);
+    } else {
+      // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
+      // This supports the convention where global skills are organised as
+      //   skills/<domain>/<skill-name>/SKILL.md
+      // in addition to the flat   skills/<skill-name>/SKILL.md  layout.
+      const domainDir = join(dir, entry.name);
+      let subEntries: Dirent[];
+      try {
+        subEntries = await readdir(domainDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const subEntry of subEntries) {
+        if (!subEntry.isDirectory()) continue;
+        const subSkillPath = join(domainDir, subEntry.name, "SKILL.md");
+        if (!(await exists(subSkillPath))) continue;
+        const item = await parseSkillEntry(subSkillPath, subEntry.name, scope);
+        if (item) items.push(item);
+      }
     }
-    if (name !== entry.name) continue;
-    items.push({
-      name,
-      description,
-      path: skillPath,
-      scope,
-      trigger: trigger.trim() || undefined,
-    });
   }
   return items;
 }

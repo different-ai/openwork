@@ -34,6 +34,7 @@ import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
+  opencodeDbMigrate,
   engineInstall,
   engineStart,
   engineStop,
@@ -93,6 +94,11 @@ export type SandboxCreateProgressState = {
 };
 
 export type SandboxCreatePhase = "idle" | "preflight" | "provisioning" | "finalizing";
+
+export type MigrationRepairResult = {
+  ok: boolean;
+  message: string;
+};
 
 export function createWorkspaceStore(options: {
   startupPreference: () => StartupPreference | null;
@@ -175,6 +181,62 @@ export function createWorkspaceStore(options: {
     }
   };
 
+  const connectInFlightByKey = new Map<string, Promise<boolean>>();
+  let createRemoteInFlight: Promise<boolean> | null = null;
+  const DEFAULT_CONNECT_HEALTH_TIMEOUT_MS = 12_000;
+  const LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS = 180_000;
+  const LONG_BOOT_CONNECT_REASONS = new Set(["host-start", "bootstrap-local"]);
+  const DB_MIGRATE_UNSUPPORTED_PATTERNS = [
+    /unknown(?:\s+sub)?command\s+['"`]?db['"`]?/i,
+    /unrecognized(?:\s+sub)?command\s+['"`]?db['"`]?/i,
+    /no such command[:\s]+db/i,
+    /found argument ['"`]db['"`] which wasn't expected/i,
+  ] as const;
+
+  const connectRequestKey = (
+    nextBaseUrl: string,
+    directory?: string,
+    context?: {
+      workspaceId?: string;
+      workspaceType?: WorkspaceInfo["workspaceType"];
+      targetRoot?: string;
+      reason?: string;
+    },
+    auth?: OpencodeAuth,
+    connectOptions?: { quiet?: boolean; navigate?: boolean },
+  ) =>
+    [
+      nextBaseUrl.trim(),
+      (directory ?? "").trim(),
+      context?.workspaceId?.trim() ?? "",
+      context?.workspaceType ?? "",
+      context?.targetRoot?.trim() ?? "",
+      context?.reason ?? "",
+      auth?.mode ?? (auth ? "basic" : "none"),
+      String(connectOptions?.quiet ?? false),
+      String(connectOptions?.navigate ?? true),
+    ].join("::");
+
+  const resolveConnectHealthTimeoutMs = (reason?: string) => {
+    const normalizedReason = reason?.trim() ?? "";
+    if (LONG_BOOT_CONNECT_REASONS.has(normalizedReason)) {
+      return LOCAL_BOOT_CONNECT_HEALTH_TIMEOUT_MS;
+    }
+    return DEFAULT_CONNECT_HEALTH_TIMEOUT_MS;
+  };
+
+  const formatExecOutput = (result: { stdout: string; stderr: string }) => {
+    const stderr = result.stderr.trim();
+    const stdout = result.stdout.trim();
+    return [stderr, stdout].filter(Boolean).join("\n\n");
+  };
+
+  const isDbMigrateUnsupported = (output: string) => {
+    const normalized = output.trim();
+    if (!normalized) return false;
+    return DB_MIGRATE_UNSUPPORTED_PATTERNS.some((pattern) => pattern.test(normalized));
+  };
+
   const [engine, setEngine] = createSignal<EngineInfo | null>(null);
   const [engineAuth, setEngineAuth] = createSignal<OpencodeAuth | null>(null);
   const [engineDoctorResult, setEngineDoctorResult] = createSignal<EngineDoctorResult | null>(null);
@@ -253,6 +315,8 @@ export function createWorkspaceStore(options: {
   >({});
   const [exportingWorkspaceConfig, setExportingWorkspaceConfig] = createSignal(false);
   const [importingWorkspaceConfig, setImportingWorkspaceConfig] = createSignal(false);
+  const [migrationRepairBusy, setMigrationRepairBusy] = createSignal(false);
+  const [migrationRepairResult, setMigrationRepairResult] = createSignal<MigrationRepairResult | null>(null);
 
   const activeWorkspaceInfo = createMemo(() => workspaces().find((w) => w.id === activeWorkspaceId()) ?? null);
   const activeWorkspaceDisplay = createMemo<WorkspaceDisplay>(() => {
@@ -1101,183 +1165,212 @@ export function createWorkspaceStore(options: {
     auth?: OpencodeAuth,
     connectOptions?: { quiet?: boolean; navigate?: boolean },
   ) {
-    console.log("[workspace] connect", {
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      workspaceType: context?.workspaceType ?? null,
-    });
-    const connectStart = Date.now();
-    wsDebug("connect:start", {
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      reason: context?.reason ?? null,
-      workspaceType: context?.workspaceType ?? null,
-      targetRoot: context?.targetRoot ?? null,
-      quiet: connectOptions?.quiet ?? false,
-      navigate: connectOptions?.navigate ?? true,
-      authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
-    });
-    const quiet = connectOptions?.quiet ?? false;
-    const navigate = connectOptions?.navigate ?? true;
-    options.setError(null);
-    if (!quiet) {
-      options.setBusy(true);
-      options.setBusyLabel("status.connecting");
-      options.setBusyStartedAt(Date.now());
+    const requestKey = connectRequestKey(nextBaseUrl, directory, context, auth, connectOptions);
+    const existing = connectInFlightByKey.get(requestKey);
+    if (existing) {
+      wsDebug("connect:dedupe", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        workspaceType: context?.workspaceType ?? null,
+      });
+      return existing;
     }
-    options.setSseConnected(false);
 
-    const connectMeta: OpencodeConnectStatus = {
-      at: Date.now(),
-      baseUrl: nextBaseUrl,
-      directory: directory ?? null,
-      reason: context?.reason ?? null,
-      status: "connecting",
-      error: null,
-    };
-    options.setOpencodeConnectStatus?.(connectMeta);
-
-    const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
-
-    try {
-      let resolvedDirectory = directory?.trim() ?? "";
-      let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
-      const health = await waitForHealthy(nextClient, { timeoutMs: 12_000 });
-      connectMetrics.healthyMs = Date.now() - connectStart;
-      wsDebug("connect:healthy", { ms: Date.now() - connectStart, version: health.version });
-
-      if (context?.workspaceType === "remote" && !resolvedDirectory) {
-        try {
-          const pathInfo = unwrap(await nextClient.path.get());
-          const discovered = pathInfo.directory?.trim() ?? "";
-          if (discovered) {
-            resolvedDirectory = discovered;
-            console.log("[workspace] remote directory resolved", resolvedDirectory);
-            if (isTauriRuntime() && context.workspaceId) {
-              const updated = await workspaceUpdateRemote({
-                workspaceId: context.workspaceId,
-                directory: resolvedDirectory,
-              });
-              setWorkspaces(updated.workspaces);
-              syncActiveWorkspaceId(updated.activeId);
-            }
-            setProjectDir(resolvedDirectory);
-            nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
-          }
-        } catch (error) {
-          console.log("[workspace] remote directory lookup failed", error);
-        }
+    const run = (async () => {
+      console.log("[workspace] connect", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        workspaceType: context?.workspaceType ?? null,
+      });
+      const connectStart = Date.now();
+      wsDebug("connect:start", {
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        workspaceType: context?.workspaceType ?? null,
+        targetRoot: context?.targetRoot ?? null,
+        healthTimeoutMs: resolveConnectHealthTimeoutMs(context?.reason),
+        quiet: connectOptions?.quiet ?? false,
+        navigate: connectOptions?.navigate ?? true,
+        authMode: auth && "mode" in auth ? (auth as any).mode : auth ? "basic" : "none",
+      });
+      const quiet = connectOptions?.quiet ?? false;
+      const navigate = connectOptions?.navigate ?? true;
+      options.setError(null);
+      if (!quiet) {
+        options.setBusy(true);
+        options.setBusyLabel("status.connecting");
+        options.setBusyStartedAt(Date.now());
       }
+      options.setSseConnected(false);
 
-      options.setClient(nextClient);
-      options.setConnectedVersion(health.version);
-      options.setBaseUrl(nextBaseUrl);
-      options.setClientDirectory(resolvedDirectory);
+      const connectMeta: OpencodeConnectStatus = {
+        at: Date.now(),
+        baseUrl: nextBaseUrl,
+        directory: directory ?? null,
+        reason: context?.reason ?? null,
+        status: "connecting",
+        error: null,
+      };
+      options.setOpencodeConnectStatus?.(connectMeta);
 
-      const providersPromise = (async () => {
-        const providersAt = Date.now();
-        wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
-        try {
-          const providerList = unwrap(await nextClient.provider.list());
-          wsDebug("connect:providers:done", {
-            ms: Date.now() - providersAt,
-            source: "provider.list",
-            available: providerList.all?.length ?? 0,
-            connected: providerList.connected?.length ?? 0,
-          });
-          return {
-            providers: providerList.all,
-            defaults: providerList.default,
-            connectedIds: providerList.connected,
-          };
-        } catch (error) {
-          const message = error instanceof Error ? error.message : safeStringify(error);
-          wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
+      const connectMetrics: NonNullable<OpencodeConnectStatus["metrics"]> = {};
+
+      try {
+        let resolvedDirectory = directory?.trim() ?? "";
+        let nextClient = createClient(nextBaseUrl, resolvedDirectory || undefined, auth);
+        const healthTimeoutMs = resolveConnectHealthTimeoutMs(context?.reason);
+        const health = await waitForHealthy(nextClient, { timeoutMs: healthTimeoutMs });
+        connectMetrics.healthyMs = Date.now() - connectStart;
+        wsDebug("connect:healthy", {
+          ms: Date.now() - connectStart,
+          version: health.version,
+          timeoutMs: healthTimeoutMs,
+        });
+
+        if (context?.workspaceType === "remote" && !resolvedDirectory) {
           try {
-            const cfg = unwrap(await nextClient.config.providers());
-            const mapped = mapConfigProvidersToList(cfg.providers);
+            const pathInfo = unwrap(await nextClient.path.get());
+            const discovered = pathInfo.directory?.trim() ?? "";
+            if (discovered) {
+              resolvedDirectory = discovered;
+              console.log("[workspace] remote directory resolved", resolvedDirectory);
+              if (isTauriRuntime() && context.workspaceId) {
+                const updated = await workspaceUpdateRemote({
+                  workspaceId: context.workspaceId,
+                  directory: resolvedDirectory,
+                });
+                setWorkspaces(updated.workspaces);
+                syncActiveWorkspaceId(updated.activeId);
+              }
+              setProjectDir(resolvedDirectory);
+              nextClient = createClient(nextBaseUrl, resolvedDirectory, auth);
+            }
+          } catch (error) {
+            console.log("[workspace] remote directory lookup failed", error);
+          }
+        }
+
+        options.setClient(nextClient);
+        options.setConnectedVersion(health.version);
+        options.setBaseUrl(nextBaseUrl);
+        options.setClientDirectory(resolvedDirectory);
+
+        const providersPromise = (async () => {
+          const providersAt = Date.now();
+          wsDebug("connect:providers:start", { baseUrl: nextBaseUrl });
+          try {
+            const providerList = unwrap(await nextClient.provider.list());
             wsDebug("connect:providers:done", {
               ms: Date.now() - providersAt,
-              source: "config.providers",
-              available: mapped.length,
-              connected: 0,
+              source: "provider.list",
+              available: providerList.all?.length ?? 0,
+              connected: providerList.connected?.length ?? 0,
             });
             return {
-              providers: mapped,
-              defaults: cfg.default,
-              connectedIds: [],
+              providers: providerList.all,
+              defaults: providerList.default,
+              connectedIds: providerList.connected,
             };
-          } catch (fallbackError) {
-            const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
-            wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
-            return {
-              providers: [],
-              defaults: {},
-              connectedIds: [],
-            };
+          } catch (error) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            wsDebug("connect:providers:fallback", { ms: Date.now() - providersAt, message });
+            try {
+              const cfg = unwrap(await nextClient.config.providers());
+              const mapped = mapConfigProvidersToList(cfg.providers);
+              wsDebug("connect:providers:done", {
+                ms: Date.now() - providersAt,
+                source: "config.providers",
+                available: mapped.length,
+                connected: 0,
+              });
+              return {
+                providers: mapped,
+                defaults: cfg.default,
+                connectedIds: [],
+              };
+            } catch (fallbackError) {
+              const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : safeStringify(fallbackError);
+              wsDebug("connect:providers:error", { ms: Date.now() - providersAt, message: fallbackMessage });
+              return {
+                providers: [],
+                defaults: {},
+                connectedIds: [],
+              };
+            }
+          } finally {
+            connectMetrics.providersMs = Date.now() - providersAt;
           }
-        } finally {
-          connectMetrics.providersMs = Date.now() - providersAt;
+        })();
+
+        const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
+        wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
+        const sessionsAt = Date.now();
+        await options.loadSessions(targetRoot);
+        connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
+        wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
+        const pendingPermissionsAt = Date.now();
+        await options.refreshPendingPermissions();
+        connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
+
+        const providerState = await providersPromise;
+        options.setProviders(providerState.providers);
+        options.setProviderDefaults(providerState.defaults);
+        options.setProviderConnectedIds(providerState.connectedIds);
+
+        options.setSelectedSessionId(null);
+        options.setMessages([]);
+        options.setTodos([]);
+        options.setPendingPermissions([]);
+        options.setSessionStatusById({});
+
+        options.refreshSkills({ force: true }).catch(() => undefined);
+        options.refreshPlugins().catch(() => undefined);
+        if (navigate && !options.selectedSessionId()) {
+          options.setTab("scheduled");
+          options.setView("session");
         }
-      })();
 
-      const targetRoot = context?.targetRoot ?? (resolvedDirectory || activeWorkspaceRoot().trim());
-      wsDebug("connect:loadSessions", { targetRoot, resolvedDirectory });
-      const sessionsAt = Date.now();
-      await options.loadSessions(targetRoot);
-      connectMetrics.loadSessionsMs = Date.now() - sessionsAt;
-      wsDebug("connect:loadSessions:done", { ms: Date.now() - sessionsAt });
-      const pendingPermissionsAt = Date.now();
-      await options.refreshPendingPermissions();
-      connectMetrics.pendingPermissionsMs = Date.now() - pendingPermissionsAt;
-
-      const providerState = await providersPromise;
-      options.setProviders(providerState.providers);
-      options.setProviderDefaults(providerState.defaults);
-      options.setProviderConnectedIds(providerState.connectedIds);
-
-      options.setSelectedSessionId(null);
-      options.setMessages([]);
-      options.setTodos([]);
-      options.setPendingPermissions([]);
-      options.setSessionStatusById({});
-
-      options.refreshSkills({ force: true }).catch(() => undefined);
-      options.refreshPlugins().catch(() => undefined);
-      if (navigate && !options.selectedSessionId()) {
-        options.setTab("scheduled");
-        options.setView("session");
+        // If the user successfully connected, treat onboarding as complete so we
+        // don't force the onboarding flow on subsequent launches.
+        markOnboardingComplete();
+        options.onEngineStable?.();
+        connectMetrics.totalMs = Date.now() - connectStart;
+        options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
+        wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
+        return true;
+      } catch (e) {
+        options.setClient(null);
+        options.setConnectedVersion(null);
+        const message = e instanceof Error ? e.message : safeStringify(e);
+        wsDebug("connect:error", { ms: Date.now() - connectStart, message });
+        connectMetrics.totalMs = Date.now() - connectStart;
+        options.setOpencodeConnectStatus?.({
+          ...connectMeta,
+          status: "error",
+          error: addOpencodeCacheHint(message),
+          metrics: connectMetrics,
+        });
+        if (!quiet) {
+          options.setError(addOpencodeCacheHint(message));
+        }
+        return false;
+      } finally {
+        if (!quiet) {
+          options.setBusy(false);
+          options.setBusyLabel(null);
+          options.setBusyStartedAt(null);
+        }
       }
+    })();
 
-      // If the user successfully connected, treat onboarding as complete so we
-      // don't force the onboarding flow on subsequent launches.
-      markOnboardingComplete();
-      options.onEngineStable?.();
-      connectMetrics.totalMs = Date.now() - connectStart;
-      options.setOpencodeConnectStatus?.({ ...connectMeta, status: "connected", metrics: connectMetrics });
-      wsDebug("connect:done", { ok: true, ms: Date.now() - connectStart });
-      return true;
-    } catch (e) {
-      options.setClient(null);
-      options.setConnectedVersion(null);
-      const message = e instanceof Error ? e.message : safeStringify(e);
-      wsDebug("connect:error", { ms: Date.now() - connectStart, message });
-      connectMetrics.totalMs = Date.now() - connectStart;
-      options.setOpencodeConnectStatus?.({
-        ...connectMeta,
-        status: "error",
-        error: addOpencodeCacheHint(message),
-        metrics: connectMetrics,
-      });
-      if (!quiet) {
-        options.setError(addOpencodeCacheHint(message));
-      }
-      return false;
+    connectInFlightByKey.set(requestKey, run);
+    try {
+      return await run;
     } finally {
-      if (!quiet) {
-        options.setBusy(false);
-        options.setBusyLabel(null);
-        options.setBusyStartedAt(null);
+      if (connectInFlightByKey.get(requestKey) === run) {
+        connectInFlightByKey.delete(requestKey);
       }
     }
   }
@@ -1589,6 +1682,15 @@ export function createWorkspaceStore(options: {
     sandboxRunId?: string | null;
     sandboxContainerName?: string | null;
   }) {
+    if (createRemoteInFlight) {
+      wsDebug("create-remote:dedupe", {
+        hostUrl: input.openworkHostUrl ?? null,
+        directory: input.directory ?? null,
+      });
+      return createRemoteInFlight;
+    }
+
+    const run = (async () => {
     const hostUrl = normalizeOpenworkServerUrl(input.openworkHostUrl ?? "") ?? "";
     const token = input.openworkToken?.trim() ?? "";
     const directory = input.directory?.trim() ?? "";
@@ -1768,6 +1870,16 @@ export function createWorkspaceStore(options: {
         options.setBusy(false);
         options.setBusyLabel(null);
         options.setBusyStartedAt(null);
+      }
+    }
+    })();
+
+    createRemoteInFlight = run;
+    try {
+      return await run;
+    } finally {
+      if (createRemoteInFlight === run) {
+        createRemoteInFlight = null;
       }
     }
   }
@@ -2139,6 +2251,109 @@ export function createWorkspaceStore(options: {
     }
   }
 
+  function canRepairOpencodeMigration() {
+    if (!isTauriRuntime()) return false;
+    const workspace = activeWorkspaceInfo();
+    if (!workspace || workspace.workspaceType !== "local") return false;
+    return Boolean(activeWorkspacePath().trim());
+  }
+
+  async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
+    if (!isTauriRuntime()) {
+      const message = t("app.migration.desktop_required", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    if (migrationRepairBusy()) return false;
+
+    const workspace = activeWorkspaceInfo();
+    if (!workspace || workspace.workspaceType !== "local") {
+      const message = t("app.migration.local_only", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    const root = activeWorkspacePath().trim();
+    if (!root) {
+      const message = t("app.migration.workspace_required", currentLocale());
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    }
+
+    setMigrationRepairBusy(true);
+    setMigrationRepairResult(null);
+    options.setError(null);
+    options.setBusy(true);
+    options.setBusyLabel("status.repairing_migration");
+    options.setBusyStartedAt(Date.now());
+
+    try {
+      if (engine()?.running) {
+        const info = await engineStop();
+        setEngine(info);
+      }
+
+      const source = options.engineSource();
+      const result = await opencodeDbMigrate({
+        projectDir: root,
+        preferSidecar: source === "sidecar",
+        opencodeBinPath: source === "custom" ? options.engineCustomBinPath?.().trim() || null : null,
+      });
+
+      if (!result.ok) {
+        const output = formatExecOutput(result);
+        if (isDbMigrateUnsupported(output)) {
+          const message = t("app.migration.unsupported", currentLocale());
+          setMigrationRepairResult({ ok: false, message });
+          options.setError(message);
+          return false;
+        }
+
+        const fallback = t("app.migration.failed", currentLocale());
+        const message = output ? `${fallback}\n\n${output}` : fallback;
+        setMigrationRepairResult({ ok: false, message });
+        options.setError(addOpencodeCacheHint(message));
+        return false;
+      }
+
+      const started = await startHost({
+        workspacePath: root,
+        navigate: optionsOverride?.navigate ?? false,
+      });
+      if (!started) {
+        const message = t("app.migration.restart_failed", currentLocale());
+        setMigrationRepairResult({ ok: false, message });
+        return false;
+      }
+
+      setMigrationRepairResult({ ok: true, message: t("app.migration.success", currentLocale()) });
+      return true;
+    } catch (error) {
+      const message = addOpencodeCacheHint(error instanceof Error ? error.message : safeStringify(error));
+      setMigrationRepairResult({ ok: false, message });
+      options.setError(message);
+      return false;
+    } finally {
+      setMigrationRepairBusy(false);
+      options.setBusy(false);
+      options.setBusyLabel(null);
+      options.setBusyStartedAt(null);
+    }
+  }
+
+  async function onRepairOpencodeMigration() {
+    options.setStartupPreference("local");
+    options.setOnboardingStep("connecting");
+    const ok = await repairOpencodeMigration({ navigate: true });
+    if (!ok) {
+      options.setOnboardingStep("local");
+    }
+  }
+
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
@@ -2189,6 +2404,7 @@ export function createWorkspaceStore(options: {
     }
 
     options.setError(null);
+    setMigrationRepairResult(null);
     options.setBusy(true);
     options.setBusyLabel("status.starting_engine");
     options.setBusyStartedAt(Date.now());
@@ -2787,6 +3003,8 @@ export function createWorkspaceStore(options: {
     workspaceConnectionStateById,
     exportingWorkspaceConfig,
     importingWorkspaceConfig,
+    migrationRepairBusy,
+    migrationRepairResult,
     activeWorkspaceDisplay,
     activeWorkspacePath,
     activeWorkspaceRoot,
@@ -2814,6 +3032,8 @@ export function createWorkspaceStore(options: {
     pickWorkspaceFolder,
     exportWorkspaceConfig,
     importWorkspaceConfig,
+    canRepairOpencodeMigration,
+    repairOpencodeMigration,
     startHost,
     stopHost,
     reloadWorkspaceEngine,
@@ -2821,6 +3041,7 @@ export function createWorkspaceStore(options: {
     onSelectStartup,
     onBackToWelcome,
     onStartHost,
+    onRepairOpencodeMigration,
     onAttachHost,
     onConnectClient,
     onRememberStartupToggle,

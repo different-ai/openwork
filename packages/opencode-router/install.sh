@@ -11,6 +11,8 @@ usage() {
   cat <<'EOF'
 opencode-router installer
 
+Requires: bun (runtime) and node/npm.
+
 Environment variables:
   OPENCODE_ROUTER_INSTALL_DIR  Install directory (default: ~/.openwork/opencode-router/openwork)
   OPENCODE_ROUTER_REPO         Git repo (default: https://github.com/different-ai/openwork.git)
@@ -36,8 +38,12 @@ require_bin() {
 }
 
 require_bin node
+require_bin bun
+
+CUSTOM_SHIM_CREATED=false
 
 if [[ "$OPENCODE_ROUTER_INSTALL_METHOD" == "npm" ]]; then
+  require_bin npm
   echo "Installing opencode-router via npm..."
   npm install -g opencode-router
 else
@@ -114,12 +120,13 @@ EOF
   cat <<EOF > "$OPENCODE_ROUTER_BIN_DIR/opencode-router"
 #!/usr/bin/env bash
 set -euo pipefail
-node "$OPENCODE_ROUTER_INSTALL_DIR/packages/opencode-router/dist/cli.js" "$@"
+bun "$OPENCODE_ROUTER_INSTALL_DIR/packages/opencode-router/dist/cli.js" "$@"
 EOF
   chmod 755 "$OPENCODE_ROUTER_BIN_DIR/opencode-router"
+  CUSTOM_SHIM_CREATED=true
 fi
 
-if ! echo ":$PATH:" | grep -q ":$OPENCODE_ROUTER_BIN_DIR:"; then
+if [[ "$CUSTOM_SHIM_CREATED" == "true" ]] && ! echo ":$PATH:" | grep -q ":$OPENCODE_ROUTER_BIN_DIR:"; then
   shell_name="$(basename "${SHELL:-}" 2>/dev/null || true)"
   case "$shell_name" in
     fish)
@@ -142,6 +149,7 @@ cat <<EOF
 opencode-router installed.
 
 Next steps:
-1) Edit: $ENV_PATH
-2) Run: opencode-router start
+1) Verify install: opencode-router --help
+2) Add Telegram identity: opencode-router telegram add <token> --id default
+3) Start router: opencode-router start
 EOF

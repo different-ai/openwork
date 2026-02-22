@@ -224,6 +224,40 @@ type AgentLabAutomationStore = {
   items: AgentLabAutomation[];
 };
 
+type SoulHeartbeatEntry = {
+  id: string;
+  ts: string | null;
+  workspace: string | null;
+  summary: string;
+  looseEnds: string[];
+  nextAction: string | null;
+};
+
+type SoulStatus = {
+  enabled: boolean;
+  state: "off" | "healthy" | "stale" | "error";
+  memoryEnabled: boolean;
+  instructionsEnabled: boolean;
+  heartbeatLogExists: boolean;
+  heartbeatCommandExists: boolean;
+  heartbeatJob: {
+    name: string;
+    slug: string;
+    schedule: string;
+    lastRunAt: string | null;
+    lastRunStatus: string | null;
+    lastRunError: string | null;
+  } | null;
+  heartbeatCount: number;
+  lastHeartbeatAt: string | null;
+  lastHeartbeatSummary: string | null;
+  staleAfterMs: number | null;
+  overdue: boolean;
+  summary: string;
+  memoryPath: string;
+  heartbeatPath: string;
+};
+
 export function startServer(config: ServerConfig) {
   const approvals = new ApprovalService(config.approval);
   const reloadEvents = new ReloadEventStore();
@@ -3030,6 +3064,21 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     return jsonResponse({ job });
   });
 
+  addRoute(routes, "GET", "/workspace/:id/soul/status", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const status = await getSoulStatus(workspace.path);
+    return jsonResponse(status);
+  });
+
+  addRoute(routes, "GET", "/workspace/:id/soul/heartbeats", "client", async (ctx) => {
+    const workspace = await resolveWorkspace(config, ctx.params.id);
+    const limitParam = ctx.url.searchParams.get("limit");
+    const parsedLimit = limitParam ? Number(limitParam) : NaN;
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 200) : 20;
+    const { items, total, path } = await listSoulHeartbeats(workspace.path, limit);
+    return jsonResponse({ items, total, path });
+  });
+
   addRoute(routes, "GET", "/workspace/:id/export", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const exportPayload = await exportWorkspace(workspace);
@@ -4002,6 +4051,261 @@ async function updateOpenCodeRouterSlackTokens(
   }
 
   return response;
+}
+
+function resolveSoulMemoryPath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "soul.md");
+}
+
+function resolveSoulHeartbeatPath(workspaceRoot: string): string {
+  return join(workspaceRoot, ".opencode", "soul", "heartbeat.jsonl");
+}
+
+function normalizeSoulTimestamp(value: unknown): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : trimmed;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  return null;
+}
+
+function toSoulStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [];
+}
+
+function parseSoulHeartbeatLine(rawLine: string, lineIndex: number): SoulHeartbeatEntry | null {
+  const trimmed = rawLine.trim();
+  if (!trimmed) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    const value = JSON.parse(trimmed);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    parsed = value as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const ts = normalizeSoulTimestamp(parsed.ts);
+  const workspace = typeof parsed.workspace === "string" && parsed.workspace.trim()
+    ? parsed.workspace.trim()
+    : null;
+  const looseEnds = toSoulStringArray(parsed.loose_ends ?? parsed.looseEnds);
+  const nextActionRaw = parsed.next_action ?? parsed.nextAction;
+  const nextAction = typeof nextActionRaw === "string" && nextActionRaw.trim() ? nextActionRaw.trim() : null;
+  const summaryRaw = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+  const summary =
+    summaryRaw ||
+    nextAction ||
+    (looseEnds.length ? `Loose ends: ${looseEnds.slice(0, 2).join("; ")}` : "(no summary)");
+
+  return {
+    id: `${ts ?? "unknown"}-${lineIndex}`,
+    ts,
+    workspace,
+    summary,
+    looseEnds,
+    nextAction,
+  };
+}
+
+function parseSoulHeartbeatEntries(content: string): SoulHeartbeatEntry[] {
+  const lines = content.split(/\r?\n/);
+  const items: SoulHeartbeatEntry[] = [];
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const item = parseSoulHeartbeatLine(lines[i] ?? "", i + 1);
+    if (item) items.push(item);
+  }
+  return items;
+}
+
+function configIncludesSoulInstruction(config: Record<string, unknown>): boolean {
+  const target = ".opencode/soul.md";
+  const instructions = config.instructions;
+  if (typeof instructions === "string") {
+    return instructions.includes(target);
+  }
+  if (Array.isArray(instructions)) {
+    return instructions.some((entry) => typeof entry === "string" && entry.includes(target));
+  }
+  return false;
+}
+
+function estimateCronIntervalMs(schedule: string): number | null {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length < 5) return null;
+  const [minute, hour, dom, mon, dow] = parts;
+  if (!minute || !hour || !dom || !mon || !dow) return null;
+
+  if (minute === "*" && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+    return 60_000;
+  }
+
+  const minuteEvery = /^\*\/(\d+)$/.exec(minute);
+  if (minuteEvery && hour === "*" && dom === "*" && mon === "*" && dow === "*") {
+    const interval = Number(minuteEvery[1]);
+    if (Number.isFinite(interval) && interval > 0) {
+      return interval * 60_000;
+    }
+  }
+
+  const hourEvery = /^\*\/(\d+)$/.exec(hour);
+  if (hourEvery && /^\d+$/.test(minute) && dom === "*" && mon === "*" && dow === "*") {
+    const interval = Number(hourEvery[1]);
+    if (Number.isFinite(interval) && interval > 0) {
+      return interval * 60 * 60_000;
+    }
+  }
+
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow === "*") {
+    return 24 * 60 * 60_000;
+  }
+
+  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === "*" && mon === "*" && dow !== "*") {
+    return 24 * 60 * 60_000;
+  }
+
+  return null;
+}
+
+async function listSoulHeartbeats(
+  workspaceRoot: string,
+  limit: number,
+): Promise<{ items: SoulHeartbeatEntry[]; total: number; path: string }> {
+  const heartbeatPath = resolveSoulHeartbeatPath(workspaceRoot);
+  const relativePath = ".opencode/soul/heartbeat.jsonl";
+  if (!(await exists(heartbeatPath))) {
+    return { items: [], total: 0, path: relativePath };
+  }
+
+  const content = await readFile(heartbeatPath, "utf8");
+  const all = parseSoulHeartbeatEntries(content);
+  return { items: all.slice(0, Math.max(1, limit)), total: all.length, path: relativePath };
+}
+
+async function getSoulStatus(workspaceRoot: string): Promise<SoulStatus> {
+  const [opencodeConfig, memoryEnabled, heartbeatLogExists] = await Promise.all([
+    readOpencodeConfig(workspaceRoot),
+    exists(resolveSoulMemoryPath(workspaceRoot)),
+    exists(resolveSoulHeartbeatPath(workspaceRoot)),
+  ]);
+
+  let heartbeatCommandExists = false;
+  try {
+    const commands = await listCommands(workspaceRoot, "workspace");
+    heartbeatCommandExists = commands.some((command) => command.name === "soul-heartbeat");
+  } catch {
+    heartbeatCommandExists = false;
+  }
+
+  let heartbeatJob: {
+    name: string;
+    slug: string;
+    schedule: string;
+    lastRunAt: string | null;
+    lastRunStatus: string | null;
+    lastRunError: string | null;
+  } | null = null;
+
+  try {
+    const jobs = await listScheduledJobs(workspaceRoot);
+    const found = jobs.find((job) => {
+      if (job.name === "soul-heartbeat") return true;
+      if (job.slug === "soul-heartbeat") return true;
+      return job.slug.includes("soul-heartbeat");
+    });
+    if (found) {
+      heartbeatJob = {
+        name: found.name,
+        slug: found.slug,
+        schedule: found.schedule,
+        lastRunAt: found.lastRunAt ?? null,
+        lastRunStatus: found.lastRunStatus ?? null,
+        lastRunError: found.lastRunError ?? null,
+      };
+    }
+  } catch {
+    heartbeatJob = null;
+  }
+
+  const instructionsEnabled = configIncludesSoulInstruction(opencodeConfig);
+  const heartbeats = await listSoulHeartbeats(workspaceRoot, 500);
+  const lastHeartbeat = heartbeats.items[0] ?? null;
+  const lastHeartbeatAt = lastHeartbeat?.ts ?? null;
+  const lastHeartbeatSummary = lastHeartbeat?.summary ?? null;
+
+  const enabled =
+    memoryEnabled ||
+    instructionsEnabled ||
+    heartbeatLogExists ||
+    heartbeatCommandExists ||
+    Boolean(heartbeatJob);
+
+  const estimatedIntervalMs = heartbeatJob ? estimateCronIntervalMs(heartbeatJob.schedule) : null;
+  const staleAfterMs = enabled
+    ? Math.max(estimatedIntervalMs ? estimatedIntervalMs * 2 : 24 * 60 * 60_000, 30 * 60_000)
+    : null;
+
+  const parsedLastHeartbeat = lastHeartbeatAt ? Date.parse(lastHeartbeatAt) : NaN;
+  const hasLastHeartbeat = Number.isFinite(parsedLastHeartbeat);
+  const overdue = Boolean(
+    enabled &&
+    staleAfterMs != null &&
+    (heartbeatJob || lastHeartbeatAt) &&
+    (!hasLastHeartbeat || Date.now() - parsedLastHeartbeat > staleAfterMs),
+  );
+
+  let state: SoulStatus["state"] = "off";
+  if (!enabled) {
+    state = "off";
+  } else if ((heartbeatJob?.lastRunStatus ?? "") === "failed" || Boolean(heartbeatJob?.lastRunError?.trim())) {
+    state = "error";
+  } else if (overdue) {
+    state = "stale";
+  } else {
+    state = "healthy";
+  }
+
+  const summary = !enabled
+    ? "Soul mode is not enabled for this worker yet."
+    : state === "error"
+      ? "Soul heartbeat ran into an error."
+      : state === "stale"
+        ? "Soul heartbeat is overdue."
+        : heartbeatJob
+          ? "Soul mode is active and heartbeat is on schedule."
+          : "Soul mode is active. Heartbeat schedule not found.";
+
+  return {
+    enabled,
+    state,
+    memoryEnabled,
+    instructionsEnabled,
+    heartbeatLogExists,
+    heartbeatCommandExists,
+    heartbeatJob,
+    heartbeatCount: heartbeats.total,
+    lastHeartbeatAt,
+    lastHeartbeatSummary,
+    staleAfterMs,
+    overdue,
+    summary,
+    memoryPath: ".opencode/soul.md",
+    heartbeatPath: ".opencode/soul/heartbeat.jsonl",
+  };
 }
 
 async function readOpencodeConfig(workspaceRoot: string): Promise<Record<string, unknown>> {

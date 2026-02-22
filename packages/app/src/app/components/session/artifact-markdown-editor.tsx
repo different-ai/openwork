@@ -68,7 +68,9 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
       setError(writeDisabledReason());
       return;
     }
-    if (!target) return;
+    if (!target) {
+      return;
+    }
     if (!isMarkdown(target)) {
       setError(t("session.editor_toast_markdown_only"));
       return;
@@ -194,8 +196,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
     }
 
     const target = path();
-    if (!target) return;
-    if (loading() || pendingReason() === "switch") return;
+    if (!target || loading() || pendingReason() === "switch") return;
 
     const active = loadedPath();
     if (!active) {
