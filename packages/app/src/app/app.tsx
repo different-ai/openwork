@@ -1025,6 +1025,11 @@ export default function App() {
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
       const parts = buildPromptParts(resolvedDraft);
+      const selectedVariant = modelVariant() ?? undefined;
+      const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
+      const promptOverrides = reasoningEffort
+        ? ({ reasoning_effort: reasoningEffort } as const)
+        : undefined;
 
       if (resolvedDraft.mode === "shell") {
         await shellInSession(c, sessionID, content);
@@ -1045,8 +1050,7 @@ export default function App() {
         }
 
         // Slash command: route through session.command() API
-        const selected = selectedSessionModel();
-        const modelString = `${selected.providerID}/${selected.modelID}`;
+        const modelString = `${model.providerID}/${model.modelID}`;
         const files = buildCommandFileParts(resolvedDraft);
 
         // session.command() expects `model` as a provider/model string and only supports file parts.
@@ -1057,7 +1061,8 @@ export default function App() {
             arguments: command.arguments,
             agent: agent ?? undefined,
             model: modelString,
-            variant: modelVariant() ?? undefined,
+            variant: selectedVariant,
+            ...(promptOverrides ?? {}),
             parts: files.length ? files : undefined,
           }),
         );
@@ -1067,7 +1072,8 @@ export default function App() {
           sessionID,
           model,
           agent: agent ?? undefined,
-          variant: modelVariant() ?? undefined,
+          variant: selectedVariant,
+          ...(promptOverrides ?? {}),
           parts,
         });
         assertNoClientError(result);
@@ -1827,6 +1833,14 @@ export default function App() {
     if (trimmed === "balance" || trimmed === "balanced") return "none";
     const match = MODEL_VARIANT_OPTIONS.find((option) => option.value === trimmed);
     return match ? match.value : null;
+  };
+
+  const resolveCodexReasoningEffort = (modelID: string, variant: string | null) => {
+    if (!modelID.trim().toLowerCase().includes("codex")) return undefined;
+    const normalized = normalizeModelVariant(variant);
+    if (!normalized || normalized === "none") return undefined;
+    if (normalized === "xhigh") return "high";
+    return normalized;
   };
 
   const formatModelVariantLabel = (value: string | null) => {
