@@ -1701,38 +1701,70 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           },
           "prompt start",
         );
-        const response = await getClient(boundDirectory).session.prompt({
-          sessionID,
-          parts: [{ type: "text", text: promptText }],
-          ...(effectiveModel ? { model: effectiveModel } : {}),
-          ...(messagingAgent.selectedAgent ? { agent: messagingAgent.selectedAgent } : {}),
-        });
-        const parts = (response as { parts?: Array<{ type?: string; text?: string; ignored?: boolean }> }).parts ?? [];
-        const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
-        logger.debug(
-          {
+
+        type PromptPart = { type?: string; text?: string; ignored?: boolean };
+
+        const extractReply = (parts: PromptPart[]) =>
+          parts
+            .filter((part) => part.type === "text" && !part.ignored)
+            .map((part) => part.text ?? "")
+            .join("\n")
+            .trim();
+
+        const logPromptResponse = (attempt: "initial" | "retry", parts: PromptPart[]) => {
+          const textParts = parts.filter((part) => part.type === "text" && !part.ignored);
+          logger.debug(
+            {
+              sessionID,
+              attempt,
+              partCount: parts.length,
+              textCount: textParts.length,
+              partTypes: parts.map((p) => p.type),
+              ignoredCount: parts.filter((p) => p.ignored).length,
+            },
+            "prompt response",
+          );
+        };
+
+        const runPrompt = async (): Promise<PromptPart[]> => {
+          const response = await getClient(boundDirectory).session.prompt({
             sessionID,
-            partCount: parts.length,
-            textCount: textParts.length,
-            partTypes: parts.map((p) => p.type),
-            ignoredCount: parts.filter((p) => p.ignored).length,
-          },
-          "prompt response",
-        );
-        const reply = parts
-          .filter((part) => part.type === "text" && !part.ignored)
-          .map((part) => part.text ?? "")
-          .join("\n")
-          .trim();
+            parts: [{ type: "text", text: promptText }],
+            ...(effectiveModel ? { model: effectiveModel } : {}),
+            ...(messagingAgent.selectedAgent ? { agent: messagingAgent.selectedAgent } : {}),
+          });
+          return (response as { parts?: PromptPart[] }).parts ?? [];
+        };
+
+        let parts = await runPrompt();
+        logPromptResponse("initial", parts);
+        let reply = extractReply(parts);
+
+        if (!reply && !parts.some((part) => part.type === "tool")) {
+          logger.warn({ sessionID }, "prompt returned no visible text; retrying once");
+          parts = await runPrompt();
+          logPromptResponse("retry", parts);
+          reply = extractReply(parts);
+        }
 
         if (reply) {
           logger.debug({ sessionID, replyLength: reply.length }, "reply built");
           await sendText(inbound.channel, inbound.identityId, inbound.peerId, reply, { kind: "reply" });
         } else {
-          logger.debug({ sessionID }, "reply empty");
-          await sendText(inbound.channel, inbound.identityId, inbound.peerId, "No response generated. Try again.", {
-            kind: "system",
-          });
+          logger.warn(
+            { sessionID, partTypes: parts.map((part) => part.type), ignoredCount: parts.filter((part) => part.ignored).length },
+            "prompt returned no visible text; clearing session",
+          );
+          store.deleteSession(inbound.channel, inbound.identityId, peerKey);
+          await sendText(
+            inbound.channel,
+            inbound.identityId,
+            inbound.peerId,
+            "No visible response was generated. I reset this chat session in case stale state was blocking replies. Send your message again.",
+            {
+              kind: "system",
+            },
+          );
         }
       } catch (error) {
         // Log full error details for debugging
