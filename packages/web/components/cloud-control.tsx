@@ -17,6 +17,8 @@ type WorkerLaunch = {
   status: string;
   provider: string | null;
   instanceUrl: string | null;
+  openworkUrl: string | null;
+  workspaceId: string | null;
   clientToken: string | null;
   hostToken: string | null;
 };
@@ -148,6 +150,8 @@ function getWorker(payload: unknown): WorkerLaunch | null {
     status: typeof worker.status === "string" ? worker.status : "unknown",
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
+    workspaceId: null,
     clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
     hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
   };
@@ -243,6 +247,8 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     typeof value.status === "string" &&
     (typeof value.provider === "string" || value.provider === null) &&
     (typeof value.instanceUrl === "string" || value.instanceUrl === null) &&
+    (typeof value.openworkUrl === "string" || value.openworkUrl === null || typeof value.openworkUrl === "undefined") &&
+    (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
     (typeof value.clientToken === "string" || value.clientToken === null) &&
     (typeof value.hostToken === "string" || value.hostToken === null)
   );
@@ -255,8 +261,141 @@ function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = n
     status: item.status,
     provider: item.provider,
     instanceUrl: item.instanceUrl,
+    openworkUrl: item.instanceUrl,
+    workspaceId: null,
     clientToken: current?.workerId === item.workerId ? current.clientToken : null,
     hostToken: current?.workerId === item.workerId ? current.hostToken : null
+  };
+}
+
+function normalizeUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "");
+}
+
+function parseWorkspaceIdFromUrl(value: string): string | null {
+  const normalized = normalizeUrl(value);
+  if (!normalized) {
+    return null;
+  }
+
+  try {
+    const url = new URL(normalized);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const last = segments[segments.length - 1] ?? "";
+    const prev = segments[segments.length - 2] ?? "";
+    if (prev !== "w" || !last) {
+      return null;
+    }
+    return decodeURIComponent(last);
+  } catch {
+    const match = normalized.match(/\/w\/([^/?#]+)/);
+    if (!match?.[1]) {
+      return null;
+    }
+    try {
+      return decodeURIComponent(match[1]);
+    } catch {
+      return match[1];
+    }
+  }
+}
+
+function buildWorkspaceUrl(instanceUrl: string, workspaceId: string): string {
+  return `${normalizeUrl(instanceUrl)}/w/${encodeURIComponent(workspaceId)}`;
+}
+
+function parseWorkspaceIdFromWorkspacesPayload(payload: unknown): string | null {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    return null;
+  }
+
+  const activeId = typeof payload.activeId === "string" ? payload.activeId : null;
+  if (activeId && payload.items.some((item) => isRecord(item) && item.id === activeId)) {
+    return activeId;
+  }
+
+  for (const item of payload.items) {
+    if (isRecord(item) && typeof item.id === "string" && item.id.trim()) {
+      return item.id;
+    }
+  }
+
+  return null;
+}
+
+async function requestAbsoluteJson(url: string, init: RequestInit = {}, timeoutMs = 12000) {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
+
+  const shouldAttachTimeout = !init.signal && timeoutMs > 0;
+  const timeoutController = shouldAttachTimeout ? new AbortController() : null;
+  const timeoutHandle = timeoutController
+    ? setTimeout(() => {
+        timeoutController.abort();
+      }, timeoutMs)
+    : null;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers,
+      credentials: "omit",
+      signal: init.signal ?? timeoutController?.signal
+    });
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  return { response, payload };
+}
+
+async function resolveOpenworkWorkspaceUrl(instanceUrl: string, accessToken: string): Promise<{ workspaceId: string; openworkUrl: string } | null> {
+  const baseUrl = normalizeUrl(instanceUrl);
+  const token = accessToken.trim();
+  if (!baseUrl || !token) {
+    return null;
+  }
+
+  const mountedWorkspaceId = parseWorkspaceIdFromUrl(baseUrl);
+  if (mountedWorkspaceId) {
+    return {
+      workspaceId: mountedWorkspaceId,
+      openworkUrl: baseUrl
+    };
+  }
+
+  const { response, payload } = await requestAbsoluteJson(`${baseUrl}/workspaces`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const workspaceId = parseWorkspaceIdFromWorkspacesPayload(payload);
+  if (!workspaceId) {
+    return null;
+  }
+
+  return {
+    workspaceId,
+    openworkUrl: buildWorkspaceUrl(baseUrl, workspaceId)
   };
 }
 
@@ -364,6 +503,8 @@ export function CloudControlPanel() {
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
 
   const progressWidth = step === 1 ? "33.333%" : step === 2 ? "66.666%" : "100%";
+  const openworkConnectUrl = worker?.openworkUrl ?? worker?.instanceUrl ?? null;
+  const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -380,6 +521,48 @@ export function CloudControlPanel() {
 
       return next.slice(0, 10);
     });
+  }
+
+  async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
+    const instanceUrl = candidate.instanceUrl?.trim() ?? "";
+    if (!instanceUrl) {
+      return {
+        ...candidate,
+        openworkUrl: null,
+        workspaceId: null
+      };
+    }
+
+    const accessToken = candidate.clientToken?.trim() ?? "";
+    if (!accessToken) {
+      const mountedWorkspaceId = parseWorkspaceIdFromUrl(instanceUrl);
+      return {
+        ...candidate,
+        openworkUrl: normalizeUrl(instanceUrl),
+        workspaceId: mountedWorkspaceId
+      };
+    }
+
+    try {
+      const resolved = await resolveOpenworkWorkspaceUrl(instanceUrl, accessToken);
+      if (resolved) {
+        return {
+          ...candidate,
+          openworkUrl: resolved.openworkUrl,
+          workspaceId: resolved.workspaceId
+        };
+      }
+    } catch {
+      if (!options.quiet) {
+        appendEvent("warning", "Credential hint", "Could not resolve /w/ws_ URL yet. Using host URL fallback.");
+      }
+    }
+
+    return {
+      ...candidate,
+      openworkUrl: normalizeUrl(instanceUrl),
+      workspaceId: parseWorkspaceIdFromUrl(instanceUrl)
+    };
   }
 
   async function refreshWorkers(options: { keepSelection?: boolean } = {}) {
@@ -524,6 +707,8 @@ export function CloudControlPanel() {
 
       const restored: WorkerLaunch = {
         ...parsed,
+        openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
+        workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
         clientToken: null,
         hostToken: null
       };
@@ -674,11 +859,12 @@ export function CloudControlPanel() {
         return;
       }
 
-      setWorker(parsedWorker);
+      const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker);
+      setWorker(resolvedWorker);
       setWorkerLookupId(parsedWorker.workerId);
       setPaymentReturned(false);
       setCheckoutUrl(null);
-      setLaunchStatus(`Worker ${parsedWorker.workerName} is ${parsedWorker.status}.`);
+      setLaunchStatus(`Worker ${resolvedWorker.workerName} is ${resolvedWorker.status}.`);
       appendEvent("success", "Worker launched", `Worker ID ${parsedWorker.workerId}`);
     } catch (error) {
       const message =
@@ -734,27 +920,29 @@ export function CloudControlPanel() {
         return;
       }
 
-      setWorker((previous) => {
-        if (previous && previous.workerId === summary.workerId) {
-          return {
-            ...previous,
-            workerName: summary.workerName,
-            status: summary.status,
-            provider: summary.provider,
-            instanceUrl: summary.instanceUrl
-          };
-        }
+      const nextWorker: WorkerLaunch =
+        worker && worker.workerId === summary.workerId
+          ? {
+              ...worker,
+              workerName: summary.workerName,
+              status: summary.status,
+              provider: summary.provider,
+              instanceUrl: summary.instanceUrl
+            }
+          : {
+              workerId: summary.workerId,
+              workerName: summary.workerName,
+              status: summary.status,
+              provider: summary.provider,
+              instanceUrl: summary.instanceUrl,
+              openworkUrl: summary.instanceUrl,
+              workspaceId: null,
+              clientToken: null,
+              hostToken: null
+            };
 
-        return {
-          workerId: summary.workerId,
-          workerName: summary.workerName,
-          status: summary.status,
-          provider: summary.provider,
-          instanceUrl: summary.instanceUrl,
-          clientToken: null,
-          hostToken: null
-        };
-      });
+      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+      setWorker(resolvedWorker);
 
       setWorkerLookupId(summary.workerId);
       setLaunchStatus(`Worker ${summary.workerName} is currently ${summary.status}.`);
@@ -807,28 +995,30 @@ export function CloudControlPanel() {
         return;
       }
 
-      setWorker((previous) => {
-        if (previous && previous.workerId === id) {
-          return {
-            ...previous,
-            clientToken: tokens.clientToken,
-            hostToken: tokens.hostToken
-          };
-        }
+      const nextWorker: WorkerLaunch =
+        worker && worker.workerId === id
+          ? {
+              ...worker,
+              clientToken: tokens.clientToken,
+              hostToken: tokens.hostToken
+            }
+          : {
+              workerId: id,
+              workerName: "Existing worker",
+              status: "unknown",
+              provider: null,
+              instanceUrl: null,
+              openworkUrl: null,
+              workspaceId: null,
+              clientToken: tokens.clientToken,
+              hostToken: tokens.hostToken
+            };
 
-        return {
-          workerId: id,
-          workerName: "Existing worker",
-          status: "unknown",
-          provider: null,
-          instanceUrl: null,
-          clientToken: tokens.clientToken,
-          hostToken: tokens.hostToken
-        };
-      });
+      const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
+      setWorker(resolvedWorker);
 
-      setLaunchStatus("Generated a fresh worker API key.");
-      appendEvent("success", "Generated new worker API key", `Worker ID ${id}`);
+      setLaunchStatus("Generated a fresh access token.");
+      appendEvent("success", "Generated new access token", `Worker ID ${id}`);
       void refreshWorkers({ keepSelection: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
@@ -858,7 +1048,7 @@ export function CloudControlPanel() {
       {
         id: 3,
         title: "Connect",
-        detail: worker ? "Copy URL + API key into the OpenWork app" : "Credentials appear when launch succeeds"
+        detail: worker ? "Copy OpenWork URL + access token into OpenWork" : "Credentials appear when launch succeeds"
       }
     ],
     [checkoutUrl, launchBusy, launchStatus, user, worker]
@@ -1053,7 +1243,7 @@ export function CloudControlPanel() {
                   onClick={handleGenerateKey}
                   disabled={actionBusy !== null || !selectedWorker}
                 >
-                  {actionBusy === "token" ? "Generating..." : "New API key"}
+                  {actionBusy === "token" ? "Generating..." : "New access token"}
                 </button>
               </div>
             </div>
@@ -1086,21 +1276,30 @@ export function CloudControlPanel() {
             </div>
 
             <CredentialRow
-              label="Worker URL"
-              value={worker?.instanceUrl ?? null}
+              label="OpenWork worker URL"
+              value={openworkConnectUrl}
               placeholder="URL becomes available after provisioning."
-              canCopy={Boolean(worker?.instanceUrl)}
-              copied={copiedField === "worker-url"}
-              onCopy={() => void copyToClipboard("worker-url", worker?.instanceUrl ?? null)}
+              canCopy={Boolean(openworkConnectUrl)}
+              copied={copiedField === "openwork-url"}
+              onCopy={() => void copyToClipboard("openwork-url", openworkConnectUrl)}
             />
 
             <CredentialRow
-              label="Worker API Key"
+              label="Access token"
               value={worker?.clientToken ?? null}
-              placeholder="Click New API key to generate credentials."
+              placeholder="Click New access token to generate credentials."
               canCopy={Boolean(worker?.clientToken)}
-              copied={copiedField === "worker-key"}
-              onCopy={() => void copyToClipboard("worker-key", worker?.clientToken ?? null)}
+              copied={copiedField === "access-token"}
+              onCopy={() => void copyToClipboard("access-token", worker?.clientToken ?? null)}
+            />
+
+            <CredentialRow
+              label="Worker host URL"
+              value={worker?.instanceUrl ?? null}
+              placeholder="Host URL"
+              canCopy={Boolean(worker?.instanceUrl)}
+              copied={copiedField === "worker-host-url"}
+              onCopy={() => void copyToClipboard("worker-host-url", worker?.instanceUrl ?? null)}
             />
 
             <CredentialRow
@@ -1128,7 +1327,7 @@ export function CloudControlPanel() {
                 {actionBusy === "status" ? "Checking..." : "Check status"}
               </button>
               <button type="button" className="ow-btn-secondary" onClick={handleGenerateKey} disabled={actionBusy !== null}>
-                {actionBusy === "token" ? "Generating..." : "New API key"}
+                {actionBusy === "token" ? "Generating..." : "New access token"}
               </button>
               <button
                 type="button"
@@ -1146,7 +1345,10 @@ export function CloudControlPanel() {
             </div>
 
             <div className="ow-note-box">
-              <p>Open the OpenWork app and paste the Worker URL plus Worker API key into the remote worker connect flow.</p>
+              <p>Open OpenWork and paste OpenWork worker URL plus Access token into the remote connect flow.</p>
+              {!hasWorkspaceScopedUrl && openworkConnectUrl ? (
+                <p className="ow-caption">Tip: URL should include /w/ws_... . Click Check status to resolve the mounted workspace URL.</p>
+              ) : null}
               {launchError ? <p className="ow-error-text">{launchError}</p> : null}
             </div>
 
