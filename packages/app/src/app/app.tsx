@@ -347,24 +347,30 @@ export default function App() {
     return hostInfo?.baseUrl ?? settingsUrl;
   });
 
-  const openworkServerAuth = createMemo(() => {
-    const pref = startupPreference();
-    const hostInfo = openworkServerHostInfo();
-    const settingsToken = openworkServerSettings().token?.trim() ?? "";
-    const clientToken = hostInfo?.clientToken?.trim() ?? "";
-    const hostToken = hostInfo?.hostToken?.trim() ?? "";
+  const openworkServerAuth = createMemo(
+    () => {
+      const pref = startupPreference();
+      const hostInfo = openworkServerHostInfo();
+      const settingsToken = openworkServerSettings().token?.trim() ?? "";
+      const clientToken = hostInfo?.clientToken?.trim() ?? "";
+      const hostToken = hostInfo?.hostToken?.trim() ?? "";
 
-    if (pref === "local") {
-      return { token: clientToken || undefined, hostToken: hostToken || undefined };
-    }
-    if (pref === "server") {
+      if (pref === "local") {
+        return { token: clientToken || undefined, hostToken: hostToken || undefined };
+      }
+      if (pref === "server") {
+        return { token: settingsToken || undefined, hostToken: undefined };
+      }
+      if (hostInfo?.baseUrl) {
+        return { token: clientToken || undefined, hostToken: hostToken || undefined };
+      }
       return { token: settingsToken || undefined, hostToken: undefined };
-    }
-    if (hostInfo?.baseUrl) {
-      return { token: clientToken || undefined, hostToken: hostToken || undefined };
-    }
-    return { token: settingsToken || undefined, hostToken: undefined };
-  });
+    },
+    undefined,
+    {
+      equals: (prev, next) => prev?.token === next.token && prev?.hostToken === next.hostToken,
+    },
+  );
 
   const openworkServerClient = createMemo(() => {
     const baseUrl = openworkServerBaseUrl().trim();
