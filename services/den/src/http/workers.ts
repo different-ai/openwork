@@ -29,6 +29,72 @@ const token = () => randomBytes(32).toString("hex")
 type WorkerRow = typeof WorkerTable.$inferSelect
 type WorkerInstanceRow = typeof WorkerInstanceTable.$inferSelect
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null
+}
+
+function normalizeUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "")
+}
+
+function parseWorkspaceSelection(payload: unknown): { workspaceId: string; openworkUrl: string } | null {
+  if (!isRecord(payload) || !Array.isArray(payload.items)) {
+    return null
+  }
+
+  const activeId = typeof payload.activeId === "string" ? payload.activeId : null
+  let workspaceId = activeId
+
+  if (!workspaceId) {
+    for (const item of payload.items) {
+      if (isRecord(item) && typeof item.id === "string" && item.id.trim()) {
+        workspaceId = item.id
+        break
+      }
+    }
+  }
+
+  const baseUrl = typeof payload.baseUrl === "string" ? normalizeUrl(payload.baseUrl) : ""
+  if (!workspaceId || !baseUrl) {
+    return null
+  }
+
+  return {
+    workspaceId,
+    openworkUrl: `${baseUrl}/w/${encodeURIComponent(workspaceId)}`,
+  }
+}
+
+async function resolveConnectUrlFromWorker(instanceUrl: string, clientToken: string) {
+  const baseUrl = normalizeUrl(instanceUrl)
+  if (!baseUrl || !clientToken.trim()) {
+    return null
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/workspaces`, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${clientToken.trim()}`,
+      },
+    })
+
+    if (!response.ok) {
+      return null
+    }
+
+    const payload = (await response.json()) as unknown
+    const selected = parseWorkspaceSelection({
+      ...(isRecord(payload) ? payload : {}),
+      baseUrl,
+    })
+    return selected
+  } catch {
+    return null
+  }
+}
+
 async function requireSession(req: express.Request, res: express.Response) {
   const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
@@ -335,10 +401,14 @@ workersRouter.post("/:id/tokens", async (req, res) => {
     return
   }
 
+  const instance = await getLatestWorkerInstance(rows[0].id)
+  const connect = instance?.url ? await resolveConnectUrlFromWorker(instance.url, clientToken) : null
+
   res.json({
     tokens: {
       host: hostToken,
       client: clientToken,
     },
+    connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
   })
 })

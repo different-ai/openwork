@@ -35,6 +35,8 @@ type WorkerSummary = {
 type WorkerTokens = {
   clientToken: string | null;
   hostToken: string | null;
+  openworkUrl: string | null;
+  workspaceId: string | null;
 };
 
 type WorkerListItem = {
@@ -185,14 +187,17 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   }
 
   const tokens = payload.tokens;
+  const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
   const hostToken = typeof tokens.host === "string" ? tokens.host : null;
+  const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
+  const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
 
   if (!clientToken && !hostToken) {
     return null;
   }
 
-  return { clientToken, hostToken };
+  return { clientToken, hostToken, openworkUrl, workspaceId };
 }
 
 function parseWorkerListItem(value: unknown): WorkerListItem | null {
@@ -525,6 +530,16 @@ export function CloudControlPanel() {
   }
 
   async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
+    const existingConnectUrl = candidate.openworkUrl?.trim() ?? "";
+    const existingWorkspaceId = candidate.workspaceId?.trim() ?? "";
+    if (existingConnectUrl && existingWorkspaceId) {
+      return {
+        ...candidate,
+        openworkUrl: existingConnectUrl,
+        workspaceId: existingWorkspaceId
+      };
+    }
+
     const instanceUrl = candidate.instanceUrl?.trim() ?? "";
     if (!instanceUrl) {
       return {
@@ -1018,6 +1033,8 @@ export function CloudControlPanel() {
         worker && worker.workerId === id
           ? {
               ...worker,
+              openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
+              workspaceId: tokens.workspaceId ?? worker.workspaceId,
               clientToken: tokens.clientToken,
               hostToken: tokens.hostToken
             }
@@ -1027,8 +1044,8 @@ export function CloudControlPanel() {
               status: "unknown",
               provider: null,
               instanceUrl: null,
-              openworkUrl: null,
-              workspaceId: null,
+              openworkUrl: tokens.openworkUrl,
+              workspaceId: tokens.workspaceId,
               clientToken: tokens.clientToken,
               hostToken: tokens.hostToken
             };
