@@ -616,6 +616,16 @@ function normalizePathToken(value: string): string {
   return extractFilename(clean);
 }
 
+function formatAgentLabel(value: string): string {
+  const clean = value.trim().replace(/[_-]+/g, " ");
+  if (!clean) return "";
+  return clean
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
 function getToolInput(state: any): Record<string, unknown> {
   const input = state?.input;
   if (input && typeof input === "object") return input as Record<string, unknown>;
@@ -679,10 +689,9 @@ function buildToolTitle(state: any, toolName: string): string {
   }
 
   if (lower === "task") {
-    const description = pick("description");
-    if (description) return truncateStepText(description, 56);
-    const agent = pick("subagent_type");
-    return agent ? `Delegate ${agent}` : "Delegate task";
+    const agent = formatAgentLabel(pick("subagent_type"));
+    if (agent) return `${agent} task`;
+    return "Task";
   }
 
   if (lower === "webfetch") {
@@ -731,7 +740,9 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
   }
 
   if (lower === "task") {
-    const agent = pick("subagent_type");
+    const description = pick("description");
+    if (description) return truncateStepText(description, 80);
+    const agent = formatAgentLabel(pick("subagent_type"));
     if (agent) return `${agent} agent`;
   }
 

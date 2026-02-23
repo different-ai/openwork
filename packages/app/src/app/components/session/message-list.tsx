@@ -15,6 +15,7 @@ export type MessageListProps = {
   showThinking: boolean;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
+  openSessionById?: (sessionId: string) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
   searchHighlightQuery?: string;
@@ -94,6 +95,45 @@ function latestStepPart(partsGroups: Part[][]): Part | undefined {
     }
   }
   return undefined;
+}
+
+type TaskStepInfo = {
+  isTask: boolean;
+  agentType?: string;
+  sessionId?: string;
+};
+
+function formatAgentType(agentType: string): string {
+  const clean = agentType.trim().replace(/[_-]+/g, " ");
+  if (!clean) return "";
+  return clean
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+function getTaskStepInfo(part: Part): TaskStepInfo {
+  if (part.type !== "tool") return { isTask: false };
+
+  const record = part as any;
+  const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
+  if (tool !== "task") return { isTask: false };
+
+  const state = record.state ?? {};
+  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+  const metadata = state.metadata && typeof state.metadata === "object" ? (state.metadata as Record<string, unknown>) : {};
+
+  const rawAgentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
+  const agentType = rawAgentType ? formatAgentType(rawAgentType) : undefined;
+  const rawSessionId =
+    metadata.sessionId ??
+    metadata.sessionID ??
+    state.sessionId ??
+    state.sessionID;
+  const sessionId = typeof rawSessionId === "string" && rawSessionId.trim() ? rawSessionId.trim() : undefined;
+
+  return { isTask: true, agentType, sessionId };
 }
 
 export default function MessageList(props: MessageListProps) {
@@ -225,21 +265,14 @@ export default function MessageList(props: MessageListProps) {
       stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
 
       if (isStepsOnly) {
-        const lastBlock = blocks[blocks.length - 1];
-        if (lastBlock && lastBlock.kind === "steps-cluster" && lastBlock.isUser === isUser) {
-          lastBlock.partsGroups.push(...stepGroups.map((group) => group.parts));
-          lastBlock.stepIds.push(...stepGroups.map((group) => group.id));
-          lastBlock.messageIds.push(messageId);
-        } else {
-          blocks.push({
-            kind: "steps-cluster",
-            id: stepGroups[0].id,
-            stepIds: stepGroups.map((group) => group.id),
-            partsGroups: stepGroups.map((group) => group.parts),
-            messageIds: [messageId],
-            isUser,
-          });
-        }
+        blocks.push({
+          kind: "steps-cluster",
+          id: stepGroups[0].id,
+          stepIds: stepGroups.map((group) => group.id),
+          partsGroups: stepGroups.map((group) => group.parts),
+          messageIds: [messageId],
+          isUser,
+        });
         return;
       }
 
@@ -312,6 +345,7 @@ export default function MessageList(props: MessageListProps) {
     const summary = createMemo(() => summarizeStep(rowProps.part));
     const category = createMemo(() => summary().toolCategory ?? "tool");
     const status = createMemo(() => summary().status);
+    const task = createMemo(() => getTaskStepInfo(rowProps.part));
 
     if (rowProps.part.type === "reasoning") {
       return (
@@ -352,11 +386,38 @@ export default function MessageList(props: MessageListProps) {
             skill
           </span>
         </Show>
+        <Show when={task().isTask}>
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
+            subagent
+          </span>
+        </Show>
         {/* Detail - truncated to single line */}
         <Show when={summary().detail}>
           <span class="text-[12px] text-gray-9 truncate min-w-0">
             {summary().detail}
           </span>
+        </Show>
+        <Show when={task().agentType && !summary().detail}>
+          {(agentType) => (
+            <span class="text-[12px] text-gray-9 truncate min-w-0">
+              {agentType()} agent
+            </span>
+          )}
+        </Show>
+        <Show when={Boolean(task().sessionId && props.openSessionById)}>
+          <button
+            type="button"
+            class="ml-auto text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              const sessionId = task().sessionId;
+              if (!sessionId) return;
+              props.openSessionById?.(sessionId);
+            }}
+          >
+            open
+          </button>
         </Show>
       </div>
     );
@@ -569,7 +630,7 @@ export default function MessageList(props: MessageListProps) {
               <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
             </Show>
             <span class="truncate max-w-[58ch]">
-              {expanded() ? "Hide details" : "Working on it"}
+              {expanded() ? "Hide timeline" : "Execution timeline"}
             </span>
           </span>
           <Show when={!expanded()}>
