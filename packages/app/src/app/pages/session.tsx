@@ -3255,6 +3255,7 @@ export default function SessionView(props: SessionViewProps) {
             setExpandedStepIds={props.setExpandedStepIds}
             searchMatchMessageIds={searchMatchMessageIds()}
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
+            searchHighlightQuery={searchQueryDebounced().trim()}
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">

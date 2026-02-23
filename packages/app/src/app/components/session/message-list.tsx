@@ -17,6 +17,7 @@ export type MessageListProps = {
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   searchMatchMessageIds?: ReadonlySet<string>;
   activeSearchMessageId?: string | null;
+  searchHighlightQuery?: string;
   workspaceRoot?: string;
   footer?: JSX.Element;
 };
@@ -696,6 +697,7 @@ export default function MessageList(props: MessageListProps) {
                               tone={block.isUser ? "dark" : "light"}
                               renderMarkdown={!block.isUser}
                               markdownThrottleMs={markdownThrottleMs}
+                              highlightQuery={hasSearchMatch ? props.searchHighlightQuery : undefined}
                             />
                           );
                         })()}
