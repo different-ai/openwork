@@ -10,7 +10,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/aikapenelope/openOS.git",
     "directory": "packages/opencode-router"
   },
   "keywords": [

@@ -1,17 +1,17 @@
-# OpenWork Server
-Bridge missing capabilities between OpenWork and OpenCode
+# AikaOS Server
+Bridge missing capabilities between AikaOS and OpenCode
 
 ---
 ## Summarize
-Introduce an OpenWork server layer that fills gaps in OpenCode APIs, enabling remote clients to manage workspace config, skills, plugins, and MCPs without direct filesystem access.
+Introduce an AikaOS server layer that fills gaps in OpenCode APIs, enabling remote clients to manage workspace config, skills, plugins, and MCPs without direct filesystem access.
 
 ---
 ## Define problem
-Remote clients cannot read or write workspace config because critical state lives in the filesystem. OpenWork needs a safe, minimal surface to access and mutate config, skills, plugins, and MCPs when connected to a host.
+Remote clients cannot read or write workspace config because critical state lives in the filesystem. AikaOS needs a safe, minimal surface to access and mutate config, skills, plugins, and MCPs when connected to a host.
 
 ---
 ## Set goals
-- Bridge OpenWork needs that OpenCode does not expose today
+- Bridge AikaOS needs that OpenCode does not expose today
 - Enable remote clients to view and update workspace config safely
 - Keep the surface minimal, auditable, and aligned to OpenCode primitives
 
@@ -31,7 +31,7 @@ Remote clients cannot read or write workspace config because critical state live
 - Functional: expose workspace config read/write APIs for `.opencode` and `opencode.json`
 - Functional: list installed skills, plugins, MCPs for a workspace without direct FS access
 - Functional: allow saving new skills, plugins, and MCP entries from a remote client
-- Functional: host mode auto-starts the OpenWork server alongside the OpenCode engine
+- Functional: host mode auto-starts the AikaOS server alongside the OpenCode engine
 - UX: surface pairing URL + tokens in Settings for host mode
 - UX: show remote-config origin, last updated time, and change attribution
 
@@ -58,7 +58,7 @@ When OpenCode already exposes a stable API (agents, skills, MCP status), prefer 
 
 ### Capabilities
 - `GET /capabilities` -> { skills: { read, write, source }, plugins: { read, write }, mcp: { read, write }, commands: { read, write }, config: { read, write } }
-- `source` indicates whether OpenCode or OpenWork server is the authoritative API
+- `source` indicates whether OpenCode or AikaOS server is the authoritative API
 
 ### Workspace config
 - `GET /workspace/:id/config` -> returns parsed `opencode.json` + `.opencode/openwork.json`
@@ -69,7 +69,7 @@ When OpenCode already exposes a stable API (agents, skills, MCP status), prefer 
   - Only project config is writable by default; global config requires explicit host-only scope
 
 ### Skills
-- Prefer OpenCode skills API when available; OpenWork server only fills local FS gaps.
+- Prefer OpenCode skills API when available; AikaOS server only fills local FS gaps.
 - `GET /workspace/:id/skills` -> list skill metadata from `.opencode/skills` (fallback only)
 - `POST /workspace/:id/skills` -> add/update skill file(s) (write approval required, fallback only)
   - Request body: `{ name, content, description? }`
@@ -85,7 +85,7 @@ When OpenCode already exposes a stable API (agents, skills, MCP status), prefer 
   - Server de-dupes by normalized name (strip version where possible)
 
 ### MCPs
-- Prefer OpenCode MCP APIs for status/runtime; OpenWork server only reads/writes config.
+- Prefer OpenCode MCP APIs for status/runtime; AikaOS server only reads/writes config.
 - `GET /workspace/:id/mcp` -> list configured MCP servers
 - `POST /workspace/:id/mcp` -> add MCP config entry (write approval required)
 - `DELETE /workspace/:id/mcp/:name` -> remove MCP config entry (write approval required)
@@ -93,7 +93,7 @@ When OpenCode already exposes a stable API (agents, skills, MCP status), prefer 
   - Response: `{ items: [{ name, config, source }] }`
 
 ### Agents
-- Prefer OpenCode agents API; no OpenWork server endpoints needed unless OpenCode lacks coverage for remote clients.
+- Prefer OpenCode agents API; no AikaOS server endpoints needed unless OpenCode lacks coverage for remote clients.
 
 ### Commands
 - `GET /workspace/:id/commands` -> list commands from `.opencode/commands` (fallback only)
@@ -105,7 +105,7 @@ When OpenCode already exposes a stable API (agents, skills, MCP status), prefer 
 
 ---
 ## OpenCode behavior reference (from docs)
-This section captures the exact OpenCode semantics the OpenWork server must respect.
+This section captures the exact OpenCode semantics the AikaOS server must respect.
 
 ### Plugins
 - Config list: `opencode.json` -> `plugin` field. Can be string or string[].
@@ -150,31 +150,31 @@ This section captures the exact OpenCode semantics the OpenWork server must resp
 
 ### OpenCode server APIs
 - OpenCode already exposes: `/config`, `/mcp` (runtime), `/agent`, `/command` (list), `/session`.
-- OpenWork server should prefer OpenCode APIs for runtime status and only handle FS-backed config gaps.
+- AikaOS server should prefer OpenCode APIs for runtime status and only handle FS-backed config gaps.
 - When reading config, prefer OpenCode `/config` to capture precedence (remote defaults + global + project).
 - When writing, only modify project `opencode.json` to avoid clobbering upstream defaults.
-- `/command` is list-only; OpenWork server adds create/delete via filesystem for remote clients.
+- `/command` is list-only; AikaOS server adds create/delete via filesystem for remote clients.
 
 ### Config precedence (reference)
 - Remote defaults from `.well-known/opencode`
 - Global config `~/.config/opencode/opencode.json`
 - Project config `opencode.json`
 - `.opencode/` directories and inline env overrides
-- OpenWork server should preserve this ordering when presenting config sources
+- AikaOS server should preserve this ordering when presenting config sources
 
 ---
 ## OpenCode server alignment (from docs)
 - OpenCode runs an HTTP server via `opencode serve` (default `127.0.0.1:4096`).
-- `--cors` can be used to allow browser origins; OpenWork should align with that for web clients.
+- `--cors` can be used to allow browser origins; AikaOS should align with that for web clients.
 - Basic auth can be enabled via `OPENCODE_SERVER_PASSWORD` (username defaults to `opencode`).
-- The OpenWork server should not bypass OpenCode auth; if OpenCode is password-protected, the host UI must collect credentials and pass them to the client.
-- OpenCode publishes its OpenAPI spec at `/doc`; the OpenWork server should track upstream changes and avoid duplicating stable APIs.
+- The AikaOS server should not bypass OpenCode auth; if OpenCode is password-protected, the host UI must collect credentials and pass them to the client.
+- OpenCode publishes its OpenAPI spec at `/doc`; the AikaOS server should track upstream changes and avoid duplicating stable APIs.
 
 ---
 ## Host auto-start + pairing UX
-- When OpenWork runs in Host mode, it starts the OpenWork server automatically after the OpenCode engine comes online.
+- When AikaOS runs in Host mode, it starts the AikaOS server automatically after the OpenCode engine comes online.
 - The host UI exposes a pairing card in Settings with:
-  - OpenWork Server URL (prefers `.local` hostname, falls back to LAN IP)
+  - AikaOS Server URL (prefers `.local` hostname, falls back to LAN IP)
   - Client token (for remote devices)
   - Host token (for approvals)
 - Tokens are generated per run unless supplied by host config.
@@ -274,16 +274,16 @@ Response:
 
 ---
 ## Outline integration
-- Host side: OpenWork server exposes a narrow API layer on top of OpenCode
-- Implementation: Bun-based server initially, shipped as a sidecar inside the OpenWork desktop app
-- Client side: OpenWork UI uses this layer when remote, falls back to FS when local
+- Host side: AikaOS server exposes a narrow API layer on top of OpenCode
+- Implementation: Bun-based server initially, shipped as a sidecar inside the AikaOS desktop app
+- Client side: AikaOS UI uses this layer when remote, falls back to FS when local
 - Storage: persists changes to `.opencode` and `opencode.json` within workspace root
 
 ---
 ## Server runtime and sidecar lifecycle
-- The desktop app launches the OpenWork server as a sidecar process.
+- The desktop app launches the AikaOS server as a sidecar process.
 - The server binds to localhost on an ephemeral port and reports its URL back to the host UI.
-- The host UI includes the OpenWork server URL in the pairing payload for remote clients.
+- The host UI includes the AikaOS server URL in the pairing payload for remote clients.
 - On crash, the host restarts the server and re-issues capabilities.
 - The server must never expose filesystem paths outside approved workspace roots.
 
@@ -296,10 +296,10 @@ Response:
 
 ---
 ## Authentication and pairing
-- The host generates a short-lived pairing token and includes the OpenWork server base URL in the pairing payload.
+- The host generates a short-lived pairing token and includes the AikaOS server base URL in the pairing payload.
 - Remote clients store the token in memory (not on disk) and send it as `Authorization: Bearer <token>`.
 - Tokens are scoped to the host and expire on disconnect or after a short TTL (e.g., 24h).
-- The OpenWork server rejects requests without a valid token (`401`).
+- The AikaOS server rejects requests without a valid token (`401`).
 - Future: rotate tokens on reconnect and support revocation from host settings.
 
 ---
@@ -330,8 +330,8 @@ Response:
 
 ---
 ## Web app integration
-- Remote clients connect to both OpenCode (engine) and OpenWork server (config layer)
-- Capability check gates UI actions: if OpenWork server is missing, config actions are read-only
+- Remote clients connect to both OpenCode (engine) and AikaOS server (config layer)
+- Capability check gates UI actions: if AikaOS server is missing, config actions are read-only
 - Writes require host approval and are surfaced in the audit log
 - Future: this evolves into a sync layer across clients (out of scope here)
 
@@ -340,7 +340,7 @@ Response:
 - Cache the last successful config snapshot per workspace in local state.
 - On write success, refresh via `GET /workspace/:id/config` before updating UI.
 - Use optimistic UI only for read-only lists; for writes, wait for approval + server response.
-- If OpenWork server is unreachable, show read-only data and a reconnect CTA.
+- If AikaOS server is unreachable, show read-only data and a reconnect CTA.
 
 ---
 ## Sequence flows (examples)
@@ -364,7 +364,7 @@ Response:
 4) UI shows “Reload engine” banner if required.
 
 ---
-## OpenWork UI wiring (specific)
+## AikaOS UI wiring (specific)
 These are the concrete integration points inside `packages/app`.
 
 ### Data layer
@@ -403,31 +403,31 @@ export const openworkServer = {
 ```
 
 ### State stores
-- `src/app/context/workspace.ts`: route remote config reads/writes to OpenWork server when workspaceType is `remote`
-- `src/app/context/extensions.ts`: use OpenWork server to list/add skills/plugins/MCPs in remote mode
+- `src/app/context/workspace.ts`: route remote config reads/writes to AikaOS server when workspaceType is `remote`
+- `src/app/context/extensions.ts`: use AikaOS server to list/add skills/plugins/MCPs in remote mode
 - `src/app/context/session.ts`: no changes; stays on OpenCode engine
 
 ### UI surfaces
 - `src/app/pages/dashboard.tsx`: display workspace config status + enable “Share config” only when supported
-- `src/app/pages/skills.tsx`: list and import skills via OpenWork server in remote mode
-- `src/app/pages/plugins.tsx`: list/add/remove plugins via OpenWork server in remote mode
-- `src/app/pages/mcp.tsx`: list/connect MCPs via OpenWork server in remote mode
-- `src/app/pages/commands.tsx`: list/add/remove commands via OpenWork server in remote mode
-- `src/app/pages/session.tsx`: surface agent list/selection via OpenWork server when remote if OpenCode lacks agent APIs
+- `src/app/pages/skills.tsx`: list and import skills via AikaOS server in remote mode
+- `src/app/pages/plugins.tsx`: list/add/remove plugins via AikaOS server in remote mode
+- `src/app/pages/mcp.tsx`: list/connect MCPs via AikaOS server in remote mode
+- `src/app/pages/commands.tsx`: list/add/remove commands via AikaOS server in remote mode
+- `src/app/pages/session.tsx`: surface agent list/selection via AikaOS server when remote if OpenCode lacks agent APIs
 - `src/app/components/workspace-chip.tsx` + `workspace-picker.tsx`: show capability badges (read-only if server missing)
 
 ### Capability checks
-- On connect, call `GET /health` on OpenWork server
+- On connect, call `GET /health` on AikaOS server
 - Store a `serverCapabilities` flag in app state and guard remote config actions
 
 ---
 ## Detailed wiring notes
-This section explains exactly how requests flow and where the UI switches between local FS and the OpenWork server.
+This section explains exactly how requests flow and where the UI switches between local FS and the AikaOS server.
 
 ### Connection flow (remote)
 1) User connects to a host (OpenCode engine). The client already has a base URL for OpenCode.
-2) The client derives or receives the OpenWork server base URL from the host pairing payload.
-3) The client calls `GET /health` and `GET /capabilities` on the OpenWork server.
+2) The client derives or receives the AikaOS server base URL from the host pairing payload.
+3) The client calls `GET /health` and `GET /capabilities` on the AikaOS server.
 4) UI stores `openworkServerStatus` (ok/error) and `openworkServerCapabilities` in app state.
 5) All config-mutating UI surfaces check capabilities before enabling write actions.
 
@@ -438,14 +438,14 @@ This section explains exactly how requests flow and where the UI switches betwee
 
 ### Store-level routing (concrete)
 - `context/extensions.ts`
-  - `refreshSkills()` uses OpenWork server when remote, else lists local skills from FS.
-  - `refreshPlugins()` pulls config from OpenWork server in remote mode, else reads `opencode.json` locally.
-  - `refreshMcpServers()` reads MCP config from OpenWork server in remote mode, else from FS.
+  - `refreshSkills()` uses AikaOS server when remote, else lists local skills from FS.
+  - `refreshPlugins()` pulls config from AikaOS server in remote mode, else reads `opencode.json` locally.
+  - `refreshMcpServers()` reads MCP config from AikaOS server in remote mode, else from FS.
 - `context/workspace.ts`
-  - Loads `openwork.json` and `opencode.json` from OpenWork server when remote.
-  - On writes, calls OpenWork server endpoints and refreshes local state on success.
+  - Loads `openwork.json` and `opencode.json` from AikaOS server when remote.
+  - On writes, calls AikaOS server endpoints and refreshes local state on success.
 - `context/commands.ts`
-  - `list`, `create`, and `delete` commands via OpenWork server when remote.
+  - `list`, `create`, and `delete` commands via AikaOS server when remote.
 
 ### Action mapping (UI -> endpoint -> file)
 - Add plugin (Plugins page) -> `POST /workspace/:id/plugins` -> `opencode.json` `plugin` array
@@ -466,7 +466,7 @@ This section explains exactly how requests flow and where the UI switches betwee
 - If approval is denied or times out, the server returns a clear error and the UI shows a non-blocking toast.
 
 ### Data contracts (expected formats)
-These map to existing OpenWork types.
+These map to existing AikaOS types.
 
 **Plugins**
 - Source of truth: `opencode.json` → `plugin` field (string or string[]).
@@ -521,12 +521,12 @@ These map to existing OpenWork types.
 
 **Agents**
 - Prefer OpenCode SDK (`listAgents`) as the primary source.
-- Only add OpenWork server agent endpoints if OpenCode doesn’t expose them for remote clients.
+- Only add AikaOS server agent endpoints if OpenCode doesn’t expose them for remote clients.
 
 ---
 ## Write approval flow (detailed)
 1) Client sends a write request (POST/PATCH/DELETE).
-2) OpenWork server emits a permission request to the host UI with:
+2) AikaOS server emits a permission request to the host UI with:
    - action (write type), workspace id, list of file paths, and summary of changes
 3) Host approves or denies within a timeout window.
 4) Server executes the write only after approval and records an audit log entry.
@@ -570,14 +570,14 @@ Server behavior:
 - Specs may also be file URLs or absolute paths when supported by OpenCode.
 - Local plugin files are discovered in `.opencode/plugins/` and `~/.config/opencode/plugins/`.
 - Only JavaScript/TypeScript files are treated as plugins (`.js`, `.ts`).
-- The OpenWork server should return both config plugins and local plugin files, with a `source` field:
+- The AikaOS server should return both config plugins and local plugin files, with a `source` field:
   - `config` for npm specs
   - `dir.project` for `.opencode/plugins/`
   - `dir.global` for `~/.config/opencode/plugins/`
 - The UI can display these as separate sections while preserving OpenCode load order.
 - The server should not run `bun install`; OpenCode handles installs on startup.
 - If `.opencode/package.json` is present, note it in responses so the UI can link to dependency setup.
-- Plugin runtime behavior (events, custom tools, logging) remains owned by OpenCode; OpenWork server only manages config.
+- Plugin runtime behavior (events, custom tools, logging) remains owned by OpenCode; AikaOS server only manages config.
 
 ---
 ## Skill handling (detailed)
@@ -589,7 +589,7 @@ Server behavior:
   - `name` and `description` required
   - `license`, `compatibility`, `metadata` optional
 - Enforce name and description length rules on write.
-- The OpenWork server does not parse or interpret skill content beyond frontmatter extraction.
+- The AikaOS server does not parse or interpret skill content beyond frontmatter extraction.
 
 ---
 ## MCP handling (detailed)
@@ -598,8 +598,8 @@ Server behavior:
 - If OpenCode provides remote defaults via `.well-known/opencode`, treat those as `source: "config.remote"`.
 - Writes always go to project `opencode.json` and should not mutate remote defaults.
 - If MCP tools are disabled via `tools` glob patterns, surface that as `disabledByTools: true` in responses.
-- OAuth tokens are managed by OpenCode and stored in `~/.local/share/opencode/mcp-auth.json`; OpenWork server should not manage tokens directly.
-- Authentication flows should be triggered via OpenCode (`/mcp` endpoints or CLI), not via OpenWork server.
+- OAuth tokens are managed by OpenCode and stored in `~/.local/share/opencode/mcp-auth.json`; AikaOS server should not manage tokens directly.
+- Authentication flows should be triggered via OpenCode (`/mcp` endpoints or CLI), not via AikaOS server.
 - Reference CLI flows: `opencode mcp auth <name>`, `opencode mcp list`, `opencode mcp logout <name>`, `opencode mcp debug <name>`.
 
 ---
@@ -653,7 +653,7 @@ Server behavior:
 
 ### UI wiring
 - Add `src/app/lib/openwork-server.ts` client
-- Route remote mode reads/writes through OpenWork server:
+- Route remote mode reads/writes through AikaOS server:
   - `src/app/context/extensions.ts`
   - `src/app/context/workspace.ts`
   - `src/app/pages/commands.tsx`
@@ -702,8 +702,8 @@ Server behavior:
 - Deny returns `403` and no file is written
 - Approve writes file and returns success
 
-### Client wiring tests (OpenWork web)
-- Remote mode uses OpenWork server endpoints instead of Tauri FS
+### Client wiring tests (AikaOS web)
+- Remote mode uses AikaOS server endpoints instead of Tauri FS
 - Missing capability switches UI to read-only
 - Reconnect restores write actions after capabilities return
 - OpenCode basic auth prompts propagate to client when enabled
@@ -761,8 +761,8 @@ Server behavior:
 - Workspace id mismatch returns `404`
 
 ### UI
-- Remote client with OpenWork server: write actions enabled
-- Remote client without OpenWork server: write actions disabled + read-only badge
+- Remote client with AikaOS server: write actions enabled
+- Remote client without AikaOS server: write actions disabled + read-only badge
 
 ---
 ## Set permissions
@@ -797,7 +797,7 @@ Server behavior:
 
 ---
 ## Plan rollout
-- Phase 0: Bun server prototype running alongside OpenWork host
+- Phase 0: Bun server prototype running alongside AikaOS host
 - Phase 1: read-only APIs for skills/plugins/MCPs + config metadata
 - Phase 2: write APIs for skills/plugins/MCPs with audit log
 - Phase 3: config export/import support for remote clients

@@ -103,7 +103,7 @@ opencode-router bindings list
 
 The router can expose a small local HTTP server for health/config and simple message dispatch.
 
-- `OPENCODE_ROUTER_HEALTH_PORT` controls the port (OpenWork defaults to a random free port when using `openwork`).
+- `OPENCODE_ROUTER_HEALTH_PORT` controls the port (AikaOS defaults to a random free port when using `openwork`).
 - `PORT` is also accepted as a convenience if the above are unset.
 - `OPENCODE_ROUTER_HEALTH_HOST` controls bind host (default: `127.0.0.1`).
 

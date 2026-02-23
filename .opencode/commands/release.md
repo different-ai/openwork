@@ -1,8 +1,8 @@
 ---
-description: Run the OpenWork release flow
+description: Run the AikaOS release flow
 ---
 
-You are running the OpenWork release flow in this repo.
+You are running the AikaOS release flow in this repo.
 
 Arguments: `$ARGUMENTS`
 - If empty, default to a patch release.

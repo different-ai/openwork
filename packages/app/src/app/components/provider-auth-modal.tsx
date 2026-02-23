@@ -386,7 +386,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           <div class="px-6 pt-6 pb-4 border-b border-gray-6/50 flex items-start justify-between gap-4">
             <div>
               <h3 class="text-lg font-semibold text-gray-12">Connect providers</h3>
-              <p class="text-sm text-gray-11 mt-1">Sign in to services you want OpenWork to use.</p>
+              <p class="text-sm text-gray-11 mt-1">Sign in to services you want AikaOS to use.</p>
             </div>
             <Button
               variant="ghost"

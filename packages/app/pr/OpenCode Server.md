@@ -2,18 +2,18 @@
 Run tasks from a shared runtime
 ---
 ## Summarize
-- Define a local OpenCode server that OpenWork can discover, connect to, and use for task execution across devices
+- Define a local OpenCode server that AikaOS can discover, connect to, and use for task execution across devices
 ---
 ## Define problem
-- OpenWork needs a reliable way to run tasks without bundling a full CLI per device while keeping setup simple and transparent
+- AikaOS needs a reliable way to run tasks without bundling a full CLI per device while keeping setup simple and transparent
 ---
 ## Set goals
-- Enable a host machine to run tasks for multiple OpenWork clients with clear status, fast connect, and predictable behavior
+- Enable a host machine to run tasks for multiple AikaOS clients with clear status, fast connect, and predictable behavior
 - Keep setup minimal and align with least-privilege, mobile-first usage
 ---
 ## Exclude scope
 - Building a hosted SaaS, multi-tenant cloud, or marketplace for remote agents
-- Supporting non-OpenWork clients beyond a basic compatibility layer
+- Supporting non-AikaOS clients beyond a basic compatibility layer
 ---
 ## Describe personas
 - Mobile user who wants to run tasks from a phone against a home or work machine

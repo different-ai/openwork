@@ -567,7 +567,7 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
         <box flexDirection="column" width={dimensions().width} height={dimensions().height} paddingLeft={2} paddingRight={2}>
           <box flexDirection="row" justifyContent="space-between" paddingTop={1}>
             <text fg={theme.text} attributes={TextAttributes.BOLD}>
-              openwork · {state.view}
+              aikaos · {state.view}
             </text>
             <text fg={theme.textMuted}>v{options.version}</text>
           </box>
@@ -637,9 +637,9 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
                   Connect
                 </text>
-                <text fg={theme.textMuted}>OpenWork URL (LAN)</text>
+                <text fg={theme.textMuted}>AikaOS URL (LAN)</text>
                 <text fg={theme.text}>{state.connect.openworkUrl}</text>
-                <text fg={theme.textMuted}>OpenWork Token</text>
+                <text fg={theme.textMuted}>AikaOS Token</text>
                 <text fg={theme.text}>{state.connect.openworkToken}</text>
                 <text fg={theme.textMuted}>Host Token</text>
                 <text fg={theme.text}>{state.connect.hostToken}</text>
