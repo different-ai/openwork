@@ -24,6 +24,9 @@ Frontend for `app.openwork.software`.
   - default: `https://api.openwork.software`
 - `DEN_AUTH_ORIGIN` (server-only): Origin header sent to Better Auth endpoints.
   - default: `https://den-control-plane-openwork.onrender.com`
+- `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
+  - Example: `https://openwork.software/app`
+  - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
 
 ## Deploy on Vercel
 

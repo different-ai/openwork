@@ -174,13 +174,16 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
     return null;
   }
 
-  if (url.protocol.toLowerCase() !== "openwork:") {
+  const protocol = url.protocol.toLowerCase();
+  if (protocol !== "openwork:" && protocol !== "https:" && protocol !== "http:") {
     return null;
   }
 
   const routeHost = url.hostname.toLowerCase();
   const routePath = url.pathname.replace(/^\/+/, "").toLowerCase();
-  if (routeHost !== "connect-remote" && routePath !== "connect-remote") {
+  const routeSegments = routePath.split("/").filter(Boolean);
+  const routeTail = routeSegments[routeSegments.length - 1] ?? "";
+  if (routeHost !== "connect-remote" && routePath !== "connect-remote" && routeTail !== "connect-remote") {
     return null;
   }
 
@@ -202,6 +205,38 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
     directory: null,
     displayName: displayName || null,
   };
+}
+
+function stripRemoteConnectQuery(rawUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  let changed = false;
+  for (const key of [
+    "openworkHostUrl",
+    "openworkUrl",
+    "openworkToken",
+    "accessToken",
+    "workerId",
+    "workerName",
+    "source",
+  ]) {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return null;
+  }
+
+  const search = url.searchParams.toString();
+  return `${url.pathname}${search ? `?${search}` : ""}${url.hash}`;
 }
 
 export default function App() {
@@ -4290,6 +4325,16 @@ export default function App() {
         });
       } catch {
         // ignore
+      }
+    }
+
+    if (!isTauriRuntime()) {
+      const currentUrl = typeof window === "undefined" ? "" : window.location.href;
+      if (currentUrl && queueRemoteConnectDeepLink(currentUrl)) {
+        const strippedUrl = stripRemoteConnectQuery(currentUrl);
+        if (strippedUrl) {
+          window.history.replaceState({}, "", strippedUrl);
+        }
       }
     }
 

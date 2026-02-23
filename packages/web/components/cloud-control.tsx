@@ -70,6 +70,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
+const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -395,6 +396,49 @@ function buildOpenworkDeepLink(
   return `openwork://connect-remote?${params.toString()}`;
 }
 
+function buildOpenworkAppConnectUrl(
+  appConnectBaseUrl: string,
+  openworkUrl: string | null,
+  accessToken: string | null,
+  workerId: string | null,
+  workerName: string | null,
+): string | null {
+  if (!appConnectBaseUrl || !openworkUrl || !accessToken) {
+    return null;
+  }
+
+  let connectUrl: URL;
+  try {
+    connectUrl = new URL(appConnectBaseUrl);
+  } catch {
+    return null;
+  }
+
+  const normalizedPath = connectUrl.pathname.replace(/\/+$/, "");
+  if (!normalizedPath || normalizedPath === "/") {
+    connectUrl.pathname = "/connect-remote";
+  } else {
+    const pathSegments = normalizedPath.split("/").filter(Boolean);
+    const lastSegment = (pathSegments[pathSegments.length - 1] ?? "").toLowerCase();
+    connectUrl.pathname =
+      lastSegment === "connect-remote" ? normalizedPath : `${normalizedPath}/connect-remote`;
+  }
+
+  connectUrl.searchParams.set("openworkHostUrl", openworkUrl);
+  connectUrl.searchParams.set("openworkToken", accessToken);
+  connectUrl.searchParams.set("source", "openwork-web");
+
+  if (workerId) {
+    connectUrl.searchParams.set("workerId", workerId);
+  }
+
+  if (workerName) {
+    connectUrl.searchParams.set("workerName", workerName);
+  }
+
+  return connectUrl.toString();
+}
+
 function parseWorkspaceIdFromWorkspacesPayload(payload: unknown): string | null {
   if (!isRecord(payload) || !Array.isArray(payload.items)) {
     return null;
@@ -621,6 +665,13 @@ export function CloudControlPanel() {
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const openworkDeepLink = buildOpenworkDeepLink(
+    openworkConnectUrl,
+    activeWorker?.clientToken ?? null,
+    activeWorker?.workerId ?? null,
+    activeWorker?.workerName ?? null,
+  );
+  const openworkAppConnectUrl = buildOpenworkAppConnectUrl(
+    OPENWORK_APP_CONNECT_BASE_URL,
     openworkConnectUrl,
     activeWorker?.clientToken ?? null,
     activeWorker?.workerId ?? null,
@@ -1777,25 +1828,45 @@ export function CloudControlPanel() {
                               <p className="text-sm text-slate-500">Access and manage your worker instance.</p>
                             </div>
 
-                            <button
-                              type="button"
-                              className="rounded-[14px] bg-[#1B29FF] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-[#1B29FF]/25 transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                              onClick={() => {
-                                if (!openworkDeepLink) {
-                                  return;
-                                }
-                                window.location.href = openworkDeepLink;
-                              }}
-                              disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
-                            >
-                              {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
-                            </button>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-[14px] bg-[#1B29FF] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-[#1B29FF]/25 transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
+                                onClick={() => {
+                                  if (!openworkDeepLink) {
+                                    return;
+                                  }
+                                  window.location.href = openworkDeepLink;
+                                }}
+                                disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
+                              >
+                                {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
+                              </button>
+
+                              {openworkAppConnectUrl ? (
+                                <a
+                                  href={openworkAppConnectUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className={`rounded-[14px] border px-5 py-3 text-sm font-semibold transition ${
+                                    selectedStatusMeta.bucket === "ready"
+                                      ? "border-slate-300 bg-white text-slate-700 hover:border-slate-400 hover:text-slate-900"
+                                      : "pointer-events-none cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400"
+                                  }`}
+                                  aria-disabled={selectedStatusMeta.bucket !== "ready"}
+                                >
+                                  Open in App
+                                </a>
+                              ) : null}
+                            </div>
                           </div>
 
                           <div className="rounded-[14px] border border-slate-100 bg-slate-50 px-4 py-3">
                             <p className="text-sm text-slate-600">
                               {openworkDeepLink
-                                ? "You are all set. Open in OpenWork to start working."
+                                ? openworkAppConnectUrl
+                                  ? "You are all set. Open in OpenWork or Open in App to start working."
+                                  : "You are all set. Open in OpenWork to start working."
                                 : "We are still preparing your connection. The button will unlock when ready."}
                             </p>
                           </div>
