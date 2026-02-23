@@ -1969,7 +1969,10 @@ export default function App() {
     const baseUrl = workspace.baseUrl?.trim() ?? "";
     const directory = workspace.directory?.trim() ?? "";
     if (workspace.remoteType === "openwork") {
-      const token = workspace.openworkToken?.trim() || openworkServerSettings().token?.trim() || "";
+      // Sidebar session listing should be per-workspace and should not implicitly depend on
+      // global OpenWork server settings, otherwise switching between remotes can cause other
+      // workspace task lists to appear/disappear.
+      const token = workspace.openworkToken?.trim() ?? "";
       const auth: OpencodeAuth | undefined = token ? { token, mode: "openwork" } : undefined;
       return {
         baseUrl,
@@ -2120,7 +2123,6 @@ export default function App() {
     const engineBaseUrl = engineInfo?.baseUrl?.trim() ?? "";
     const engineUser = engineInfo?.opencodeUsername?.trim() ?? "";
     const enginePass = engineInfo?.opencodePassword?.trim() ?? "";
-    const tokenFallback = openworkServerSettings().token?.trim() ?? "";
 
     const engineKey = [engineBaseUrl, engineUser, enginePass].join("::");
     const workspaceKey = workspaceStore
@@ -2134,14 +2136,17 @@ export default function App() {
       })
       .join(";");
 
-    const combinedWorkspaceKey = [tokenFallback, workspaceKey].join("::");
-    if (engineKey === lastSidebarEngineKey && combinedWorkspaceKey === lastSidebarWorkspaceKey) return;
+    // Sidebar session refreshes should only be driven by the engine auth/baseUrl or the workspace
+    // definitions themselves. Global OpenWork server settings are intentionally excluded so that
+    // connecting/activating a remote does not cause other workspace task lists to refresh (and
+    // potentially disappear) due to auth fallback changes.
+    if (engineKey === lastSidebarEngineKey && workspaceKey === lastSidebarWorkspaceKey) return;
 
     const engineChanged = engineKey !== lastSidebarEngineKey;
-    const workspacesChanged = combinedWorkspaceKey !== lastSidebarWorkspaceKey;
+    const workspacesChanged = workspaceKey !== lastSidebarWorkspaceKey;
 
     lastSidebarEngineKey = engineKey;
-    lastSidebarWorkspaceKey = combinedWorkspaceKey;
+    lastSidebarWorkspaceKey = workspaceKey;
 
     pruneSidebarSessionState(new Set(workspaceStore.workspaces().map((ws) => ws.id)));
 
@@ -2175,7 +2180,10 @@ export default function App() {
 
   createEffect(() => {
     const allSessions = sessions(); // reactive dependency on session store
-    const wsId = workspaceStore.activeWorkspaceId().trim();
+    // When switching workers, the session store can update before the activeWorkspaceId flips.
+    // Use connectingWorkspaceId as the authoritative target during the switch so we don't
+    // accidentally overwrite another worker's sidebar sessions.
+    const wsId = (workspaceStore.connectingWorkspaceId() ?? workspaceStore.activeWorkspaceId()).trim();
     if (!wsId) return;
     const status = sidebarSessionStatusByWorkspaceId()[wsId];
 
