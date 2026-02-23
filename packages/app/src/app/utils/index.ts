@@ -593,6 +593,15 @@ function normalizeStepText(value: unknown): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function cleanReasoningText(value: string): string {
+  return value
+    .replace(/\[REDACTED\]/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .trim();
+}
+
 function truncateStepText(value: string, max = 80): string {
   return value.length > max ? `${value.slice(0, Math.max(0, max - 3))}...` : value;
 }
@@ -876,9 +885,34 @@ export function summarizeStep(part: Part): { title: string; detail?: string; isS
 
   if (part.type === "reasoning") {
     const record = part as any;
-    const text = typeof record.text === "string" ? record.text.trim() : "";
-    if (!text) return { title: "Planning", toolCategory: "tool" };
-    return { title: "Thinking", toolCategory: "tool" };
+    const text = typeof record.text === "string" ? cleanReasoningText(record.text) : "";
+    if (!text) return { title: "Thinking", toolCategory: "tool" };
+
+    const lines = text
+      .split(/\r?\n/)
+      .map((line: string) => line.trim())
+      .filter(Boolean);
+    const compact = lines.join(" ");
+
+    let headline = "";
+    let detail = "";
+    if (lines.length > 1) {
+      headline = lines[0];
+      detail = lines.slice(1).join("\n");
+    } else {
+      const sentenceBreak = compact.indexOf(". ");
+      if (sentenceBreak > 18 && sentenceBreak < 120) {
+        headline = compact.slice(0, sentenceBreak + 1).trim();
+        detail = compact.slice(sentenceBreak + 2).trim();
+      } else {
+        headline = compact;
+        detail = compact;
+      }
+    }
+
+    headline = headline.replace(/^thinking[:\s-]*/i, "").trim();
+    const title = `Thinking: ${truncateStepText(headline || "reviewing context", 96)}`;
+    return { title, detail: detail || undefined, toolCategory: "tool" };
   }
 
   if (part.type === "step-start" || part.type === "step-finish") {

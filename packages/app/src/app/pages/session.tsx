@@ -1138,33 +1138,6 @@ export default function SessionView(props: SessionViewProps) {
       .replace(/`([^`]+)`/g, "$1")
       .trim();
 
-  const latestRunReasoning = createMemo<string | null>(() => {
-    if (!showRunIndicator()) return null;
-    const baseline = runBaseline();
-    for (let i = props.messages.length - 1; i >= 0; i -= 1) {
-      const msg = props.messages[i];
-      const info = msg?.info as { id?: string | number; role?: string } | undefined;
-      if (info?.role !== "assistant") continue;
-      const messageId =
-        typeof info.id === "string" ? info.id : typeof info.id === "number" ? String(info.id) : null;
-      if (!messageId) continue;
-
-      const minIndex = baseline.assistantId && messageId === baseline.assistantId ? baseline.partCount - 1 : -1;
-      for (let partIndex = msg.parts.length - 1; partIndex > minIndex; partIndex -= 1) {
-        const part = msg.parts[partIndex];
-        if (part?.type !== "reasoning") continue;
-        const raw = typeof (part as { text?: unknown }).text === "string" ? String((part as { text?: string }).text) : "";
-        const text = cleanReasoning(raw);
-        if (text) return text;
-      }
-
-      if (baseline.assistantId && messageId === baseline.assistantId) {
-        break;
-      }
-    }
-    return null;
-  });
-
   const computeStatusFromPart = (part: Part | null) => {
     if (!part) return null;
     if (part.type === "tool") {
@@ -1195,9 +1168,15 @@ export default function SessionView(props: SessionViewProps) {
       }
     }
     if (part.type === "reasoning") {
-      const text = typeof (part as any).text === "string" ? (part as any).text : "";
-      const match = text.trimStart().match(/^\*\*(.+?)\*\*/);
-      if (match) return `Thinking about ${match[1].trim()}`;
+      const text = cleanReasoning(typeof (part as any).text === "string" ? (part as any).text : "");
+      const first = text
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+      if (first) {
+        const clipped = first.length > 56 ? `${first.slice(0, 53)}...` : first;
+        return `Thinking: ${clipped}`;
+      }
       return "Thinking";
     }
     if (part.type === "text") {
@@ -1206,65 +1185,10 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   };
 
-  const truncateDetail = (value: string, max = 240) => {
-    const trimmed = value.trim();
-    if (!trimmed) return null;
-    if (trimmed.length <= max) return trimmed;
-    return `${trimmed.slice(0, max)}...`;
-  };
-
-  const formatRunErrorDetail = (message: string) => {
-    const lines = message
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!lines.length) return "Run failed";
-    const compact = lines.slice(0, 4).join("\n");
-    if (lines.length <= 4) return compact;
-    return `${compact}\n...`;
-  };
-
   const thinkingStatus = createMemo(() => {
     const status = computeStatusFromPart(latestRunPart());
     if (status) return status;
     if (runPhase() === "thinking") return "Thinking";
-    return null;
-  });
-
-  const thinkingDetail = createMemo<null | { title: string; detail?: string }>(() => {
-    if (runPhase() === "error") {
-      if (!props.error) return { title: "Error" };
-      const detail = truncateDetail(formatRunErrorDetail(props.error), 420);
-      return detail ? { title: "Error", detail } : { title: "Error" };
-    }
-
-    const reasoning = latestRunReasoning();
-    if (reasoning) {
-      const detail = truncateDetail(reasoning);
-      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
-    }
-
-    const part = latestRunPart();
-    if (!part) return null;
-    if (part.type === "tool") {
-      const record = part as any;
-      const state = record.state ?? {};
-      const title =
-        typeof state.title === "string" && state.title.trim() ? state.title.trim() : String(record.tool ?? "Tool");
-      const output = typeof state.output === "string" ? truncateDetail(state.output) : null;
-      const error = typeof state.error === "string" ? truncateDetail(state.error) : null;
-      return { title, detail: output ?? error ?? undefined };
-    }
-    if (part.type === "reasoning") {
-      const text = cleanReasoning(typeof (part as any).text === "string" ? (part as any).text : "");
-      const detail = truncateDetail(text);
-      return detail ? { title: "Reasoning", detail } : { title: "Reasoning" };
-    }
-    if (part.type === "text") {
-      const text = typeof (part as any).text === "string" ? (part as any).text : "";
-      const detail = truncateDetail(text);
-      return detail ? { title: "Draft", detail } : { title: "Draft" };
-    }
     return null;
   });
 
@@ -3273,13 +3197,6 @@ export default function SessionView(props: SessionViewProps) {
                         <span class="text-[10px] text-gray-8 ml-auto shrink-0">{runElapsedLabel()}</span>
                       </Show>
                     </div>
-                    <Show when={thinkingDetail()?.detail}>
-                      {(detail) => (
-                        <div class="pl-3 pr-2 pt-0.5 text-[11px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
-                          {thinkingDetail()?.title === "Reasoning" ? detail() : `${thinkingDetail()?.title}: ${detail()}`}
-                        </div>
-                      )}
-                    </Show>
                   </div>
                 </div>
               ) : undefined
