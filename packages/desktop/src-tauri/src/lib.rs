@@ -55,6 +55,21 @@ use orchestrator::manager::OrchestratorManager;
 use tauri::Manager;
 use workspace::watch::WorkspaceWatchState;
 
+fn stop_managed_services(app_handle: &tauri::AppHandle) {
+    if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
+        EngineManager::stop_locked(&mut engine);
+    }
+    if let Ok(mut orchestrator) = app_handle.state::<OrchestratorManager>().inner.lock() {
+        OrchestratorManager::stop_locked(&mut orchestrator);
+    }
+    if let Ok(mut openwork_server) = app_handle.state::<OpenworkServerManager>().inner.lock() {
+        OpenworkServerManager::stop_locked(&mut openwork_server);
+    }
+    if let Ok(mut opencode_router) = app_handle.state::<OpenCodeRouterManager>().inner.lock() {
+        OpenCodeRouterManager::stop_locked(&mut opencode_router);
+    }
+}
+
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
@@ -133,27 +148,16 @@ pub fn run() {
     // Best-effort cleanup on app exit. Without this, background sidecars can keep
     // running after the UI quits (especially during dev), leading to multiple
     // orchestrator/opencode/openwork-server processes and stale ports.
-    app.run(|app_handle, event| {
-        if matches!(
-            event,
-            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-        ) {
-            if let Ok(mut engine) = app_handle.state::<EngineManager>().inner.lock() {
-                EngineManager::stop_locked(&mut engine);
-            }
-            if let Ok(mut orchestrator) = app_handle.state::<OrchestratorManager>().inner.lock() {
-                OrchestratorManager::stop_locked(&mut orchestrator);
-            }
-            if let Ok(mut openwork_server) =
-                app_handle.state::<OpenworkServerManager>().inner.lock()
-            {
-                OpenworkServerManager::stop_locked(&mut openwork_server);
-            }
-            if let Ok(mut opencode_router) =
-                app_handle.state::<OpenCodeRouterManager>().inner.lock()
-            {
-                OpenCodeRouterManager::stop_locked(&mut opencode_router);
-            }
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            stop_managed_services(&app_handle);
         }
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        } => {
+            stop_managed_services(&app_handle);
+        }
+        _ => {}
     });
 }

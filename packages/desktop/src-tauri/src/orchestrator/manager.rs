@@ -20,12 +20,28 @@ pub struct OrchestratorState {
 
 impl OrchestratorManager {
     pub fn stop_locked(state: &mut OrchestratorState) {
+        let data_dir = state
+            .data_dir
+            .clone()
+            .unwrap_or_else(orchestrator::resolve_orchestrator_data_dir);
+
+        let shutdown_requested = match orchestrator::request_orchestrator_shutdown(&data_dir) {
+            Ok(requested) => requested,
+            Err(error) => {
+                eprintln!("[orchestrator] Failed to request shutdown: {error}");
+                false
+            }
+        };
+
         if let Some(child) = state.child.take() {
-            let _ = child.kill();
+            // Prefer daemon-owned graceful shutdown so openwork-orchestrator can
+            // terminate its managed OpenCode child before exiting.
+            if !shutdown_requested {
+                let _ = child.kill();
+            }
         }
-        if let Some(dir) = state.data_dir.as_deref() {
-            orchestrator::clear_orchestrator_auth(dir);
-        }
+
+        orchestrator::clear_orchestrator_auth(&data_dir);
         state.child_exited = true;
         state.data_dir = None;
         state.last_stdout = None;
