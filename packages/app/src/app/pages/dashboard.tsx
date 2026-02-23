@@ -356,7 +356,7 @@ export default function DashboardView(props: DashboardViewProps) {
   const [lastRefreshedTab, setLastRefreshedTab] = createSignal<string | null>(null);
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
-  const MAX_SESSIONS_PREVIEW = 3;
+  const MAX_SESSIONS_PREVIEW = 6;
   const COLLAPSED_SESSIONS_PREVIEW = 1;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<Set<string>>(
     new Set()

@@ -247,12 +247,12 @@ const COMMAND_PALETTE_THINKING_OPTIONS = [
 
 export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
+  let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
   let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
   let scrollFrame: number | undefined;
-  let nearBottomFrame: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
   let lastAutoScrollAt = 0;
   let streamRenderBatchTimer: number | undefined;
@@ -794,7 +794,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!total) return "";
     return `${todoCompletedCount()} out of ${total} tasks completed`;
   });
-  const MAX_SESSIONS_PREVIEW = 3;
+  const MAX_SESSIONS_PREVIEW = 6;
   const COLLAPSED_SESSIONS_PREVIEW = 1;
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<Set<string>>(
     new Set()
@@ -896,11 +896,6 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.removeEventListener("click", closeMenu));
   });
 
-  const isNearBottom = (el: HTMLElement, threshold = 80) => {
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    return distance <= threshold;
-  };
-
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
@@ -927,10 +922,6 @@ export default function SessionView(props: SessionViewProps) {
     if (scrollFrame !== undefined) {
       window.cancelAnimationFrame(scrollFrame);
       scrollFrame = undefined;
-    }
-    if (nearBottomFrame !== undefined) {
-      window.cancelAnimationFrame(nearBottomFrame);
-      nearBottomFrame = undefined;
     }
     if (streamRenderBatchTimer !== undefined) {
       window.clearTimeout(streamRenderBatchTimer);
@@ -1303,25 +1294,23 @@ export default function SessionView(props: SessionViewProps) {
 
   onMount(() => {
     const container = chatContainerEl;
-    if (!container) return;
-    const updateNearBottom = () => {
-      nearBottomFrame = undefined;
-      setNearBottom(isNearBottom(container));
-    };
-    const handleScroll = () => {
-      if (nearBottomFrame !== undefined) return;
-      nearBottomFrame = window.requestAnimationFrame(updateNearBottom);
-    };
+    const sentinel = bottomVisibilityEl;
+    if (!container || !sentinel) return;
 
-    updateNearBottom();
-    container.addEventListener("scroll", handleScroll, { passive: true });
-    onCleanup(() => {
-      container.removeEventListener("scroll", handleScroll);
-      if (nearBottomFrame !== undefined) {
-        window.cancelAnimationFrame(nearBottomFrame);
-        nearBottomFrame = undefined;
-      }
-    });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        setNearBottom(Boolean(entry?.isIntersecting));
+      },
+      {
+        root: container,
+        rootMargin: "0px 0px 96px 0px",
+        threshold: 0,
+      },
+    );
+
+    observer.observe(sentinel);
+    onCleanup(() => observer.disconnect());
   });
 
   createEffect(
@@ -1339,9 +1328,9 @@ export default function SessionView(props: SessionViewProps) {
 
         if (!firstVisit) {
           queueMicrotask(() => {
-            const container = chatContainerEl;
-            if (!container) return;
-            setNearBottom(isNearBottom(container));
+            if (nearBottom()) {
+              scheduleScrollToLatest("auto");
+            }
           });
           return;
         }
@@ -1350,7 +1339,6 @@ export default function SessionView(props: SessionViewProps) {
           const container = chatContainerEl;
           if (!container) return;
           container.scrollTop = 0;
-          setNearBottom(isNearBottom(container));
         });
       },
     ),
@@ -2303,6 +2291,19 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandPaletteRootItems = createMemo<CommandPaletteItem[]>(() => {
     const items: CommandPaletteItem[] = [
+      {
+        id: "new-session",
+        title: "Create new session",
+        detail: "Start a fresh task in the current worker",
+        meta: "Create",
+        action: () => {
+          closeCommandPalette();
+          void Promise.resolve(props.createSessionAndOpen()).catch((error) => {
+            const message = error instanceof Error ? error.message : "Failed to create session";
+            setToastMessage(message);
+          });
+        },
+      },
       {
         id: "sessions",
         title: "Search sessions",
@@ -3286,7 +3287,12 @@ export default function SessionView(props: SessionViewProps) {
             }
           />
 
-           <div ref={(el) => (messagesEndEl = el)} />
+           <div
+             ref={(el) => {
+               messagesEndEl = el;
+               bottomVisibilityEl = el;
+             }}
+           />
            </div>
            </div>
 

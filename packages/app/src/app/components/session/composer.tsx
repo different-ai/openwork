@@ -206,6 +206,7 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 const normalizeText = (value: string) => value.replace(/\u00a0/g, " ");
 const RECENT_EMIT_TTL_MS = 30_000;
 const MAX_RECENT_EMITS = 400;
+const DRAFT_FLUSH_DEBOUNCE_MS = 140;
 
 const MODEL_VARIANT_OPTIONS = [
   { value: "none", label: "None" },
@@ -694,7 +695,7 @@ export default function Composer(props: ComposerProps) {
     if (emitTimer) window.clearTimeout(emitTimer);
     emitTimer = window.setTimeout(() => {
       flushDraftChange();
-    }, 50);
+    }, DRAFT_FLUSH_DEBOUNCE_MS);
   };
 
   const flushDraftChange = () => {
@@ -750,13 +751,19 @@ export default function Composer(props: ComposerProps) {
 
   const handleEditorInput = () => {
     const startedAt = perfNow();
+    const currentText = normalizeText(editorRef?.innerText ?? "");
     const mentionStartedAt = perfNow();
-    updateMentionQuery();
+    if (mentionOpen() || currentText.includes("@")) {
+      updateMentionQuery(currentText);
+    } else {
+      setMentionOpen(false);
+      setMentionQuery("");
+    }
     const mentionMs = Math.round((perfNow() - mentionStartedAt) * 100) / 100;
     const slashStartedAt = perfNow();
-    updateSlashQuery();
+    updateSlashQuery(currentText);
     const slashMs = Math.round((perfNow() - slashStartedAt) * 100) / 100;
-    setDraftText(normalizeText(editorRef?.innerText ?? ""));
+    setDraftText(currentText);
     emitDraftChange();
 
     const totalMs = Math.round((perfNow() - startedAt) * 100) / 100;
@@ -819,7 +826,7 @@ export default function Composer(props: ComposerProps) {
     renderParts(value ? [{ type: "text", text: value }] : [], false);
   };
 
-  const updateMentionQuery = () => {
+  const updateMentionQuery = (currentText?: string) => {
     if (!editorRef) return;
     if (mode() === "shell") {
       setMentionOpen(false);
@@ -832,7 +839,7 @@ export default function Composer(props: ComposerProps) {
       setMentionQuery("");
       return;
     }
-    const text = normalizeText(editorRef.innerText);
+    const text = currentText ?? normalizeText(editorRef.innerText);
     const before = text.slice(0, offsets.start);
     const match = before.match(/@(\S*)$/);
     if (!match) {
@@ -844,14 +851,14 @@ export default function Composer(props: ComposerProps) {
     setMentionOpen(true);
   };
 
-  const updateSlashQuery = () => {
+  const updateSlashQuery = (currentText?: string) => {
     if (!editorRef) return;
     if (mode() === "shell") {
       setSlashOpen(false);
       setSlashQuery("");
       return;
     }
-    const text = normalizeText(editorRef.innerText);
+    const text = currentText ?? normalizeText(editorRef.innerText);
     // Only trigger when the entire input matches /command (no spaces, starts with /)
     const slashMatch = text.match(/^\/(\S*)$/);
     if (!slashMatch) {
@@ -1520,7 +1527,7 @@ export default function Composer(props: ComposerProps) {
   });
 
   return (
-    <div class="px-4 pb-4 pt-0 bg-dls-surface sticky bottom-0 z-20" style={{ contain: "layout style paint" }}>
+    <div class="px-4 pb-4 pt-0 bg-dls-surface sticky bottom-0 z-20" style={{ contain: "layout style" }}>
       <div class="max-w-3xl mx-auto">
         <div
           class={`bg-dls-surface border border-dls-border rounded-2xl overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-none border-t-transparent shadow-none" : "shadow-xl"
@@ -1594,7 +1601,7 @@ export default function Composer(props: ComposerProps) {
           {/* Slash command popup */}
           <Show when={slashOpen()}>
             <div class="absolute bottom-full left-[-1px] right-[-1px] z-30">
-              <div class="rounded-t-3xl border border-dls-border border-b-0 bg-dls-surface shadow-xl overflow-hidden">
+              <div class="rounded-t-3xl border border-dls-border border-b-0 bg-dls-surface overflow-hidden">
                 <div class="p-2 bg-dls-surface max-h-64 overflow-y-auto" onMouseDown={(event: MouseEvent) => event.preventDefault()}>
                   <Show
                     when={slashFiltered().length}
