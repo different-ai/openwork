@@ -686,29 +686,9 @@ export default function Composer(props: ComposerProps) {
     queueMicrotask(() => focusEditorEnd());
   });
 
-  let heightRaf: number | null = null;
-  const syncHeight = () => {
-    if (!editorRef) return;
-    editorRef.style.height = "auto";
-    const baseHeight = 24;
-    const scrollHeight = editorRef.scrollHeight || baseHeight;
-    const nextHeight = Math.min(Math.max(scrollHeight, baseHeight), 160);
-    editorRef.style.height = `${nextHeight}px`;
-    editorRef.style.overflowY = scrollHeight > 160 ? "auto" : "hidden";
-  };
-
-  const scheduleSyncHeight = () => {
-    if (heightRaf !== null) return;
-    heightRaf = window.requestAnimationFrame(() => {
-      heightRaf = null;
-      syncHeight();
-    });
-  };
-
   let emitTimer: number | null = null;
   const emitDraftChange = () => {
     if (!editorRef) return;
-    scheduleSyncHeight();
     draftScheduledAt = perfNow();
 
     if (emitTimer) window.clearTimeout(emitTimer);
@@ -831,7 +811,6 @@ export default function Composer(props: ComposerProps) {
     if (selection) {
       restoreSelectionOffsets(editorRef, selection);
     }
-    syncHeight();
   };
 
   const setEditorText = (value: string) => {
@@ -942,7 +921,6 @@ export default function Composer(props: ComposerProps) {
     queueMicrotask(() => {
       suppressPromptSync = false;
     });
-    syncHeight();
     requestAnimationFrame(() => {
       editorRef!.focus();
       const selection = window.getSelection();
@@ -1539,10 +1517,6 @@ export default function Composer(props: ComposerProps) {
       window.clearTimeout(emitTimer);
       emitTimer = null;
     }
-    if (heightRaf !== null) {
-      window.cancelAnimationFrame(heightRaf);
-      heightRaf = null;
-    }
   });
 
   return (
@@ -1754,7 +1728,7 @@ export default function Composer(props: ComposerProps) {
                       onKeyDown={handleKeyDown}
                       onPaste={handlePaste}
                       onClick={handleEditorClick}
-                      class="bg-transparent border-none p-0 pb-8 pr-4 text-dls-text focus:ring-0 text-sm leading-relaxed resize-none min-h-[24px] outline-none relative z-10"
+                      class="bg-transparent border-none p-0 pb-8 pr-4 text-dls-text focus:ring-0 text-sm leading-relaxed resize-none min-h-[24px] max-h-40 overflow-y-auto outline-none relative z-10"
                     />
 
                     <div class="mt-3 flex items-center justify-between px-2 pb-2">

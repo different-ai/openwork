@@ -594,7 +594,7 @@ export default function MessageList(props: MessageListProps) {
   };
 
   return (
-    <div class="space-y-6 pb-32">
+    <div class="space-y-6 pb-32" style={{ contain: "layout paint style" }}>
       <For each={messageBlocks()}>
         {(block, blockIndex) => {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];

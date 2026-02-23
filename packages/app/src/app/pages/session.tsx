@@ -226,6 +226,7 @@ const SOUL_SETUP_TEMPLATE = (() => {
   return { name, description, body };
 })();
 
+const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
 const MAX_SEARCH_HITS = 2_000;
@@ -251,6 +252,7 @@ export default function SessionView(props: SessionViewProps) {
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
   let scrollFrame: number | undefined;
+  let nearBottomFrame: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
   let lastAutoScrollAt = 0;
   let streamRenderBatchTimer: number | undefined;
@@ -894,17 +896,6 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.removeEventListener("click", closeMenu));
   });
 
-  createEffect(() => {
-    if (!addWorkspaceMenuOpen()) return;
-    const closeMenu = (event: MouseEvent) => {
-      const target = event.target as Node | null;
-      if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
-      setAddWorkspaceMenuOpen(false);
-    };
-    window.addEventListener("click", closeMenu);
-    onCleanup(() => window.removeEventListener("click", closeMenu));
-  });
-
   const isNearBottom = (el: HTMLElement, threshold = 80) => {
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     return distance <= threshold;
@@ -937,6 +928,10 @@ export default function SessionView(props: SessionViewProps) {
       window.cancelAnimationFrame(scrollFrame);
       scrollFrame = undefined;
     }
+    if (nearBottomFrame !== undefined) {
+      window.cancelAnimationFrame(nearBottomFrame);
+      nearBottomFrame = undefined;
+    }
     if (streamRenderBatchTimer !== undefined) {
       window.clearTimeout(streamRenderBatchTimer);
       streamRenderBatchTimer = undefined;
@@ -947,12 +942,34 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(
     on(
-      () => props.selectedSessionId,
-      (sessionId, previousSessionId) => {
+      () => [props.selectedSessionId, props.messages.length] as const,
+      ([sessionId, count], previous) => {
+        const previousSessionId = previous?.[0] ?? null;
         if (sessionId !== previousSessionId) {
-          setMessageWindowSessionId(sessionId ?? null);
+          setMessageWindowSessionId(null);
           setMessageWindowExpanded(false);
           setMessageWindowStart(0);
+        }
+
+        if (!sessionId) return;
+        if (messageWindowExpanded()) return;
+        if (count === 0) return;
+
+        const targetStart = count > INITIAL_MESSAGE_WINDOW ? count - INITIAL_MESSAGE_WINDOW : 0;
+        if (messageWindowSessionId() !== sessionId) {
+          setMessageWindowStart(targetStart);
+          setMessageWindowSessionId(sessionId);
+          return;
+        }
+
+        const currentStart = messageWindowStart();
+        if (currentStart <= 0 && targetStart > 0) {
+          setMessageWindowStart(targetStart);
+          return;
+        }
+
+        if (nearBottom() && targetStart > currentStart) {
+          setMessageWindowStart(targetStart);
         }
       },
       { defer: true },
@@ -1287,10 +1304,24 @@ export default function SessionView(props: SessionViewProps) {
   onMount(() => {
     const container = chatContainerEl;
     if (!container) return;
-    const update = () => setNearBottom(isNearBottom(container));
-    update();
-    container.addEventListener("scroll", update, { passive: true });
-    onCleanup(() => container.removeEventListener("scroll", update));
+    const updateNearBottom = () => {
+      nearBottomFrame = undefined;
+      setNearBottom(isNearBottom(container));
+    };
+    const handleScroll = () => {
+      if (nearBottomFrame !== undefined) return;
+      nearBottomFrame = window.requestAnimationFrame(updateNearBottom);
+    };
+
+    updateNearBottom();
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    onCleanup(() => {
+      container.removeEventListener("scroll", handleScroll);
+      if (nearBottomFrame !== undefined) {
+        window.cancelAnimationFrame(nearBottomFrame);
+        nearBottomFrame = undefined;
+      }
+    });
   });
 
   createEffect(
@@ -3154,6 +3185,7 @@ export default function SessionView(props: SessionViewProps) {
          <div class="flex-1 min-w-0 relative overflow-hidden">
            <div
              class="h-full overflow-y-auto px-12 py-10 scroll-smooth bg-dls-surface"
+             style={{ contain: "layout paint style" }}
              ref={(el) => (chatContainerEl = el)}
            >
              <div class="max-w-5xl mx-auto w-full">
