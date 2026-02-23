@@ -1273,7 +1273,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
       actor: ctx.actor ?? { type: "host" },
       action: "workspace.delete",
       target: "workspace",
-      summary: "Deleted workspace from AikaOS server",
+      summary: "Deleted workspace from OpenWork server",
       timestamp: Date.now(),
     });
 
@@ -2247,7 +2247,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    throw new ApiError(410, "engine_reload_deprecated", "AikaOS-managed engine reload is disabled", {
+    throw new ApiError(410, "engine_reload_deprecated", "OpenWork-managed engine reload is disabled", {
       workspaceId: workspace.id,
       guidance: "Use OpenCode hot reload instead",
     });

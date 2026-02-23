@@ -1,5 +1,5 @@
 {
-  "name": "@aikalabs/den",
+  "name": "@openwork/den",
   "private": true,
   "type": "module",
   "scripts": {

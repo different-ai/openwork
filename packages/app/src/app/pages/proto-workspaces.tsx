@@ -12,7 +12,7 @@ import {
 
 import type { WorkspaceInfo } from "../lib/tauri";
 import Button from "../components/button";
-import AikaOSLogo from "../components/aikaos-logo";
+import OpenWorkLogo from "../components/openwork-logo";
 import WorkspaceChip from "../components/workspace-chip";
 
 type ProtoView = "onboarding" | "dashboard" | "session";
@@ -150,8 +150,8 @@ export default function ProtoWorkspacesView() {
             <div class="max-w-xl w-full z-10 space-y-10">
               <div class="text-center space-y-4">
                 <div class="flex items-center justify-center gap-3 mb-6">
-                  <AikaOSLogo size={48} />
-                  <h2 class="text-3xl font-bold tracking-tight text-gray-12">AikaOS</h2>
+                  <OpenWorkLogo size={48} />
+                  <h2 class="text-3xl font-bold tracking-tight text-gray-12">OpenWork</h2>
                 </div>
                 <h3 class="text-xl text-gray-11">Choose how to connect</h3>
               </div>
@@ -216,8 +216,8 @@ export default function ProtoWorkspacesView() {
             <aside class="w-60 border-r border-gray-6 p-6 hidden md:flex flex-col justify-between bg-gray-1">
               <div>
                 <div class="flex items-center gap-3 mb-10 px-2">
-                  <AikaOSLogo size={28} />
-                  <span class="font-bold text-lg tracking-tight">AikaOS</span>
+                  <OpenWorkLogo size={28} />
+                  <span class="font-bold text-lg tracking-tight">OpenWork</span>
                 </div>
                 <nav class="space-y-1">
                   <For each={navItems}>
@@ -271,7 +271,7 @@ export default function ProtoWorkspacesView() {
                     <div class="bg-gray-1 rounded-[22px] p-6 md:p-8 flex flex-col md:flex-row items-center justify-between gap-6">
                       <div class="space-y-2 text-center md:text-left">
                         <h3 class="text-2xl font-semibold text-gray-12">What should we do today?</h3>
-                        <p class="text-gray-11">Describe an outcome. AikaOS will run it and keep an audit trail.</p>
+                        <p class="text-gray-11">Describe an outcome. OpenWork will run it and keep an audit trail.</p>
                       </div>
                       <div class="w-full md:w-[320px]">
                         <div class="flex items-center gap-2 rounded-2xl border border-gray-6/60 bg-gray-2/50 px-4 py-3">

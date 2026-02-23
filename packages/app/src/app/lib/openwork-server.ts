@@ -658,7 +658,7 @@ function buildHeaders(
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-AikaOS-Host-Token"] = hostToken;
+    headers["X-OpenWork-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);
@@ -672,7 +672,7 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
     headers.Authorization = `Bearer ${token}`;
   }
   if (hostToken) {
-    headers["X-AikaOS-Host-Token"] = hostToken;
+    headers["X-OpenWork-Host-Token"] = hostToken;
   }
   if (extra) {
     Object.assign(headers, extra);

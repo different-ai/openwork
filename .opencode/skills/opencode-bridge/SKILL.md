@@ -1,11 +1,11 @@
 ---
 name: opencode-bridge
-description: Bridge between AikaOS UI and OpenCode runtime
+description: Bridge between OpenWork UI and OpenCode runtime
 ---
 
 ## Overview
 
-AikaOS communicates with OpenCode via three mechanisms:
+OpenWork communicates with OpenCode via three mechanisms:
 
 1. **CLI invocation**: Spawn `opencode` with prompts and get JSON responses.
 2. **Database access**: Read OpenCode's SQLite database for sessions and messages.
@@ -109,7 +109,7 @@ const sessions = await db.select<Session[]>(
 
 ## MCP Bridge (Advanced)
 
-AikaOS can register as an MCP server that OpenCode connects to.
+OpenWork can register as an MCP server that OpenCode connects to.
 
 ### Configuration (opencode.json)
 ```json
@@ -124,9 +124,9 @@ AikaOS can register as an MCP server that OpenCode connects to.
 ```
 
 ### Use cases
-- Real-time permission prompts surfaced in AikaOS UI.
+- Real-time permission prompts surfaced in OpenWork UI.
 - Streaming progress updates.
-- Custom tools exposed from AikaOS (e.g., native file picker).
+- Custom tools exposed from OpenWork (e.g., native file picker).
 
 ## Message Content Parts
 

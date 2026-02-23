@@ -182,7 +182,7 @@ export function createSystemState(options: {
     if (!reasons.length) {
       return {
         title: "Reload required",
-        body: "AikaOS detected changes that require reloading the OpenCode instance.",
+        body: "OpenWork detected changes that require reloading the OpenCode instance.",
       };
     }
 
@@ -230,7 +230,7 @@ export function createSystemState(options: {
 
     return {
       title: "Reload required",
-      body: "AikaOS detected OpenCode configuration changes. Reload the engine to apply them.",
+      body: "OpenWork detected OpenCode configuration changes. Reload the engine to apply them.",
     };
   });
 
@@ -399,7 +399,7 @@ export function createSystemState(options: {
     try {
       const result = await sandboxCleanupOpenworkContainers();
       if (!result.candidates.length) {
-        setDockerCleanupResult("No AikaOS Docker containers found.");
+        setDockerCleanupResult("No OpenWork Docker containers found.");
         return;
       }
 
@@ -412,7 +412,7 @@ export function createSystemState(options: {
         return;
       }
 
-      setDockerCleanupResult(`Removed ${removedCount} AikaOS Docker container(s).`);
+      setDockerCleanupResult(`Removed ${removedCount} OpenWork Docker container(s).`);
     } catch (e) {
       setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
     } finally {

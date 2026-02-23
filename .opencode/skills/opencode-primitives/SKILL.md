@@ -4,7 +4,7 @@ description: Reference OpenCode docs when implementing skills, plugins, MCPs, or
 ---
 
 ## Purpose
-Use this skill whenever AikaOS behavior is implemented directly on top of OpenCode primitives (skills, plugins, MCP servers, opencode.json config, tools/permissions). It anchors decisions to the official OpenCode documentation and keeps terminology consistent in the UI.
+Use this skill whenever OpenWork behavior is implemented directly on top of OpenCode primitives (skills, plugins, MCP servers, opencode.json config, tools/permissions). It anchors decisions to the official OpenCode documentation and keeps terminology consistent in the UI.
 
 ## Doc Sources (Always cite when relevant)
 - Skills: https://opencode.ai/docs/skills
@@ -39,9 +39,9 @@ Use this skill whenever AikaOS behavior is implemented directly on top of OpenCo
 - `.opencode` subdirectories are plural by default (`agents/`, `commands/`, `plugins/`, `skills/`, `tools/`, `themes/`), with singular names supported for compatibility.
 
 ## When to Invoke
-- Adding or adjusting AikaOS flows that reference skills, plugins, MCP servers, or OpenCode config.
+- Adding or adjusting OpenWork flows that reference skills, plugins, MCP servers, or OpenCode config.
 - Designing onboarding guidance that mentions skill/plugin installation, config locations, or permission prompts.
 - Implementing UIs that surface OpenCode primitives (skills tab, plugin manager, MCP toggles).
 
 ## Usage
-Call `skill({ name: "opencode-primitives" })` before implementing or documenting any AikaOS behavior that maps to OpenCode primitives.
+Call `skill({ name: "opencode-primitives" })` before implementing or documenting any OpenWork behavior that maps to OpenCode primitives.

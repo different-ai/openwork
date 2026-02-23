@@ -1,35 +1,35 @@
 # AGENTS.md
 
-AikaOS helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
+OpenWork helps users run agents, skills, and MCP. It is an open-source alternative to Claude Cowork/Codex as a desktop app.
 
-## What AikaOS Is
+## What OpenWork Is
 
-AikaOS is a practical control surface for agentic work:
+OpenWork is a practical control surface for agentic work:
 
 * Run local and remote agent workflows from one place.
-* Use OpenCode capabilities directly through AikaOS.
+* Use OpenCode capabilities directly through OpenWork.
 * Compose desktop app, server, and messaging connectors without lock-in.
-* Treat the AikaOS app as a client of the AikaOS server API surface.
+* Treat the OpenWork app as a client of the OpenWork server API surface.
 * Connect to hosted workers through a simple user flow: `Add a worker` -> `Connect remote`.
 
 ## Core Philosophy
 
-* **Local-first, cloud-ready**: AikaOS runs on your machine in one click and can connect to cloud workflows when needed.
-* **Server-consumption first**: the app should consume AikaOS server surfaces (self-hosted or hosted), not invent parallel behavior.
+* **Local-first, cloud-ready**: OpenWork runs on your machine in one click and can connect to cloud workflows when needed.
+* **Server-consumption first**: the app should consume OpenWork server surfaces (self-hosted or hosted), not invent parallel behavior.
 * **Composable**: use the desktop app, WhatsApp/Slack/Telegram connectors, or server mode based on the task.
-* **Ejectable**: AikaOS is powered by OpenCode, so anything OpenCode can do is available in AikaOS, even before a dedicated UI exists.
+* **Ejectable**: OpenWork is powered by OpenCode, so anything OpenCode can do is available in OpenWork, even before a dedicated UI exists.
 * **Sharing is caring**: start solo, then share quickly; one CLI or desktop command can spin up an instantly shareable instance.
 
 ## Core Runtime Model (Updated)
 
-AikaOS now has three production-grade ways to run the same product surface:
+OpenWork now has three production-grade ways to run the same product surface:
 
 1. **Desktop-hosted app/server**
-   - AikaOS app runs locally and can host server functionality on-device.
+   - OpenWork app runs locally and can host server functionality on-device.
 2. **CLI-hosted server (openwork-orchestrator)**
-   - AikaOS server surfaces can be provided by the orchestrator/CLI on a trusted machine.
-3. **Hosted AikaOS Cloud server**
-   - AikaOS-hosted infrastructure provisions workers and exposes the same remote-connect semantics.
+   - OpenWork server surfaces can be provided by the orchestrator/CLI on a trusted machine.
+3. **Hosted OpenWork Cloud server**
+   - OpenWork-hosted infrastructure provisions workers and exposes the same remote-connect semantics.
 
 User mental model:
 
@@ -40,7 +40,7 @@ User mental model:
 
 Read INFRASTRUCTURE.md
 
-## Why AikaOS Exists
+## Why OpenWork Exists
 
 **Cowork is closed-source and locked to Claude Max.** We need an open alternative.
 **Mobile-first matters.** People want to run tasks from their phones, including via messaging surfaces like WhatsApp and Telegram through OpenCode Router.
@@ -51,7 +51,7 @@ Read INFRASTRUCTURE.md
 * **Purpose-first UI**: prioritize clarity, safety, and approachability for non-technical users.
 * **Parity with OpenCode**: anything the UI can do must map cleanly to OpenCode tools.
 * **Prefer OpenCode primitives**: represent concepts using OpenCode's native surfaces first (folders/projects, `.opencode`, `opencode.json`, skills, plugins) before introducing new abstractions.
-* **Web parity**: anything that mutates `.opencode/` should be expressible via the AikaOS server API; Tauri-only filesystem calls are a fallback for host mode, not a separate capability set.
+* **Web parity**: anything that mutates `.opencode/` should be expressible via the OpenWork server API; Tauri-only filesystem calls are a fallback for host mode, not a separate capability set.
 * **Self-referential**: maintain a gitignored mirror of OpenCode at `vendor/opencode` for inspection.
 * **Self-building**: prefer prompts, skills, and composable primitives over bespoke logic.
 * **Open source**: keep the repo portable; no secrets committed.
@@ -77,7 +77,7 @@ When the user asks to create a new feature, follow this exact procedure:
 1. Make sure you are up to date on all submodules and repos synced to the head of remotes.
 2. Create a worktree.
 3. Implement the feature.
-4. Start the AikaOS dev stack via Docker (from the AikaOS repo root): `packaging/docker/dev-up.sh`.
+4. Start the OpenWork dev stack via Docker (from the OpenWork repo root): `packaging/docker/dev-up.sh`.
 5. Use Chrome MCP to fully test the feature: `.opencode/skills/openwork-docker-chrome-mcp/SKILL.md`.
 6. Take screenshots and put them in the repo.
 7. Refer to these screenshots in the PR (only if relevant in the UI).
@@ -102,7 +102,7 @@ If you cannot run tests or capture the video, say so explicitly and explain why,
 
 ## Living Systems
 
-AikaOS aims to be a **living system**: agents, skills, commands, and config are hot-reloadable while sessions are running. This enables agents to create new skills or update their own configuration and have changes take effect immediately, without tearing down active sessions.
+OpenWork aims to be a **living system**: agents, skills, commands, and config are hot-reloadable while sessions are running. This enables agents to create new skills or update their own configuration and have changes take effect immediately, without tearing down active sessions.
 
 Design principles for hot reload:
 
@@ -129,7 +129,7 @@ Design principles for hot reload:
 
 ## Dev Debugging
 
-* If you change `packages/server/src`, rebuild the AikaOS server binary (`pnpm --filter openwork-server build:bin`) because `openwork` (openwork-orchestrator) runs the compiled server, not the TS sources.
+* If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwork` (openwork-orchestrator) runs the compiled server, not the TS sources.
 
 ## Local Structure
 
@@ -156,7 +156,7 @@ openwork/
 
 ## OpenCode SDK Usage
 
-AikaOS integrates with OpenCode via:
+OpenWork integrates with OpenCode via:
 
 1.  **Non-interactive mode**: `opencode -p "prompt" -f json -q`
 2.  **Database access**: Read `.opencode/opencode.db` for sessions and messages.
@@ -192,11 +192,11 @@ When editing SolidJS UI (`packages/app/src/**/*.tsx`), consult:
 
 * `.opencode/skills/solidjs-patterns/SKILL.md`
 
-This captures AikaOS’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
+This captures OpenWork’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
 
 ## Skill: Trigger a Release
 
-AikaOS releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
+OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
 `Release App` can also publish openwork-orchestrator sidecars and npm packages when enabled via workflow inputs or repo vars (`RELEASE_PUBLISH_SIDECARS`, `RELEASE_PUBLISH_NPM`).
 
 ### Standard release (recommended)

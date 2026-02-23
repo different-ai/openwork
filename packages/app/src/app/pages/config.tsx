@@ -89,7 +89,7 @@ export default function ConfigView(props: ConfigViewProps) {
   const reloadAvailabilityReason = createMemo(() => {
     if (!props.clientConnected) return "Connect to this worker to reload.";
     if (!props.canReloadWorkspace) {
-      return "Reloading is only available for local workers or connected AikaOS servers.";
+      return "Reloading is only available for local workers or connected OpenWork servers.";
     }
     return null;
   });
@@ -324,7 +324,7 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">AikaOS server sharing</div>
+              <div class="text-sm font-medium text-gray-12">OpenWork server sharing</div>
               <div class="text-xs text-gray-10">
                 Share these details with a trusted device. Keep the server on the same network for the fastest setup.
               </div>
@@ -337,7 +337,7 @@ export default function ConfigView(props: ConfigViewProps) {
           <div class="grid gap-3">
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">AikaOS Server URL</div>
+                <div class="text-xs font-medium text-gray-11">OpenWork Server URL</div>
                 <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || "Starting server…"}</div>
                 <Show when={hostConnectUrl()}>
                   <div class="text-[11px] text-gray-8 mt-1">
@@ -431,9 +431,9 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-12">AikaOS server</div>
+            <div class="text-sm font-medium text-gray-12">OpenWork server</div>
             <div class="text-xs text-gray-10">
-              Connect to an AikaOS server. Use the URL and access token from your server admin.
+              Connect to an OpenWork server. Use the URL and access token from your server admin.
             </div>
           </div>
           <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>{openworkStatusLabel()}</div>
@@ -441,11 +441,11 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="grid gap-3">
           <TextInput
-            label="AikaOS server URL"
+            label="OpenWork server URL"
             value={openworkUrl()}
             onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:8787"
-            hint="Use the URL shared by your AikaOS server."
+            hint="Use the URL shared by your OpenWork server."
             disabled={props.busy}
           />
 
@@ -532,7 +532,7 @@ export default function ConfigView(props: ConfigViewProps) {
         </Show>
 
         <Show when={openworkStatusLabel() !== "Connected"}>
-          <div class="text-xs text-gray-9">AikaOS server connection needed to sync skills, plugins, and commands.</div>
+          <div class="text-xs text-gray-9">OpenWork server connection needed to sync skills, plugins, and commands.</div>
         </Show>
       </div>
 

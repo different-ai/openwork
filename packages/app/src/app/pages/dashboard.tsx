@@ -667,7 +667,7 @@ export default function DashboardView(props: DashboardViewProps) {
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
-          label: "AikaOS worker URL",
+          label: "OpenWork worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -697,7 +697,7 @@ export default function DashboardView(props: DashboardViewProps) {
         "";
       return [
         {
-          label: "AikaOS worker URL",
+          label: "OpenWork worker URL",
           value: url,
         },
         {

@@ -448,15 +448,15 @@ export function createWorkspaceStore(options: {
     } catch (error) {
       if (error instanceof OpenworkServerError && (error.status === 401 || error.status === 403)) {
         if (!trimmedToken) {
-          throw new Error("Access token required for AikaOS server.");
+          throw new Error("Access token required for OpenWork server.");
         }
-        throw new Error("AikaOS server rejected the access token.");
+        throw new Error("OpenWork server rejected the access token.");
       }
       return { kind: "fallback" as const };
     }
 
     if (!trimmedToken) {
-      throw new Error("Access token required for AikaOS server.");
+      throw new Error("Access token required for OpenWork server.");
     }
 
     const response = await client.listWorkspaces();
@@ -475,7 +475,7 @@ export function createWorkspaceStore(options: {
       ? (items.find((item) => item?.id && selectById(item as any)) as OpenworkWorkspaceInfo | undefined)
       : undefined;
     if (requestedWorkspaceId && !workspaceById) {
-      throw new Error("AikaOS worker not found on that host.");
+      throw new Error("OpenWork worker not found on that host.");
     }
 
     const workspaceByHint = hint
@@ -484,11 +484,11 @@ export function createWorkspaceStore(options: {
 
     const workspace = (workspaceById ?? workspaceByHint ?? items[0]) as OpenworkWorkspaceInfo | undefined;
     if (!workspace?.id) {
-      throw new Error("AikaOS server did not return a worker.");
+      throw new Error("OpenWork server did not return a worker.");
     }
     const opencodeUpstreamBaseUrl = workspace.opencode?.baseUrl?.trim() ?? workspace.baseUrl?.trim() ?? "";
     if (!opencodeUpstreamBaseUrl) {
-      throw new Error("AikaOS server did not provide an OpenCode URL.");
+      throw new Error("OpenWork server did not provide an OpenCode URL.");
     }
 
     const workspaceScopedBaseUrl =
@@ -563,7 +563,7 @@ export function createWorkspaceStore(options: {
       if (!hostUrl) {
         updateWorkspaceConnectionState(id, {
           status: "error",
-          message: "AikaOS server URL is required.",
+          message: "OpenWork server URL is required.",
         });
         return false;
       }
@@ -578,7 +578,7 @@ export function createWorkspaceStore(options: {
         if (resolved.kind !== "openwork") {
           updateWorkspaceConnectionState(id, {
             status: "error",
-            message: "AikaOS server unavailable. Check the URL and token.",
+            message: "OpenWork server unavailable. Check the URL and token.",
           });
           return false;
         }
@@ -748,10 +748,10 @@ export function createWorkspaceStore(options: {
         if (remoteType === "openwork") {
           const hostUrl = next.openworkHostUrl?.trim() ?? "";
           if (!hostUrl) {
-            options.setError("AikaOS server URL is required.");
+            options.setError("OpenWork server URL is required.");
             updateWorkspaceConnectionState(id, {
               status: "error",
-              message: "AikaOS server URL is required.",
+              message: "OpenWork server URL is required.",
             });
             return false;
           }
@@ -785,10 +785,10 @@ export function createWorkspaceStore(options: {
               directoryHint: next.directory ?? null,
             });
             if (resolved.kind !== "openwork") {
-              options.setError("AikaOS server unavailable. Check the URL and token.");
+              options.setError("OpenWork server unavailable. Check the URL and token.");
               updateWorkspaceConnectionState(id, {
                 status: "error",
-                message: "AikaOS server unavailable. Check the URL and token.",
+                message: "OpenWork server unavailable. Check the URL and token.",
               });
               return false;
             }
@@ -852,7 +852,7 @@ export function createWorkspaceStore(options: {
               // ignore
             }
           } else {
-            // In web mode, we still need to persist the resolved AikaOS connection
+            // In web mode, we still need to persist the resolved OpenWork connection
             // details onto the workspace entry so that the sidebar can list sessions
             // for multiple remotes at once (without relying on global server settings).
             const resolvedToken = token.trim();
@@ -1486,8 +1486,8 @@ export function createWorkspaceStore(options: {
         { key: "docker", label: "Docker ready", status: "active", detail: null },
         { key: "workspace", label: "Prepare worker", status: "pending", detail: null },
         { key: "sandbox", label: "Start sandbox services", status: "pending", detail: null },
-        { key: "health", label: "Wait for AikaOS", status: "pending", detail: null },
-        { key: "connect", label: "Connect in AikaOS", status: "pending", detail: null },
+        { key: "health", label: "Wait for OpenWork", status: "pending", detail: null },
+        { key: "connect", label: "Connect in OpenWork", status: "pending", detail: null },
       ],
     });
 
@@ -1542,7 +1542,7 @@ export function createWorkspaceStore(options: {
       setSandboxStep("workspace", { status: "active", detail: name });
       pushSandboxCreateLog(`Worker: ${resolvedFolder}`);
 
-      // Ensure the workspace folder has baseline AikaOS/OpenCode files.
+      // Ensure the workspace folder has baseline OpenWork/OpenCode files.
       const created = await workspaceCreate({ folderPath: resolvedFolder, name, preset });
       setWorkspaces(created.workspaces);
       syncActiveWorkspaceId(created.activeId);
@@ -1780,7 +1780,7 @@ export function createWorkspaceStore(options: {
           directory: resolvedDirectory,
         });
       } else {
-        options.setError("AikaOS server unavailable. Check the URL and token.");
+        options.setError("OpenWork server unavailable. Check the URL and token.");
         return false;
       }
     } catch (error) {
@@ -1920,7 +1920,7 @@ export function createWorkspaceStore(options: {
 
     const remoteType = normalizeRemoteType(workspace.remoteType);
     if (remoteType !== "openwork") {
-      options.setError("Only AikaOS remote workers can be edited.");
+      options.setError("Only OpenWork remote workers can be edited.");
       return false;
     }
 
@@ -1964,7 +1964,7 @@ export function createWorkspaceStore(options: {
         directoryHint: directory || null,
       });
       if (resolved.kind !== "openwork") {
-        options.setError("AikaOS server unavailable. Check the URL and token.");
+        options.setError("OpenWork server unavailable. Check the URL and token.");
         return false;
       }
       resolvedBaseUrl = resolved.opencodeBaseUrl;
@@ -2196,7 +2196,7 @@ export function createWorkspaceStore(options: {
       const outputPath = await saveFile({
         title: "Export worker config",
         defaultPath,
-        filters: [{ name: "AikaOS Worker", extensions: ["openwork-workspace", "zip"] }],
+        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
       });
 
       if (!outputPath) {
@@ -2228,7 +2228,7 @@ export function createWorkspaceStore(options: {
     try {
       const selection = await pickFile({
         title: "Import worker config",
-        filters: [{ name: "AikaOS Worker", extensions: ["openwork-workspace", "zip"] }],
+        filters: [{ name: "OpenWork Worker", extensions: ["openwork-workspace", "zip"] }],
       });
       const filePath =
         typeof selection === "string" ? selection : Array.isArray(selection) ? selection[0] : null;
@@ -2403,7 +2403,7 @@ export function createWorkspaceStore(options: {
       if (!result.found) {
         options.setError(
           options.isWindowsPlatform()
-            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with AikaOS, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
+            ? "OpenCode CLI not found. Install OpenCode for Windows or bundle opencode.exe with OpenWork, then restart. If it is installed, ensure `opencode.exe` is on PATH (try `opencode --version` in PowerShell)."
             : "OpenCode CLI not found. Install with `brew install anomalyco/tap/opencode` or `curl -fsSL https://opencode.ai/install | bash`, then retry.",
         );
         return false;

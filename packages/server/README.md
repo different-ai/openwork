@@ -1,6 +1,6 @@
-# AikaOS Server
+# OpenWork Server
 
-Filesystem-backed API for AikaOS remote clients. This package provides the AikaOS server layer described in `packages/app/pr/openwork-server.md` and is intentionally independent from the desktop app.
+Filesystem-backed API for OpenWork remote clients. This package provides the OpenWork server layer described in `packages/app/pr/openwork-server.md` and is intentionally independent from the desktop app.
 
 ## Quick start
 
@@ -139,7 +139,7 @@ All writes are gated by host approval.
 
 Host APIs accept either:
 
-- `X-AikaOS-Host-Token: <token>` (legacy host token), or
+- `X-OpenWork-Host-Token: <token>` (legacy host token), or
 - `Authorization: Bearer <token>` where the token scope is `owner`.
 
 Approvals endpoints:

@@ -1,13 +1,13 @@
-# AikaOS Infrastructure Principles
+# OpenWork Infrastructure Principles
 
-AikaOS is an experience layer. `opencode` is the engine. This document defines how infrastructure is built so every component is usable on its own, composable as a sidecar, and easy to automate.
+OpenWork is an experience layer. `opencode` is the engine. This document defines how infrastructure is built so every component is usable on its own, composable as a sidecar, and easy to automate.
 
 ## Core Principles
 
 1.  CLI-first, always
 
 * Every infrastructure component must be runnable via a single CLI command.
-* The AikaOS UI may wrap these, but never replace or lock them out.
+* The OpenWork UI may wrap these, but never replace or lock them out.
 
 2.  Unix-like interfaces
 
@@ -21,7 +21,7 @@ AikaOS is an experience layer. `opencode` is the engine. This document defines h
 
 4.  Clear boundaries
 
-* OpenCode remains the engine; AikaOS adds a thin config + UX layer.
+* OpenCode remains the engine; OpenWork adds a thin config + UX layer.
 * When OpenCode exposes a stable API, use it instead of re-implementing.
 
 5.  Local-first, graceful degradation
@@ -67,18 +67,18 @@ But what you can do is:
 ### opencode Engine
 
 * Always usable via `opencode` CLI.
-* AikaOS never replaces the CLI; it only connects to the engine.
+* OpenWork never replaces the CLI; it only connects to the engine.
 
-### AikaOS Server
+### OpenWork Server
 
 * Runs standalone via `openwork-server` CLI.
 * Provides filesystem-backed config surfaces (skills, plugins, MCP, commands).
 * Sidecar lifecycle is described in `packages/app/pr/openwork-server.md`.
-* Can also be consumed as a hosted AikaOS Cloud control surface for remote worker lifecycle.
+* Can also be consumed as a hosted OpenWork Cloud control surface for remote worker lifecycle.
 
-### AikaOS Cloud Control Plane
+### OpenWork Cloud Control Plane
 
-* Hosted deployment of AikaOS server capabilities for worker provisioning and remote connect.
+* Hosted deployment of OpenWork server capabilities for worker provisioning and remote connect.
 * Must preserve the same user-level contract as self-hosted paths:
   - launch worker
   - get connect credentials (URL + token)
@@ -88,7 +88,7 @@ But what you can do is:
 ### OpenCode Router
 
 * Runs standalone via `opencode-router` CLI.
-* Must be able to use AikaOS server for config and approvals.
+* Must be able to use OpenWork server for config and approvals.
 
 ## Non-goals
 

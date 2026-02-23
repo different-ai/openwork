@@ -61,5 +61,5 @@ Verified:
 ## Notes on environment
 
 - Attempted `packaging/docker/dev-up.sh` in this worktree; orchestrator container was repeatedly killed (`exit 137`) during dependency install.
-- For UI validation, used this worktree's Vite app and connected it to an already-running healthy AikaOS Docker server.
+- For UI validation, used this worktree's Vite app and connected it to an already-running healthy OpenWork Docker server.
 - Chrome MCP was used for the interactive verification and screenshot capture above.

@@ -65,7 +65,7 @@ console.log('[MCP] Has token:', !!notionToken);
 ### 3. Check CSRF error source
 
 - Is this from Notion's OAuth?
-- Is this from AikaOS server?
+- Is this from OpenWork server?
 - Is there stale state from previous connection attempt?
 
 Check if reload-required is firing twice (explicit `markReloadRequired("mcp")` + file watcher event) right after OAuth.

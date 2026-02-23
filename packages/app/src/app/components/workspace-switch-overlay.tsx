@@ -1,6 +1,6 @@
 import { Show, createMemo } from "solid-js";
 import { t, currentLocale } from "../../i18n";
-import AikaOSLogo from "./aikaos-logo";
+import OpenWorkLogo from "./openwork-logo";
 
 import type { WorkspaceInfo } from "../lib/tauri";
 
@@ -87,7 +87,7 @@ export default function WorkspaceSwitchOverlay(props: {
                       <div class="relative">
 
               <div class="relative h-24 w-24 flex items-center justify-center">
-                <AikaOSLogo size={44} class="drop-shadow-sm" />
+                <OpenWorkLogo size={44} class="drop-shadow-sm" />
               </div>
             </div>
 

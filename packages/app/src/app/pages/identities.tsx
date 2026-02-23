@@ -494,7 +494,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
 
     const ok = await props.reconnectOpenworkServer();
     if (!ok) {
-      setReconnectError("Reconnect failed. Check AikaOS URL/token and try again.");
+      setReconnectError("Reconnect failed. Check OpenWork URL/token and try again.");
       return;
     }
 
@@ -747,9 +747,9 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
       {/* ---- Not connected to server ---- */}
       <Show when={!serverReady()}>
         <div class="rounded-xl border border-gray-4 bg-gray-1 p-5">
-          <div class="text-sm font-semibold text-gray-12">Connect to an AikaOS server</div>
+          <div class="text-sm font-semibold text-gray-12">Connect to an OpenWork server</div>
           <div class="mt-1 text-xs text-gray-10">
-            Identities are available when you are connected to an AikaOS host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">openwork</code>).
+            Identities are available when you are connected to an OpenWork host (<code class="text-[11px] font-mono bg-gray-3 px-1 py-0.5 rounded">openwork</code>).
           </div>
         </div>
       </Show>

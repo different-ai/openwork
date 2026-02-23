@@ -1,6 +1,6 @@
 # Release checklist
 
-AikaOS releases should be deterministic, easy to reproduce, and fully verifiable with CLI tooling.
+OpenWork releases should be deterministic, easy to reproduce, and fully verifiable with CLI tooling.
 
 ## Preflight
 

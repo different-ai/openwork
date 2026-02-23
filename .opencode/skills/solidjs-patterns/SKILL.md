@@ -1,14 +1,14 @@
 ---
 name: solidjs-patterns
-description: SolidJS reactivity + UI state patterns for AikaOS
+description: SolidJS reactivity + UI state patterns for OpenWork
 ---
 
 ## Why this skill exists
 
-AikaOS’s UI is SolidJS: it updates via **signals**, not React-style rerenders.
+OpenWork’s UI is SolidJS: it updates via **signals**, not React-style rerenders.
 Most “UI stuck” bugs are actually **state coupling** bugs (e.g. one global `busy()` disabling an unrelated action), not rerender issues.
 
-This skill captures the patterns we want to consistently use in AikaOS.
+This skill captures the patterns we want to consistently use in OpenWork.
 
 ## Core rules
 

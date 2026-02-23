@@ -51,9 +51,9 @@ export async function publishOpenworkBundleJson(input: {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        "X-AikaOS-Bundle-Type": input.bundleType,
-        "X-AikaOS-Schema-Version": "v1",
-        ...(input.name?.trim() ? { "X-AikaOS-Name": input.name.trim() } : null),
+        "X-OpenWork-Bundle-Type": input.bundleType,
+        "X-OpenWork-Schema-Version": "v1",
+        ...(input.name?.trim() ? { "X-OpenWork-Name": input.name.trim() } : null),
       },
       body: JSON.stringify(input.payload),
       signal: controller.signal,

@@ -1,6 +1,6 @@
-# AikaOS Orchestrator
+# OpenWork Orchestrator
 
-Host orchestrator for opencode + AikaOS server + opencode-router. This is a CLI-first way to run host mode without the desktop UI.
+Host orchestrator for opencode + OpenWork server + opencode-router. This is a CLI-first way to run host mode without the desktop UI.
 
 Published on npm as `openwork-orchestrator` and installs the `openwork` command.
 
@@ -63,10 +63,10 @@ pnpm --filter openwork-orchestrator dev -- \
   start --workspace /path/to/workspace --approval auto --allow-external
 ```
 
-The command prints pairing details (AikaOS server URL + token, OpenCode URL + auth) so remote AikaOS clients can connect.
+The command prints pairing details (OpenWork server URL + token, OpenCode URL + auth) so remote OpenWork clients can connect.
 
 Use `--detach` to keep services running and exit the dashboard. The detach summary includes the
-AikaOS URL, tokens, and the `opencode attach` command.
+OpenWork URL, tokens, and the `opencode attach` command.
 
 ## Sandbox mode (Docker / Apple container)
 
@@ -109,7 +109,7 @@ Override with `OPENWORK_SANDBOX_MOUNT_ALLOWLIST`.
 
 ## Logging
 
-`openwork` emits a unified log stream from OpenCode, AikaOS server, and opencode-router. Use JSON format for
+`openwork` emits a unified log stream from OpenCode, OpenWork server, and opencode-router. Use JSON format for
 structured, OpenTelemetry-friendly logs and a stable run id for correlation.
 
 ```bash
@@ -118,7 +118,7 @@ OPENWORK_LOG_FORMAT=json openwork start --workspace /path/to/workspace
 
 Use `--run-id` or `OPENWORK_RUN_ID` to supply your own correlation id.
 
-AikaOS server logs every request with method, path, status, and duration. Disable this when running
+OpenWork server logs every request with method, path, status, and duration. Disable this when running
 `openwork-server` directly by setting `OPENWORK_LOG_REQUESTS=0` or passing `--no-log-requests`.
 
 ## Router daemon (multi-workspace)
@@ -138,8 +138,8 @@ Use `OPENWORK_DATA_DIR` or `--data-dir` to isolate router state in tests.
 
 ## Pairing notes
 
-- Use the **AikaOS connect URL** and **client token** to connect a remote AikaOS client.
-- The AikaOS server advertises the **OpenCode connect URL** plus optional basic auth credentials to the client.
+- Use the **OpenWork connect URL** and **client token** to connect a remote OpenWork client.
+- The OpenWork server advertises the **OpenCode connect URL** plus optional basic auth credentials to the client.
 
 ## Approvals (manual mode)
 

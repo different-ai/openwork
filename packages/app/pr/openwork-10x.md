@@ -1,4 +1,4 @@
-# AikaOS 10x Quality Pass
+# OpenWork 10x Quality Pass
 
 **Priority:** P0
 **Related research:** `packages/app/pr/openwork-10x-audit.md`
@@ -7,7 +7,7 @@
 
 ## Summary
 
-Deliver a focused quality pass that makes AikaOS feel 10x more premium and reliable by fixing stale data, removing debug artifacts, reducing background polling, and smoothing core session flows. Changes are intentionally small and atomic, aligned to OpenCode primitives and mobile-first UX.
+Deliver a focused quality pass that makes OpenWork feel 10x more premium and reliable by fixing stale data, removing debug artifacts, reducing background polling, and smoothing core session flows. Changes are intentionally small and atomic, aligned to OpenCode primitives and mobile-first UX.
 
 ---
 
@@ -82,7 +82,7 @@ Each item should be implemented in its own worktree and then merged into a singl
    - Refresh per-workspace sessions when workspace list changes or on demand.
    - Avoid expensive global reloads.
 
-10. **AikaOS server check backoff**
+10. **OpenWork server check backoff**
    - When disconnected, use exponential backoff or pause until settings change.
 
 ---
@@ -98,7 +98,7 @@ Each item should be implemented in its own worktree and then merged into a singl
 - No browser-native prompts are used in session flows.
 - Mention search never shows stale results after rapid typing.
 - Session lists for inactive workspaces are not stale for long-lived sessions.
-- AikaOS server checks do not spam when disconnected.
+- OpenWork server checks do not spam when disconnected.
 
 ---
 

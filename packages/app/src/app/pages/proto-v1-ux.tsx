@@ -408,7 +408,7 @@ export default function ProtoV1UxView() {
                   <Terminal size={18} class="text-gray-11" />
                 </div>
                 <div>
-                  <div class="text-sm font-semibold text-gray-12">AikaOS</div>
+                  <div class="text-sm font-semibold text-gray-12">OpenWork</div>
                   <div class="text-xs text-gray-9">Proto v1 UX</div>
                 </div>
               </div>

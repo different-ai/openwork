@@ -1,4 +1,4 @@
-# AikaOS 10x Audit Research
+# OpenWork 10x Audit Research
 
 **Date:** 2026-02-03
 **Scope:** App UI, session/workspace state, background polling
@@ -7,7 +7,7 @@
 
 ## Context
 
-AikaOS is an open-source alternative to Claude Cowork. It is mobile-first, premium-feeling, and a thin UI layer on top of OpenCode primitives. Target users include:
+OpenWork is an open-source alternative to Claude Cowork. It is mobile-first, premium-feeling, and a thin UI layer on top of OpenCode primitives. Target users include:
 
 - Bob (IT/power user) who already uses OpenCode and wants to share workflows.
 - Susan (non-technical) who wants a polished experience that just works.
@@ -67,7 +67,7 @@ The core experience is strong, but several stale-data issues, debug artifacts, a
 - Impact: Sidebar workspace groups show outdated sessions until the workspace is re-activated.
 - Potential fix: Refresh sessions per workspace on demand or group from a global session list keyed by directory.
 
-### 10) AikaOS server checks have no disconnect backoff
+### 10) OpenWork server checks have no disconnect backoff
 - Evidence: `packages/app/src/app/app.tsx:340-370`
 - Impact: Repeated failures while disconnected; noisy and wasteful.
 - Potential fix: Apply exponential backoff or suspend checks until the user changes connection settings.

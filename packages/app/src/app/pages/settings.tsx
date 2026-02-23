@@ -376,10 +376,10 @@ export default function SettingsView(props: SettingsViewProps) {
         setOpenworkReconnectError("Reconnect failed. Check server URL/token and try again.");
         return;
       }
-      setOpenworkReconnectStatus("Reconnected to AikaOS server.");
+      setOpenworkReconnectStatus("Reconnected to OpenWork server.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      setOpenworkReconnectError(message || "Failed to reconnect AikaOS server.");
+      setOpenworkReconnectError(message || "Failed to reconnect OpenWork server.");
     }
   };
 
@@ -959,7 +959,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="text-sm font-medium text-gray-12">Updates</div>
-                  <div class="text-xs text-gray-10">Keep AikaOS up to date.</div>
+                  <div class="text-xs text-gray-10">Keep OpenWork up to date.</div>
                 </div>
                 <div class="text-xs text-gray-7 font-mono">{props.appVersion ? `v${props.appVersion}` : ""}</div>
               </div>
@@ -974,7 +974,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6">
                           <div class="space-y-0.5">
                             <div class="text-sm text-gray-12">Background checks</div>
-                            <div class="text-xs text-gray-7">AikaOS always checks on launch. Also checks once per day (quiet).</div>
+                            <div class="text-xs text-gray-7">OpenWork always checks on launch. Also checks once per day (quiet).</div>
                           </div>
                           <button
                             class={`min-w-[70px] px-4 py-1.5 rounded-full text-xs font-medium border shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] transition-colors ${
@@ -1151,9 +1151,9 @@ export default function SettingsView(props: SettingsViewProps) {
 
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
-                    <div class="text-sm text-gray-12">AikaOS Docker containers</div>
+                    <div class="text-sm text-gray-12">OpenWork Docker containers</div>
                     <div class="text-xs text-gray-7">
-                      Force-remove Docker containers launched by AikaOS (sandbox + local dev stacks).
+                      Force-remove Docker containers launched by OpenWork (sandbox + local dev stacks).
                     </div>
                     <Show when={props.dockerCleanupResult}>
                       <div class="text-xs text-gray-11 mt-2">{props.dockerCleanupResult}</div>
@@ -1291,7 +1291,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           </Button>
                         </div>
                         <div class="text-[11px] text-gray-7">
-                          Use this to point AikaOS at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
+                          Use this to point OpenWork at a local OpenCode build (e.g. your fork). Applies next time the engine starts or reloads.
                         </div>
                       </div>
                     </Show>
@@ -1312,7 +1312,7 @@ export default function SettingsView(props: SettingsViewProps) {
                             onClick={() => props.setEngineRuntime("openwork-orchestrator")}
                             disabled={props.busy}
                           >
-                            AikaOS Orchestrator
+                            OpenWork Orchestrator
                           </Button>
                         </div>
                         <div class="text-[11px] text-gray-7">Applies the next time the engine starts or reloads.</div>
@@ -1330,7 +1330,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
                       <div class="text-sm text-gray-12">Reset onboarding</div>
-                      <div class="text-xs text-gray-7">Clears AikaOS preferences and restarts the app.</div>
+                      <div class="text-xs text-gray-7">Clears OpenWork preferences and restarts the app.</div>
                     </div>
                     <Button
                       variant="outline"
@@ -1346,7 +1346,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                     <div class="min-w-0">
                       <div class="text-sm text-gray-12">Reset app data</div>
-                      <div class="text-xs text-gray-7">More aggressive. Clears AikaOS cache + app data.</div>
+                      <div class="text-xs text-gray-7">More aggressive. Clears OpenWork cache + app data.</div>
                     </div>
                     <Button
                       variant="danger"
@@ -1382,7 +1382,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="text-[11px] text-gray-7 font-mono truncate">Orchestrator: {orchestratorVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">
-                            AikaOS server: {openworkServerVersionLabel()}
+                            OpenWork server: {openworkServerVersionLabel()}
                           </div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
                         </div>
@@ -1526,7 +1526,7 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div class="flex items-center justify-between gap-3">
                         <div>
-                          <div class="text-sm font-medium text-gray-12">AikaOS server</div>
+                          <div class="text-sm font-medium text-gray-12">OpenWork server</div>
                           <div class="text-xs text-gray-10">Config and approvals sidecar.</div>
                         </div>
                         <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>
@@ -1619,7 +1619,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">AikaOS server diagnostics</div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server diagnostics</div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
                         {props.openworkServerDiagnostics?.version ?? "—"}
                       </div>
@@ -1647,7 +1647,7 @@ export default function SettingsView(props: SettingsViewProps) {
 
                   <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                     <div class="flex items-center justify-between gap-3">
-                      <div class="text-sm font-medium text-gray-12">AikaOS server capabilities</div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server capabilities</div>
                       <div class="text-[11px] text-gray-8 font-mono truncate">
                         {props.openworkServerWorkspaceId ? `Worker ${props.openworkServerWorkspaceId}` : "Worker unresolved"}
                       </div>

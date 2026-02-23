@@ -5,7 +5,7 @@ import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
 
 import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
-import AikaOSLogo from "../components/aikaos-logo";
+import OpenWorkLogo from "../components/openwork-logo";
 import TextInput from "../components/text-input";
 import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, t } from "../../i18n";
@@ -114,7 +114,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-gray-2 via-gray-1 to-gray-1 opacity-50" />
           <div class="z-10 flex flex-col items-center gap-6">
             <div class="relative">
-              <AikaOSLogo size={40} />
+              <OpenWorkLogo size={40} />
             </div>
             <div class="text-center">
               <h2 class="text-xl font-medium mb-2">
@@ -158,7 +158,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
           <div class="max-w-lg w-full z-10 space-y-6">
               <div class="text-center space-y-2">
                 <div class="">
-                  <AikaOSLogo size={48} />
+                  <OpenWorkLogo size={48} />
                 </div>
               <h2 class="text-2xl font-bold tracking-tight">
                 {props.workspaces.length <= 1 ? translate("onboarding.create_first_workspace") : translate("onboarding.create_workspace")}
@@ -209,7 +209,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
               </div>
 
               <OnboardingWorkspaceSelector
-                defaultPath="~/AikaOS/Worker"
+                defaultPath="~/OpenWork/Worker"
                 onConfirm={props.onCreateWorkspace}
                 onPickFolder={props.onPickWorkspaceFolder}
               />
@@ -592,9 +592,9 @@ export default function OnboardingView(props: OnboardingViewProps) {
             <div class="text-center space-y-4">
               <div class="flex items-center justify-center gap-3 mb-6">
                 <div class="">
-                  <AikaOSLogo size={48} />
+                  <OpenWorkLogo size={48} />
                 </div>
-                <h1 class="text-3xl font-bold tracking-tight text-gray-12">AikaOS</h1>
+                <h1 class="text-3xl font-bold tracking-tight text-gray-12">OpenWork</h1>
               </div>
               <h2 class="text-xl text-gray-11">{translate("onboarding.welcome_title")}</h2>
             </div>
