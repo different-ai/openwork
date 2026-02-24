@@ -334,7 +334,7 @@ export type OpenworkWorkspaceExport = {
   exportedAt: number;
   opencode?: Record<string, unknown>;
   openwork?: Record<string, unknown>;
-  skills?: Array<{ name: string; description?: string; content: string }>;
+  skills?: Array<{ name: string; description?: string; trigger?: string; content: string }>;
   commands?: Array<{ name: string; description?: string; template?: string }>;
 };
 
@@ -509,11 +509,16 @@ export const DEFAULT_OPENWORK_CONNECT_APP_URL = "https://app.openwork.software";
 const OPENWORK_INVITE_PARAM_URL = "ow_url";
 const OPENWORK_INVITE_PARAM_TOKEN = "ow_token";
 const OPENWORK_INVITE_PARAM_STARTUP = "ow_startup";
+const OPENWORK_INVITE_PARAM_BUNDLE = "ow_bundle";
 
 export type OpenworkConnectInvite = {
   url: string;
   token?: string;
   startup?: "server";
+};
+
+export type OpenworkBundleInvite = {
+  bundleUrl: string;
 };
 
 export function buildOpenworkConnectInviteUrl(input: {
@@ -575,12 +580,76 @@ export function readOpenworkConnectInviteFromSearch(input: string | URLSearchPar
   } satisfies OpenworkConnectInvite;
 }
 
+export function buildOpenworkBundleInviteUrl(input: {
+  bundleUrl: string;
+  appUrl?: string | null;
+}) {
+  const rawBundleUrl = input.bundleUrl?.trim() ?? "";
+  if (!rawBundleUrl) return "";
+
+  let bundleUrl: string;
+  try {
+    bundleUrl = new URL(rawBundleUrl).toString();
+  } catch {
+    return "";
+  }
+
+  const base = normalizeOpenworkServerUrl(input.appUrl ?? "") ?? DEFAULT_OPENWORK_CONNECT_APP_URL;
+
+  try {
+    const url = new URL(base);
+    const search = new URLSearchParams(url.search);
+    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
+    url.search = search.toString();
+    return url.toString();
+  } catch {
+    const search = new URLSearchParams();
+    search.set(OPENWORK_INVITE_PARAM_BUNDLE, bundleUrl);
+    return `${DEFAULT_OPENWORK_CONNECT_APP_URL}?${search.toString()}`;
+  }
+}
+
+export function readOpenworkBundleInviteFromSearch(input: string | URLSearchParams) {
+  const search =
+    typeof input === "string"
+      ? new URLSearchParams(input.startsWith("?") ? input.slice(1) : input)
+      : input;
+
+  const rawBundleUrl = search.get(OPENWORK_INVITE_PARAM_BUNDLE)?.trim() ?? "";
+  if (!rawBundleUrl) return null;
+
+  let bundleUrl: string;
+  try {
+    const parsed = new URL(rawBundleUrl);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    bundleUrl = parsed.toString();
+  } catch {
+    return null;
+  }
+
+  return {
+    bundleUrl,
+  } satisfies OpenworkBundleInvite;
+}
+
 export function stripOpenworkConnectInviteFromUrl(input: string) {
   try {
     const url = new URL(input);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_URL);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_TOKEN);
     url.searchParams.delete(OPENWORK_INVITE_PARAM_STARTUP);
+    return url.toString();
+  } catch {
+    return input;
+  }
+}
+
+export function stripOpenworkBundleInviteFromUrl(input: string) {
+  try {
+    const url = new URL(input);
+    url.searchParams.delete(OPENWORK_INVITE_PARAM_BUNDLE);
     return url.toString();
   } catch {
     return input;

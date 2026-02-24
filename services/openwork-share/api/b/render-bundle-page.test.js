@@ -59,6 +59,31 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /data-openwork-bundle-type="skill"/);
   assert.match(html, /meta name="openwork:bundle-id" content="01TEST"/);
   assert.match(html, /\?format=json/);
+  assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
   assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
+});
+
+test("renderBundlePage shows workspace profile metadata", () => {
+  const rawJson = JSON.stringify({
+    schemaVersion: 1,
+    type: "workspace-profile",
+    name: "Team Workspace",
+    workspace: {
+      opencode: { model: "gpt-5.3" },
+      openwork: { reload: { auto: true } },
+      skills: [{ name: "workspace-guide", content: "..." }, { name: "skill-creator", content: "..." }],
+      commands: [{ name: "standup", template: "..." }],
+    },
+  });
+
+  const html = renderBundlePage({
+    id: "01WORKSPACE",
+    rawJson,
+    req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
+  });
+
+  assert.match(html, /<dt>Skills<\/dt><dd>2<\/dd>/);
+  assert.match(html, /<dt>Commands<\/dt><dd>1<\/dd>/);
+  assert.match(html, /<dt>Config<\/dt><dd>yes<\/dd>/);
 });

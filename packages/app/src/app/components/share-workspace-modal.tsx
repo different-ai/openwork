@@ -20,6 +20,17 @@ export default function ShareWorkspaceModal(props: {
   workspaceDetail?: string | null;
   fields: ShareField[];
   note?: string | null;
+  publisherBaseUrl?: string;
+  onShareWorkspaceProfile?: () => void;
+  shareWorkspaceProfileBusy?: boolean;
+  shareWorkspaceProfileUrl?: string | null;
+  shareWorkspaceProfileError?: string | null;
+  shareWorkspaceProfileDisabledReason?: string | null;
+  onShareSkillsSet?: () => void;
+  shareSkillsSetBusy?: boolean;
+  shareSkillsSetUrl?: string | null;
+  shareSkillsSetError?: string | null;
+  shareSkillsSetDisabledReason?: string | null;
   onExportConfig?: () => void;
   exportDisabledReason?: string | null;
   onOpenBots?: () => void;
@@ -148,6 +159,96 @@ export default function ShareWorkspaceModal(props: {
                 {note()}
               </div>
             </Show>
+
+            <div class="rounded-2xl border border-gray-6 bg-gray-1/30 p-4 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Share service links</div>
+                <div class="text-xs text-gray-10">
+                  Publish public links for this worker profile or all installed skills.
+                </div>
+                <Show when={props.publisherBaseUrl?.trim()}>
+                  <div class="text-[11px] text-gray-9 mt-1 font-mono">Publisher: {props.publisherBaseUrl}</div>
+                </Show>
+              </div>
+
+              <div class="rounded-xl border border-gray-6 bg-gray-1/40 p-3 space-y-2">
+                <div class="text-xs font-medium text-gray-11">Workspace profile</div>
+                <div class="text-[11px] text-gray-9">
+                  Includes config, MCP setup, commands, and skills in one OpenWork share URL.
+                </div>
+                <Show when={props.shareWorkspaceProfileError?.trim()}>
+                  <div class="rounded-md border border-red-7/20 bg-red-1/40 px-2 py-1.5 text-[11px] text-red-12">
+                    {props.shareWorkspaceProfileError}
+                  </div>
+                </Show>
+                <Show when={props.shareWorkspaceProfileUrl?.trim()}>
+                  <div class="rounded-md border border-gray-6 bg-gray-1 px-2 py-1.5 text-[11px] font-mono text-gray-11 break-all">
+                    {props.shareWorkspaceProfileUrl}
+                  </div>
+                </Show>
+                <Show when={props.shareWorkspaceProfileDisabledReason?.trim()}>
+                  <div class="text-[11px] text-gray-9">{props.shareWorkspaceProfileDisabledReason}</div>
+                </Show>
+                <div class="flex items-center justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={() => handleCopy(props.shareWorkspaceProfileUrl ?? "", "share-workspace-profile")}
+                    disabled={!props.shareWorkspaceProfileUrl}
+                  >
+                    <Copy size={14} />
+                    {copiedKey() === "share-workspace-profile" ? "Copied" : "Copy"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={() => props.onShareWorkspaceProfile?.()}
+                    disabled={Boolean(props.shareWorkspaceProfileDisabledReason) || !props.onShareWorkspaceProfile || props.shareWorkspaceProfileBusy}
+                  >
+                    {props.shareWorkspaceProfileBusy ? "Publishing..." : props.shareWorkspaceProfileUrl ? "Regenerate" : "Create link"}
+                  </Button>
+                </div>
+              </div>
+
+              <div class="rounded-xl border border-gray-6 bg-gray-1/40 p-3 space-y-2">
+                <div class="text-xs font-medium text-gray-11">Skills set</div>
+                <div class="text-[11px] text-gray-9">
+                  Publish every installed skill as one link. OpenWork can import all skills at once.
+                </div>
+                <Show when={props.shareSkillsSetError?.trim()}>
+                  <div class="rounded-md border border-red-7/20 bg-red-1/40 px-2 py-1.5 text-[11px] text-red-12">
+                    {props.shareSkillsSetError}
+                  </div>
+                </Show>
+                <Show when={props.shareSkillsSetUrl?.trim()}>
+                  <div class="rounded-md border border-gray-6 bg-gray-1 px-2 py-1.5 text-[11px] font-mono text-gray-11 break-all">
+                    {props.shareSkillsSetUrl}
+                  </div>
+                </Show>
+                <Show when={props.shareSkillsSetDisabledReason?.trim()}>
+                  <div class="text-[11px] text-gray-9">{props.shareSkillsSetDisabledReason}</div>
+                </Show>
+                <div class="flex items-center justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={() => handleCopy(props.shareSkillsSetUrl ?? "", "share-skills-set")}
+                    disabled={!props.shareSkillsSetUrl}
+                  >
+                    <Copy size={14} />
+                    {copiedKey() === "share-skills-set" ? "Copied" : "Copy"}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    class="text-xs h-8 py-0 px-3"
+                    onClick={() => props.onShareSkillsSet?.()}
+                    disabled={Boolean(props.shareSkillsSetDisabledReason) || !props.onShareSkillsSet || props.shareSkillsSetBusy}
+                  >
+                    {props.shareSkillsSetBusy ? "Publishing..." : props.shareSkillsSetUrl ? "Regenerate" : "Create link"}
+                  </Button>
+                </div>
+              </div>
+            </div>
 
             <div class="rounded-2xl border border-gray-6 bg-gray-1/30 p-4 space-y-3">
               <div>

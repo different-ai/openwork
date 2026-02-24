@@ -1,4 +1,4 @@
-export type OpenworkPublisherBundleType = "skill" | "workspace-profile";
+export type OpenworkPublisherBundleType = "skill" | "workspace-profile" | "skills-set";
 
 export type PublishBundleResult = {
   url: string;

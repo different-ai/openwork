@@ -1,5 +1,9 @@
 const OPENWORK_SITE_URL = "https://openwork.software";
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
+const OPENWORK_APP_URL =
+  typeof process.env.PUBLIC_OPENWORK_APP_URL === "string" && process.env.PUBLIC_OPENWORK_APP_URL.trim()
+    ? process.env.PUBLIC_OPENWORK_APP_URL.trim()
+    : "https://app.openwork.software";
 
 function escapeHtml(value) {
   return String(value)
@@ -22,6 +26,14 @@ function maybeString(value) {
   return typeof value === "string" ? value : "";
 }
 
+function maybeObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+function maybeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
 function humanizeType(type) {
   if (!type) return "Bundle";
   return type
@@ -36,6 +48,23 @@ function truncate(value, maxChars = 3200) {
   return `${value.slice(0, maxChars)}\n\n... (truncated for display)`;
 }
 
+function normalizeAppUrl(input) {
+  const trimmed = String(input ?? "").trim();
+  if (!trimmed) return "";
+  return trimmed.replace(/\/+$/, "");
+}
+
+function buildOpenInAppUrl(shareUrl) {
+  const appUrl = normalizeAppUrl(OPENWORK_APP_URL) || "https://app.openwork.software";
+  try {
+    const url = new URL(appUrl);
+    url.searchParams.set("ow_bundle", shareUrl);
+    return url.toString();
+  } catch {
+    return `${"https://app.openwork.software"}?ow_bundle=${encodeURIComponent(shareUrl)}`;
+  }
+}
+
 function parseBundle(rawJson) {
   try {
     const parsed = JSON.parse(rawJson);
@@ -47,8 +76,15 @@ function parseBundle(rawJson) {
         description: "",
         trigger: "",
         content: "",
+        workspace: null,
+        skills: [],
+        commands: [],
       };
     }
+
+    const workspace = maybeObject(parsed.workspace);
+    const skills = maybeArray(parsed.skills);
+    const commands = maybeArray(parsed.commands);
 
     return {
       schemaVersion: typeof parsed.schemaVersion === "number" ? parsed.schemaVersion : null,
@@ -57,6 +93,9 @@ function parseBundle(rawJson) {
       description: maybeString(parsed.description).trim(),
       trigger: maybeString(parsed.trigger).trim(),
       content: maybeString(parsed.content),
+      workspace,
+      skills,
+      commands,
     };
   } catch {
     return {
@@ -66,6 +105,9 @@ function parseBundle(rawJson) {
       description: "",
       trigger: "",
       content: "",
+      workspace: null,
+      skills: [],
+      commands: [],
     };
   }
 }
@@ -76,6 +118,10 @@ function prettyJson(rawJson) {
   } catch {
     return rawJson;
   }
+}
+
+function listCount(value) {
+  return Array.isArray(value) ? value.length : 0;
 }
 
 function getOrigin(req) {
@@ -120,6 +166,7 @@ export function wantsDownload(req) {
 export function renderBundlePage({ id, rawJson, req }) {
   const bundle = parseBundle(rawJson);
   const urls = buildBundleUrls(req, id);
+  const openInAppUrl = buildOpenInAppUrl(urls.shareUrl);
   const prettyBundleJson = prettyJson(rawJson);
   const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
   const typeLabel = humanizeType(bundle.type);
@@ -127,13 +174,32 @@ export function renderBundlePage({ id, rawJson, req }) {
   const description =
     bundle.description ||
     "OpenWork share links stay human-friendly for reading while still exposing a stable machine-readable JSON bundle.";
+  const workspaceSkills = listCount(bundle.workspace?.skills);
+  const workspaceCommands = listCount(bundle.workspace?.commands);
+  const workspaceHasConfig = Boolean(maybeObject(bundle.workspace?.opencode) || maybeObject(bundle.workspace?.openwork));
+  const skillsSetCount = listCount(bundle.skills);
   const installHint =
     bundle.type === "skill"
-      ? "Open OpenWork, go to Skills, choose Install from link, then paste this URL."
-      : "Use the JSON endpoint if you want to import this bundle programmatically.";
+      ? "Open OpenWork and import from this link to install this skill."
+      : bundle.type === "skills-set"
+        ? "Use Open in app to import this full skills set in one step."
+        : bundle.type === "workspace-profile"
+          ? "Use Open in app to import this full workspace profile (config, MCP, commands, and skills)."
+          : "Use the JSON endpoint if you want to import this bundle programmatically.";
   const contentLabel = bundle.type === "skill" && bundle.content.trim() ? "Skill content" : "Bundle payload";
   const contentPreview =
     bundle.type === "skill" && bundle.content.trim() ? truncate(bundle.content.trim()) : truncate(prettyBundleJson);
+
+  let metadataExtras = "";
+  if (bundle.type === "workspace-profile") {
+    metadataExtras = `
+          <div><dt>Skills</dt><dd>${escapeHtml(String(workspaceSkills))}</dd></div>
+          <div><dt>Commands</dt><dd>${escapeHtml(String(workspaceCommands))}</dd></div>
+          <div><dt>Config</dt><dd>${escapeHtml(workspaceHasConfig ? "yes" : "no")}</dd></div>`;
+  } else if (bundle.type === "skills-set") {
+    metadataExtras = `
+          <div><dt>Skills</dt><dd>${escapeHtml(String(skillsSetCount))}</dd></div>`;
+  }
 
   return `<!doctype html>
 <html lang="en">
@@ -145,6 +211,7 @@ export function renderBundlePage({ id, rawJson, req }) {
   <meta name="openwork:bundle-id" content="${escapeHtml(id)}" />
   <meta name="openwork:bundle-type" content="${escapeHtml(bundle.type || "unknown")}" />
   <meta name="openwork:schema-version" content="${escapeHtml(schemaVersion)}" />
+  <meta name="openwork:open-in-app-url" content="${escapeHtml(openInAppUrl)}" />
   <link rel="alternate" type="application/json" href="${escapeHtml(urls.jsonUrl)}" />
   <style>
     :root {
@@ -382,7 +449,8 @@ export function renderBundlePage({ id, rawJson, req }) {
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(description)}</p>
       <div class="actions">
-        <button type="button" class="primary" id="copy-link-button">Copy share link</button>
+        <a class="action-link primary" href="${escapeHtml(openInAppUrl)}" target="_blank" rel="noreferrer">Open in app</a>
+        <button type="button" class="secondary" id="copy-link-button">Copy share link</button>
         <button type="button" class="secondary" id="copy-json-button">Copy bundle JSON</button>
         <a class="action-link secondary" href="${escapeHtml(urls.jsonUrl)}" target="_blank" rel="noreferrer">View raw JSON</a>
         <a class="action-link secondary" href="${escapeHtml(urls.downloadUrl)}">Download JSON</a>
@@ -407,6 +475,7 @@ export function renderBundlePage({ id, rawJson, req }) {
           <div><dt>Schema</dt><dd>${escapeHtml(schemaVersion)}</dd></div>
           <div><dt>Name</dt><dd>${escapeHtml(bundle.name || "n/a")}</dd></div>
           <div><dt>Trigger</dt><dd>${escapeHtml(bundle.trigger || "n/a")}</dd></div>
+${metadataExtras}
         </dl>
       </section>
     </div>

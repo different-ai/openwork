@@ -59,13 +59,16 @@ import {
   buildOpenworkConnectInviteUrl,
   buildOpenworkWorkspaceBaseUrl,
   createOpenworkServerClient,
+  parseOpenworkWorkspaceIdFromUrl,
 } from "../lib/openwork-server";
 import type {
   OpenworkServerClient,
   OpenworkServerSettings,
   OpenworkServerStatus,
   OpenworkSoulStatus,
+  OpenworkWorkspaceExport,
 } from "../lib/openwork-server";
+import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 import { join } from "@tauri-apps/api/path";
 import {
   formatRelativeTime,
@@ -210,6 +213,33 @@ export type SessionViewProps = {
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
   deleteSession: (sessionId: string) => Promise<void>;
+};
+
+type SharedSkillItem = {
+  name: string;
+  description?: string;
+  content: string;
+  trigger?: string;
+};
+
+type WorkspaceProfileBundleV1 = {
+  schemaVersion: 1;
+  type: "workspace-profile";
+  name: string;
+  description: string;
+  workspace: OpenworkWorkspaceExport;
+};
+
+type SkillsSetBundleV1 = {
+  schemaVersion: 1;
+  type: "skills-set";
+  name: string;
+  description: string;
+  skills: SharedSkillItem[];
+  sourceWorkspace?: {
+    id?: string;
+    name?: string;
+  };
 };
 
 const BROWSER_SETUP_TEMPLATE = (() => {
@@ -1940,6 +1970,23 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const [shareLocalOpenworkWorkspaceId, setShareLocalOpenworkWorkspaceId] = createSignal<string | null>(null);
+  const [shareWorkspaceProfileBusy, setShareWorkspaceProfileBusy] = createSignal(false);
+  const [shareWorkspaceProfileUrl, setShareWorkspaceProfileUrl] = createSignal<string | null>(null);
+  const [shareWorkspaceProfileError, setShareWorkspaceProfileError] = createSignal<string | null>(null);
+  const [shareSkillsSetBusy, setShareSkillsSetBusy] = createSignal(false);
+  const [shareSkillsSetUrl, setShareSkillsSetUrl] = createSignal<string | null>(null);
+  const [shareSkillsSetError, setShareSkillsSetError] = createSignal<string | null>(null);
+
+  createEffect(
+    on(shareWorkspaceId, () => {
+      setShareWorkspaceProfileBusy(false);
+      setShareWorkspaceProfileUrl(null);
+      setShareWorkspaceProfileError(null);
+      setShareSkillsSetBusy(false);
+      setShareSkillsSetUrl(null);
+      setShareSkillsSetError(null);
+    }),
+  );
 
   createEffect(() => {
     const ws = shareWorkspace();
@@ -2087,6 +2134,188 @@ export default function SessionView(props: SessionViewProps) {
     }
     return null;
   });
+
+  const shareServiceDisabledReason = createMemo(() => {
+    const ws = shareWorkspace();
+    if (!ws) return "Select a worker first.";
+    if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
+      return "Share service links are available for OpenWork workers.";
+    }
+    if (ws.workspaceType !== "remote") {
+      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      if (!baseUrl || !token) {
+        return "Local OpenWork host is not ready yet.";
+      }
+    } else {
+      const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+      const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+      if (!hostUrl) return "Missing OpenWork host URL.";
+      if (!token) return "Missing OpenWork token.";
+    }
+    return null;
+  });
+
+  const resolveShareExportContext = async (): Promise<{
+    client: OpenworkServerClient;
+    workspaceId: string;
+    workspace: WorkspaceInfo;
+  }> => {
+    const ws = shareWorkspace();
+    if (!ws) {
+      throw new Error("Select a worker first.");
+    }
+
+    if (ws.workspaceType !== "remote") {
+      const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
+      const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
+      if (!baseUrl || !token) {
+        throw new Error("Local OpenWork host is not ready yet.");
+      }
+      const client = createOpenworkServerClient({ baseUrl, token });
+
+      let workspaceId = shareLocalOpenworkWorkspaceId()?.trim() ?? "";
+      if (!workspaceId) {
+        const response = await client.listWorkspaces();
+        const items = Array.isArray(response.items) ? response.items : [];
+        const targetPath = normalizeDirectoryPath(ws.path?.trim() ?? "");
+        const match = items.find((entry) => normalizeDirectoryPath(entry.path) === targetPath);
+        workspaceId = (match?.id ?? "").trim();
+        setShareLocalOpenworkWorkspaceId(workspaceId || null);
+      }
+
+      if (!workspaceId) {
+        throw new Error("Could not resolve this worker on the local OpenWork host.");
+      }
+
+      return { client, workspaceId, workspace: ws };
+    }
+
+    if (ws.remoteType !== "openwork") {
+      throw new Error("Share service links are available for OpenWork workers.");
+    }
+
+    const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
+    const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
+    if (!hostUrl || !token) {
+      throw new Error("OpenWork host URL and token are required.");
+    }
+
+    const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
+    let workspaceId =
+      ws.openworkWorkspaceId?.trim() ||
+      parseOpenworkWorkspaceIdFromUrl(ws.openworkHostUrl ?? "") ||
+      parseOpenworkWorkspaceIdFromUrl(ws.baseUrl ?? "") ||
+      "";
+
+    if (!workspaceId) {
+      const response = await client.listWorkspaces();
+      const items = Array.isArray(response.items) ? response.items : [];
+      const directoryHint = normalizeDirectoryPath(ws.directory?.trim() ?? ws.path?.trim() ?? "");
+      const match = directoryHint
+        ? items.find((entry) => {
+            const entryPath = normalizeDirectoryPath(
+              (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim(),
+            );
+            return Boolean(entryPath && entryPath === directoryHint);
+          })
+        : (response.activeId ? items.find((entry) => entry.id === response.activeId) : null) ??
+          items[0];
+      workspaceId = (match?.id ?? "").trim();
+    }
+
+    if (!workspaceId) {
+      throw new Error("Could not resolve this worker on the OpenWork host.");
+    }
+
+    return { client, workspaceId, workspace: ws };
+  };
+
+  const publishWorkspaceProfileLink = async () => {
+    if (shareWorkspaceProfileBusy()) return;
+    setShareWorkspaceProfileBusy(true);
+    setShareWorkspaceProfileError(null);
+    setShareWorkspaceProfileUrl(null);
+
+    try {
+      const { client, workspaceId, workspace } = await resolveShareExportContext();
+      const exported = await client.exportWorkspace(workspaceId);
+      const payload: WorkspaceProfileBundleV1 = {
+        schemaVersion: 1,
+        type: "workspace-profile",
+        name: `${workspaceLabel(workspace)} profile`,
+        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        workspace: exported,
+      };
+
+      const result = await publishOpenworkBundleJson({
+        payload,
+        bundleType: "workspace-profile",
+        name: payload.name,
+      });
+
+      setShareWorkspaceProfileUrl(result.url);
+      try {
+        await navigator.clipboard.writeText(result.url);
+      } catch {
+        // ignore
+      }
+    } catch (error) {
+      setShareWorkspaceProfileError(error instanceof Error ? error.message : "Failed to publish workspace profile");
+    } finally {
+      setShareWorkspaceProfileBusy(false);
+    }
+  };
+
+  const publishSkillsSetLink = async () => {
+    if (shareSkillsSetBusy()) return;
+    setShareSkillsSetBusy(true);
+    setShareSkillsSetError(null);
+    setShareSkillsSetUrl(null);
+
+    try {
+      const { client, workspaceId, workspace } = await resolveShareExportContext();
+      const exported = await client.exportWorkspace(workspaceId);
+      const skills = Array.isArray(exported.skills) ? exported.skills : [];
+      if (!skills.length) {
+        throw new Error("No skills found in this workspace.");
+      }
+
+      const payload: SkillsSetBundleV1 = {
+        schemaVersion: 1,
+        type: "skills-set",
+        name: `${workspaceLabel(workspace)} skills`,
+        description: "Complete skills set from an OpenWork workspace.",
+        skills: skills.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          trigger: skill.trigger,
+          content: skill.content,
+        })),
+        sourceWorkspace: {
+          id: workspaceId,
+          name: workspaceLabel(workspace),
+        },
+      };
+
+      const result = await publishOpenworkBundleJson({
+        payload,
+        bundleType: "skills-set",
+        name: payload.name,
+      });
+
+      setShareSkillsSetUrl(result.url);
+      try {
+        await navigator.clipboard.writeText(result.url);
+      } catch {
+        // ignore
+      }
+    } catch (error) {
+      setShareSkillsSetError(error instanceof Error ? error.message : "Failed to publish skills set");
+    } finally {
+      setShareSkillsSetBusy(false);
+    }
+  };
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
@@ -3635,6 +3864,17 @@ export default function SessionView(props: SessionViewProps) {
         workspaceDetail={shareWorkspaceDetail()}
         fields={shareFields()}
         note={shareNote()}
+        publisherBaseUrl={DEFAULT_OPENWORK_PUBLISHER_BASE_URL}
+        onShareWorkspaceProfile={publishWorkspaceProfileLink}
+        shareWorkspaceProfileBusy={shareWorkspaceProfileBusy()}
+        shareWorkspaceProfileUrl={shareWorkspaceProfileUrl()}
+        shareWorkspaceProfileError={shareWorkspaceProfileError()}
+        shareWorkspaceProfileDisabledReason={shareServiceDisabledReason()}
+        onShareSkillsSet={publishSkillsSetLink}
+        shareSkillsSetBusy={shareSkillsSetBusy()}
+        shareSkillsSetUrl={shareSkillsSetUrl()}
+        shareSkillsSetError={shareSkillsSetError()}
+        shareSkillsSetDisabledReason={shareServiceDisabledReason()}
         onExportConfig={
           exportDisabledReason()
             ? undefined
