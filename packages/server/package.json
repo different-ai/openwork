@@ -22,12 +22,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/aikapenelope/openOS.git",
     "directory": "packages/server"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/server",
+  "homepage": "https://github.com/aikapenelope/openOS/tree/dev/packages/server",
   "bugs": {
-    "url": "https://github.com/different-ai/openwork/issues"
+    "url": "https://github.com/aikapenelope/openOS/issues"
   },
   "keywords": [
     "openwork",

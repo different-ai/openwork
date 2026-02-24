@@ -4,7 +4,7 @@
     "body": {
       "token": "REDACTED_SESSION_TOKEN",
       "user": {
-        "name": "Den OpenWork",
+        "name": "Den AikaOS",
         "email": "den-openwork-1771653211@example.com",
         "emailVerified": false,
         "image": null,
@@ -29,7 +29,7 @@
         "id": "REDACTED_SESSION_ID"
       },
       "user": {
-        "name": "Den OpenWork",
+        "name": "Den AikaOS",
         "email": "den-openwork-1771653211@example.com",
         "emailVerified": false,
         "image": null,
@@ -53,7 +53,7 @@
         "id": "REDACTED_SESSION_ID"
       },
       "user": {
-        "name": "Den OpenWork",
+        "name": "Den AikaOS",
         "email": "den-openwork-1771653211@example.com",
         "emailVerified": false,
         "image": null,

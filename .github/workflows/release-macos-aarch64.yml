@@ -11,7 +11,7 @@ on:
         required: false
         type: string
       release_name:
-        description: "Release title (defaults to OpenWork <tag>)"
+        description: "Release title (defaults to AikaOS <tag>)"
         required: false
         type: string
       release_body:
@@ -112,7 +112,7 @@ jobs:
           if [ -n "$RELEASE_NAME_INPUT" ]; then
             RELEASE_NAME="$RELEASE_NAME_INPUT"
           else
-            RELEASE_NAME="OpenWork $TAG"
+            RELEASE_NAME="AikaOS $TAG"
           fi
 
           RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
@@ -597,7 +597,7 @@ jobs:
 
           tar -xzf "$tmp_dir/openwork-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
 
-          app_path="$tmp_dir/OpenWork.app"
+          app_path="$tmp_dir/AikaOS.app"
           manifest_path="$app_path/Contents/MacOS/versions.json"
 
           if [ ! -f "$manifest_path" ]; then
@@ -922,7 +922,7 @@ jobs:
 
           version="${RELEASE_TAG#v}"
           git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
+          git -c user.name="AikaOS Release Bot" \
               -c user.email="release-bot@users.noreply.github.com" \
               commit -m "chore(aur): update PKGBUILD for ${version}"
           git push origin HEAD:dev

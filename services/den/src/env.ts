@@ -71,7 +71,7 @@ export const env = {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
-    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
+    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/aikapenelope/openOS",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
     workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",

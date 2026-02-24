@@ -1484,7 +1484,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         "telegram",
         input.identityId,
         input.peerId,
-        "This Telegram bot is private. Ask your OpenWork host for the pairing code, then send /pair <code>.",
+        "This Telegram bot is private. Ask your AikaOS host for the pairing code, then send /pair <code>.",
         { kind: "system" },
       );
       return "handled";
@@ -1495,7 +1495,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         "telegram",
         input.identityId,
         input.peerId,
-        "This Telegram bot is private but missing a pairing code. Ask your OpenWork host to reconnect it.",
+        "This Telegram bot is private but missing a pairing code. Ask your AikaOS host to reconnect it.",
         { kind: "system" },
       );
       return "handled";
@@ -1516,7 +1516,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         "telegram",
         input.identityId,
         input.peerId,
-        "No workspace directory configured for this identity. Ask your OpenWork host to set it, or reply with /dir <path>.",
+        "No workspace directory configured for this identity. Ask your AikaOS host to set it, or reply with /dir <path>.",
         { kind: "system" },
       );
       return "handled";
@@ -1616,7 +1616,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         inbound.channel,
         inbound.identityId,
         inbound.peerId,
-        "No workspace directory configured for this identity. Ask your OpenWork host to set it, or reply with /dir <path>.",
+        "No workspace directory configured for this identity. Ask your AikaOS host to set it, or reply with /dir <path>.",
         { kind: "system" },
       );
       return;
@@ -1683,7 +1683,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           .filter(Boolean)
           .join("\n\n");
         const promptText = [
-          "You are handling a Slack/Telegram message via OpenWork.",
+          "You are handling a Slack/Telegram message via AikaOS.",
           `Workspace agent file: ${messagingAgent.filePath}`,
           ...(messagingAgent.selectedAgent ? [`Selected OpenCode agent: ${messagingAgent.selectedAgent}`] : []),
           "Follow these workspace messaging instructions:",

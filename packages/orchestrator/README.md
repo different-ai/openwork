@@ -30,7 +30,7 @@ Use `--sidecar-source` to control where `openwork-server` and `opencode-router` 
 apply the same policies via env vars.
 
 By default the manifest is fetched from
-`https://github.com/different-ai/openwork/releases/download/openwork-orchestrator-v<version>/openwork-orchestrator-sidecars.json`.
+`https://github.com/aikapenelope/openOS/releases/download/openwork-orchestrator-v<version>/openwork-orchestrator-sidecars.json`.
 
 OpenCode Router is optional. If it exits, `openwork` continues running unless you pass
 `--opencode-router-required` or set `OPENWORK_OPENCODE_ROUTER_REQUIRED=1`.

@@ -1,8 +1,8 @@
-# OpenWork Architecture
+# AikaOS Architecture
 
 ## Design principle: Predictable > Clever
 
-OpenWork optimizes for **predictability** over "clever" auto-detection. Users should be able to form a correct mental model of what will happen.
+AikaOS optimizes for **predictability** over "clever" auto-detection. Users should be able to form a correct mental model of what will happen.
 
 Guidelines:
 
@@ -65,7 +65,7 @@ use when you need to create tasks that are executed by different models than the
 
 These are all opencode primitives you can read the docs to find out exactly how to set them up.
 
-## Core Concepts of OpenWork
+## Core Concepts of AikaOS
 
 - uses all these primitives
 - uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
@@ -74,45 +74,45 @@ These are all opencode primitives you can read the docs to find out exactly how 
 
 ## Core Architecture
 
-OpenWork is a client experience that consumes OpenWork server surfaces.
+AikaOS is a client experience that consumes AikaOS server surfaces.
 
-Historically, users reached OpenWork server capabilities in two ways:
+Historically, users reached AikaOS server capabilities in two ways:
 
-- a running desktop OpenWork app acting as host
+- a running desktop AikaOS app acting as host
 - a running `openwork-orchestrator` (CLI host)
 
-Now there is a third, first-class path: hosted OpenWork Cloud workers.
+Now there is a third, first-class path: hosted AikaOS Cloud workers.
 
-OpenWork therefore has three runtime connection modes:
+AikaOS therefore has three runtime connection modes:
 
 ### Mode A - Host (Desktop/Server)
 
-- OpenWork runs on a desktop/laptop and **starts** OpenCode locally.
+- AikaOS runs on a desktop/laptop and **starts** OpenCode locally.
 - The OpenCode server runs on loopback (default `127.0.0.1:4096`).
-- OpenWork UI connects via the official SDK and listens to events.
+- AikaOS UI connects via the official SDK and listens to events.
 
 ### Mode B - Client (Desktop/Mobile)
 
-- OpenWork runs on iOS/Android as a **remote controller**.
+- AikaOS runs on iOS/Android as a **remote controller**.
 - It connects to an already-running OpenCode server hosted by a trusted device.
 - Pairing uses a QR code / one-time token and a secure transport (LAN or tunneled).
 
-### Mode C - Hosted OpenWork Cloud
+### Mode C - Hosted AikaOS Cloud
 
-- User signs in to hosted OpenWork web/app surfaces.
+- User signs in to hosted AikaOS web/app surfaces.
 - User launches a cloud worker from hosted control plane.
-- OpenWork returns remote connect credentials (`/w/ws_*` URL + access token).
-- User connects from OpenWork app using `Add a worker` -> `Connect remote`.
+- AikaOS returns remote connect credentials (`/w/ws_*` URL + access token).
+- User connects from AikaOS app using `Add a worker` -> `Connect remote`.
 
 This model keeps the user experience consistent across self-hosted and hosted paths while preserving OpenCode parity.
 
 ## Cloud Worker Connect Flow (Canonical)
 
-1. Authenticate in OpenWork Cloud control surface.
+1. Authenticate in AikaOS Cloud control surface.
 2. Launch worker (with checkout/paywall when needed).
 3. Wait for provisioning and health.
 4. Generate/retrieve connect credentials.
-5. Connect in OpenWork app via deep link or manual URL + token.
+5. Connect in AikaOS app via deep link or manual URL + token.
 
 Technical note:
 
@@ -129,16 +129,16 @@ The browser runtime cannot read or write arbitrary local files. Any feature that
 
 must be routed through a host-side service.
 
-In OpenWork, the long-term direction is:
+In AikaOS, the long-term direction is:
 
-- Use the OpenWork server (`packages/server`) as the single API surface for filesystem-backed operations.
+- Use the AikaOS server (`packages/server`) as the single API surface for filesystem-backed operations.
 - Treat Tauri-only file operations as an implementation detail / convenience fallback, not a separate feature set.
 
 This ensures the same UI flows work on desktop, mobile, and web clients, with approvals and auditing handled centrally.
 
 ## OpenCode Integration (Exact SDK + APIs)
 
-OpenWork uses the official JavaScript/TypeScript SDK:
+AikaOS uses the official JavaScript/TypeScript SDK:
 
 - Package: `@opencode-ai/sdk/v2` (UI should import `@opencode-ai/sdk/v2/client` to avoid Node-only server code)
 - Purpose: type-safe client generated from OpenAPI spec
@@ -183,7 +183,7 @@ const client = createOpencodeClient({
 
 ### Event Streaming (Real-time UI)
 
-OpenWork must be real-time. It subscribes to SSE events:
+AikaOS must be real-time. It subscribes to SSE events:
 
 - `client.event.subscribe()`
 
@@ -196,7 +196,7 @@ The UI uses these events to drive:
 
 ### Sessions (Primary Primitive)
 
-OpenWork maps a "Task Run" to an OpenCode **Session**.
+AikaOS maps a "Task Run" to an OpenCode **Session**.
 
 Core methods:
 
@@ -210,7 +210,7 @@ Core methods:
 
 ### Files + Search
 
-OpenWork's file browser and "what changed" UI are powered by:
+AikaOS's file browser and "what changed" UI are powered by:
 
 - `client.find.text()`
 - `client.find.files()`
@@ -220,12 +220,12 @@ OpenWork's file browser and "what changed" UI are powered by:
 
 ### Permissions
 
-OpenWork must surface permission requests clearly and respond explicitly.
+AikaOS must surface permission requests clearly and respond explicitly.
 
 - Permission response API:
   - `client.permission.reply({ requestID, reply })` (where `reply` is `once` | `always` | `reject`)
 
-OpenWork UI should:
+AikaOS UI should:
 
 1. Show what is being requested (scope + reason).
 2. Provide choices (allow once / allow for session / deny).
@@ -234,7 +234,7 @@ OpenWork UI should:
 
 ### Config + Providers
 
-OpenWork's settings pages use:
+AikaOS's settings pages use:
 
 - `client.config.get()`
 - `client.config.providers()`
@@ -242,27 +242,27 @@ OpenWork's settings pages use:
 
 ### Extensibility - Skills + Plugins
 
-OpenWork exposes two extension surfaces:
+AikaOS exposes two extension surfaces:
 
 1. **Skills (OpenPackage)**
    - Installed into `.opencode/skills/*`.
-   - OpenWork can run `opkg install` to pull packages from the registry or GitHub.
+   - AikaOS can run `opkg install` to pull packages from the registry or GitHub.
 
 2. **Plugins (OpenCode)**
    - Plugins are configured via `opencode.json` in the workspace.
    - The format is the same as OpenCode CLI uses today.
-   - OpenWork should show plugin status and instructions; a native plugin manager is planned.
+   - AikaOS should show plugin status and instructions; a native plugin manager is planned.
 
 ### Engine reload (config refresh)
 
-- OpenWork server exposes `POST /workspace/:id/engine/reload`.
+- AikaOS server exposes `POST /workspace/:id/engine/reload`.
 - It calls OpenCode `POST /instance/dispose` with the workspace directory to force a config re-read.
 - Use after skills/plugins/MCP/config edits; reloads can interrupt active sessions.
-- Reload requests follow OpenWork server approval rules.
+- Reload requests follow AikaOS server approval rules.
 
 ### OpenPackage Registry (Current + Future)
 
-- Today, OpenWork only supports **curated lists + manual sources**.
+- Today, AikaOS only supports **curated lists + manual sources**.
 - Publishing to the official registry currently requires authentication (`opkg push` + `opkg configure`).
 - Future goals:
   - in-app registry search
@@ -274,11 +274,11 @@ OpenWork exposes two extension surfaces:
 - `client.project.list()` / `client.project.current()`
 - `client.path.get()`
 
-OpenWork conceptually treats "workspace" as the current project/path.
+AikaOS conceptually treats "workspace" as the current project/path.
 
 ## Optional TUI Control (Advanced)
 
-The SDK exposes `client.tui.*` methods. OpenWork can optionally provide a "Developer Mode" screen to:
+The SDK exposes `client.tui.*` methods. AikaOS can optionally provide a "Developer Mode" screen to:
 
 - append/submit prompt
 - open help/sessions/themes/models
@@ -288,15 +288,15 @@ This is optional and not required for non-technical MVP.
 
 ## Folder Authorization Model
 
-OpenWork enforces folder access through **two layers**:
+AikaOS enforces folder access through **two layers**:
 
-1. **OpenWork UI authorization**
+1. **AikaOS UI authorization**
    - user explicitly selects allowed folders via native picker
-   - OpenWork remembers allowed roots per profile
+   - AikaOS remembers allowed roots per profile
 
 2. **OpenCode server permissions**
    - OpenCode requests permissions as needed
-   - OpenWork intercepts requests via events and displays them
+   - AikaOS intercepts requests via events and displays them
 
 Rules:
 
@@ -309,4 +309,4 @@ Rules:
 
 - Best packaging strategy for Host mode engine (bundled vs user-installed Node/runtime).
 - Best remote transport for mobile client (LAN only vs optional tunnel).
-- Scheduling API surface (native in OpenCode server vs OpenWork-managed scheduler).
+- Scheduling API surface (native in OpenCode server vs AikaOS-managed scheduler).

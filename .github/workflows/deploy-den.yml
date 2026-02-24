@@ -20,7 +20,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'aikapenelope/openOS'
     steps:
       - name: Validate required secrets
         env:
@@ -224,7 +224,7 @@ jobs:
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
               {"key": "RENDER_API_KEY", "value": api_key},
               {"key": "RENDER_OWNER_ID", "value": owner_id},
-              {"key": "RENDER_WORKER_REPO", "value": "https://github.com/different-ai/openwork"},
+              {"key": "RENDER_WORKER_REPO", "value": "https://github.com/aikapenelope/openOS"},
               {"key": "RENDER_WORKER_BRANCH", "value": "dev"},
               {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
               {"key": "RENDER_WORKER_PLAN", "value": worker_plan},

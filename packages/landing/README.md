@@ -5,7 +5,7 @@
 1. Install deps from repo root:
    `pnpm install`
 2. Run the app:
-   `pnpm --filter @different-ai/openwork-landing dev`
+   `pnpm --filter @aikalabs/aikaos-landing dev`
 
 ### Optional env vars
 
@@ -19,11 +19,11 @@ This app is ready for Vercel or any Node-compatible Next.js host.
 ### Vercel
 
 1. Create a new Vercel project rooted at `packages/landing`.
-2. Build command: `pnpm --filter @different-ai/openwork-landing build`
+2. Build command: `pnpm --filter @aikalabs/aikaos-landing build`
 3. Output: `.next`
-4. Start command: `pnpm --filter @different-ai/openwork-landing start`
+4. Start command: `pnpm --filter @aikalabs/aikaos-landing start`
 
 ### Self-hosted
 
-1. Build: `pnpm --filter @different-ai/openwork-landing build`
-2. Start: `pnpm --filter @different-ai/openwork-landing start`
+1. Build: `pnpm --filter @aikalabs/aikaos-landing build`
+2. Start: `pnpm --filter @aikalabs/aikaos-landing start`

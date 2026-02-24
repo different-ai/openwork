@@ -13,9 +13,9 @@
 - `pnpm --filter opencode-router typecheck`
 - `pnpm --filter openwork-server typecheck`
 - `pnpm --filter openwork-server test`
-- `pnpm --filter @different-ai/openwork-ui typecheck`
+- `pnpm --filter @aikalabs/aikaos typecheck`
 - `pnpm --filter opencode-router build`
-- `pnpm --filter @different-ai/openwork-ui build`
+- `pnpm --filter @aikalabs/aikaos build`
 
 ## Notes
 

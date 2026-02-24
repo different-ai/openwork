@@ -637,9 +637,9 @@ export function startOrchestratorTui(options: TuiOptions): TuiHandle {
                 <text fg={theme.text} attributes={TextAttributes.BOLD}>
                   Connect
                 </text>
-                <text fg={theme.textMuted}>OpenWork URL (LAN)</text>
+                <text fg={theme.textMuted}>AikaOS URL (LAN)</text>
                 <text fg={theme.text}>{state.connect.openworkUrl}</text>
-                <text fg={theme.textMuted}>OpenWork Token</text>
+                <text fg={theme.textMuted}>AikaOS Token</text>
                 <text fg={theme.text}>{state.connect.openworkToken}</text>
                 <text fg={theme.textMuted}>Host Token</text>
                 <text fg={theme.text}>{state.connect.hostToken}</text>

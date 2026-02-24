@@ -16,9 +16,9 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenWork Cloud",
+  title: "AikaOS Cloud",
   description:
-    "Launch OpenWork cloud workers, handle Polar paywall flows, and operate Den from app.openwork.software."
+    "Launch AikaOS cloud workers, handle Polar paywall flows, and operate Den from app.openwork.software."
 };
 
 export default function RootLayout({

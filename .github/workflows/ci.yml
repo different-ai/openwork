@@ -34,7 +34,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build web
-        run: pnpm --filter @different-ai/openwork-web build
+        run: pnpm --filter @aikalabs/aikaos-web build
 
   build-den:
     name: Build Den service

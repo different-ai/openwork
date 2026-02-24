@@ -207,7 +207,7 @@ const webProcess = spawnLogged(
   "pnpm",
   [
     "--filter",
-    "@different-ai/openwork-ui",
+    "@aikalabs/aikaos",
     "exec",
     "vite",
     "--host",

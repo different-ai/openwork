@@ -59,7 +59,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
 
     const fallback = normalizeServerUrl(props.defaultUrl) ?? "";
 
-    // In production web builds served by OpenWork (Docker "remote" mode), OpenCode
+    // In production web builds served by AikaOS (Docker "remote" mode), OpenCode
     // traffic should go through the server proxy (usually same-origin `/opencode`).
     // Do not reuse any persisted localhost targets.
     const forceProxy =

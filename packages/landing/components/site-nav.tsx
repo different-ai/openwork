@@ -54,7 +54,7 @@ export function SiteNav(props: Props) {
             Book a call
           </a>
           <a
-            href="https://github.com/different-ai/openwork"
+            href="https://github.com/aikapenelope/openOS"
             className="flex items-center gap-1 text-gray-700 transition hover:text-black"
             rel="noreferrer"
             target="_blank"

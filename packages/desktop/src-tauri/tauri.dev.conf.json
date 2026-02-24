@@ -1,5 +1,5 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "OpenWork Dev",
-  "identifier": "com.differentai.openwork.dev"
+  "productName": "AikaOS Dev",
+  "identifier": "com.aikalabs.aikaos.dev"
 }

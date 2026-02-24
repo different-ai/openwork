@@ -2,7 +2,7 @@
 
 ### What changed
 
-- Added a desktop command to run `opencode db migrate` from OpenWork.
+- Added a desktop command to run `opencode db migrate` from AikaOS.
 - Added workspace recovery flow to stop engine, migrate, and restart once.
 - Added onboarding and settings UI entry points for "Fix migration".
 - Increased first local boot health timeout for `host-start` and `bootstrap-local`.
@@ -21,15 +21,15 @@ Note: this environment was connected to a remote workspace surface, so desktop-o
 
 ```bash
 pnpm install
-pnpm --filter @different-ai/openwork-ui typecheck
-pnpm --filter @different-ai/openwork-ui build
-pnpm --filter @different-ai/openwork-desktop tauri build --debug
+pnpm --filter @aikalabs/aikaos typecheck
+pnpm --filter @aikalabs/aikaos build
+pnpm --filter @aikalabs/aikaos-desktop tauri build --debug
 ```
 
 2. Run desktop app and verify recovery action appears.
 
 ```bash
-pnpm --filter @different-ai/openwork-desktop tauri dev
+pnpm --filter @aikalabs/aikaos-desktop tauri dev
 ```
 
 3. In the desktop app, create or open a local workspace and force local startup preference.

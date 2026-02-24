@@ -9,7 +9,7 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 jobs:
   stats:
-    if: github.repository == 'different-ai/openwork'
+    if: github.repository == 'aikapenelope/openOS'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -30,7 +30,7 @@ jobs:
           POSTHOG_HOST: https://us.i.posthog.com
           POSTHOG_EVENT: download
           POSTHOG_DISTINCT_ID: openwork-download
-          GITHUB_REPO: different-ai/openwork
+          GITHUB_REPO: aikapenelope/openOS
         run: node scripts/stats.mjs
 
       - name: Commit stats

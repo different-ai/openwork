@@ -16,7 +16,7 @@ function setCors(res) {
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type,Accept,X-OpenWork-Bundle-Type,X-OpenWork-Schema-Version,X-OpenWork-Name",
+    "Content-Type,Accept,X-AikaOS-Bundle-Type,X-AikaOS-Schema-Version,X-AikaOS-Name",
   );
 }
 

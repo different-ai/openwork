@@ -20,7 +20,7 @@
 
 ## Validation
 
-- `pnpm --filter @different-ai/openwork-ui typecheck`
-- `pnpm --filter @different-ai/openwork-ui test:health`
+- `pnpm --filter @aikalabs/aikaos typecheck`
+- `pnpm --filter @aikalabs/aikaos test:health`
 - Brought up Docker stack for manual verification: `packaging/docker/dev-up.sh`
 - Verified Soul dashboard renders new controls and state card in browser, then shut stack down.

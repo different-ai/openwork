@@ -1,6 +1,6 @@
 ---
 name: openwork-core
-description: Core context and guardrails for OpenWork native app
+description: Core context and guardrails for AikaOS native app
 ---
 
 ## Quick Usage (Already Configured)
@@ -44,7 +44,7 @@ opencode -p "your prompt" -f json -q
 
 ## Common Gotchas
 
-- OpenWork must stay within OpenCode's tool surface; avoid inventing new capabilities.
+- AikaOS must stay within OpenCode's tool surface; avoid inventing new capabilities.
 - Always expose plans, permissions, and progress for non-technical users.
 - Use Tauri commands for all system access (file, shell, database).
 - Keep UI at 60fps; avoid blocking the main thread.
@@ -77,7 +77,7 @@ pnpm tauri android init
 
 ## Common Gotchas
 
-- OpenWork must stay within OpenCode’s tool surface; avoid inventing new capabilities.
+- AikaOS must stay within OpenCode’s tool surface; avoid inventing new capabilities.
 - Always expose plans, permissions, and progress for non-technical users.
 
 ## First-Time Setup (If Not Configured)

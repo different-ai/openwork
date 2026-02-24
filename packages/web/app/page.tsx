@@ -13,7 +13,7 @@ export default function HomePage() {
         <span className="ow-brand-icon" aria-hidden>
           <span className="ow-brand-icon-core" />
         </span>
-        <span className="ow-brand-text">OpenWork</span>
+        <span className="ow-brand-text">AikaOS</span>
       </header>
 
       <CloudControlPanel />

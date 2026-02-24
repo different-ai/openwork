@@ -1,4 +1,4 @@
-# OpenWork Cloud App (`packages/web`)
+# AikaOS Cloud App (`packages/web`)
 
 Frontend for `app.openwork.software`.
 
@@ -14,7 +14,7 @@ Frontend for `app.openwork.software`.
 1. Install workspace deps from repo root:
    `pnpm install`
 2. Run the app:
-   `pnpm --filter @different-ai/openwork-web dev`
+   `pnpm --filter @aikalabs/aikaos-web dev`
 3. Open:
    `http://localhost:3005`
 

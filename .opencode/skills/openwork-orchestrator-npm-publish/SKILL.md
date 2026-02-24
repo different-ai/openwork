@@ -29,7 +29,7 @@ Manual recovery path (sidecars + npm) below.
 ```bash
 pnpm --filter openwork-orchestrator build:sidecars
 gh release create openwork-orchestrator-vX.Y.Z packages/orchestrator/dist/sidecars/* \
-  --repo different-ai/openwork \
+  --repo aikapenelope/openOS \
   --title "openwork-orchestrator vX.Y.Z sidecars" \
   --notes "Sidecar binaries and manifest for openwork-orchestrator vX.Y.Z"
 ```
@@ -79,5 +79,5 @@ Alternatively, export an npm token in your environment (see `.env.example`).
 - `openwork-orchestrator` is published as:
   - `openwork-orchestrator` (wrapper + optionalDependencies)
   - `openwork-orchestrator-darwin-arm64`, `openwork-orchestrator-darwin-x64`, `openwork-orchestrator-linux-arm64`, `openwork-orchestrator-linux-x64`, `openwork-orchestrator-windows-x64` (platform binaries)
-- `openwork-orchestrator` is versioned in lockstep with OpenWork app/desktop releases.
+- `openwork-orchestrator` is versioned in lockstep with AikaOS app/desktop releases.
 - openwork-orchestrator downloads sidecars from `openwork-orchestrator-vX.Y.Z` release assets by default.

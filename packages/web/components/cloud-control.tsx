@@ -69,7 +69,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 const WORKER_STATUS_POLL_MS = 5000;
-const DEFAULT_AUTH_NAME = "OpenWork User";
+const DEFAULT_AUTH_NAME = "AikaOS User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
 
@@ -1874,8 +1874,8 @@ export function CloudControlPanel() {
                             <p className="text-sm text-slate-600">
                               {openworkDeepLink
                                 ? openworkAppConnectUrl
-                                  ? "You are all set. Open in OpenWork or Open in App to start working."
-                                  : "You are all set. Open in OpenWork to start working."
+                                  ? "You are all set. Open in AikaOS or Open in App to start working."
+                                  : "You are all set. Open in AikaOS to start working."
                                 : "We are still preparing your connection. The button will unlock when ready."}
                             </p>
                           </div>
@@ -1940,7 +1940,7 @@ export function CloudControlPanel() {
                                   {openAccordion === "connect" ? (
                                     <div className="space-y-3 px-4 pb-4">
                                       <CredentialRow
-                                        label="OpenWork worker URL"
+                                        label="AikaOS worker URL"
                                         value={openworkConnectUrl}
                                         placeholder="URL appears once ready"
                                         canCopy={Boolean(openworkConnectUrl)}

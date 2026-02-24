@@ -100,7 +100,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork orchestrator"
+        echo "  AikaOS orchestrator"
         echo "  Server:     http://localhost:${OPENWORK_PORT:-8787}"
         echo "  Health:     http://localhost:${OPENWORK_PORT:-8787}/health"
         echo "  Token:      $$OPENWORK_TOKEN"
@@ -165,7 +165,7 @@ services:
 
         echo ""
         echo "============================================"
-        echo "  OpenWork web UI"
+        echo "  AikaOS web UI"
         echo "  URL:   http://localhost:${WEB_PORT:-5173}"
         echo "  Token: $${VITE_OPENWORK_TOKEN:-<see orchestrator logs>}"
         echo "============================================"
@@ -177,7 +177,7 @@ services:
         export HOST="0.0.0.0"
         export PORT="5173"
 
-        exec pnpm --filter @different-ai/openwork-ui exec vite \
+        exec pnpm --filter @aikalabs/aikaos exec vite \
           --host 0.0.0.0 \
           --port 5173 \
           --strictPort

@@ -40,7 +40,7 @@ git push origin vX.Y.Z
 If a tag needs a rerun, dispatch the workflow.
 
 ```bash
-gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
+gh workflow run "Release App" --repo aikapenelope/openOS -f tag=vX.Y.Z
 ```
 
 ---
@@ -49,6 +49,6 @@ gh workflow run "Release App" --repo different-ai/openwork -f tag=vX.Y.Z
 Confirm the run and the published release.
 
 ```bash
-gh run list --repo different-ai/openwork --workflow "Release App" --limit 5
-gh release view vX.Y.Z --repo different-ai/openwork
+gh run list --repo aikapenelope/openOS --workflow "Release App" --limit 5
+gh release view vX.Y.Z --repo aikapenelope/openOS
 ```

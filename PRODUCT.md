@@ -1,9 +1,9 @@
-# OpenWork Product
+# AikaOS Product
 
 ## Target Users
 
 > Bob the IT guy.
-Bob might already use opencode, he can setup agents and workflows and share them with his team. The only thing he needs is a way to share this. The way he does is by using OpenWork and creating "workpaces".
+Bob might already use opencode, he can setup agents and workflows and share them with his team. The only thing he needs is a way to share this. The way he does is by using AikaOS and creating "workpaces".
 
 > Susan in accounting
 
@@ -30,9 +30,9 @@ We should also eventually guide ther to:
 - Permission prompts understood/accepted (low confusion + low deny-by-accident).
 - UI performance: 60fps; <100ms interaction latency; no jank.
 
-## Product Primitives (What OpenWork Exposes)
+## Product Primitives (What AikaOS Exposes)
 
-OpenWork must feel like "OpenCode, but for everyone."
+AikaOS must feel like "OpenCode, but for everyone."
 
 ### 1) Tasks
 
@@ -41,7 +41,7 @@ OpenWork must feel like "OpenCode, but for everyone."
 
 ### 2) Plans / Todo Lists
 
-OpenWork provides a first-class plan UI:
+AikaOS provides a first-class plan UI:
 
 - Plan is generated before execution (editable).
 - Plan is updated during execution (step status + timestamps).
@@ -49,7 +49,7 @@ OpenWork provides a first-class plan UI:
 
 Implementation detail:
 
-- The plan is represented in OpenCode as structured `parts` (or a dedicated "plan message") and mirrored in OpenWork.
+- The plan is represented in OpenCode as structured `parts` (or a dedicated "plan message") and mirrored in AikaOS.
 
 ### 3) Steps
 
@@ -68,7 +68,7 @@ Artifacts are user-visible outputs:
 - generated documents/spreadsheets/presentations
 - exported logs and summaries
 
-OpenWork lists artifacts per run and supports open/share/download.
+AikaOS lists artifacts per run and supports open/share/download.
 
 ### 5) Audit Log
 
@@ -123,11 +123,11 @@ use the design from ./design.ts that is your core reference for building the ent
 
 ### Cloud Worker Onboarding (Current)
 
-- Sign in (or sign up) on OpenWork cloud control surface.
+- Sign in (or sign up) on AikaOS cloud control surface.
 - Launch worker with a human-readable name.
 - If needed, complete checkout and return.
 - Select launched worker from list/detail shell.
-- Connect from OpenWork app via `Add a worker` -> `Connect remote`.
+- Connect from AikaOS app via `Add a worker` -> `Connect remote`.
 - Prefer one-click deep link when available; always provide manual URL + token fallback.
 
 ### Task Execution
@@ -158,7 +158,7 @@ use the design from ./design.ts that is your core reference for building the ent
 
 ### 0. Install & Launch
 
-1. User installs OpenWork.
+1. User installs AikaOS.
 2. App launches.
 3. App shows "Choose mode: Host / Client".
 4. Host: start local OpenCode via SDK.
@@ -192,7 +192,7 @@ use the design from ./design.ts that is your core reference for building the ent
 ### 4. Quick Task Flow
 
 1. User types goal.
-2. OpenWork generates plan (structured).
+2. AikaOS generates plan (structured).
 3. User approves.
 4. Create session: `session.create()`.
 5. Send prompt: `session.prompt()`.
@@ -209,7 +209,7 @@ use the design from ./design.ts that is your core reference for building the ent
 ### 6. File-Driven Task Flow
 
 1. User attaches files.
-2. OpenWork injects context into session.
+2. AikaOS injects context into session.
 3. Execute prompt.
 
 ### 7. Permissions Flow (Any)
@@ -257,9 +257,9 @@ use the design from ./design.ts that is your core reference for building the ent
 
 ### 14. Hosted Cloud Worker Connect Flow (Current)
 
-1. User opens OpenWork cloud control page and authenticates.
+1. User opens AikaOS cloud control page and authenticates.
 2. User launches a worker (with optional checkout).
 3. UI polls until worker is healthy.
 4. UI resolves workspace-scoped connect URL (`/w/ws_*`) and access token.
-5. User clicks `Open in OpenWork` or copies manual credentials.
-6. In OpenWork app, user uses `Add a worker` -> `Connect remote` and starts working.
+5. User clicks `Open in AikaOS` or copies manual credentials.
+6. In AikaOS app, user uses `Add a worker` -> `Connect remote` and starts working.

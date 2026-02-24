@@ -1,22 +1,22 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
-# OpenWork
-> OpenWork helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
+# AikaOS
+> AikaOS helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
 
 
   
 ## Core Philosophy
-- Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
+- Local-first, cloud-ready: AikaOS runs on your machine in one click. Send a message instantly.
 - Composable: desktop app, WhatsApp/Slack/Telegram connector, or server. Use what fits, no lock-in.
-- Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
+- Ejectable: AikaOS is powered by OpenCode, so everything OpenCode can do works in AikaOS, even without a UI yet.
 - Sharing is caring: start solo, then share. One CLI or desktop command spins up an instantly shareable instance.
 
 <p align="center">
-  <img src="./app-demo.gif" alt="OpenWork demo" width="800" />
+  <img src="./app-demo.gif" alt="AikaOS demo" width="800" />
 </p>
 
 
-OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
+AikaOS is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
 
 
 ## Alternate UIs
@@ -25,24 +25,24 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
   - `curl -fsSL https://raw.githubusercontent.com/different-ai/opencode-router/dev/install.sh | bash`
   - run `opencode-router setup`, then `opencode-router whatsapp login`, then `opencode-router start`
   - full setup: https://github.com/different-ai/opencode-router/blob/dev/README.md
-- **OpenWork Orchestrator (CLI host)**: run OpenCode + OpenWork server without the desktop UI.
+- **AikaOS Orchestrator (CLI host)**: run OpenCode + AikaOS server without the desktop UI.
   - install: `npm install -g openwork-orchestrator`
   - run: `openwork start --workspace /path/to/workspace --approval auto`
   - docs: [packages/orchestrator/README.md](./packages/orchestrator/README.md)
 
 
 ## Quick start
-Download the dmg here https://github.com/different-ai/openwork/releases (or install from source below)
+Download the dmg here https://github.com/aikapenelope/openOS/releases (or install from source below)
 
 ## Why
 
 Current CLI and GUIs for opencode are anchored around developers. That means a focus on file diffs, tool names, and hard to extend capabilities without relying on exposing some form of cli.
 
-OpenWork is designed to be:
+AikaOS is designed to be:
 - **Extensible**: skill and opencode plugins are installable modules.
 - **Auditable**: show what happened, when, and why.
 - **Permissioned**: access to privileged flows.
-- **Local/Remote**: OpenWork works locally as well as can connect to remote servers.
+- **Local/Remote**: AikaOS works locally as well as can connect to remote servers.
 
 ## What’s Included 
 
@@ -82,7 +82,7 @@ OpenWork is designed to be:
 pnpm install
 ```
 
-OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell).
+AikaOS now lives in `packages/app` (UI) and `packages/desktop` (desktop shell).
 
 ### Run (Desktop)
 
@@ -104,11 +104,11 @@ yay -s opencode # Releases version
 
 ## Architecture (high-level)
 
-- In **Host mode**, OpenWork runs a local host stack and connects the UI to it.
+- In **Host mode**, AikaOS runs a local host stack and connects the UI to it.
   - Default runtime: `openwork` (installed from `openwork-orchestrator`), which orchestrates `opencode`, `openwork-server`, and optionally `opencode-router`.
   - Fallback runtime: `direct`, where the desktop app spawns `opencode serve --hostname 127.0.0.1 --port <free-port>` directly.
 
-When you select a project folder, OpenWork runs the host stack locally using that folder and connects the desktop UI.
+When you select a project folder, AikaOS runs the host stack locally using that folder and connects the desktop UI.
 This lets you run agentic workflows, send prompts, and see progress entirely on your machine without a remote server.
 
 - The UI uses `@opencode-ai/sdk/v2/client` to:
@@ -128,7 +128,7 @@ Capability permissions are defined in:
 
 ## OpenPackage Notes
 
-If `opkg` is not installed globally, OpenWork falls back to:
+If `opkg` is not installed globally, AikaOS falls back to:
 
 ```bash
 pnpm dlx opkg install <package>
@@ -136,13 +136,13 @@ pnpm dlx opkg install <package>
 
 ## OpenCode Plugins
 
-Plugins are the **native** way to extend OpenCode. OpenWork now manages them from the Skills tab by
+Plugins are the **native** way to extend OpenCode. AikaOS now manages them from the Skills tab by
 reading and writing `opencode.json`.
 
 - **Project scope**: `<workspace>/opencode.json`
 - **Global scope**: `~/.config/opencode/opencode.json` (or `$XDG_CONFIG_HOME/opencode/opencode.json`)
 
-You can still edit `opencode.json` manually; OpenWork uses the same format as the OpenCode CLI:
+You can still edit `opencode.json` manually; AikaOS uses the same format as the OpenCode CLI:
 
 ```json
 {
@@ -166,7 +166,7 @@ pnpm test:e2e
 
 ### Linux / Wayland (Hyprland)
 
-If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
+If AikaOS crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
 
 ```bash
 WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
@@ -178,7 +178,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## Security Notes
 
-- OpenWork hides model reasoning and sensitive tool metadata by default.
+- AikaOS hides model reasoning and sensitive tool metadata by default.
 - Host mode binds to `127.0.0.1` by default.
 
 ## Contributing
@@ -190,7 +190,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 ## For Teams & Businesses
 
-Interested in using OpenWork in your organization? We'd love to hear from you — reach out at [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) to chat about your use case.
+Interested in using AikaOS in your organization? We'd love to hear from you — reach out at [benjamin.shafii@gmail.com](mailto:benjamin.shafii@gmail.com) to chat about your use case.
 
 ## License
 

@@ -41,7 +41,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
   const canSave = createMemo(() => dirty() && !saving() && canWrite());
   const writeDisabledReason = createMemo(() => {
     if (canWrite()) return null;
-    return "Connect to an OpenWork server worker to edit files.";
+    return "Connect to an AikaOS server worker to edit files.";
   });
 
   const resetState = () => {
@@ -127,7 +127,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
     const workspaceId = props.workspaceId;
     const target = resolvedPath() ?? path();
     if (!client || !workspaceId || !target) {
-      props.onToast?.("Cannot save: OpenWork server not connected");
+      props.onToast?.("Cannot save: AikaOS server not connected");
       return;
     }
     if (!isMarkdown(target)) {

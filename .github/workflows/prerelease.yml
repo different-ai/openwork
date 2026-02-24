@@ -32,7 +32,7 @@ jobs:
 
           short_sha=$(echo "$GITHUB_SHA" | cut -c1-7)
           tag="v${short_sha}-dev"
-          name="OpenWork ${tag}"
+          name="AikaOS ${tag}"
           body="Automated prerelease from ${GITHUB_REF_NAME} (${GITHUB_SHA})."
 
           echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"

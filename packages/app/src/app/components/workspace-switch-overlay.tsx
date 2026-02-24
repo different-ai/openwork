@@ -87,7 +87,7 @@ export default function WorkspaceSwitchOverlay(props: {
                       <div class="relative">
 
               <div class="relative h-24 w-24 flex items-center justify-center">
-                <OpenWorkLogo size={44} class="drop-shadow-sm" />
+                <AikaOSLogo size={44} class="drop-shadow-sm" />
               </div>
             </div>
 

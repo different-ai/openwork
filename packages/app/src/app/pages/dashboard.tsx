@@ -722,14 +722,14 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "AikaOS invite link",
           value: inviteUrl,
           secret: true,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "AikaOS worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -763,13 +763,13 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: "AikaOS invite link",
           value: inviteUrl,
           secret: true,
           hint: "One link that prefills worker URL and token.",
         },
         {
-          label: "OpenWork worker URL",
+          label: "AikaOS worker URL",
           value: url,
         },
         {
@@ -810,19 +810,19 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return "Select a worker first.";
     if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
-      return "Share service links are available for OpenWork workers.";
+      return "Share service links are available for AikaOS workers.";
     }
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local OpenWork host is not ready yet.";
+        return "Local AikaOS host is not ready yet.";
       }
     } else {
       const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
       const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing OpenWork host URL.";
-      if (!token) return "Missing OpenWork token.";
+      if (!hostUrl) return "Missing AikaOS host URL.";
+      if (!token) return "Missing AikaOS token.";
     }
     return null;
   });
@@ -841,7 +841,7 @@ export default function DashboardView(props: DashboardViewProps) {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local OpenWork host is not ready yet.");
+        throw new Error("Local AikaOS host is not ready yet.");
       }
       const client = createOpenworkServerClient({ baseUrl, token });
 
@@ -856,20 +856,20 @@ export default function DashboardView(props: DashboardViewProps) {
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local OpenWork host.");
+        throw new Error("Could not resolve this worker on the local AikaOS host.");
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
     if (ws.remoteType !== "openwork") {
-      throw new Error("Share service links are available for OpenWork workers.");
+      throw new Error("Share service links are available for AikaOS workers.");
     }
 
     const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
     const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("OpenWork host URL and token are required.");
+      throw new Error("AikaOS host URL and token are required.");
     }
 
     const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
@@ -896,7 +896,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the OpenWork host.");
+      throw new Error("Could not resolve this worker on the AikaOS host.");
     }
 
     return { client, workspaceId, workspace: ws };
@@ -915,7 +915,7 @@ export default function DashboardView(props: DashboardViewProps) {
         schemaVersion: 1,
         type: "workspace-profile",
         name: `${workspaceLabel(workspace)} profile`,
-        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        description: "Full AikaOS workspace profile with config, MCP setup, commands, and skills.",
         workspace: exported,
       };
 
@@ -956,7 +956,7 @@ export default function DashboardView(props: DashboardViewProps) {
         schemaVersion: 1,
         type: "skills-set",
         name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an OpenWork workspace.",
+        description: "Complete skills set from an AikaOS workspace.",
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,

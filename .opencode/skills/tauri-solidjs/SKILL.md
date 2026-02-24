@@ -1,6 +1,6 @@
 ---
 name: tauri-solidjs
-description: Tauri 2.x + SolidJS stack for OpenWork native app
+description: Tauri 2.x + SolidJS stack for AikaOS native app
 ---
 
 ## Quick Usage (Already Configured)

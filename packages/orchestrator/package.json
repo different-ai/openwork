@@ -25,12 +25,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/aikapenelope/openOS.git",
     "directory": "packages/orchestrator"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/orchestrator",
+  "homepage": "https://github.com/aikapenelope/openOS/tree/dev/packages/orchestrator",
   "bugs": {
-    "url": "https://github.com/different-ai/openwork/issues"
+    "url": "https://github.com/aikapenelope/openOS/issues"
   },
   "keywords": [
     "openwork",

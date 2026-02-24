@@ -170,17 +170,17 @@ export function renderBundlePage({ id, rawJson, req }) {
   const prettyBundleJson = prettyJson(rawJson);
   const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
   const typeLabel = humanizeType(bundle.type);
-  const title = bundle.name || `OpenWork ${typeLabel}`;
+  const title = bundle.name || `AikaOS ${typeLabel}`;
   const description =
     bundle.description ||
-    "OpenWork share links stay human-friendly for reading while still exposing a stable machine-readable JSON bundle.";
+    "AikaOS share links stay human-friendly for reading while still exposing a stable machine-readable JSON bundle.";
   const workspaceSkills = listCount(bundle.workspace?.skills);
   const workspaceCommands = listCount(bundle.workspace?.commands);
   const workspaceHasConfig = Boolean(maybeObject(bundle.workspace?.opencode) || maybeObject(bundle.workspace?.openwork));
   const skillsSetCount = listCount(bundle.skills);
   const installHint =
     bundle.type === "skill"
-      ? "Open OpenWork and import from this link to install this skill."
+      ? "Open AikaOS and import from this link to install this skill."
       : bundle.type === "skills-set"
         ? "Use Open in app to import this full skills set in one step."
         : bundle.type === "workspace-profile"
@@ -206,7 +206,7 @@ export function renderBundlePage({ id, rawJson, req }) {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>${escapeHtml(title)} - OpenWork Share</title>
+  <title>${escapeHtml(title)} - AikaOS Share</title>
   <meta name="description" content="${escapeHtml(description)}" />
   <meta name="openwork:bundle-id" content="${escapeHtml(id)}" />
   <meta name="openwork:bundle-type" content="${escapeHtml(bundle.type || "unknown")}" />
@@ -439,9 +439,9 @@ export function renderBundlePage({ id, rawJson, req }) {
     <section class="card topbar">
       <a class="brand" href="${OPENWORK_SITE_URL}" target="_blank" rel="noreferrer">
         <span class="brand-badge">O</span>
-        <span>OpenWork Share</span>
+        <span>AikaOS Share</span>
       </a>
-      <a class="action-link secondary" href="${OPENWORK_DOWNLOAD_URL}" target="_blank" rel="noreferrer">Get OpenWork</a>
+      <a class="action-link secondary" href="${OPENWORK_DOWNLOAD_URL}" target="_blank" rel="noreferrer">Get AikaOS</a>
     </section>
 
     <section class="card hero">
@@ -459,7 +459,7 @@ export function renderBundlePage({ id, rawJson, req }) {
 
     <div class="grid">
       <section class="card">
-        <h2>Install in OpenWork</h2>
+        <h2>Install in AikaOS</h2>
         <ol>
           <li>${escapeHtml(installHint)}</li>
           <li>If you are using the API directly, call this link with <code>?format=json</code>.</li>

@@ -174,7 +174,7 @@ export default function ShareWorkspaceModal(props: {
               <div class="rounded-xl border border-gray-6 bg-gray-1/40 p-3 space-y-2">
                 <div class="text-xs font-medium text-gray-11">Workspace profile</div>
                 <div class="text-[11px] text-gray-9">
-                  Includes config, MCP setup, commands, and skills in one OpenWork share URL.
+                  Includes config, MCP setup, commands, and skills in one AikaOS share URL.
                 </div>
                 <Show when={props.shareWorkspaceProfileError?.trim()}>
                   <div class="rounded-md border border-red-7/20 bg-red-1/40 px-2 py-1.5 text-[11px] text-red-12">
@@ -213,7 +213,7 @@ export default function ShareWorkspaceModal(props: {
               <div class="rounded-xl border border-gray-6 bg-gray-1/40 p-3 space-y-2">
                 <div class="text-xs font-medium text-gray-11">Skills set</div>
                 <div class="text-[11px] text-gray-9">
-                  Publish every installed skill as one link. OpenWork can import all skills at once.
+                  Publish every installed skill as one link. AikaOS can import all skills at once.
                 </div>
                 <Show when={props.shareSkillsSetError?.trim()}>
                   <div class="rounded-md border border-red-7/20 bg-red-1/40 px-2 py-1.5 text-[11px] text-red-12">

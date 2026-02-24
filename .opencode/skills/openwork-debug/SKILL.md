@@ -1,6 +1,6 @@
 ---
 name: openwork-debug
-description: Debug OpenWork sidecars, config, and audit trail
+description: Debug AikaOS sidecars, config, and audit trail
 ---
 
 ## Credential check
@@ -56,4 +56,4 @@ sqlite3 ~/.opencode/opencode.db "select role, content from messages order by cre
 ## Notes
 
 - Audit logs are stored at `.opencode/openwork/audit.jsonl` in the workspace root.
-- OpenWork server writes only within approved workspace roots.
+- AikaOS server writes only within approved workspace roots.

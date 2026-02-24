@@ -1,4 +1,4 @@
-# OpenWork Host (Docker)
+# AikaOS Host (Docker)
 
 ## Dev testability stack (recommended for testing)
 
@@ -13,7 +13,7 @@ From the repo root:
 Then open the printed Web UI URL (ports are randomized so you can run multiple stacks).
 
 What it does:
-- Starts **headless** (OpenCode + OpenWork server) on port 8787
+- Starts **headless** (OpenCode + AikaOS server) on port 8787
 - Starts **web UI** (Vite dev server) on port 5173
 - Auto-generates and shares auth tokens between services
 - Web waits for headless health check before starting
@@ -35,7 +35,7 @@ Optional env vars (via `.env` or `export`):
 
 ## Production container
 
-This is a minimal packaging template to run the OpenWork Host contract in a single container.
+This is a minimal packaging template to run the AikaOS Host contract in a single container.
 
 It runs:
 
@@ -69,9 +69,9 @@ Optional:
 Persistence:
 
 - Workspace is mounted at `/workspace`
-- Host data dir is mounted at `/data` (OpenCode caches + OpenWork server config/tokens)
+- Host data dir is mounted at `/data` (OpenCode caches + AikaOS server config/tokens)
 
 ### Notes
 
-- OpenCode is not exposed directly; access it via the OpenWork proxy (`/opencode/*`).
+- OpenCode is not exposed directly; access it via the AikaOS proxy (`/opencode/*`).
 - For PaaS, replace `./workspace:/workspace` with a volume or a checkout strategy (git clone on boot).

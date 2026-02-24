@@ -127,9 +127,9 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalOpenWork = join(homedir(), ".config", "opencode", "skills");
+    const globalAikaOS = join(homedir(), ".config", "opencode", "skills");
     const globalClaude = join(homedir(), ".claude", "skills");
-    items.push(...(await listSkillsInDir(globalOpenWork, "global")));
+    items.push(...(await listSkillsInDir(globalAikaOS, "global")));
     items.push(...(await listSkillsInDir(globalClaude, "global")));
   }
 

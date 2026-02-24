@@ -310,14 +310,14 @@ export const TOY_UI_HTML = `<!doctype html>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OpenWork Toy UI</title>
+    <title>AikaOS Toy UI</title>
     <link rel="stylesheet" href="/ui/assets/toy.css" />
   </head>
   <body>
     <div class="wrap">
       <div class="top">
         <div class="title">
-          <h1>OpenWork Toy UI</h1>
+          <h1>AikaOS Toy UI</h1>
           <div class="sub">Local-first host contract harness (served by openwork-server)</div>
         </div>
         <div class="row">
@@ -803,7 +803,7 @@ async function ensureSession(workspaceId) {
   if (existing) return existing;
   const created = await apiFetch("/w/" + encodeURIComponent(workspaceId) + "/opencode/session", {
     method: "POST",
-    body: JSON.stringify({ title: "OpenWork Toy UI" }),
+    body: JSON.stringify({ title: "AikaOS Toy UI" }),
   });
   const id = created && created.id ? String(created.id) : "";
   if (!id) throw new Error("session_create_failed");
@@ -1724,7 +1724,7 @@ async function main() {
   };
 
   qs("#btn-delete-workspace").onclick = async () => {
-    if (!confirm("Delete this workspace from the host's OpenWork server config?")) return;
+    if (!confirm("Delete this workspace from the host's AikaOS server config?")) return;
     try {
       await apiFetch("/workspaces/" + encodeURIComponent(workspaceId), { method: "DELETE" });
       setStatus("Workspace deleted (refresh workspaces)", "ok");

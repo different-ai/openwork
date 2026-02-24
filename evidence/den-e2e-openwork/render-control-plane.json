@@ -2,7 +2,7 @@
   "service": {
     "id": "srv-d6ck5utm5p6s73er2av0",
     "name": "den-control-plane-openwork-1771651835",
-    "repo": "https://github.com/different-ai/openwork",
+    "repo": "https://github.com/aikapenelope/openOS",
     "branch": "feat/den-cloud-worker-openwork-repo",
     "rootDir": "services/den",
     "url": "https://den-control-plane-openwork-1771651835.onrender.com"
