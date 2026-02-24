@@ -41,7 +41,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
   const canSave = createMemo(() => dirty() && !saving() && canWrite());
   const writeDisabledReason = createMemo(() => {
     if (canWrite()) return null;
-    return "Connect to an OpenWork server worker to edit files.";
+    return "Connect to an AikaOS server worker to edit files.";
   });
 
   const resetState = () => {
@@ -85,7 +85,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
         result = (await client.readWorkspaceFile(workspaceId, target)) as OpenworkWorkspaceFileContent;
       } catch (err) {
         // Artifacts are frequently referenced as workspace-relative paths (e.g. `learned/foo.md`),
-        // but on disk they may live under the OpenWork outbox dir: `.opencode/openwork/outbox/`.
+        // but on disk they may live under the AikaOS outbox dir: `.opencode/openwork/outbox/`.
         // If the first lookup fails, retry there.
         const candidateOutbox = `.opencode/openwork/outbox/${target}`.replace(/\/+/g, "/");
         const shouldTryOutbox =
@@ -127,7 +127,7 @@ export default function ArtifactMarkdownEditor(props: ArtifactMarkdownEditorProp
     const workspaceId = props.workspaceId;
     const target = resolvedPath() ?? path();
     if (!client || !workspaceId || !target) {
-      props.onToast?.("Cannot save: OpenWork server not connected");
+      props.onToast?.("Cannot save: AikaOS server not connected");
       return;
     }
     if (!isMarkdown(target)) {

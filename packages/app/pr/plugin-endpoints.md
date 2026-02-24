@@ -4,7 +4,7 @@ description: Use /config for short-term plugin listing and add
 ---
 
 ## Set context
-OpenWork manages plugins by editing `opencode.json`, but remote workspaces cannot read that file. OpenCode already exposes `/config` for reading and updating project config, so the short-term plan is to rely on `/config` for plugin listing and adds instead of introducing a new `/plugin` endpoint right away.
+AikaOS manages plugins by editing `opencode.json`, but remote workspaces cannot read that file. OpenCode already exposes `/config` for reading and updating project config, so the short-term plan is to rely on `/config` for plugin listing and adds instead of introducing a new `/plugin` endpoint right away.
 
 ---
 
@@ -51,7 +51,7 @@ PATCH `/config` adds plugins by submitting the full plugin list.
 
 ## Shape data
 The plugin list is the same array of string specifiers used in config (`config.plugin`).
-OpenWork treats the config list as the source of truth for "installed" plugins.
+AikaOS treats the config list as the source of truth for "installed" plugins.
 
 ---
 
@@ -81,7 +81,7 @@ Host/Tauri mode can keep using local `opencode.json` parsing.
 ---
 
 ## Related APIs
-Skills already have a dedicated endpoint (`GET /skill`), which OpenWork uses for remote listing.
+Skills already have a dedicated endpoint (`GET /skill`), which AikaOS uses for remote listing.
 
 ---
 
@@ -93,4 +93,4 @@ Errors include file path, parse details, and API caller identity.
 
 ## Plan rollout
 Document this as the short-term path for remote plugin support.
-Revisit a dedicated `/plugin` endpoint after OpenWork validates the config-based flow.
+Revisit a dedicated `/plugin` endpoint after AikaOS validates the config-based flow.

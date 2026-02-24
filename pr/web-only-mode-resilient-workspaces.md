@@ -1,7 +1,7 @@
 # Web-Only Mode + Resilient Workspaces PRD
 
 ## Summary
-Enable OpenWork to run fully in a browser without the Tauri shell, extract shared UI components for web views, and make core flows resilient when no working directory is available. This PRD defines the product shape, user experience, and architectural shifts required to maintain parity with OpenCode primitives while expanding access to web and mobile environments.
+Enable AikaOS to run fully in a browser without the Tauri shell, extract shared UI components for web views, and make core flows resilient when no working directory is available. This PRD defines the product shape, user experience, and architectural shifts required to maintain parity with OpenCode primitives while expanding access to web and mobile environments.
 
 ## Goals
 - Deliver a web-only runtime that does not require the Tauri browser.
@@ -17,7 +17,7 @@ Enable OpenWork to run fully in a browser without the Tauri shell, extract share
 - Add new compute backends beyond OpenCode.
 
 ## Definitions
-- **Web-only mode**: OpenWork runs in a standard browser, with no Tauri shell.
+- **Web-only mode**: AikaOS runs in a standard browser, with no Tauri shell.
 - **Host**: A trusted device running OpenCode that can execute tasks and stream events.
 - **Workspace**: The authorized folder or project context for tasks.
 - **No-workspace mode**: Tasks that run without an attached workspace, using minimal context.
@@ -30,7 +30,7 @@ Enable OpenWork to run fully in a browser without the Tauri shell, extract share
 - Single codepath for UI, with platform-specific adapters.
 
 ## Current state / problem
-- OpenWork is tightly coupled to Tauri runtime expectations, limiting web-only execution.
+- AikaOS is tightly coupled to Tauri runtime expectations, limiting web-only execution.
 - Several UI components assume local filesystem access and a working directory.
 - When a working directory is missing, flows break or block instead of degrading.
 - Component reuse across web and desktop is limited by platform-specific dependencies.
@@ -65,7 +65,7 @@ Enable OpenWork to run fully in a browser without the Tauri shell, extract share
 
 ## UX / flows
 ### Entry (web-only)
-1. User opens OpenWork in browser.
+1. User opens AikaOS in browser.
 2. Runtime banner indicates “Web Mode”.
 3. User chooses:
    - Connect to a host
@@ -101,7 +101,7 @@ Enable OpenWork to run fully in a browser without the Tauri shell, extract share
 - Keep desktop experience unchanged while enabling web-only parity.
 
 ## Acceptance criteria
-1. OpenWork runs in a browser with no Tauri dependencies.
+1. AikaOS runs in a browser with no Tauri dependencies.
 2. Core task flow works without a workspace, with clear limitations.
 3. Users can connect to a host and run sessions end-to-end.
 4. Components render identically across web and desktop for shared views.

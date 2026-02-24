@@ -764,7 +764,7 @@ export default function SessionView(props: SessionViewProps) {
 
   const openMarkdownEditor = (file: string) => {
     if (!props.openworkServerClient) {
-      setToastMessage("Cannot open file: not connected to OpenWork server.");
+      setToastMessage("Cannot open file: not connected to AikaOS server.");
       return;
     }
     if (!props.openworkServerWorkspaceId) {
@@ -882,7 +882,7 @@ export default function SessionView(props: SessionViewProps) {
     if (props.openworkServerStatus === "limited") {
       return "Add a server token to attach files.";
     }
-    return "Connect to OpenWork server to attach files.";
+    return "Connect to AikaOS server to attach files.";
   });
 
   createEffect(() => {
@@ -1996,7 +1996,7 @@ export default function SessionView(props: SessionViewProps) {
       const token = props.openworkServerHostInfo?.clientToken?.trim() || "";
       return [
         {
-          label: "OpenWork worker URL",
+          label: "AikaOS worker URL",
           value: url,
           placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
@@ -2026,7 +2026,7 @@ export default function SessionView(props: SessionViewProps) {
         "";
       return [
         {
-          label: "OpenWork worker URL",
+          label: "AikaOS worker URL",
           value: url,
         },
         {
@@ -2149,7 +2149,7 @@ export default function SessionView(props: SessionViewProps) {
     const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
       if (notify) {
-        setToastMessage("Connect to the OpenWork server to upload inbox files.");
+        setToastMessage("Connect to the AikaOS server to upload inbox files.");
       }
       return [];
     }
@@ -3135,7 +3135,7 @@ export default function SessionView(props: SessionViewProps) {
                 >
                   <div class="text-sm font-semibold text-dls-text">Automate your browser</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Set up browser actions and run reliable web tasks from OpenWork.
+                    Set up browser actions and run reliable web tasks from AikaOS.
                   </div>
                 </button>
                 <button

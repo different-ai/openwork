@@ -3,25 +3,12 @@ import { SiteNav } from "../../components/site-nav";
 import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork - Starter Success",
-  description: "Thanks for pre-ordering OpenWork Team Starter.",
+  title: "AikaOS — Suscripción confirmada",
+  description: "Gracias por suscribirte a AikaOS Profesional.",
 };
 
 export default async function StarterSuccessPage() {
   const github = await getGithubData();
-  const calBase = process.env.NEXT_PUBLIC_CAL_URL ?? "";
-  const calHref = (() => {
-    if (!calBase) return "/enterprise#book";
-    try {
-      const url = new URL(calBase);
-      url.searchParams.set("source", "starter-success");
-      url.searchParams.set("notes", "Paid customer: OpenWork Team Starter (12 months). Priority onboarding requested.");
-      url.searchParams.set("description", "Paid customer - Team Starter (12 months). Please prioritize onboarding.");
-      return url.toString();
-    } catch {
-      return calBase;
-    }
-  })();
 
   return (
     <div className="min-h-screen">
@@ -31,43 +18,48 @@ export default async function StarterSuccessPage() {
         <div className="content-max-width px-6">
           <section className="animate-fade-up">
             <div className="mb-4 inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-emerald-700">
-              starter confirmed
+              Suscripción confirmada
             </div>
 
             <h1 className="mb-4 text-4xl font-bold tracking-tight">
-              Thank you. You&apos;re in.
+              Gracias. Ya estás dentro.
             </h1>
 
             <p className="max-w-2xl text-[16px] leading-relaxed text-gray-700">
-              You&apos;re on track for getting access to OpenWork Hosted in 7 days.
+              Estás en camino a recibir acceso a AikaOS Nube en los próximos
+              7 días.
             </p>
           </section>
 
           <section className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2">
             <div className="feature-card">
-              <h2 className="mb-2 text-[15px] font-bold">What happens next</h2>
+              <h2 className="mb-2 text-[15px] font-bold">
+                ¿Qué sigue?
+              </h2>
               <ul className="space-y-2 text-[14px] leading-relaxed text-gray-600">
-                <li>- We review your team setup and use case.</li>
-                <li>- We send rollout details for teams up to 10 people.</li>
-                <li>- You get early access as hosted workers go live.</li>
+                <li>- Revisamos tu configuración de equipo y caso de uso.</li>
+                <li>- Te enviamos los detalles de implementación para equipos de hasta 10 personas.</li>
+                <li>- Recibes acceso anticipado cuando los workers hospedados estén activos.</li>
               </ul>
             </div>
 
-            <div className="feature-card bg-gradient-to-br from-blue-50 to-orange-50">
-              <h2 className="mb-2 text-[15px] font-bold">Want to accelerate?</h2>
+            <div className="feature-card bg-gradient-to-br from-teal-50 to-emerald-50">
+              <h2 className="mb-2 text-[15px] font-bold">
+                ¿Quieres acelerar?
+              </h2>
               <p className="mb-4 text-[14px] leading-relaxed text-gray-600">
-                Schedule a call with the founder to accelerate and share your
-                use case.
+                Escríbenos para agendar una llamada y compartir tu caso de
+                uso. Te ayudamos con el onboarding personalizado.
               </p>
-              <a href={calHref} className="doc-button">
-                Schedule founder call
+              <a href="mailto:contacto@aikalabs.com" className="doc-button">
+                Contactar equipo
               </a>
             </div>
           </section>
 
           <div className="mt-10 rounded-xl border border-gray-100 bg-white p-5 text-[13px] text-gray-500">
-            OpenWork stays open source, runs in any environment, and works with
-            any model.
+            AikaOS es open source, corre en cualquier entorno y funciona con
+            cualquier modelo de IA.
           </div>
 
           <SiteFooter />

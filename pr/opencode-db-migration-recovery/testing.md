@@ -2,7 +2,7 @@
 
 ### What changed
 
-- Added a desktop command to run `opencode db migrate` from OpenWork.
+- Added a desktop command to run `opencode db migrate` from AikaOS.
 - Added workspace recovery flow to stop engine, migrate, and restart once.
 - Added onboarding and settings UI entry points for "Fix migration".
 - Increased first local boot health timeout for `host-start` and `bootstrap-local`.

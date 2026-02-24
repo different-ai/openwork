@@ -1,4 +1,4 @@
-# OpenWork Cloud App (`packages/web`)
+# AikaOS Cloud App (`packages/web`)
 
 Frontend for `app.openwork.software`.
 

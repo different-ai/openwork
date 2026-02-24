@@ -2423,14 +2423,14 @@ function printHelp(): void {
     "  openwork status [--openwork-url <url>] [--opencode-url <url>]",
     "",
     "Commands:",
-    "  start                   Start OpenCode + OpenWork server + OpenCodeRouter",
+    "  start                   Start OpenCode + AikaOS server + OpenCodeRouter",
     "  serve                   Start services and stream logs (no TUI)",
     "  daemon                  Run orchestrator router daemon (multi-workspace)",
     "  workspace               Manage workspaces (add/list/switch/path)",
     "  instance                Manage workspace instances (dispose)",
     "  approvals list           List pending approval requests",
     "  approvals reply <id>     Approve or deny a request",
-    "  status                  Check OpenCode/OpenWork health",
+    "  status                  Check OpenCode/AikaOS health",
     "",
     "Options:",
     "  --workspace <path>        Workspace directory (default: cwd)",
@@ -2454,7 +2454,7 @@ function printHelp(): void {
     "  --openwork-host-token <t> Host token for approvals",
     "  --approval <mode>         manual | auto (default: manual)",
     "  --approval-timeout <ms>   Approval timeout in ms",
-    "  --read-only               Start OpenWork server in read-only mode",
+    "  --read-only               Start AikaOS server in read-only mode",
     "  --cors <origins>          Comma-separated CORS origins or *",
     "  --connect-host <host>     Override LAN host used for pairing URLs",
     "  --openwork-server-bin <p> Path to openwork-server binary (requires --allow-external)",
@@ -3269,7 +3269,7 @@ async function verifyOpenworkServer(input: {
   const workspaces = await fetchJson(`${input.baseUrl}/workspaces`, { headers });
   const items = Array.isArray(workspaces?.items) ? (workspaces.items as Array<Record<string, unknown>>) : [];
   if (!items.length) {
-    throw new Error("OpenWork server returned no workspaces");
+    throw new Error("AikaOS server returned no workspaces");
   }
 
   const expectedPath = normalizeWorkspacePath(input.expectedWorkspace);
@@ -3286,25 +3286,25 @@ async function verifyOpenworkServer(input: {
     | undefined;
 
   if (!matched) {
-    throw new Error(`OpenWork server workspace mismatch. Expected ${expectedPath}.`);
+    throw new Error(`AikaOS server workspace mismatch. Expected ${expectedPath}.`);
   }
 
   const opencode = matched.opencode;
   if (input.expectedOpencodeBaseUrl && opencode?.baseUrl !== input.expectedOpencodeBaseUrl) {
     throw new Error(
-      `OpenWork server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencode?.baseUrl ?? "<missing>"}.`,
+      `AikaOS server OpenCode base URL mismatch: expected ${input.expectedOpencodeBaseUrl}, got ${opencode?.baseUrl ?? "<missing>"}.`,
     );
   }
   if (input.expectedOpencodeDirectory && opencode?.directory !== input.expectedOpencodeDirectory) {
     throw new Error(
-      `OpenWork server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencode?.directory ?? "<missing>"}.`,
+      `AikaOS server OpenCode directory mismatch: expected ${input.expectedOpencodeDirectory}, got ${opencode?.directory ?? "<missing>"}.`,
     );
   }
   if (input.expectedOpencodeUsername && opencode?.username !== input.expectedOpencodeUsername) {
-    throw new Error("OpenWork server OpenCode username mismatch.");
+    throw new Error("AikaOS server OpenCode username mismatch.");
   }
   if (input.expectedOpencodePassword && opencode?.password !== input.expectedOpencodePassword) {
-    throw new Error("OpenWork server OpenCode password mismatch.");
+    throw new Error("AikaOS server OpenCode password mismatch.");
   }
 
   const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
@@ -3325,7 +3325,7 @@ async function runChecks(input: {
   const hostHeaders = { "X-OpenWork-Host-Token": input.hostToken };
   const workspaces = await fetchJson(`${baseUrl}/workspaces`, { headers });
   if (!workspaces?.items?.length) {
-    throw new Error("OpenWork server returned no workspaces");
+    throw new Error("AikaOS server returned no workspaces");
   }
 
   const workspaceId = workspaces.items[0].id as string;
@@ -3367,7 +3367,7 @@ async function runChecks(input: {
     }
   }
 
-  const created = await input.opencodeClient.session.create({ title: "OpenWork headless check" });
+  const created = await input.opencodeClient.session.create({ title: "AikaOS headless check" });
   const createdSession = unwrap(created);
   unwrap(await input.opencodeClient.session.messages({ sessionID: createdSession.id, limit: 10 }));
 
@@ -3388,7 +3388,7 @@ async function runChecks(input: {
       }
     })();
 
-    unwrap(await input.opencodeClient.session.create({ title: "OpenWork headless check events" }));
+    unwrap(await input.opencodeClient.session.create({ title: "AikaOS headless check events" }));
     await new Promise((resolve) => setTimeout(resolve, 1200));
     controller.abort();
     await Promise.race([reader, new Promise((resolve) => setTimeout(resolve, 500))]);
@@ -4527,7 +4527,7 @@ async function runStatus(args: ParsedArgs) {
   } else {
     if (status.openwork) {
       const openwork = status.openwork as { ok: boolean; url: string; error?: string };
-      console.log(`OpenWork server: ${openwork.ok ? "ok" : "error"} (${openwork.url})`);
+      console.log(`AikaOS server: ${openwork.ok ? "ok" : "error"} (${openwork.url})`);
       if (openwork.error) console.log(`  ${openwork.error}`);
     }
     if (status.opencode) {
@@ -4819,7 +4819,7 @@ async function runStart(args: ParsedArgs) {
 
   const attachCommand =
     sandboxMode !== "none"
-      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires OpenWork token)`
+      ? `OpenCode is proxied via ${opencodeConnectUrl} (requires AikaOS token)`
       : buildAttachCommand({
           url: opencodeConnectUrl,
           workspace: resolvedWorkspace,
@@ -4910,8 +4910,8 @@ async function runStart(args: ParsedArgs) {
             `Stop: ${sandboxStopCommand} ${sandboxContainerName}`,
           ]
         : []),
-      `OpenWork URL: ${openworkConnectUrl}`,
-      `OpenWork Token: ${openworkToken}`,
+      `AikaOS URL: ${openworkConnectUrl}`,
+      `AikaOS Token: ${openworkToken}`,
       `OpenCode URL: ${opencodeConnectUrl}`,
       `Attach: ${attachCommand}`,
     ].join("\n");
@@ -5484,7 +5484,7 @@ async function runStart(args: ParsedArgs) {
         "openwork-orchestrator",
       );
     } else {
-      console.log("OpenWork orchestrator running");
+      console.log("AikaOS orchestrator running");
       console.log(`Run ID: ${runId}`);
       console.log(`Workspace: ${payload.workspace}`);
       console.log(`OpenCode: ${payload.opencode.baseUrl}`);
@@ -5492,8 +5492,8 @@ async function runStart(args: ParsedArgs) {
       if (payload.opencode.username && payload.opencode.password) {
         console.log(`OpenCode auth: ${payload.opencode.username} / ${payload.opencode.password}`);
       }
-      console.log(`OpenWork server: ${payload.openwork.baseUrl}`);
-      console.log(`OpenWork connect URL: ${payload.openwork.connectUrl}`);
+      console.log(`AikaOS server: ${payload.openwork.baseUrl}`);
+      console.log(`AikaOS connect URL: ${payload.openwork.connectUrl}`);
       console.log(`Client token: ${payload.openwork.token}`);
       console.log(`Host token: ${payload.openwork.hostToken}`);
     }

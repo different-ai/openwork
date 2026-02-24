@@ -1,8 +1,8 @@
 [package]
-name = "openwork"
+name = "aikaos"
 version = "0.11.121"
-description = "OpenWork"
-authors = ["Different AI"]
+description = "AikaOS"
+authors = ["AikaLabs"]
 edition = "2021"
 
 [build-dependencies]

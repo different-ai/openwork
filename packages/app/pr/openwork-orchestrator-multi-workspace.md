@@ -4,7 +4,7 @@ description: Keep a single opencode process alive and switch workspaces JIT via 
 ---
 
 ## Set context
-OpenWork currently restarts the OpenCode engine whenever a local workspace changes. That is slow, drops session streams, and makes it impossible to keep multiple local workspaces warm at once. OpenCode already supports routing requests by `directory`, and caches per-directory instances in a single server process. The missing piece is a stable local control plane that keeps one OpenCode process alive, manages multiple workspaces, and exposes a CLI for programmatic tests and automation.
+AikaOS currently restarts the OpenCode engine whenever a local workspace changes. That is slow, drops session streams, and makes it impossible to keep multiple local workspaces warm at once. OpenCode already supports routing requests by `directory`, and caches per-directory instances in a single server process. The missing piece is a stable local control plane that keeps one OpenCode process alive, manages multiple workspaces, and exposes a CLI for programmatic tests and automation.
 
 ---
 
@@ -39,7 +39,7 @@ OpenWork currently restarts the OpenCode engine whenever a local workspace chang
 - Runs on localhost only.
 - Spawns a single `opencode serve` process and keeps it alive.
 - Exposes a small HTTP control plane to manage workspaces and report status.
-- Stores state in a JSON file under an OpenWork data directory.
+- Stores state in a JSON file under an AikaOS data directory.
 - Provides JIT instance creation by calling OpenCode endpoints with `directory`.
 
 ### Workspace registry
@@ -129,7 +129,7 @@ Calls OpenCode `/instance/dispose` with the workspace directory.
   "workspaces": [
     {
       "id": "ws-abc123",
-      "name": "OpenWork",
+      "name": "AikaOS",
       "path": "/Users/me/openwork",
       "workspaceType": "local",
       "lastUsedAt": 1730000000000
@@ -181,7 +181,7 @@ Calls OpenCode `/instance/dispose` with the workspace directory.
 
 ## Rollout plan
 - Phase 0: openwork-orchestrator daemon + CLI only, programmatic tests.
-- Phase 1: OpenWork desktop can read openwork-orchestrator state and attach to baseUrl + directory.
+- Phase 1: AikaOS desktop can read openwork-orchestrator state and attach to baseUrl + directory.
 - Phase 2: Add idle eviction and remote workspace helpers.
 
 ---
@@ -195,5 +195,5 @@ Calls OpenCode `/instance/dispose` with the workspace directory.
 
 ## Open questions
 - Where should openwork-orchestrator store its state on each platform (XDG vs OS app data)?
-- Should openwork-orchestrator reuse OpenWork desktop workspace registry for compatibility?
+- Should openwork-orchestrator reuse AikaOS desktop workspace registry for compatibility?
 - Should we standardize a `workspaceId` format shared by desktop and CLI?

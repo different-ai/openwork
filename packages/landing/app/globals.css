@@ -4,6 +4,9 @@
 
 :root {
   color-scheme: light;
+  --aika-teal: #00C8B4;
+  --aika-teal-hover: #00B0A0;
+  --aika-dark: #0F0F14;
 }
 
 html {
@@ -12,8 +15,8 @@ html {
 
 body {
   font-family: var(--font-sora), ui-sans-serif, system-ui;
-  background: radial-gradient(1200px 600px at 10% -10%, #f5f9ff 0%, transparent 60%),
-    radial-gradient(900px 500px at 90% 0%, #fff6ef 0%, transparent 55%),
+  background: radial-gradient(1200px 600px at 10% -10%, #f0fdfb 0%, transparent 60%),
+    radial-gradient(900px 500px at 90% 0%, #f0fdfa 0%, transparent 55%),
     #ffffff;
   color: #111111;
 }
@@ -24,13 +27,30 @@ body {
 }
 
 .content-max-width {
-  max-width: 64rem; /* matches Tailwind max-w-5xl used by the nav */
+  max-width: 64rem;
   margin-left: auto;
   margin-right: auto;
 }
 
 .doc-button {
-  background-color: #111111;
+  background-color: var(--aika-teal);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s ease, opacity 0.2s ease;
+}
+
+.doc-button:hover {
+  background-color: var(--aika-teal-hover);
+}
+
+.doc-button-dark {
+  background-color: var(--aika-dark);
   color: #ffffff;
   padding: 8px 16px;
   border-radius: 6px;
@@ -42,21 +62,22 @@ body {
   transition: opacity 0.2s ease;
 }
 
-.doc-button:hover {
+.doc-button-dark:hover {
   opacity: 0.9;
 }
 
 .step-circle {
   width: 24px;
   height: 24px;
-  background: #f4f4f4;
+  background: #f0fdfa;
   border-radius: 999px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 12px;
   font-weight: 600;
-  color: #666666;
+  color: #0F0F14;
+  border: 1px solid #d1faf4;
 }
 
 hr {
@@ -74,7 +95,7 @@ hr {
 }
 
 .feature-card:hover {
-  border-color: #e0e0e0;
+  border-color: #d1faf4;
   transform: translateY(-2px);
 }
 
@@ -88,35 +109,6 @@ hr {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-}
-
-.word-cycle {
-  display: inline-block;
-  position: relative;
-  vertical-align: top;
-  overflow: hidden;
-  height: 1.5em;
-}
-
-.word-cycle span {
-  display: block;
-  animation: cycle 4s infinite ease-in-out;
-  color: #111111;
-  font-weight: 600;
-}
-
-@keyframes cycle {
-  0%,
-  45% {
-    transform: translateY(0);
-  }
-  50%,
-  95% {
-    transform: translateY(-1.5em);
-  }
-  100% {
-    transform: translateY(0);
-  }
 }
 
 .animate-fade-up {
@@ -135,7 +127,6 @@ hr {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .word-cycle span,
   .animate-fade-up {
     animation: none;
   }

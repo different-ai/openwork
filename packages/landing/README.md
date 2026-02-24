@@ -1,4 +1,4 @@
-# OpenWork Landing (Next.js)
+# AikaOS Landing (Next.js)
 
 ## Local dev
 

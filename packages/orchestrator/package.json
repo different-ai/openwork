@@ -2,7 +2,7 @@
   "name": "openwork-orchestrator",
   "version": "0.11.121",
   "opencodeVersion": "1.2.6",
-  "description": "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
+  "description": "AikaOS host orchestrator for opencode + AikaOS server + opencode-router",
   "private": true,
   "type": "module",
   "scripts": {
@@ -25,12 +25,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/different-ai/openwork.git",
+    "url": "git+https://github.com/aikapenelope/openOS.git",
     "directory": "packages/orchestrator"
   },
-  "homepage": "https://github.com/different-ai/openwork/tree/dev/packages/orchestrator",
+  "homepage": "https://github.com/aikapenelope/openOS/tree/main/packages/orchestrator",
   "bugs": {
-    "url": "https://github.com/different-ai/openwork/issues"
+    "url": "https://github.com/aikapenelope/openOS/issues"
   },
   "keywords": [
     "openwork",

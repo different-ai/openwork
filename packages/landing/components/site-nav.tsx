@@ -7,50 +7,47 @@ type Props = {
 };
 
 export function SiteNav(props: Props) {
-  const call = "/enterprise#book";
   const navLink = (isActive: boolean) =>
     isActive ? "transition text-black" : "transition hover:text-black";
   return (
-    <nav className="sticky top-0 z-50 py-4">
+    <nav className="sticky top-0 z-50 py-4 bg-white/80 backdrop-blur-sm">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6">
         <div className="flex items-center gap-6">
-          <Link href="/" className="text-lg font-bold tracking-tight">
-            OpenWork
+          <Link href="/" className="flex items-center gap-2 text-lg font-bold tracking-tight">
+            <span className="mono text-aika-teal">{">_"}</span>
+            <span>AikaOS</span>
           </Link>
           <div className="hidden items-center gap-6 text-[15px] text-gray-700 md:flex">
-            <Link href="/#install" className="transition hover:text-black">
-              Getting started
+            <Link href="/#expertos" className="transition hover:text-black">
+              Expertos
             </Link>
-            <Link href="/#capabilities" className="transition hover:text-black">
-              Features
+            <Link href="/#funciones" className="transition hover:text-black">
+              Funciones
             </Link>
             <Link href="/#faq" className="transition hover:text-black">
               FAQ
             </Link>
             <Link href="/download" className={navLink(props.active === "download")}>
-              Download
+              Descargar
             </Link>
             <Link href="/enterprise" className={navLink(props.active === "enterprise")}>
-              Enterprise
-            </Link>
-            <Link href="/den" className={navLink(props.active === "den")}>
-              Den
+              Precios
             </Link>
           </div>
         </div>
         <div className="flex items-center gap-4 text-[14px]">
           <a
-            href={call}
-            className="hidden rounded-md bg-black px-3 py-2 text-[13px] font-semibold text-white transition-opacity hover:opacity-90 sm:inline-flex"
+            href="/enterprise#contacto"
+            className="hidden rounded-md bg-aika-teal px-3 py-2 text-[13px] font-semibold text-white transition-colors hover:bg-aika-teal-hover sm:inline-flex"
           >
-            Book a call
+            Contactar ventas
           </a>
           <a
-            href="https://github.com/different-ai/openwork"
+            href="https://github.com/aikapenelope/openOS"
             className="flex items-center gap-1 text-gray-700 transition hover:text-black"
             rel="noreferrer"
             target="_blank"
-            aria-label="OpenWork GitHub stars"
+            aria-label="AikaOS en GitHub"
           >
             <svg
               className="h-4 w-4"

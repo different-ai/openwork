@@ -336,7 +336,7 @@ export default function SkillsView(props: SkillsViewProps) {
         const name = typeof json.name === "string" ? json.name.trim() : "";
         const content = typeof json.content === "string" ? json.content : "";
         if (schemaVersion !== 1 || type !== "skill") {
-          throw new Error("This link is not an OpenWork skill bundle");
+          throw new Error("This link is not an AikaOS skill bundle");
         }
         if (!name) throw new Error("Bundle is missing a skill name");
         if (!content) throw new Error("Bundle is missing skill content");
@@ -641,7 +641,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
                         <Show when={isOpenworkInjectedSkill(skill)}>
                           <span class="rounded-full border border-dls-border bg-dls-hover px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-dls-secondary">
-                            OpenWork
+                            AikaOS
                           </span>
                         </Show>
                       </div>

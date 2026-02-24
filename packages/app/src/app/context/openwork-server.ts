@@ -1,7 +1,7 @@
 /**
- * OpenWork server connection state.
+ * AikaOS server connection state.
  *
- * Encapsulates all signals, effects, and helpers related to the OpenWork
+ * Encapsulates all signals, effects, and helpers related to the AikaOS
  * server lifecycle: connection status, capabilities polling, host info,
  * diagnostics, audit entries, and the server client instance.
  */
