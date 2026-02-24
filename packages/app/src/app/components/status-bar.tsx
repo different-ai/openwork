@@ -204,7 +204,7 @@ export default function StatusBar(props: StatusBarProps) {
         <div class="w-px h-4 bg-gray-6/70" />
         <div
           class="flex items-center gap-2"
-          title={`OpenWork Server: ${openworkStatusMeta().label}`}
+          title={`AikaOS Server: ${openworkStatusMeta().label}`}
         >
           <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
           <Server class="w-4 h-4 text-gray-11" />

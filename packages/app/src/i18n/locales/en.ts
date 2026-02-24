@@ -67,7 +67,7 @@ export default {
   "dashboard.remote_base_url_label": "AikaOS server URL",
   "dashboard.remote_base_url_placeholder": "http://127.0.0.1:8787",
   "dashboard.remote_base_url_required": "Add a server URL to continue.",
-  "dashboard.openwork_host_label": "OpenWork server URL",
+  "dashboard.openwork_host_label": "AikaOS server URL",
   "dashboard.openwork_host_placeholder": "https://your-server.openwork.app",
   "dashboard.openwork_host_hint": "Use the URL shared by your AikaOS server.",
   "dashboard.openwork_host_token_label": "Access token",

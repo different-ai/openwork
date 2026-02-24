@@ -376,7 +376,7 @@ export default function SettingsView(props: SettingsViewProps) {
         setOpenworkReconnectError("Reconnect failed. Check server URL/token and try again.");
         return;
       }
-      setOpenworkReconnectStatus("Reconnected to OpenWork server.");
+      setOpenworkReconnectStatus("Reconnected to AikaOS server.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setOpenworkReconnectError(message || "Failed to reconnect AikaOS server.");
@@ -1382,7 +1382,7 @@ export default function SettingsView(props: SettingsViewProps) {
                           <div class="text-[11px] text-gray-7 font-mono truncate">Orchestrator: {orchestratorVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCode: {opencodeVersionLabel()}</div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">
-                            OpenWork server: {openworkServerVersionLabel()}
+                            AikaOS server: {openworkServerVersionLabel()}
                           </div>
                           <div class="text-[11px] text-gray-7 font-mono truncate">OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
                         </div>
