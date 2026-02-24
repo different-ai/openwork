@@ -12,15 +12,21 @@
 #   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
+#
+# Python 3.13 + pip: installed in command script, cached in volume python313-install.
 
 x-shared: &shared
   image: node:22-bookworm-slim
   working_dir: /app
   volumes:
-    # Mount the entire repo so both services share node_modules + source
+    # Mount the entire repo so both services share source
     - ../../:/app
+    # Shadow node_modules with a named volume so pnpm runs on a real Linux
+    # filesystem (avoids EACCES rename errors on Windows/macOS host mounts)
+    - node-modules:/app/node_modules
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
+    - python313-install:/opt/python313
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
 
 services:
@@ -38,6 +44,27 @@ services:
         apt-get update -qq && apt-get install -y -qq --no-install-recommends \
           curl ca-certificates unzip git >/dev/null 2>&1
 
+        # --- Python 3.13 + pip (cached in named volume /opt/python313) ---
+        export PATH="/opt/python313/bin:$$PATH"
+        if ! [ -x "/opt/python313/bin/python3.13" ]; then
+          echo "[orchestrator] Installing Python 3.13 (once, cached in volume)..."
+          apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+            build-essential wget libssl-dev zlib1g-dev libncurses5-dev libgdbm-dev \
+            libnss3-dev libreadline-dev libffi-dev libsqlite3-dev >/dev/null 2>&1
+          wget -q https://www.python.org/ftp/python/3.13.1/Python-3.13.1.tgz -O /tmp/Python-3.13.1.tgz
+          tar -xzf /tmp/Python-3.13.1.tgz -C /tmp
+          cd /tmp/Python-3.13.1
+          ./configure --prefix=/opt/python313 --with-ensurepip=install --enable-optimizations=no
+          make -j$$(nproc)
+          make install
+          cd /
+          rm -rf /tmp/Python-3.13.1 /tmp/Python-3.13.1.tgz
+          apt-get purge -y -qq build-essential libffi-dev libgdbm-dev libncurses5-dev libnss3-dev libreadline-dev libsqlite3-dev libssl-dev zlib1g-dev 2>/dev/null || true
+          apt-get autoremove -y -qq
+          echo "[orchestrator] Python 3.13 installed."
+        fi
+        python3.13 --version && pip3.13 --version
+
         # --- Install bun (cached in named volume) ---
         export BUN_INSTALL="/root/.bun"
         export PATH="$$BUN_INSTALL/bin:$$PATH"
@@ -54,10 +81,13 @@ services:
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
         # --- Build Linux binaries into container-local path ---
-        # Avoids overwriting macOS-native binaries on the host mount.
+        # Output and CWD are both on the container overlay FS (/tmp) to avoid
+        # bun#12318: bun build --compile creates a temp file in CWD then renames
+        # it to the output path; a cross-device rename (NTFS mount → overlay FS)
+        # silently produces a non-ELF binary causing "Exec format error".
         export OPENWORK_SERVER_BIN="/tmp/openwork-bins/openwork-server"
         export OPENCODE_ROUTER_BIN="/tmp/openwork-bins/opencode-router"
-        mkdir -p /tmp/openwork-bins
+        mkdir -p /tmp/openwork-bins /tmp/bun-build-work
 
         # --- Compile sidecars for the container architecture ---
         case "$(uname -m)" in
@@ -74,11 +104,11 @@ services:
         esac
 
         echo "[orchestrator] Building openwork-server binary (linux)..."
-        cd /app/packages/server && bun build --compile --target "$$BUN_TARGET" src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
+        cd /tmp/bun-build-work && bun build --compile --target "$$BUN_TARGET" /app/packages/server/src/cli.ts --outfile "$$OPENWORK_SERVER_BIN"
 
         echo "[orchestrator] Building opencode-router binary (linux)..."
         OPENCODE_ROUTER_VERSION=$$(node -p "require('/app/packages/opencode-router/package.json').version")
-        cd /app/packages/opencode-router && bun build --compile --target "$$BUN_TARGET" src/cli.ts \
+        cd /tmp/bun-build-work && bun build --compile --target "$$BUN_TARGET" /app/packages/opencode-router/src/cli.ts \
           --define "__OPENCODE_ROUTER_VERSION__=\"$${OPENCODE_ROUTER_VERSION}\"" --outfile "$$OPENCODE_ROUTER_BIN"
 
         cd /app
@@ -107,6 +137,9 @@ services:
         echo "  Host token: $$OPENWORK_HOST_TOKEN"
         echo "============================================"
         echo ""
+
+        # Runtime PATH so orchestrator and child services (opencode, openwork-server) can run python, pip, node, bun, pnpm
+        export PATH="/opt/python313/bin:$$BUN_INSTALL/bin:$$PATH"
 
         exec pnpm --filter openwork-orchestrator dev -- start \
           --workspace /workspace \
@@ -144,6 +177,9 @@ services:
     command:
       - |
         set -e
+
+        # --- Python 3.13 (use volume populated by orchestrator) ---
+        export PATH="/opt/python313/bin:$$PATH"
 
         # --- Install system deps ---
         apt-get update -qq && apt-get install -y -qq --no-install-recommends \
@@ -187,7 +223,11 @@ services:
       OPENWORK_DEV_ID: ${OPENWORK_DEV_ID:-default}
 
 volumes:
+  node-modules:
+    name: openwork-dev-node-modules
   pnpm-store:
     name: openwork-dev-pnpm-store
   bun-install:
     name: openwork-dev-bun-install
+  python313-install:
+    name: openwork-dev-python313
