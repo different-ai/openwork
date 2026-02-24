@@ -71,6 +71,15 @@ const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
+const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
+
+function getGithubCallbackUrl(): string {
+  try {
+    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
+  } catch {
+    return "https://app.openwork.software/";
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -1073,7 +1082,7 @@ export function CloudControlPanel() {
     setAuthInfo("Redirecting to GitHub...");
 
     try {
-      const callbackURL = window.location.href;
+      const callbackURL = getGithubCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({

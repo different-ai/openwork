@@ -27,6 +27,8 @@ Frontend for `app.openwork.software`.
 - `NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL` (client): Base URL for "Open in App" links.
   - Example: `https://openwork.software/app`
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
+- `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
+  - default: `https://app.openwork.software`
 
 ## Deploy on Vercel
 

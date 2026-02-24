@@ -73,6 +73,7 @@ pnpm db:migrate
 - `POST /v1/workers`
   - Cloud launches return `202` quickly with worker `status=provisioning` and continue provisioning asynchronously.
   - Returns `402 payment_required` with Polar checkout URL when paywall is enabled and entitlement is missing.
+  - Existing Polar customers are matched by `external_customer_id` first, then by email to preserve access for pre-existing paid users.
 - `GET /v1/workers/:id`
   - Includes latest instance metadata when available.
 - `POST /v1/workers/:id/tokens`
