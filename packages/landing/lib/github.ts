@@ -15,7 +15,14 @@ type Repo = {
   stargazers_count?: number;
 };
 
-const FALLBACK_RELEASE = "https://github.com/aikapenelope/openOS/releases";
+// ── Release sources ──
+// Stars and repo metadata come from our fork.
+// Downloads come from upstream until we publish our own releases.
+// TODO: switch RELEASE_REPO back to "aikapenelope/openOS" once our CI
+//       pipeline produces signed .dmg assets.
+const OUR_REPO = "aikapenelope/openOS";
+const RELEASE_REPO = "different-ai/openwork";
+const FALLBACK_RELEASE = `https://github.com/${OUR_REPO}/releases`;
 
 const formatCompact = (value: number) => {
   try {
@@ -70,9 +77,9 @@ const fetchJson = async <T,>(url: string): Promise<T | null> => {
 
 export const getGithubData = async () => {
   const [repo, releases] = await Promise.all([
-    fetchJson<Repo>("https://api.github.com/repos/aikapenelope/openOS"),
+    fetchJson<Repo>(`https://api.github.com/repos/${OUR_REPO}`),
     fetchJson<Release[]>(
-      "https://api.github.com/repos/aikapenelope/openOS/releases?per_page=10"
+      `https://api.github.com/repos/${RELEASE_REPO}/releases?per_page=10`
     )
   ]);
 
@@ -90,7 +97,7 @@ export const getGithubData = async () => {
     const assets = Array.isArray(release.assets) ? release.assets : [];
     return assets.some((asset) => {
       const name = String(asset?.name || "").toLowerCase();
-      return name.startsWith("openwork-desktop-");
+      return name.startsWith("aikaos-desktop-") || name.startsWith("openwork-desktop-");
     });
   };
 
@@ -140,7 +147,7 @@ export const getGithubData = async () => {
         x64: windowsX64?.browser_download_url || releaseUrl
       },
       linux: {
-        aur: "https://aur.archlinux.org/packages/openwork",
+        aur: "https://aur.archlinux.org/packages/aikaos",
         debX64: linuxDebX64?.browser_download_url || releaseUrl,
         debArm64: linuxDebArm64?.browser_download_url || releaseUrl,
         rpmX64: linuxRpmX64?.browser_download_url || releaseUrl,

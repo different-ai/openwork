@@ -1,46 +1,41 @@
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
-import { OpenCodeLogo } from "../../components/opencode-logo";
-import { getGithubData } from "../../lib/github";
 
 export const metadata = {
-  title: "OpenWork — Den",
+  title: "AikaOS — Nube",
   description:
-    "Hosted sandboxed workers for your team, available in desktop, Slack, and Telegram.",
+    "Workers hospedados en la nube para tu equipo. Accede desde escritorio, Slack o Telegram.",
 };
 
-export default async function Den() {
-  const github = await getGithubData();
-
+export default function Den() {
   return (
     <div className="min-h-screen">
-      <SiteNav stars={github.stars} active="den" />
+      <SiteNav active="den" />
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
           <div className="animate-fade-up">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
-              OpenWork hosted
+              AikaOS Nube
             </div>
-            <h1 className="mb-3 text-4xl font-bold tracking-tight">Den</h1>
+            <h1 className="mb-3 text-4xl font-bold tracking-tight">Nube</h1>
             <h2 className="mb-8 text-[34px] font-bold leading-tight tracking-tight text-black">
-              Hosted sandboxed workers for your team
+              Workers hospedados para tu equipo
             </h2>
             <p className="max-w-3xl text-[18px] leading-relaxed text-gray-600">
-              Den gives your team hosted sandboxed workers that you can access
-              from our desktop app, Slack, or Telegram. All your skills,
-              agents, and MCP integrations are directly available.
+              AikaOS Nube le da a tu equipo workers aislados en la nube que
+              puedes acceder desde la app de escritorio, Slack o Telegram.
+              Todos tus skills, agentes e integraciones MCP están disponibles
+              de inmediato.
             </p>
           </div>
 
           <div className="mb-12 mt-10 flex flex-wrap items-center gap-3">
             <a
-              href="https://app.openwork.software"
+              href="/enterprise#contacto"
               className="doc-button"
-              rel="noreferrer"
-              target="_blank"
             >
-              Get started
+              Contactar ventas
               <svg
                 className="h-4 w-4"
                 fill="none"
@@ -59,55 +54,41 @@ export default async function Den() {
           </div>
 
           <div className="mb-8 text-[20px] font-semibold text-black">
-            $1 first month, then $50/month per worker. Cancel anytime.
+            Incluido en el plan Profesional — $49 USD/mes por worker.
           </div>
           <p className="mb-12 max-w-3xl text-[15px] leading-relaxed text-gray-600">
-            Early adopters get priority onboarding and custom workflow setup
-            through March 1.
+            Los primeros usuarios reciben onboarding prioritario y
+            configuración personalizada de flujos de trabajo.
           </p>
 
           <div className="mb-14 grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
             <div className="feature-card">
               <h4 className="mb-2 text-[14px] font-bold">
-                Hosted sandboxed workers
+                Workers aislados en la nube
               </h4>
               <p className="text-[13px] leading-relaxed text-gray-500">
-                Every worker runs in an isolated environment so your team can
-                automate safely without managing infrastructure.
+                Cada worker corre en un entorno aislado para que tu equipo
+                automatice de forma segura sin administrar infraestructura.
               </p>
             </div>
             <div className="feature-card">
               <h4 className="mb-2 text-[14px] font-bold">
-                Desktop, Slack, and Telegram access
+                Acceso desde escritorio, Slack y Telegram
               </h4>
               <p className="text-[13px] leading-relaxed text-gray-500">
-                Run and monitor the same workers from the OpenWork desktop app
-                or directly inside your team chats.
+                Ejecuta y monitorea los mismos workers desde la app de
+                escritorio AikaOS o directamente en los chats de tu equipo.
               </p>
             </div>
             <div className="feature-card">
               <h4 className="mb-2 text-[14px] font-bold">
-                Skills, agents, and MCP included
+                Skills, agentes y MCP incluidos
               </h4>
               <p className="text-[13px] leading-relaxed text-gray-500">
-                Bring your existing OpenWork setup and everything is available
-                immediately in each hosted worker.
+                Trae tu configuración existente de AikaOS y todo estará
+                disponible de inmediato en cada worker hospedado.
               </p>
             </div>
-          </div>
-
-          <div className="mb-16 flex flex-wrap items-center gap-2 text-[13px] text-gray-500">
-            <span className="font-semibold text-gray-900">Powered by</span>
-            <a
-              href="https://opencode.ai"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center"
-              aria-label="opencode.ai"
-            >
-              <OpenCodeLogo className="h-3 w-auto" />
-            </a>
-            <span>Everything from opencode just works.</span>
           </div>
 
           <SiteFooter />
