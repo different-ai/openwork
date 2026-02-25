@@ -28,7 +28,7 @@ export default function Home() {
         {/* Navigation */}
         <nav className="w-full px-6 py-6 md:px-12 flex items-center justify-between max-w-7xl mx-auto animate-fade-in">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 bg-black rounded-tr-lg rounded-bl-lg shadow-md" />
+            <span className="font-mono text-xl font-bold text-aika-teal">{">_"}</span>
             <span className="text-xl font-semibold text-slate-900 tracking-tight font-nunito">
               AikaOS
             </span>
@@ -54,10 +54,10 @@ export default function Home() {
 
           <div>
             <a
-              href="/enterprise#contacto"
+              href="#planes"
               className="bg-[#1A1A1A] text-white text-[15px] font-normal px-6 py-2.5 rounded-full hover:bg-black transition-all shadow-[0_8px_16px_rgba(0,0,0,0.15)] hover:shadow-[0_12px_20px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 border border-white/10"
             >
-              Solicitar demo
+              Ver planes
             </a>
           </div>
         </nav>
@@ -87,376 +87,39 @@ export default function Home() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <a
-                href="/enterprise#contacto"
+                href="#planes"
                 className="text-[17px] hover:bg-black transition-all hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 sm:w-auto font-normal text-white bg-[#1A1A1A] w-full rounded-full pt-3.5 pr-8 pb-3.5 pl-8 shadow-[0_10px_20px_rgba(0,0,0,0.15)] border border-white/10 text-center"
               >
-                Solicitar demo
-              </a>
-              <a
-                href="#planes"
-                className="bg-white/40 backdrop-blur-xl border border-white/60 shadow-[0_8px_20px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.6)] text-[#1A1A1A] text-[17px] font-normal px-8 py-3.5 rounded-full hover:bg-white/60 hover:-translate-y-0.5 transition-all w-full sm:w-auto flex items-center justify-center gap-2"
-              >
-                Ver planes desde $20/mes
+                Ver planes desde $50/mes
               </a>
             </div>
           </div>
 
-          {/* Dashboard Mockup */}
+          {/* Product Video */}
           <div
-            className="w-full max-w-[1300px] bg-white/60 backdrop-blur-2xl rounded-t-[40px] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15),0_30px_60px_-30px_rgba(0,0,0,0.1),inset_0_2px_0_rgba(255,255,255,0.8)] border border-white/80 overflow-hidden flex flex-col md:flex-row relative animate-slide-up"
+            className="w-full max-w-[1300px] bg-white/60 backdrop-blur-2xl rounded-t-[40px] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15),0_30px_60px_-30px_rgba(0,0,0,0.1),inset_0_2px_0_rgba(255,255,255,0.8)] border border-white/80 overflow-hidden relative animate-slide-up group"
             style={{ animationDelay: "0.3s" }}
           >
-            {/* Sidebar */}
-            <aside className="hidden md:flex flex-col w-64 border-r border-white/40 p-6 bg-white/30 backdrop-blur-md">
-              <div className="flex items-center gap-2 mb-8 px-2">
-                <div className="w-5 h-5 bg-black rounded-tr-md rounded-bl-md shadow-sm" />
-                <span className="text-lg font-semibold text-slate-900 font-nunito">
-                  AikaOS
-                </span>
-                <div className="ml-auto">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon
-                    icon="solar:round-arrow-left-linear"
-                    class="text-slate-400 text-xl"
-                  />
-                </div>
-              </div>
-
-              <nav className="space-y-1 mb-8">
-                <a
-                  href="#"
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/60 shadow-[0_2px_10px_rgba(0,0,0,0.02),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white text-slate-900 font-medium text-sm transition-all hover:-translate-y-0.5"
-                >
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:user-linear" class="text-lg" />
-                  Tú
-                </a>
-                <a
-                  href="#"
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                >
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:document-linear" class="text-lg" />
-                  Documentos
-                </a>
-                <a
-                  href="#"
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                >
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:global-linear" class="text-lg" />
-                  Navegador
-                </a>
-                <a
-                  href="#"
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                >
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:box-linear" class="text-lg" />
-                  AikaOS
-                </a>
-              </nav>
-
-              <div className="mt-auto">
-                <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
-                  Modelos
-                </p>
-                <nav className="space-y-1">
-                  <a
-                    href="#"
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                  >
-                    {/* @ts-expect-error iconify-icon is a web component */}
-                    <iconify-icon icon="solar:cpu-linear" class="text-lg" />
-                    Claude
-                  </a>
-                  <a
-                    href="#"
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                  >
-                    {/* @ts-expect-error iconify-icon is a web component */}
-                    <iconify-icon icon="solar:cpu-linear" class="text-lg" />
-                    GPT-4
-                  </a>
-                  <a
-                    href="#"
-                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
-                  >
-                    {/* @ts-expect-error iconify-icon is a web component */}
-                    <iconify-icon
-                      icon="solar:server-square-linear"
-                      class="text-lg"
-                    />
-                    Ollama (Local)
-                  </a>
-                </nav>
-              </div>
-            </aside>
-
-            {/* Main Content */}
-            <div className="flex-1 md:p-8 bg-white/20 pt-6 pr-6 pb-6 pl-6 max-h-[70vh] md:max-h-none overflow-y-auto relative">
-              {/* Subtle inner glow */}
-              <div className="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-transparent pointer-events-none rounded-tl-3xl" />
-
-              {/* Header */}
-              <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 relative z-10">
-                <div>
-                  <h2 className="text-xl font-semibold text-slate-900 font-nunito tracking-tight">
-                    {">_"}AikaOS
-                  </h2>
-                  <p className="text-sm text-slate-600 mt-0.5 font-medium">
-                    Interfaz real de AikaOS — crea tareas, ejecuta skills y
-                    automatiza flujos.
-                  </p>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  {/* Search */}
-                  <div className="relative">
-                    {/* @ts-expect-error iconify-icon is a web component */}
-                    <iconify-icon
-                      icon="solar:magnifer-linear"
-                      class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Ejecutar comando..."
-                      className="pl-10 pr-4 py-2.5 bg-white/50 backdrop-blur-md border border-white/60 rounded-full text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-white/80 focus:bg-white/80 w-64 shadow-[0_2px_10px_rgba(0,0,0,0.02),inset_0_1px_0_rgba(255,255,255,0.6)] transition-all"
-                    />
-                  </div>
-
-                  {/* Icons */}
-                  <div className="flex items-center gap-3 text-slate-500 text-xl">
-                    <button className="w-10 h-10 rounded-full bg-white/40 hover:bg-white/70 border border-white/50 shadow-sm flex items-center justify-center transition-all hover:-translate-y-0.5">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:bell-linear" />
-                    </button>
-                    <button className="w-10 h-10 rounded-full bg-white/40 hover:bg-white/70 border border-white/50 shadow-sm flex items-center justify-center transition-all hover:-translate-y-0.5">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:settings-linear" />
-                    </button>
-                  </div>
-                </div>
-              </header>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8 relative z-10">
-                {/* Stat Card 1 */}
-                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
-                  <div className="flex items-center gap-3 text-slate-600 mb-6">
-                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:check-read-linear" />
-                    </div>
-                    <span className="text-[13px] font-medium">
-                      Tareas ejecutadas
-                    </span>
-                  </div>
-                  <div className="flex items-end justify-between">
-                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
-                      1,204
-                    </span>
-                    <span className="text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2 py-1 rounded-full shadow-sm">
-                      Hoy
-                    </span>
-                  </div>
-                </div>
-
-                {/* Stat Card 2 */}
-                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
-                  <div className="flex items-center gap-3 text-slate-600 mb-6">
-                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:cpu-linear" />
-                    </div>
-                    <span className="text-[13px] font-medium">
-                      Modelos conectados
-                    </span>
-                  </div>
-                  <div className="flex items-end justify-between">
-                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
-                      3
-                    </span>
-                    <span className="text-[11px] font-semibold text-blue-700 bg-blue-100/80 backdrop-blur-sm border border-blue-200/50 px-2 py-1 rounded-full shadow-sm">
-                      Activos
-                    </span>
-                  </div>
-                </div>
-
-                {/* Stat Card 3 */}
-                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
-                  <div className="flex items-center gap-3 text-slate-600 mb-6">
-                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:magic-stick-3-linear" />
-                    </div>
-                    <span className="text-[13px] font-medium">
-                      Skills instalados
-                    </span>
-                  </div>
-                  <div className="flex items-end justify-between">
-                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
-                      45
-                    </span>
-                    <span className="text-[11px] font-semibold text-purple-700 bg-purple-100/80 backdrop-blur-sm border border-purple-200/50 px-2 py-1 rounded-full shadow-sm">
-                      MCP
-                    </span>
-                  </div>
-                </div>
-
-                {/* Stat Card 4 */}
-                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
-                  <div className="flex items-center gap-3 text-slate-600 mb-6">
-                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:clock-circle-linear" />
-                    </div>
-                    <span className="text-[13px] font-medium">
-                      Tiempo ahorrado
-                    </span>
-                  </div>
-                  <div className="flex items-end justify-between">
-                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
-                      120h
-                    </span>
-                    <span className="text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2 py-1 rounded-full shadow-sm">
-                      Este mes
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Bottom Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
-                {/* Activity Feed (2 cols wide) */}
-                <div className="lg:col-span-2 bg-white/50 backdrop-blur-2xl border border-white/80 rounded-[28px] p-7 shadow-[0_15px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.9)] relative overflow-hidden">
-                  <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
-
-                  <div className="flex items-center justify-between mb-8 relative z-10">
-                    <h3 className="font-semibold text-[15px] text-slate-900 font-nunito">
-                      Actividad reciente
-                    </h3>
-                    <div className="flex gap-2">
-                      <button className="flex items-center gap-2 px-4 py-2 bg-white/60 border border-white rounded-full text-xs font-medium text-slate-700 hover:bg-white hover:shadow-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
-                        Filtrar{" "}
-                        {/* @ts-expect-error iconify-icon is a web component */}
-                        <iconify-icon icon="solar:alt-arrow-down-linear" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 relative z-10">
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-blue-50 to-blue-100/50 border border-blue-100 shadow-sm text-blue-600 flex items-center justify-center shrink-0 text-lg">
-                        {/* @ts-expect-error iconify-icon is a web component */}
-                        <iconify-icon icon="solar:document-text-linear" />
-                      </div>
-                      <div className="mt-0.5">
-                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
-                          Generación de contrato de arrendamiento
-                        </p>
-                        <p className="text-xs text-slate-500 font-medium">
-                          Skill: Asistente Inmobiliario &bull; Hace 5 min
-                        </p>
-                      </div>
-                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
-                        Completado
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-purple-50 to-purple-100/50 border border-purple-100 shadow-sm text-purple-600 flex items-center justify-center shrink-0 text-lg">
-                        {/* @ts-expect-error iconify-icon is a web component */}
-                        <iconify-icon icon="solar:chart-square-linear" />
-                      </div>
-                      <div className="mt-0.5">
-                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
-                          Conciliación bancaria mensual
-                        </p>
-                        <p className="text-xs text-slate-500 font-medium">
-                          Skill: Contabilidad LATAM &bull; Hace 1 hora
-                        </p>
-                      </div>
-                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
-                        Completado
-                      </span>
-                    </div>
-                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
-                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-orange-50 to-orange-100/50 border border-orange-100 shadow-sm text-orange-600 flex items-center justify-center shrink-0 text-lg">
-                        {/* @ts-expect-error iconify-icon is a web component */}
-                        <iconify-icon icon="solar:global-linear" />
-                      </div>
-                      <div className="mt-0.5">
-                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
-                          Investigación web: Tendencias de mercado
-                        </p>
-                        <p className="text-xs text-slate-500 font-medium">
-                          Skill: Investigador Web &bull; Hace 2 horas
-                        </p>
-                      </div>
-                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
-                        Completado
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Actions Grid (1 col wide) */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
-                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:pen-new-square-linear" />
-                    </div>
-                    <span className="text-[13px] font-semibold text-slate-800">
-                      Nuevo prompt
-                    </span>
-                  </div>
-
-                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
-                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:folder-with-files-linear" />
-                    </div>
-                    <span className="text-[13px] font-semibold text-slate-800">
-                      Analizar directorio
-                    </span>
-                  </div>
-
-                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
-                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:magic-stick-3-linear" />
-                    </div>
-                    <span className="text-[13px] font-semibold text-slate-800">
-                      Ejecutar skill
-                    </span>
-                  </div>
-
-                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
-                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
-                      {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:settings-linear" />
-                    </div>
-                    <span className="text-[13px] font-semibold text-slate-800">
-                      Configurar MCP
-                    </span>
-                  </div>
-
-                  <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-5 rounded-[24px] shadow-[0_10px_20px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.2)] border border-slate-700 flex flex-col items-start justify-center hover:from-black hover:to-slate-900 hover:shadow-[0_15px_30px_rgba(0,0,0,0.25)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group col-span-2">
-                    <div className="flex w-full items-center gap-4">
-                      <div className="w-10 h-10 rounded-full bg-white/10 border border-white/20 shadow-inner flex items-center justify-center text-white text-xl group-hover:bg-white/20 transition-colors">
-                        {/* @ts-expect-error iconify-icon is a web component */}
-                        <iconify-icon icon="solar:play-circle-linear" />
-                      </div>
-                      <span className="text-[14px] font-semibold text-white tracking-wide">
-                        Iniciar rutina diaria
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+            {/* AikaOS overlay on video */}
+            <div className="absolute left-0 top-0 z-10 flex items-center gap-2 bg-[#1e1e2e] px-6 py-2 min-w-[260px] rounded-br-2xl">
+              <span className="font-mono text-sm font-bold text-aika-teal">{">_"}</span>
+              <span className="text-sm font-semibold text-white">AikaOS</span>
             </div>
+            <video
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full block"
+            >
+              <source src="/app-demo.mp4" type="video/mp4" />
+            </video>
           </div>
+
+          <p className="mt-4 text-center text-[13px] text-slate-500 font-medium">
+            Interfaz real de AikaOS — crea tareas, ejecuta skills y automatiza
+            flujos desde tu escritorio.
+          </p>
         </main>
 
         {/* Cómo funciona Section */}
@@ -488,7 +151,7 @@ export default function Home() {
                 1. Elige tu plan
               </h3>
               <p className="text-[14px] leading-relaxed text-slate-700 font-medium relative z-10">
-                Selecciona el plan que se adapte a tu empresa (desde $20
+                Selecciona el plan que se adapte a tu empresa (desde $50
                 USD/mes). Nuestro equipo te contactará para coordinar la
                 instalación.
               </p>
@@ -1080,7 +743,7 @@ export default function Home() {
                     Precio
                   </td>
                   <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
-                    Desde $20 USD/mes. Incluye la app, actualizaciones y soporte.
+                    Desde $50 USD/mes. Incluye la app, actualizaciones y soporte.
                     Sin costos ocultos.
                   </td>
                   <td className="px-6 py-5">
@@ -1325,49 +988,7 @@ export default function Home() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start mb-20">
-            {/* Personal */}
-            <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 flex flex-col h-full hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500">
-              <h3 className="text-[19px] font-semibold text-slate-900 font-nunito mb-2 tracking-tight">
-                Personal
-              </h3>
-              <div className="text-[40px] font-semibold font-nunito text-[#1A1A1A] tracking-tight mb-4">
-                $20
-                <span className="text-[15px] text-slate-600 font-medium ml-1">
-                  /mes
-                </span>
-              </div>
-              <p className="text-[14px] text-slate-700 font-medium mb-8 leading-relaxed">
-                1 instalación. La app base sin expertos preconfigurados. Ideal
-                para explorar.
-              </p>
-              <ul className="space-y-3.5 mb-8 flex-1">
-                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
-                  App de escritorio (macOS)
-                </li>
-                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
-                  Trae tu propio modelo
-                </li>
-                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
-                  Actualizaciones incluidas
-                </li>
-                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
-                  Soporte por documentación
-                </li>
-              </ul>
-              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
-                Empezar
-              </a>
-            </div>
-
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start mb-20">
             {/* Profesional */}
             <div className="bg-gradient-to-b from-blue-50/80 to-white/60 backdrop-blur-2xl rounded-[36px] p-8 border border-white shadow-[0_30px_60px_-15px_rgba(37,99,235,0.15),inset_0_1px_0_rgba(255,255,255,0.9)] relative flex flex-col h-full lg:-mt-4 lg:mb-4 z-10 hover:-translate-y-2 transition-transform duration-500">
               <div className="flex items-center justify-between mb-2">
@@ -1392,7 +1013,12 @@ export default function Home() {
                 <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
                   {/* @ts-expect-error iconify-icon is a web component */}
                   <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
-                  Todo lo de Personal
+                  App de escritorio (macOS)
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  Trae tu propio modelo (BYOM)
                 </li>
                 <li className="flex items-start gap-2.5 text-[14px] font-semibold text-slate-900">
                   {/* @ts-expect-error iconify-icon is a web component */}
@@ -1415,7 +1041,7 @@ export default function Home() {
                   Puesta en marcha asistida
                 </li>
               </ul>
-              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-slate-900 text-white font-semibold text-[14px] hover:bg-black shadow-[0_10px_20px_rgba(0,0,0,0.15)] hover:shadow-[0_15px_30px_rgba(0,0,0,0.25)] hover:-translate-y-0.5 transition-all border border-white/10 text-center block">
+              <a href="#planes" className="w-full py-4 rounded-full bg-slate-900 text-white font-semibold text-[14px] hover:bg-black shadow-[0_10px_20px_rgba(0,0,0,0.15)] hover:shadow-[0_15px_30px_rgba(0,0,0,0.25)] hover:-translate-y-0.5 transition-all border border-white/10 text-center block">
                 Empezar
               </a>
             </div>
@@ -1471,7 +1097,7 @@ export default function Home() {
                   Actualizaciones con prioridad
                 </li>
               </ul>
-              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
+              <a href="#planes" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
                 Contactar ventas
               </a>
             </div>
@@ -1528,7 +1154,7 @@ export default function Home() {
                   Arquitectura personalizada
                 </li>
               </ul>
-              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
+              <a href="#planes" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
                 Hablar con ventas
               </a>
             </div>
@@ -1649,21 +1275,15 @@ export default function Home() {
             Empieza a automatizar tu empresa
           </h2>
           <p className="text-[16px] leading-relaxed text-slate-700 font-medium font-sans max-w-xl mx-auto mb-10">
-            Contáctanos para una demo personalizada. Te mostramos cómo AikaOS
-            puede automatizar los flujos de trabajo de tu industria.
+            Elige el plan que mejor se adapte a tu empresa y empieza a
+            automatizar los flujos de trabajo de tu industria.
           </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a
-              href="/enterprise#contacto"
-              className="text-[17px] hover:bg-black transition-all hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 sm:w-auto font-normal text-white bg-[#1A1A1A] w-full rounded-full pt-3.5 pr-8 pb-3.5 pl-8 shadow-[0_10px_20px_rgba(0,0,0,0.15)] border border-white/10 text-center"
-            >
-              Solicitar demo
-            </a>
+          <div className="flex items-center justify-center">
             <a
               href="#planes"
-              className="bg-white/40 backdrop-blur-xl border border-white/60 shadow-[0_8px_20px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.6)] text-[#1A1A1A] text-[17px] font-normal px-8 py-3.5 rounded-full hover:bg-white/60 hover:-translate-y-0.5 transition-all w-full sm:w-auto flex items-center justify-center gap-2"
+              className="text-[17px] hover:bg-black transition-all hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 sm:w-auto font-normal text-white bg-[#1A1A1A] w-full rounded-full pt-3.5 pr-8 pb-3.5 pl-8 shadow-[0_10px_20px_rgba(0,0,0,0.15)] border border-white/10 text-center"
             >
-              Ver planes desde $20/mes
+              Ver planes desde $50/mes
             </a>
           </div>
         </div>
@@ -1676,7 +1296,7 @@ export default function Home() {
             {/* Logo + tagline */}
             <div className="flex flex-col gap-3 max-w-xs">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-black rounded-tr-lg rounded-bl-lg shadow-md" />
+                <span className="font-mono text-xl font-bold text-aika-teal">{">_"}</span>
                 <span className="text-xl font-semibold text-slate-900 tracking-tight font-nunito">
                   AikaOS
                 </span>
@@ -1710,12 +1330,6 @@ export default function Home() {
                 <a href="#planes" className="hover:text-black transition-colors">
                   Planes
                 </a>
-                <a href="/enterprise" className="hover:text-black transition-colors">
-                  Enterprise
-                </a>
-                <a href="/enterprise#contacto" className="hover:text-black transition-colors">
-                  Contacto
-                </a>
               </div>
               <div className="flex flex-col gap-3">
                 <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
@@ -1740,10 +1354,10 @@ export default function Home() {
               &copy; 2026 AikaLabs. Todos los derechos reservados.
             </p>
             <a
-              href="/enterprise#contacto"
+              href="#planes"
               className="text-sm font-semibold text-slate-700 hover:text-black transition-colors"
             >
-              Solicitar demo &rarr;
+              Ver planes &rarr;
             </a>
           </div>
         </div>
