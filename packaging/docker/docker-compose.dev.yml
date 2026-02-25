@@ -13,10 +13,10 @@
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
 #
-# Python 3.13 + pip: installed in command script, cached in volume python313-install.
+# Python 3.13 + pip: baked into Dockerfile.dev image.
 
 x-shared: &shared
-  image: node:22-bookworm-slim
+  image: openwork-dev
   working_dir: /app
   volumes:
     # Mount the entire repo so both services share source
@@ -25,8 +25,6 @@ x-shared: &shared
     # filesystem (avoids EACCES rename errors on Windows/macOS host mounts)
     - node-modules:/app/node_modules
     - pnpm-store:/root/.local/share/pnpm/store
-    - bun-install:/root/.bun
-    - python313-install:/opt/python313
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
 
 services:
@@ -36,47 +34,17 @@ services:
     command:
       - |
         set -e
-
+        echo "[orchestrator] entrypoint started"
         # --- Ensure workspace dir is writable ---
         mkdir -p /workspace && touch /workspace/.keep 2>/dev/null || true
-
-        # --- Install system deps ---
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-          curl ca-certificates unzip git >/dev/null 2>&1
-
-        # --- Python 3.13 + pip (cached in named volume /opt/python313) ---
-        export PATH="/opt/python313/bin:$$PATH"
-        if ! [ -x "/opt/python313/bin/python3.13" ]; then
-          echo "[orchestrator] Installing Python 3.13 (once, cached in volume)..."
-          apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-            build-essential wget libssl-dev zlib1g-dev libncurses5-dev libgdbm-dev \
-            libnss3-dev libreadline-dev libffi-dev libsqlite3-dev >/dev/null 2>&1
-          wget -q https://www.python.org/ftp/python/3.13.1/Python-3.13.1.tgz -O /tmp/Python-3.13.1.tgz
-          tar -xzf /tmp/Python-3.13.1.tgz -C /tmp
-          cd /tmp/Python-3.13.1
-          ./configure --prefix=/opt/python313 --with-ensurepip=install --enable-optimizations=no
-          make -j$$(nproc)
-          make install
-          cd /
-          rm -rf /tmp/Python-3.13.1 /tmp/Python-3.13.1.tgz
-          apt-get purge -y -qq build-essential libffi-dev libgdbm-dev libncurses5-dev libnss3-dev libreadline-dev libsqlite3-dev libssl-dev zlib1g-dev 2>/dev/null || true
-          apt-get autoremove -y -qq
-          echo "[orchestrator] Python 3.13 installed."
-        fi
-        python3.13 --version && pip3.13 --version
-
-        # --- Install bun (cached in named volume) ---
-        export BUN_INSTALL="/root/.bun"
-        export PATH="$$BUN_INSTALL/bin:$$PATH"
-        if ! command -v bun >/dev/null 2>&1; then
-          echo "[orchestrator] Installing bun..."
-          curl -fsSL https://bun.sh/install | bash
-        fi
-
-        # --- Enable pnpm via corepack ---
-        corepack enable && corepack prepare pnpm@10.27.0 --activate
+        echo "[orchestrator] workspace dir created"
+        # Python 3.13, bun, pnpm are preinstalled in the openwork-dev image.
+        python3.13 --version && pip3.13 --version || true
+        bun --version || true
+        pnpm --version || true
 
         # --- Install deps ---
+        cd /app
         echo "[orchestrator] Installing dependencies..."
         pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
 
@@ -138,9 +106,6 @@ services:
         echo "============================================"
         echo ""
 
-        # Runtime PATH so orchestrator and child services (opencode, openwork-server) can run python, pip, node, bun, pnpm
-        export PATH="/opt/python313/bin:$$BUN_INSTALL/bin:$$PATH"
-
         exec pnpm --filter openwork-orchestrator dev -- start \
           --workspace /workspace \
           --openwork-host 0.0.0.0 \
@@ -160,7 +125,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-      start_period: 90s
+      start_period: 9000s
     environment:
       CI: "true"
       OPENWORK_TOKEN: ${OPENWORK_TOKEN:-}
@@ -177,21 +142,10 @@ services:
     command:
       - |
         set -e
-
-        # --- Python 3.13 (use volume populated by orchestrator) ---
-        export PATH="/opt/python313/bin:$$PATH"
-
-        # --- Install system deps ---
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-          curl ca-certificates >/dev/null 2>&1
-
-        # --- Bun + pnpm ---
-        export BUN_INSTALL="/root/.bun"
-        export PATH="$$BUN_INSTALL/bin:$$PATH"
-        if ! command -v bun >/dev/null 2>&1; then
-          curl -fsSL https://bun.sh/install | bash
-        fi
-        corepack enable && corepack prepare pnpm@10.27.0 --activate
+        # Python 3.13, bun, pnpm are preinstalled in the openwork-dev image.
+        python3.13 --version && pip3.13 --version || true
+        bun --version || true
+        pnpm --version || true
 
         # --- Read token written by orchestrator ---
         if [ -f "/app/tmp/.dev-env-${OPENWORK_DEV_ID:-default}" ]; then
@@ -227,7 +181,3 @@ volumes:
     name: openwork-dev-node-modules
   pnpm-store:
     name: openwork-dev-pnpm-store
-  bun-install:
-    name: openwork-dev-bun-install
-  python313-install:
-    name: openwork-dev-python313

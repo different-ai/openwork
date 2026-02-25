@@ -1,0 +1,82 @@
+FROM node:22-bookworm-slim
+
+# Install system dependencies needed at runtime, for building Python, and for Playwright/Chromium.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    tar \
+    unzip \
+    build-essential \
+    wget \
+    libssl-dev \
+    zlib1g-dev \
+    libncurses5-dev \
+    libgdbm-dev \
+    libreadline-dev \
+    libffi-dev \
+    libsqlite3-dev \
+    # Playwright / Chromium runtime deps (Debian bookworm)
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libasound2 \
+    libatspi2.0-0 \
+    libdrm2 \
+    libdbus-1-3 \
+    libx11-xcb1 \
+    libxcb1 \
+    libxext6 \
+    libxshmfence1 \
+    libxrender1 \
+    libx11-6 \
+    libxss1 \
+    libxtst6 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcups2 \
+    libexpat1 \
+    libfontconfig1 \
+    libfreetype6 \
+    libgtk-3-0 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install Python 3.13 into /opt/python313 with pip.
+ENV PYTHON_VERSION=3.13.1
+RUN wget -q https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz -O /tmp/Python-${PYTHON_VERSION}.tgz \
+  && tar -xzf /tmp/Python-${PYTHON_VERSION}.tgz -C /tmp \
+  && cd /tmp/Python-${PYTHON_VERSION} \
+  && ./configure --prefix=/opt/python313 --with-ensurepip=install --enable-optimizations=no \
+  && make -j"$(nproc)" \
+  && make install \
+  && cd / \
+  && rm -rf /tmp/Python-${PYTHON_VERSION} /tmp/Python-${PYTHON_VERSION}.tgz
+
+# Ensure Python 3.13 binaries are on PATH.
+ENV PATH="/opt/python313/bin:${PATH}"
+
+# Install bun into /root/.bun and expose it on PATH.
+ENV BUN_INSTALL=/root/.bun
+RUN curl -fsSL https://bun.sh/install | bash
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+# Enable pnpm via corepack and prepare the exact version used in the dev stack.
+RUN corepack enable && corepack prepare pnpm@10.27.0 --activate
+
+# Pre-install Playwright Chromium browser binaries so tests can run without extra downloads.
+# Use npx with --yes to avoid interactive prompts during docker build.
+RUN npx --yes playwright@latest install chromium
+
+# Install extra Playwright helper packages globally.
+RUN npm install -g playwright-extra puppeteer-extra-plugin-stealth
+
+# Default working directory matches the compose configuration.
+WORKDIR /app
