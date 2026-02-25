@@ -1,1210 +1,1779 @@
-import { SiteFooter } from "../components/site-footer";
-import { SiteNav } from "../components/site-nav";
-import { HeroBeam } from "../components/hero-beam";
-import { HyperText } from "../components/magicui/hyper-text";
-
-/* ── 25 expertos incluidos en plan Profesional+ ── */
-const EXPERTOS = [
-  {
-    id: "legal-latam",
-    nombre: "Legal LATAM",
-    desc: "Redacción jurídica, contratos y revisión de documentos legales para México, Colombia y Argentina.",
-    audiencia: "Despachos de abogados, asesores legales",
-    color: "border-violet-100 bg-violet-50/40 ring-1 ring-violet-100/50",
-    badge: "bg-violet-50 text-violet-700",
-  },
-  {
-    id: "contabilidad-latam",
-    nombre: "Contabilidad LATAM",
-    desc: "Reportes fiscales, conciliación de cuentas y cumplimiento tributario.",
-    audiencia: "Contadores, PyMEs, firmas contables",
-    color: "border-emerald-100 bg-emerald-50/40 ring-1 ring-emerald-100/50",
-    badge: "bg-emerald-50 text-emerald-700",
-  },
-  {
-    id: "retail",
-    nombre: "Retail / E-commerce",
-    desc: "Gestión de catálogo, inventario y atención al cliente para tiendas en línea.",
-    audiencia: "Tiendas online, marketplaces",
-    color: "border-sky-100 bg-sky-50/40 ring-1 ring-sky-100/50",
-    badge: "bg-sky-50 text-sky-700",
-  },
-  {
-    id: "marketing-digital",
-    nombre: "Marketing Digital",
-    desc: "Campañas, copywriting y reportes de métricas para el mercado hispanohablante.",
-    audiencia: "Agencias de marketing, equipos de growth",
-    color: "border-pink-100 bg-pink-50/40 ring-1 ring-pink-100/50",
-    badge: "bg-pink-50 text-pink-700",
-  },
-  {
-    id: "educacion",
-    nombre: "Educación",
-    desc: "Planes de clase, evaluaciones y material didáctico para instituciones educativas.",
-    audiencia: "Escuelas, universidades, tutores",
-    color: "border-amber-100 bg-amber-50/40 ring-1 ring-amber-100/50",
-    badge: "bg-amber-50 text-amber-700",
-  },
-  {
-    id: "gobierno",
-    nombre: "Gobierno / Sector Público",
-    desc: "Oficios, informes de transparencia y respuestas ciudadanas en lenguaje oficial.",
-    audiencia: "Municipios, dependencias gubernamentales",
-    color: "border-blue-100 bg-blue-50/40 ring-1 ring-blue-100/50",
-    badge: "bg-blue-50 text-blue-700",
-  },
-  {
-    id: "soporte-tecnico",
-    nombre: "Soporte Técnico",
-    desc: "Diagnóstico de tickets, base de conocimiento y escalamiento para help desks.",
-    audiencia: "Help desks, equipos de soporte SaaS",
-    color: "border-orange-100 bg-orange-50/40 ring-1 ring-orange-100/50",
-    badge: "bg-orange-50 text-orange-700",
-  },
-  {
-    id: "ventas-b2b",
-    nombre: "Ventas B2B",
-    desc: "Propuestas comerciales, seguimiento de leads y reportes de pipeline.",
-    audiencia: "Equipos comerciales, ejecutivos de ventas",
-    color: "border-teal-100 bg-teal-50/40 ring-1 ring-teal-100/50",
-    badge: "bg-teal-50 text-teal-700",
-  },
-  {
-    id: "recursos-humanos",
-    nombre: "Recursos Humanos",
-    desc: "Reclutamiento, evaluaciones de desempeño y políticas internas.",
-    audiencia: "Departamentos de RRHH, reclutadores",
-    color: "border-indigo-100 bg-indigo-50/40 ring-1 ring-indigo-100/50",
-    badge: "bg-indigo-50 text-indigo-700",
-  },
-  {
-    id: "web-dev",
-    nombre: "Desarrollo Web",
-    desc: "Full-stack con Next.js, Tailwind y herramientas modernas de desarrollo.",
-    audiencia: "Desarrolladores, agencias, freelancers",
-    color: "border-gray-200 bg-gray-50/40 ring-1 ring-gray-100/50",
-    badge: "bg-gray-100 text-gray-700",
-  },
-];
-
-/* ── 5 expertos premium (Business+) — skills avanzados, más comandos ── */
-const EXPERTOS_PREMIUM = [
-  {
-    id: "investigador-web",
-    nombre: "Investigador Web",
-    desc: "Investigación profunda con fact-checking (SIFT), verificación de fuentes y reportes profesionales. 3 skills + 5 comandos.",
-    audiencia: "Periodistas, analistas, consultores",
-    color: "border-cyan-200 bg-cyan-50/40 ring-2 ring-cyan-200/60",
-    badge: "bg-cyan-50 text-cyan-800",
-  },
-  {
-    id: "creador-contenido",
-    nombre: "Creador de Contenido",
-    desc: "Posts nativos, calendarios editoriales, hilos virales y copywriting persuasivo (AIDA/PAS/BAB). 3 skills + 5 comandos.",
-    audiencia: "Community managers, freelancers",
-    color: "border-fuchsia-200 bg-fuchsia-50/40 ring-2 ring-fuchsia-200/60",
-    badge: "bg-fuchsia-50 text-fuchsia-800",
-  },
-  {
-    id: "asistente-obsidian",
-    nombre: "Asistente Obsidian",
-    desc: "Gestión de vault, Zettelkasten, MOCs, weekly reviews y procesamiento de inbox. 3 skills + 5 comandos.",
-    audiencia: "PKM, investigadores, escritores",
-    color: "border-purple-200 bg-purple-50/40 ring-2 ring-purple-200/60",
-    badge: "bg-purple-50 text-purple-800",
-  },
-  {
-    id: "ventas-b2b-premium",
-    nombre: "Ventas B2B Pro",
-    desc: "Pipeline completo: prospección BANT+MEDDIC, propuestas con 3 opciones de precio, 7 objeciones con scripts. 3 skills + 5 comandos.",
-    audiencia: "Equipos comerciales, SDRs",
-    color: "border-teal-200 bg-teal-50/40 ring-2 ring-teal-200/60",
-    badge: "bg-teal-50 text-teal-800",
-  },
-  {
-    id: "asistente-inmobiliario",
-    nombre: "Asistente Inmobiliario",
-    desc: "Fichas, análisis de inversión (Cap Rate, GRM), contratos por país, marketing para portales y redes. 3 skills + 5 comandos.",
-    audiencia: "Agentes inmobiliarios, inversionistas",
-    color: "border-rose-200 bg-rose-50/40 ring-2 ring-rose-200/60",
-    badge: "bg-rose-50 text-rose-800",
-  },
-];
-
-const SECTORES = [
-  {
-    sector: "Despachos legales",
-    desc: "Automatiza contratos, poderes notariales y revisión de documentos en minutos.",
-    icono: "⚖️",
-  },
-  {
-    sector: "Firmas contables",
-    desc: "Genera reportes fiscales, concilia cuentas y cumple con normativas locales.",
-    icono: "📊",
-  },
-  {
-    sector: "Comercio minorista",
-    desc: "Gestiona catálogos, responde clientes y analiza inventario automáticamente.",
-    icono: "🛒",
-  },
-  {
-    sector: "Agencias de marketing",
-    desc: "Crea campañas, genera copy persuasivo y reporta métricas semanales.",
-    icono: "📣",
-  },
-  {
-    sector: "Instituciones educativas",
-    desc: "Diseña planes de clase, rúbricas y exámenes alineados a estándares.",
-    icono: "🎓",
-  },
-  {
-    sector: "Gobierno municipal",
-    desc: "Redacta oficios, informes de transparencia y respuestas ciudadanas.",
-    icono: "🏛️",
-  },
-  {
-    sector: "Salud y clínicas",
-    desc: "Agenda citas, automatiza facturación médica, genera resúmenes clínicos y apoya el triaje inicial. Solo el 65% de la atención primaria en LATAM usa expedientes electrónicos — AikaOS cierra esa brecha.",
-    icono: "🏥",
-  },
-  {
-    sector: "Inmobiliaria / PropTech",
-    desc: "Publica propiedades, genera contratos de arrendamiento, da seguimiento a clientes y automatiza valuaciones comparativas de mercado.",
-    icono: "🏠",
-  },
-  {
-    sector: "Logística y cadena de suministro",
-    desc: "Predice demanda de inventario, rastrea envíos, coordina proveedores y genera reportes de aduanas. El comercio intrarregional en LATAM es solo el 14% — la eficiencia logística es clave.",
-    icono: "🚛",
-  },
-  {
-    sector: "Agricultura / Agtech",
-    desc: "Planifica cultivos, genera documentos de cumplimiento fitosanitario, automatiza trámites de exportación y analiza datos climáticos para toma de decisiones.",
-    icono: "🌾",
-  },
-  {
-    sector: "Fintech y servicios financieros",
-    desc: "Procesa documentos de crédito, automatiza onboarding de clientes, genera reportes de cumplimiento regulatorio y analiza riesgo crediticio.",
-    icono: "💳",
-  },
-  {
-    sector: "Construcción",
-    desc: "Prepara licitaciones, documenta avance de obra, genera reportes de seguridad laboral y automatiza presupuestos de materiales.",
-    icono: "🏗️",
-  },
-];
-
-/* ── Datos de la tabla comparativa ── */
-const COMPARATIVA = [
-  {
-    criterio: "Precio",
-    aikaos: "Desde $20 USD/mes. Incluye la app, actualizaciones y soporte. Sin costos ocultos.",
-    openclaw: "El software es gratuito, pero requiere suscripción a un modelo (Claude Max recomendado: $100-200/mes). Configuración técnica por tu cuenta.",
-    cowork: "$20/mes (Pro) a $200/mes (Max 20x). Pago obligatorio para acceder a funciones agenticas.",
-  },
-  {
-    criterio: "Privacidad de datos",
-    aikaos: "Total. Todo corre en tu máquina. Tus archivos, conversaciones y datos nunca salen de tu computadora.",
-    openclaw: "Parcial. Corre localmente pero envía todo a APIs externas. Sin GUI, difícil auditar qué se envía.",
-    cowork: "Limitada. El procesamiento ocurre en servidores de Anthropic. Tu información pasa por sus sistemas.",
-  },
-  {
-    criterio: "Interfaz",
-    aikaos: "App de escritorio con GUI completa. Cualquier persona puede usarla sin conocimientos técnicos.",
-    openclaw: "Sin GUI nativa. Se opera por línea de comandos o mensajes de WhatsApp/Telegram/Discord.",
-    cowork: "App de escritorio (macOS y Windows). Interfaz pulida pero requiere conexión constante a internet.",
-  },
-  {
-    criterio: "Modelos de IA",
-    aikaos: "Trae tu propio modelo (BYOM): Claude, GPT-4, DeepSeek, Ollama (local). También ofrecemos asistencia para integrar el modelo que prefieras.",
-    openclaw: "Cualquiera, pero recomienda fuertemente Claude Max ($100-200/mes) para mejor rendimiento.",
-    cowork: "Solo Claude (Anthropic). No puedes usar otros modelos.",
-  },
-  {
-    criterio: "Funciona offline",
-    aikaos: "Sí, con modelos locales (Ollama). Sin internet, sin problema.",
-    openclaw: "Parcial. El gateway corre local pero necesita API externa para el modelo.",
-    cowork: "No. Requiere conexión activa a internet durante toda la sesión.",
-  },
-  {
-    criterio: "Límites de uso",
-    aikaos: "Sin límites. Usa todo lo que necesites, cuando lo necesites.",
-    openclaw: "Sin límites propios, pero heredas los límites del modelo que uses.",
-    cowork: "Límites estrictos por ventanas de 5 horas. Cowork consume tokens mucho más rápido que el chat normal.",
-  },
-  {
-    criterio: "Aprobación de acciones",
-    aikaos: "Sí. Ves un plan claro antes de cada acción. Nada se ejecuta sin tu permiso.",
-    openclaw: "Limitada. El agente puede actuar sin dirección explícita (caso documentado: creó un perfil de citas sin permiso del usuario).",
-    cowork: "Parcial. Pide permiso para eliminar archivos, pero puede ejecutar otras acciones sin confirmación.",
-  },
-  {
-    criterio: "Seguridad",
-    aikaos: "Sistema cerrado y controlado por AikaLabs. Sin skills de terceros no verificados. Cada actualización es revisada por nuestro equipo.",
-    openclaw: "Riesgos documentados: Cisco encontró exfiltración de datos en skills de terceros. El repositorio de skills carece de verificación adecuada.",
-    cowork: "Anthropic advierte explícitamente: no usar para cargas de trabajo reguladas. Sin logs de auditoría para actividad de Cowork.",
-  },
-  {
-    criterio: "Idioma",
-    aikaos: "Interfaz nativa en español. Expertos preconfigurados para LATAM con normativas locales (SAT, DIAN, AFIP).",
-    openclaw: "Solo en inglés. Sin soporte nativo para español ni normativas latinoamericanas.",
-    cowork: "Multiidioma en chat, pero la interfaz y documentación están en inglés.",
-  },
-  {
-    criterio: "Puesta en marcha",
-    aikaos: "Nosotros lo instalamos y configuramos. Recibes el sistema listo para trabajar con soporte incluido.",
-    openclaw: "Requiere Node 22+, CLI wizard, configuración de gateway, canales de mensajería. Nivel técnico medio-avanzado.",
-    cowork: "Descarga la app, inicia sesión con tu cuenta de pago. Sencillo pero requiere suscripción.",
-  },
-  {
-    criterio: "Cumplimiento regulatorio",
-    aikaos: "GDPR/LGPD automático: ningún dato sale de tu máquina. Ideal para datos sensibles (médicos, legales, financieros).",
-    openclaw: "Depende de tu configuración. Si usas APIs en la nube, los datos salen de tu máquina.",
-    cowork: "Anthropic no ofrece cumplimiento HIPAA para Cowork. Ellos mismos advierten no usarlo para cargas reguladas.",
-  },
-  {
-    criterio: "Actualizaciones",
-    aikaos: "Incluidas en tu plan. Nuevos modelos, integraciones y mejoras se entregan automáticamente.",
-    openclaw: "Actualizaciones comunitarias. Sin garantía de estabilidad ni soporte.",
-    cowork: "Actualizaciones de Anthropic. No tienes control sobre qué cambia ni cuándo.",
-  },
-  {
-    criterio: "Servidores MCP",
-    aikaos: "Incluidos en planes Profesional+. En Enterprise, desarrollamos servidores MCP a medida para tu empresa.",
-    openclaw: "3,000+ skills de la comunidad, pero sin verificación de seguridad.",
-    cowork: "Conectores limitados (Google Drive, Gmail, DocuSign). No puedes crear los tuyos.",
-  },
-];
+/* eslint-disable @next/next/no-img-element */
 
 export default function Home() {
   return (
-    <div className="relative min-h-screen">
-      <div className="relative z-10">
-        <SiteNav />
+    <>
+      {/* Background Layer */}
+      <div className="fixed inset-0 z-0 pointer-events-none">
+        <img
+          src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/bfd2f4cf-65ed-4b1a-86d1-a1710619267b_1600w.png"
+          alt="Sky Background"
+          className="absolute inset-0 w-full h-full object-cover opacity-80 mix-blend-multiply"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#A6CBE8]/20 via-[#BFD9EF]/40 to-[#EAE3D6]/60" />
+        <img
+          src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/4734259a-bad7-422f-981e-ce01e79184f2_1600w.jpg"
+          className="absolute top-[20%] -left-[10%] w-[50%] opacity-40 mix-blend-screen blur-xl pointer-events-none"
+          alt="cloud"
+        />
+        <img
+          src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/917d6f93-fb36-439a-8c48-884b67b35381_1600w.jpg"
+          className="absolute top-[30%] -right-[10%] w-[50%] opacity-40 mix-blend-screen blur-xl pointer-events-none"
+          alt="cloud"
+        />
+      </div>
 
-        <main className="pb-24 pt-20">
-          <div className="content-max-width px-6">
-            {/* ── Hero ── */}
-            <div className="animate-fade-up">
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-teal-200 bg-teal-50 px-3 py-1 text-[12px] font-semibold uppercase tracking-wider text-teal-700">
-                <span className="mono">{">_"}</span> por AikaLabs
-              </div>
-              <h1 className="mb-4 max-w-4xl text-5xl font-bold tracking-tight md:text-6xl">
-                Tu equipo de IA privado, listo para trabajar.
-              </h1>
-              <p className="mb-6 max-w-4xl text-xl font-medium leading-relaxed text-gray-900/80">
-                AikaOS es un sistema de agentes inteligentes que corre
-                directamente en tu computadora. Automatiza contratos, reportes
-                fiscales, campañas, soporte y más — sin que tus datos salgan
-                de tu empresa. Nosotros lo instalamos, configuramos y
-                mantenemos actualizado.
-              </p>
-              <p className="mb-10 max-w-3xl text-[15px] leading-relaxed text-gray-500">
-                Disponible para macOS con Apple Silicon (M1/M2/M3/M4).
-                Windows y Linux en desarrollo.
-              </p>
-            </div>
+      {/* Content Wrapper */}
+      <div className="relative z-10 flex flex-col min-h-screen">
+        {/* Navigation */}
+        <nav className="w-full px-6 py-6 md:px-12 flex items-center justify-between max-w-7xl mx-auto animate-fade-in">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 bg-black rounded-tr-lg rounded-bl-lg shadow-md" />
+            <span className="text-xl font-semibold text-slate-900 tracking-tight font-nunito">
+              AikaOS
+            </span>
+          </div>
 
-            {/* ── CTA principal ── */}
-            <div className="mb-10 flex flex-wrap items-center gap-4">
+          <div className="hidden md:flex items-center gap-8 text-[15px] font-medium text-slate-700/80">
+            <a href="#como-funciona" className="hover:text-black transition-colors">
+              Cómo funciona
+            </a>
+            <a href="#por-que-local" className="hover:text-black transition-colors">
+              Por qué local
+            </a>
+            <a href="#sectores" className="hover:text-black transition-colors">
+              Sectores
+            </a>
+            <a href="#planes" className="hover:text-black transition-colors">
+              Planes
+            </a>
+            <a href="#faq" className="hover:text-black transition-colors">
+              FAQ
+            </a>
+          </div>
+
+          <div>
+            <a
+              href="/enterprise#contacto"
+              className="bg-[#1A1A1A] text-white text-[15px] font-normal px-6 py-2.5 rounded-full hover:bg-black transition-all shadow-[0_8px_16px_rgba(0,0,0,0.15)] hover:shadow-[0_12px_20px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 border border-white/10"
+            >
+              Solicitar demo
+            </a>
+          </div>
+        </nav>
+
+        {/* Hero Section */}
+        <main className="flex-grow flex flex-col items-center pt-16 pb-20 px-4 md:px-6 w-full max-w-7xl mx-auto">
+          {/* Hero Text */}
+          <div
+            className="text-center max-w-4xl mx-auto mb-16 animate-slide-up"
+            style={{ animationDelay: "0.1s" }}
+          >
+            <h1 className="md:text-[80px] leading-[1] text-6xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-8 drop-shadow-sm">
+              Tu equipo de IA privado,
+              <br />
+              listo para trabajar.
+            </h1>
+            <p className="md:text-[19px] leading-relaxed text-lg font-normal text-slate-600 font-sans max-w-3xl mx-auto mb-4">
+              AikaOS es un sistema de agentes inteligentes que corre directamente
+              en tu computadora. Automatiza contratos, reportes fiscales,
+              campañas, soporte y más — sin que tus datos salgan de tu empresa.
+              Nosotros lo instalamos, configuramos y mantenemos actualizado.
+            </p>
+            <p className="text-sm text-slate-500 font-medium mb-10">
+              Disponible para macOS con Apple Silicon (M1/M2/M3/M4). Windows y
+              Linux en desarrollo.
+            </p>
+
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
               <a
                 href="/enterprise#contacto"
-                className="doc-button"
+                className="text-[17px] hover:bg-black transition-all hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 sm:w-auto font-normal text-white bg-[#1A1A1A] w-full rounded-full pt-3.5 pr-8 pb-3.5 pl-8 shadow-[0_10px_20px_rgba(0,0,0,0.15)] border border-white/10 text-center"
               >
                 Solicitar demo
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                  aria-hidden="true"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth="2"
-                    d="M14 5l7 7m0 0l-7 7m7-7H3"
-                  />
-                </svg>
               </a>
               <a
-                href="/enterprise"
-                className="doc-button-dark"
+                href="#planes"
+                className="bg-white/40 backdrop-blur-xl border border-white/60 shadow-[0_8px_20px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.6)] text-[#1A1A1A] text-[17px] font-normal px-8 py-3.5 rounded-full hover:bg-white/60 hover:-translate-y-0.5 transition-all w-full sm:w-auto flex items-center justify-center gap-2"
               >
                 Ver planes desde $20/mes
               </a>
             </div>
+          </div>
 
-            {/* ── Video demo ── */}
-            <div className="group relative mb-2 mt-8">
-              <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl transition-transform duration-500 group-hover:scale-[1.01] ring-1 ring-black/5">
-                {/* Overlay: tapa "OpenWork" en la esquina superior del video y muestra "AikaOS" */}
-                <div className="absolute left-0 top-0 z-10 flex items-center gap-2 bg-[#1e1e2e] px-6 py-2 min-w-[260px]">
-                  <span className="font-mono text-sm font-bold text-aika-teal">{">_"}</span>
-                  <span className="text-sm font-semibold text-white">AikaOS</span>
+          {/* Dashboard Mockup */}
+          <div
+            className="w-full max-w-[1300px] bg-white/60 backdrop-blur-2xl rounded-t-[40px] shadow-[0_50px_100px_-20px_rgba(0,0,0,0.15),0_30px_60px_-30px_rgba(0,0,0,0.1),inset_0_2px_0_rgba(255,255,255,0.8)] border border-white/80 overflow-hidden flex flex-col md:flex-row relative animate-slide-up"
+            style={{ animationDelay: "0.3s" }}
+          >
+            {/* Sidebar */}
+            <aside className="hidden md:flex flex-col w-64 border-r border-white/40 p-6 bg-white/30 backdrop-blur-md">
+              <div className="flex items-center gap-2 mb-8 px-2">
+                <div className="w-5 h-5 bg-black rounded-tr-md rounded-bl-md shadow-sm" />
+                <span className="text-lg font-semibold text-slate-900 font-nunito">
+                  AikaOS
+                </span>
+                <div className="ml-auto">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:round-arrow-left-linear"
+                    class="text-slate-400 text-xl"
+                  />
                 </div>
-                <video
-                  autoPlay
-                  loop
-                  muted
-                  playsInline
-                  className="w-full block"
+              </div>
+
+              <nav className="space-y-1 mb-8">
+                <a
+                  href="#"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl bg-white/60 shadow-[0_2px_10px_rgba(0,0,0,0.02),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white text-slate-900 font-medium text-sm transition-all hover:-translate-y-0.5"
                 >
-                  <source src="/app-demo.mp4" type="video/mp4" />
-                </video>
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:user-linear" class="text-lg" />
+                  Tú
+                </a>
+                <a
+                  href="#"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                >
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:document-linear" class="text-lg" />
+                  Documentos
+                </a>
+                <a
+                  href="#"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                >
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:global-linear" class="text-lg" />
+                  Navegador
+                </a>
+                <a
+                  href="#"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                >
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:box-linear" class="text-lg" />
+                  AikaOS
+                </a>
+              </nav>
+
+              <div className="mt-auto">
+                <p className="px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wider mb-2">
+                  Modelos
+                </p>
+                <nav className="space-y-1">
+                  <a
+                    href="#"
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                  >
+                    {/* @ts-expect-error iconify-icon is a web component */}
+                    <iconify-icon icon="solar:cpu-linear" class="text-lg" />
+                    Claude
+                  </a>
+                  <a
+                    href="#"
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                  >
+                    {/* @ts-expect-error iconify-icon is a web component */}
+                    <iconify-icon icon="solar:cpu-linear" class="text-lg" />
+                    GPT-4
+                  </a>
+                  <a
+                    href="#"
+                    className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-white/40 hover:shadow-sm hover:border hover:border-white/50 transition-all font-normal text-sm border border-transparent"
+                  >
+                    {/* @ts-expect-error iconify-icon is a web component */}
+                    <iconify-icon
+                      icon="solar:server-square-linear"
+                      class="text-lg"
+                    />
+                    Ollama (Local)
+                  </a>
+                </nav>
+              </div>
+            </aside>
+
+            {/* Main Content */}
+            <div className="flex-1 md:p-8 bg-white/20 pt-6 pr-6 pb-6 pl-6 max-h-[70vh] md:max-h-none overflow-y-auto relative">
+              {/* Subtle inner glow */}
+              <div className="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-transparent pointer-events-none rounded-tl-3xl" />
+
+              {/* Header */}
+              <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8 relative z-10">
+                <div>
+                  <h2 className="text-xl font-semibold text-slate-900 font-nunito tracking-tight">
+                    {">_"}AikaOS
+                  </h2>
+                  <p className="text-sm text-slate-600 mt-0.5 font-medium">
+                    Interfaz real de AikaOS — crea tareas, ejecuta skills y
+                    automatiza flujos.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-4">
+                  {/* Search */}
+                  <div className="relative">
+                    {/* @ts-expect-error iconify-icon is a web component */}
+                    <iconify-icon
+                      icon="solar:magnifer-linear"
+                      class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Ejecutar comando..."
+                      className="pl-10 pr-4 py-2.5 bg-white/50 backdrop-blur-md border border-white/60 rounded-full text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-white/80 focus:bg-white/80 w-64 shadow-[0_2px_10px_rgba(0,0,0,0.02),inset_0_1px_0_rgba(255,255,255,0.6)] transition-all"
+                    />
+                  </div>
+
+                  {/* Icons */}
+                  <div className="flex items-center gap-3 text-slate-500 text-xl">
+                    <button className="w-10 h-10 rounded-full bg-white/40 hover:bg-white/70 border border-white/50 shadow-sm flex items-center justify-center transition-all hover:-translate-y-0.5">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:bell-linear" />
+                    </button>
+                    <button className="w-10 h-10 rounded-full bg-white/40 hover:bg-white/70 border border-white/50 shadow-sm flex items-center justify-center transition-all hover:-translate-y-0.5">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:settings-linear" />
+                    </button>
+                  </div>
+                </div>
+              </header>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-8 relative z-10">
+                {/* Stat Card 1 */}
+                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
+                  <div className="flex items-center gap-3 text-slate-600 mb-6">
+                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:check-read-linear" />
+                    </div>
+                    <span className="text-[13px] font-medium">
+                      Tareas ejecutadas
+                    </span>
+                  </div>
+                  <div className="flex items-end justify-between">
+                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
+                      1,204
+                    </span>
+                    <span className="text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2 py-1 rounded-full shadow-sm">
+                      Hoy
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stat Card 2 */}
+                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
+                  <div className="flex items-center gap-3 text-slate-600 mb-6">
+                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:cpu-linear" />
+                    </div>
+                    <span className="text-[13px] font-medium">
+                      Modelos conectados
+                    </span>
+                  </div>
+                  <div className="flex items-end justify-between">
+                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
+                      3
+                    </span>
+                    <span className="text-[11px] font-semibold text-blue-700 bg-blue-100/80 backdrop-blur-sm border border-blue-200/50 px-2 py-1 rounded-full shadow-sm">
+                      Activos
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stat Card 3 */}
+                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
+                  <div className="flex items-center gap-3 text-slate-600 mb-6">
+                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:magic-stick-3-linear" />
+                    </div>
+                    <span className="text-[13px] font-medium">
+                      Skills instalados
+                    </span>
+                  </div>
+                  <div className="flex items-end justify-between">
+                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
+                      45
+                    </span>
+                    <span className="text-[11px] font-semibold text-purple-700 bg-purple-100/80 backdrop-blur-sm border border-purple-200/50 px-2 py-1 rounded-full shadow-sm">
+                      MCP
+                    </span>
+                  </div>
+                </div>
+
+                {/* Stat Card 4 */}
+                <div className="bg-white/40 backdrop-blur-xl p-5 rounded-[24px] border border-white/60 shadow-[0_8px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:-translate-y-1 transition-all duration-300 group">
+                  <div className="flex items-center gap-3 text-slate-600 mb-6">
+                    <div className="w-10 h-10 rounded-[12px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-lg group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:clock-circle-linear" />
+                    </div>
+                    <span className="text-[13px] font-medium">
+                      Tiempo ahorrado
+                    </span>
+                  </div>
+                  <div className="flex items-end justify-between">
+                    <span className="text-[32px] font-semibold font-nunito text-slate-900 tracking-tight leading-none">
+                      120h
+                    </span>
+                    <span className="text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2 py-1 rounded-full shadow-sm">
+                      Este mes
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bottom Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+                {/* Activity Feed (2 cols wide) */}
+                <div className="lg:col-span-2 bg-white/50 backdrop-blur-2xl border border-white/80 rounded-[28px] p-7 shadow-[0_15px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.9)] relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
+
+                  <div className="flex items-center justify-between mb-8 relative z-10">
+                    <h3 className="font-semibold text-[15px] text-slate-900 font-nunito">
+                      Actividad reciente
+                    </h3>
+                    <div className="flex gap-2">
+                      <button className="flex items-center gap-2 px-4 py-2 bg-white/60 border border-white rounded-full text-xs font-medium text-slate-700 hover:bg-white hover:shadow-sm transition-all shadow-[0_2px_8px_rgba(0,0,0,0.02)]">
+                        Filtrar{" "}
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon icon="solar:alt-arrow-down-linear" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 relative z-10">
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-blue-50 to-blue-100/50 border border-blue-100 shadow-sm text-blue-600 flex items-center justify-center shrink-0 text-lg">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon icon="solar:document-text-linear" />
+                      </div>
+                      <div className="mt-0.5">
+                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
+                          Generación de contrato de arrendamiento
+                        </p>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Skill: Asistente Inmobiliario &bull; Hace 5 min
+                        </p>
+                      </div>
+                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
+                        Completado
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-purple-50 to-purple-100/50 border border-purple-100 shadow-sm text-purple-600 flex items-center justify-center shrink-0 text-lg">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon icon="solar:chart-square-linear" />
+                      </div>
+                      <div className="mt-0.5">
+                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
+                          Conciliación bancaria mensual
+                        </p>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Skill: Contabilidad LATAM &bull; Hace 1 hora
+                        </p>
+                      </div>
+                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
+                        Completado
+                      </span>
+                    </div>
+                    <div className="flex items-start gap-4 p-4 rounded-2xl bg-white/40 border border-white/50 hover:bg-white/80 hover:shadow-[0_4px_15px_rgba(0,0,0,0.03)] transition-all cursor-default">
+                      <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-orange-50 to-orange-100/50 border border-orange-100 shadow-sm text-orange-600 flex items-center justify-center shrink-0 text-lg">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon icon="solar:global-linear" />
+                      </div>
+                      <div className="mt-0.5">
+                        <p className="text-[14px] font-semibold text-slate-900 mb-0.5">
+                          Investigación web: Tendencias de mercado
+                        </p>
+                        <p className="text-xs text-slate-500 font-medium">
+                          Skill: Investigador Web &bull; Hace 2 horas
+                        </p>
+                      </div>
+                      <span className="ml-auto text-[11px] font-semibold text-green-700 bg-green-100/80 backdrop-blur-sm border border-green-200/50 px-2.5 py-1 rounded-full shadow-sm mt-1">
+                        Completado
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Actions Grid (1 col wide) */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
+                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:pen-new-square-linear" />
+                    </div>
+                    <span className="text-[13px] font-semibold text-slate-800">
+                      Nuevo prompt
+                    </span>
+                  </div>
+
+                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
+                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:folder-with-files-linear" />
+                    </div>
+                    <span className="text-[13px] font-semibold text-slate-800">
+                      Analizar directorio
+                    </span>
+                  </div>
+
+                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
+                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:magic-stick-3-linear" />
+                    </div>
+                    <span className="text-[13px] font-semibold text-slate-800">
+                      Ejecutar skill
+                    </span>
+                  </div>
+
+                  <div className="bg-white/50 backdrop-blur-xl p-5 rounded-[24px] shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/80 flex flex-col items-start justify-center gap-4 hover:bg-white/70 hover:shadow-[0_15px_30px_rgba(0,0,0,0.06)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group">
+                    <div className="w-12 h-12 rounded-[14px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_-2px_4px_rgba(0,0,0,0.02)] flex items-center justify-center text-slate-800 text-xl group-hover:scale-110 transition-transform duration-300">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:settings-linear" />
+                    </div>
+                    <span className="text-[13px] font-semibold text-slate-800">
+                      Configurar MCP
+                    </span>
+                  </div>
+
+                  <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-5 rounded-[24px] shadow-[0_10px_20px_rgba(0,0,0,0.15),inset_0_1px_0_rgba(255,255,255,0.2)] border border-slate-700 flex flex-col items-start justify-center hover:from-black hover:to-slate-900 hover:shadow-[0_15px_30px_rgba(0,0,0,0.25)] hover:-translate-y-1 transition-all duration-300 cursor-pointer group col-span-2">
+                    <div className="flex w-full items-center gap-4">
+                      <div className="w-10 h-10 rounded-full bg-white/10 border border-white/20 shadow-inner flex items-center justify-center text-white text-xl group-hover:bg-white/20 transition-colors">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon icon="solar:play-circle-linear" />
+                      </div>
+                      <span className="text-[14px] font-semibold text-white tracking-wide">
+                        Iniciar rutina diaria
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
-
-            <p className="mb-16 text-center text-[13px] text-gray-500">
-              Interfaz real de AikaOS — crea tareas, ejecuta skills y automatiza
-              flujos desde tu escritorio.
-            </p>
-
-            <hr />
-
-            {/* ══════════════════════════════════════════════════════════
-                ── CÓMO FUNCIONA ──
-                ══════════════════════════════════════════════════════════ */}
-            <section id="como-funciona" className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Cómo funciona</HyperText>
-              </h2>
-              <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
-                AikaOS se instala en tu computadora y se conecta al modelo de
-                inteligencia artificial que tú elijas. Nosotros nos encargamos
-                de la puesta en marcha.
-              </p>
-
-              <div className="space-y-8">
-                <div className="flex gap-6">
-                  <div className="step-circle shrink-0">1</div>
-                  <div className="space-y-3">
-                    <h3 className="text-base font-bold">
-                      Elige tu plan y contáctanos
-                    </h3>
-                    <p className="text-[15px] text-gray-700">
-                      Selecciona el plan que se adapte a tu empresa (desde $20
-                      USD/mes). Nuestro equipo te contactará para coordinar la
-                      instalación.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-6">
-                  <div className="step-circle shrink-0">2</div>
-                  <div className="space-y-3">
-                    <h3 className="text-base font-bold">
-                      Conecta tu modelo de IA (BYOM)
-                    </h3>
-                    <p className="text-[15px] text-gray-700">
-                      AikaOS funciona con el modelo que tú prefieras. Puedes
-                      usar tu propia API key de Anthropic (Claude), OpenAI
-                      (GPT-4), DeepSeek, o modelos locales con Ollama. También
-                      puedes usar una suscripción de OpenCode. Si necesitas
-                      ayuda para elegir o integrar un modelo, nuestro equipo te
-                      asiste sin costo adicional en planes Business y
-                      Enterprise.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-6">
-                  <div className="step-circle shrink-0">3</div>
-                  <div className="space-y-3">
-                    <h3 className="text-base font-bold">
-                      Recibe tu sistema listo para trabajar
-                    </h3>
-                    <p className="text-[15px] text-gray-700">
-                      Te entregamos AikaOS instalado y configurado con los
-                      expertos y skills que necesitas para tu industria. Solo
-                      abre la app y empieza a trabajar.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex gap-6">
-                  <div className="step-circle shrink-0">4</div>
-                  <div className="space-y-3">
-                    <h3 className="text-base font-bold">
-                      Actualizaciones y soporte continuo
-                    </h3>
-                    <p className="text-[15px] text-gray-700">
-                      Tu plan incluye actualizaciones con nuevos modelos, nuevas
-                      integraciones y mejoras constantes. Nuestro equipo está
-                      disponible para soporte técnico y para desarrollar
-                      funcionalidades a medida.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* BYOM callout */}
-              <div className="mt-12 rounded-2xl border border-teal-200 bg-teal-50/50 p-6">
-                <h3 className="mb-3 text-[15px] font-bold text-teal-800">
-                  Trae tu propio modelo (BYOM)
-                </h3>
-                <p className="mb-4 text-[14px] leading-relaxed text-gray-700">
-                  AikaOS no te obliga a usar un modelo específico. Tú decides
-                  qué inteligencia artificial potencia tu sistema:
-                </p>
-                <ul className="space-y-2 text-[14px] text-gray-700">
-                  <li>
-                    <strong>API key propia:</strong> Anthropic (Claude), OpenAI
-                    (GPT-4), DeepSeek, Google Gemini, o cualquier proveedor
-                    compatible.
-                  </li>
-                  <li>
-                    <strong>Modelos locales:</strong> Ollama con Llama, Mistral,
-                    Phi u otros modelos que corren 100% en tu máquina sin
-                    internet.
-                  </li>
-                  <li>
-                    <strong>OpenCode:</strong> Si ya tienes una suscripción de
-                    OpenCode, puedes conectarla directamente.
-                  </li>
-                  <li>
-                    <strong>Asistencia de integración:</strong> En planes
-                    Business y Enterprise, nuestro equipo integra el modelo que
-                    prefieras en toda tu infraestructura.
-                  </li>
-                </ul>
-              </div>
-
-              {/* Requisitos */}
-              <div className="mt-8 rounded-2xl border border-gray-100 bg-gray-50/60 p-6">
-                <h3 className="mb-3 text-[15px] font-bold">
-                  Requisitos del sistema
-                </h3>
-                <ul className="space-y-2 text-[14px] text-gray-700">
-                  <li>
-                    <strong>macOS:</strong> 12.0 (Monterey) o superior
-                  </li>
-                  <li>
-                    <strong>Procesador:</strong> Apple Silicon (M1, M2, M3, M4)
-                  </li>
-                  <li>
-                    <strong>RAM:</strong> 8 GB mínimo (16 GB recomendado para
-                    modelos locales)
-                  </li>
-                  <li>
-                    <strong>Disco:</strong> 500 MB para la aplicación
-                  </li>
-                  <li>
-                    <strong>Conexión a internet:</strong> Solo si usas modelos en
-                    la nube (Claude, GPT-4)
-                  </li>
-                </ul>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ══════════════════════════════════════════════════════════
-                ── POR QUÉ LOCAL-FIRST ──
-                ══════════════════════════════════════════════════════════ */}
-            <section id="local-first" className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>¿Por qué correr tu IA en local?</HyperText>
-              </h2>
-              <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
-                La mayoría de las herramientas de IA procesan tus datos en
-                servidores externos. Eso significa que tus conversaciones,
-                archivos y estrategias de negocio pasan por manos de terceros.
-                AikaOS funciona diferente: todo corre en tu propia computadora.
-              </p>
-
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-2xl border border-teal-100 bg-teal-50/30 p-6 ring-1 ring-teal-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-teal-100 text-lg">
-                    🔒
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Privacidad total de tus datos
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Tus conversaciones, archivos y datos de negocio nunca salen
-                    de tu computadora. No hay servidores intermediarios, no hay
-                    terceros con acceso a tu información. En abril de 2023,
-                    empleados de Samsung filtraron código confidencial al usar
-                    ChatGPT — con AikaOS eso es imposible porque nada se envía
-                    a la nube.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-emerald-100 bg-emerald-50/30 p-6 ring-1 ring-emerald-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-100 text-lg">
-                    💰
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Costos predecibles
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Un precio fijo mensual que incluye la app, actualizaciones y
-                    soporte. Con modelos locales como Ollama, tu costo de
-                    infraestructura adicional es $0. Sin sorpresas de consumo,
-                    sin facturas variables.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-violet-100 bg-violet-50/30 p-6 ring-1 ring-violet-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-lg">
-                    🔓
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Sin dependencia de un proveedor
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Elige el modelo que quieras: Claude, GPT-4, DeepSeek, Llama,
-                    Mistral o cualquier modelo local. Si un proveedor sube
-                    precios o cambia sus términos, simplemente cambias a otro.
-                    Tu trabajo y tus automatizaciones siguen funcionando.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-blue-100 bg-blue-50/30 p-6 ring-1 ring-blue-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-lg">
-                    📋
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Cumplimiento regulatorio automático
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Si tus datos nunca salen de tu máquina, cumples
-                    automáticamente con GDPR, LGPD (Brasil), Ley Federal de
-                    Protección de Datos (México) y regulaciones similares. Ideal
-                    para despachos legales, clínicas y firmas financieras.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-amber-100 bg-amber-50/30 p-6 ring-1 ring-amber-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-amber-100 text-lg">
-                    ♾️
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Sin límites de uso
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Las herramientas cloud tienen límites por ventanas de tiempo
-                    — Claude Cowork opera en ventanas de 5 horas y las tareas
-                    agenticas consumen tokens mucho más rápido que el chat
-                    normal. Con AikaOS y un modelo local, puedes trabajar todo
-                    el día sin interrupciones.
-                  </p>
-                </div>
-
-                <div className="rounded-2xl border border-pink-100 bg-pink-50/30 p-6 ring-1 ring-pink-100/50">
-                  <div className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-pink-100 text-lg">
-                    📡
-                  </div>
-                  <h3 className="mb-2 text-[15px] font-bold">
-                    Funciona sin internet
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Con un modelo local instalado, AikaOS funciona completamente
-                    offline. Especialmente valioso en Latinoamérica, donde más
-                    de la mitad de los hogares rurales no tienen acceso
-                    confiable a internet.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── Visualización: AikaOS conecta tus herramientas con IA ── */}
-            <section className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Conecta todo con inteligencia artificial</HyperText>
-              </h2>
-              <HeroBeam />
-            </section>
-
-            <hr />
-
-            {/* ── Expertos preconfigurados ── */}
-            <section id="expertos" className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>25 expertos preconfigurados</HyperText>
-              </h2>
-              <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
-                Cada experto incluye skills especializados, comandos listos para
-                usar y servidores MCP configurados. Disponibles a partir del
-                plan Profesional ($50/mes).
-              </p>
-              <p className="mb-10 max-w-3xl text-[14px] text-gray-500">
-                El plan Personal ($20/mes) incluye la app base sin expertos
-                preconfigurados — ideal para quienes quieren configurar sus
-                propios skills.
-              </p>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                {EXPERTOS.map((exp) => (
-                  <div
-                    key={exp.id}
-                    className={`feature-card ${exp.color}`}
-                  >
-                    <span
-                      className={`mb-3 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${exp.badge}`}
-                    >
-                      {exp.audiencia.split(",")[0]}
-                    </span>
-                    <h4 className="mb-2 text-[15px] font-bold">
-                      {exp.nombre}
-                    </h4>
-                    <p className="text-[14px] leading-relaxed text-gray-700">
-                      {exp.desc}
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              {/* ── Expertos Premium (Business+) ── */}
-              <div className="mt-12">
-                <h3 className="mb-3 text-xl font-bold md:text-2xl">
-                  + 5 expertos premium
-                </h3>
-                <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
-                  Expertos avanzados con 3 skills especializados y 5 comandos
-                  cada uno. Incluidos a partir del plan Business ($150/mes).
-                </p>
-                <p className="mb-8 max-w-3xl text-[14px] text-gray-500">
-                  Cada experto premium se instala como un worker independiente:
-                  descarga la carpeta, selecciónala en AikaOS y empieza a
-                  trabajar. Sin terminal, sin configuración.
-                </p>
-
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                  {EXPERTOS_PREMIUM.map((exp) => (
-                    <div
-                      key={exp.id}
-                      className={`feature-card ${exp.color}`}
-                    >
-                      <span
-                        className={`mb-3 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${exp.badge}`}
-                      >
-                        {exp.audiencia.split(",")[0]}
-                      </span>
-                      <h4 className="mb-2 text-[15px] font-bold">
-                        {exp.nombre}
-                      </h4>
-                      <p className="text-[14px] leading-relaxed text-gray-700">
-                        {exp.desc}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── Funciones ── */}
-            <section id="funciones" className="py-12">
-              <h2 className="mb-10 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Lo que puedes hacer con AikaOS</HyperText>
-              </h2>
-
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
-                <div className="feature-card border-teal-100 bg-white/90 ring-1 ring-teal-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-teal-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-teal-700">
-                    Productividad
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Multitarea entre proyectos
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Ejecuta múltiples hilos en paralelo y cambia de contexto
-                    entre tareas de navegador y archivos locales al instante.
-                  </p>
-                </div>
-                <div className="feature-card border-violet-100 bg-white/90 ring-1 ring-violet-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-violet-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-violet-700">
-                    Automatización
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Tareas programadas
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Ejecuta cualquier prompt en un horario o actívalo
-                    automáticamente. Configúralo una vez y deja que se encargue
-                    solo.
-                  </p>
-                </div>
-                <div className="feature-card border-emerald-100 bg-white/90 ring-1 ring-emerald-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-                    Reutilización
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Skills compartibles
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Convierte cualquier flujo complejo en un skill reutilizable.
-                    Compártelo con tu equipo para que lo ejecuten con un clic.
-                  </p>
-                </div>
-                <div className="feature-card border-amber-100 bg-white/90 ring-1 ring-amber-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                    Interconexión
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Servidores MCP
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Conecta herramientas externas — navegador, bases de datos,
-                    APIs — mediante el protocolo MCP. En planes Enterprise,
-                    desarrollamos servidores MCP a medida para tu empresa.
-                  </p>
-                </div>
-                <div className="feature-card border-sky-100 bg-white/90 ring-1 ring-sky-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-sky-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-sky-700">
-                    Local-first
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Privacidad total
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Todo corre en tu máquina. Tus datos nunca salen de tu
-                    escritorio a menos que tú lo decidas.
-                  </p>
-                </div>
-                <div className="feature-card border-pink-100 bg-white/90 ring-1 ring-pink-100/60">
-                  <span className="mb-3 inline-flex rounded-full bg-pink-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-pink-700">
-                    LATAM
-                  </span>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    Hecho para Latinoamérica
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Interfaz en español, expertos que entienden normativas
-                    locales (SAT, DIAN, AFIP) y flujos adaptados a la región.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ══════════════════════════════════════════════════════════
-                ── COMPARATIVA VS COMPETENCIA ──
-                ══════════════════════════════════════════════════════════ */}
-            <section id="comparativa" className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>AikaOS vs la competencia</HyperText>
-              </h2>
-              <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
-                Existen otras herramientas de IA agentica en el mercado. Aquí
-                comparamos AikaOS con las dos más populares para que puedas
-                tomar una decisión informada.
-              </p>
-
-              {/* Resumen de competidores */}
-              <div className="mb-10 grid grid-cols-1 gap-6 md:grid-cols-2">
-                <div className="rounded-2xl border border-orange-100 bg-orange-50/30 p-6">
-                  <h3 className="mb-2 text-[15px] font-bold text-orange-800">
-                    OpenClaw (225k estrellas en GitHub)
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Asistente personal creado por Peter Steinberger. Se opera
-                    por mensajería (WhatsApp, Telegram, Discord). Siempre
-                    encendido, con 3,000+ skills de la comunidad. Sin embargo,
-                    tiene problemas de seguridad documentados: Cisco encontró
-                    que skills de terceros realizaban exfiltración de datos sin
-                    que el usuario lo supiera. Un caso documentado mostró que el
-                    agente creó un perfil de citas sin permiso del usuario.
-                    Requiere Node 22+ y configuración técnica avanzada.
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-purple-100 bg-purple-50/30 p-6">
-                  <h3 className="mb-2 text-[15px] font-bold text-purple-800">
-                    Claude Cowork (por Anthropic)
-                  </h3>
-                  <p className="text-[14px] leading-relaxed text-gray-700">
-                    Herramienta agentica de escritorio de Anthropic. Interfaz
-                    pulida, acceso directo a archivos locales, sub-agentes en
-                    paralelo, conectores para Google Drive, Gmail, DocuSign.
-                    Cuesta de $20 a $200/mes. Requiere conexión a internet
-                    constante — todo el procesamiento ocurre en servidores de
-                    Anthropic. Límites de uso por ventanas de 5 horas. Anthropic
-                    advierte explícitamente: &quot;No usar para cargas de trabajo
-                    reguladas&quot;. Sin logs de auditoría para actividad de
-                    Cowork.
-                  </p>
-                </div>
-              </div>
-
-              {/* Tabla comparativa */}
-              <div className="overflow-x-auto rounded-2xl border border-gray-200 bg-white shadow-sm">
-                <table className="w-full min-w-[800px] text-left text-[14px]">
-                  <thead>
-                    <tr className="border-b border-gray-100 bg-gray-50/80">
-                      <th className="px-4 py-3 font-bold text-gray-900">
-                        Criterio
-                      </th>
-                      <th className="px-4 py-3 font-bold text-teal-700">
-                        AikaOS
-                      </th>
-                      <th className="px-4 py-3 font-bold text-orange-700">
-                        OpenClaw
-                      </th>
-                      <th className="px-4 py-3 font-bold text-purple-700">
-                        Claude Cowork
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {COMPARATIVA.map((row, i) => (
-                      <tr
-                        key={row.criterio}
-                        className={
-                          i % 2 === 0 ? "bg-white" : "bg-gray-50/50"
-                        }
-                      >
-                        <td className="border-t border-gray-100 px-4 py-3 font-semibold text-gray-900 align-top">
-                          {row.criterio}
-                        </td>
-                        <td className="border-t border-gray-100 px-4 py-3 text-gray-700 align-top">
-                          {row.aikaos}
-                        </td>
-                        <td className="border-t border-gray-100 px-4 py-3 text-gray-700 align-top">
-                          {row.openclaw}
-                        </td>
-                        <td className="border-t border-gray-100 px-4 py-3 text-gray-700 align-top">
-                          {row.cowork}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Resumen */}
-              <div className="mt-8 rounded-2xl border border-teal-200 bg-teal-50/50 p-6">
-                <h3 className="mb-3 text-[15px] font-bold text-teal-800">
-                  En resumen: ¿por qué AikaOS?
-                </h3>
-                <ul className="space-y-2 text-[14px] leading-relaxed text-gray-700">
-                  <li>
-                    <strong>vs OpenClaw:</strong> AikaOS tiene interfaz gráfica
-                    completa (no necesitas terminal ni WhatsApp), flujo de
-                    aprobación antes de cada acción, sistema cerrado y
-                    verificado (sin skills de terceros no auditados), y puesta
-                    en marcha profesional incluida.
-                  </li>
-                  <li>
-                    <strong>vs Claude Cowork:</strong> AikaOS funciona offline,
-                    no tiene límites de uso, tus datos nunca salen de tu
-                    máquina, puedes usar cualquier modelo de IA, y el precio
-                    incluye actualizaciones y soporte — no solo acceso a la
-                    herramienta.
-                  </li>
-                  <li>
-                    <strong>Exclusivo de AikaOS:</strong> Interfaz nativa en
-                    español, expertos preconfigurados para industrias
-                    latinoamericanas, normativas locales integradas (SAT, DIAN,
-                    AFIP), desarrollo de servidores MCP a medida, e
-                    interconexión entre agentes para empresas.
-                  </li>
-                </ul>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── Sectores objetivo ── */}
-            <section id="sectores" className="py-12">
-              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Diseñado para estos sectores</HyperText>
-              </h2>
-              <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
-                AikaOS se adapta a las necesidades específicas de cada industria
-                en Latinoamérica. Desde despachos legales hasta clínicas
-                médicas, desde logística hasta agricultura.
-              </p>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-                {SECTORES.map((c) => (
-                  <div key={c.sector} className="feature-card bg-white/90">
-                    <div className="mb-3 text-2xl">{c.icono}</div>
-                    <h4 className="mb-2 text-[15px] font-bold">{c.sector}</h4>
-                    <p className="text-[14px] leading-relaxed text-gray-700">
-                      {c.desc}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── Planes resumen ── */}
-            <section id="planes" className="py-12">
-              <h2 className="mb-3 text-center text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Planes</HyperText>
-              </h2>
-              <p className="mx-auto mb-10 max-w-2xl text-center text-base leading-relaxed text-gray-700">
-                Precios en USD para toda Latinoamérica. Todos los planes
-                incluyen actualizaciones y soporte.
-              </p>
-
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-                {/* Personal */}
-                <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                  <h3 className="mb-1 text-lg font-bold">Personal</h3>
-                  <div className="mb-3 flex items-baseline gap-1">
-                    <span className="text-3xl font-bold tracking-tight">$20</span>
-                    <span className="text-[14px] text-gray-500">USD/mes</span>
-                  </div>
-                  <p className="mb-6 text-[14px] text-gray-600">
-                    1 instalación. La app base sin expertos preconfigurados.
-                    Ideal para explorar y configurar tus propios skills.
-                  </p>
-                  <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
-                    <li>App de escritorio (macOS)</li>
-                    <li>Trae tu propio modelo (BYOM)</li>
-                    <li>Actualizaciones incluidas</li>
-                    <li>Soporte por documentación</li>
-                  </ul>
-                  <a href="/enterprise#contacto" className="doc-button-dark w-full justify-center text-[13px]">
-                    Empezar
-                  </a>
-                </div>
-
-                {/* Profesional */}
-                <div className="relative flex flex-col rounded-2xl border-2 border-aika-teal bg-teal-50/30 p-6 shadow-lg">
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-aika-teal px-4 py-1 text-[11px] font-bold uppercase tracking-wider text-white">
-                    Más popular
-                  </div>
-                  <h3 className="mb-1 text-lg font-bold">Profesional</h3>
-                  <div className="mb-3 flex items-baseline gap-1">
-                    <span className="text-3xl font-bold tracking-tight">$50</span>
-                    <span className="text-[14px] text-gray-500">USD/mes</span>
-                  </div>
-                  <p className="mb-6 text-[14px] text-gray-600">
-                    1 instalación. Todos los expertos y skills preconfigurados.
-                    Sistema listo para trabajar.
-                  </p>
-                  <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
-                    <li>Todo lo de Personal</li>
-                    <li>25 expertos preconfigurados para LATAM</li>
-                    <li>Todos los skills y comandos</li>
-                    <li>Servidores MCP incluidos</li>
-                    <li>Soporte por email</li>
-                    <li>Puesta en marcha asistida</li>
-                  </ul>
-                  <a href="/enterprise#contacto" className="doc-button w-full justify-center text-[13px]">
-                    Empezar
-                  </a>
-                </div>
-
-                {/* Business */}
-                <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                  <h3 className="mb-1 text-lg font-bold">Business</h3>
-                  <div className="mb-3 flex items-baseline gap-1">
-                    <span className="text-3xl font-bold tracking-tight">$150</span>
-                    <span className="text-[14px] text-gray-500">USD/mes</span>
-                  </div>
-                  <p className="mb-6 text-[14px] text-gray-600">
-                    Hasta 5 instalaciones. Interconexión entre agentes y
-                    asistencia para integrar tu modelo preferido.
-                  </p>
-                  <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
-                    <li>Todo lo de Profesional</li>
-                    <li>Hasta 5 instalaciones</li>
-                    <li className="font-semibold text-teal-700">+ 5 expertos premium avanzados</li>
-                    <li>Interconexión entre agentes vía MCP</li>
-                    <li>Asistencia de integración de modelo</li>
-                    <li>Soporte prioritario (email + chat)</li>
-                    <li>Actualizaciones con prioridad</li>
-                  </ul>
-                  <a href="/enterprise#contacto" className="doc-button-dark w-full justify-center text-[13px]">
-                    Contactar ventas
-                  </a>
-                </div>
-
-                {/* Enterprise */}
-                <div className="flex flex-col rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-                  <h3 className="mb-1 text-lg font-bold">Enterprise</h3>
-                  <div className="mb-3 flex items-baseline gap-1">
-                    <span className="text-3xl font-bold tracking-tight">$500</span>
-                    <span className="text-[14px] text-gray-500">USD/mes</span>
-                  </div>
-                  <p className="mb-6 text-[14px] text-gray-600">
-                    10+ instalaciones. Desarrollo de servidores MCP a medida y
-                    arquitectura personalizada.
-                  </p>
-                  <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
-                    <li>Todo lo de Business</li>
-                    <li>10+ instalaciones (ilimitadas)</li>
-                    <li className="font-semibold text-teal-700">30 expertos (25 + 5 premium) + custom</li>
-                    <li>Desarrollo de servidores MCP custom</li>
-                    <li>Integración completa de modelo en tu infra</li>
-                    <li>Acceso anticipado a nuevas funciones</li>
-                    <li>Soporte dedicado + videollamada</li>
-                    <li>Arquitectura de agentes personalizada</li>
-                  </ul>
-                  <a href="/enterprise#contacto" className="doc-button-dark w-full justify-center text-[13px]">
-                    Hablar con ventas
-                  </a>
-                </div>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── FAQ ── */}
-            <section id="faq" className="py-12">
-              <h2 className="mb-10 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Preguntas frecuentes</HyperText>
-              </h2>
-              <div className="space-y-12">
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Qué diferencia hay entre AikaOS y un chatbot normal?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Un chatbot te da respuestas de texto. AikaOS puede ejecutar
-                    acciones reales: crear archivos, editar documentos, navegar
-                    la web y correr comandos en tu máquina — siempre con tu
-                    aprobación.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Necesito comprar un modelo de IA aparte?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    AikaOS funciona con el modelo que tú elijas (BYOM: Bring
-                    Your Own Model). Puedes usar tu API key de Anthropic,
-                    OpenAI, DeepSeek u otro proveedor. También puedes usar
-                    modelos locales gratuitos con Ollama, o conectar una
-                    suscripción de OpenCode. En planes Business y Enterprise,
-                    nuestro equipo te ayuda a integrar el modelo en toda tu
-                    infraestructura.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Solo funciona en Mac?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Actualmente AikaOS está optimizado para macOS con
-                    procesadores Apple Silicon (M1, M2, M3, M4). Las versiones
-                    para Windows y Linux están en desarrollo activo y se
-                    anunciarán próximamente.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Mis datos están seguros?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    AikaOS corre localmente en tu computadora. No puede acceder
-                    a archivos ni ejecutar comandos sin tu permiso. Ves un plan
-                    claro antes de cada acción. Tus datos nunca pasan por
-                    servidores de terceros. El sistema es cerrado y cada
-                    actualización es verificada por nuestro equipo.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Funciona con normativas de mi país?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Los expertos preconfigurados incluyen conocimiento de
-                    normativas locales (SAT en México, DIAN en Colombia, AFIP en
-                    Argentina). Puedes personalizar los skills para tu
-                    jurisdicción específica.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Qué incluyen las actualizaciones?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    Todos los planes incluyen actualizaciones con nuevos modelos
-                    compatibles, nuevas integraciones, mejoras de rendimiento y
-                    nuevos skills. En planes Enterprise, también desarrollamos
-                    funcionalidades a medida para tu empresa.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿Qué son los servidores MCP?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    MCP (Model Context Protocol) permite que AikaOS se conecte
-                    con herramientas externas: navegadores, bases de datos,
-                    APIs, CRMs y más. En el plan Enterprise, desarrollamos
-                    servidores MCP personalizados que conectan AikaOS con los
-                    sistemas específicos de tu empresa, permitiendo
-                    interconexión entre agentes y automatización de flujos
-                    complejos.
-                  </p>
-                </div>
-                <div>
-                  <h4 className="mb-2 text-[15px] font-bold">
-                    ¿En qué se diferencia de OpenClaw o Claude Cowork?
-                  </h4>
-                  <p className="text-[15px] leading-relaxed text-gray-700">
-                    AikaOS es un sistema cerrado y verificado con interfaz
-                    gráfica completa, a diferencia de OpenClaw que requiere
-                    terminal y tiene problemas de seguridad documentados en sus
-                    skills de terceros. A diferencia de Claude Cowork, AikaOS
-                    funciona offline, no tiene límites de uso, tus datos nunca
-                    salen de tu máquina, y puedes usar cualquier modelo de IA.
-                    Además, es el único con interfaz nativa en español, expertos
-                    para Latinoamérica, y servicio de puesta en marcha
-                    profesional.
-                  </p>
-                </div>
-              </div>
-            </section>
-
-            <hr />
-
-            {/* ── CTA final ── */}
-            <section className="py-12 text-center">
-              <h2 className="mb-4 text-2xl font-bold md:text-3xl">
-                <HyperText as="span" startOnView animateOnHover>Empieza a automatizar tu empresa</HyperText>
-              </h2>
-              <p className="mx-auto mb-8 max-w-2xl text-[15px] leading-relaxed text-gray-700">
-                Contáctanos para una demo personalizada. Te mostramos cómo
-                AikaOS puede automatizar los flujos de trabajo de tu industria.
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-4">
-                <a
-                  href="/enterprise#contacto"
-                  className="doc-button"
-                >
-                  Solicitar demo
-                  <svg
-                    className="h-4 w-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    aria-hidden="true"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth="2"
-                      d="M14 5l7 7m0 0l-7 7m7-7H3"
-                    />
-                  </svg>
-                </a>
-                <a
-                  href="/enterprise"
-                  className="doc-button-dark"
-                >
-                  Ver planes desde $20/mes
-                </a>
-              </div>
-            </section>
-
-            <SiteFooter />
           </div>
         </main>
+
+        {/* Cómo funciona Section */}
+        <section
+          id="como-funciona"
+          className="w-full max-w-7xl mx-auto px-4 md:px-6 py-24 relative z-10"
+        >
+          <div className="text-center max-w-3xl mx-auto mb-16 animate-fade-in">
+            <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-4 block font-sans">
+              Cómo funciona
+            </span>
+            <h2 className="md:text-5xl text-3xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+              Puesta en marcha profesional
+            </h2>
+            <p className="text-lg text-slate-700 font-medium font-sans max-w-2xl mx-auto">
+              AikaOS se instala en tu computadora y se conecta al modelo de IA
+              que tú elijas. Nosotros nos encargamos de todo el despliegue.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 border border-white/60 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+              <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center mb-6 text-slate-800 text-2xl group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-500 relative z-10">
+                {/* @ts-expect-error iconify-icon is a web component */}
+                <iconify-icon icon="solar:clipboard-list-linear" />
+              </div>
+              <h3 className="text-xl font-semibold text-[#1A1A1A] font-nunito mb-3 relative z-10">
+                1. Elige tu plan
+              </h3>
+              <p className="text-[14px] leading-relaxed text-slate-700 font-medium relative z-10">
+                Selecciona el plan que se adapte a tu empresa (desde $20
+                USD/mes). Nuestro equipo te contactará para coordinar la
+                instalación.
+              </p>
+            </div>
+
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 border border-white/60 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+              <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center mb-6 text-slate-800 text-2xl group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-500 relative z-10">
+                {/* @ts-expect-error iconify-icon is a web component */}
+                <iconify-icon icon="solar:cpu-linear" />
+              </div>
+              <h3 className="text-xl font-semibold text-[#1A1A1A] font-nunito mb-3 relative z-10">
+                2. Conecta tu modelo
+              </h3>
+              <p className="text-[14px] leading-relaxed text-slate-700 font-medium relative z-10">
+                AikaOS funciona con tu API key (Claude, OpenAI) o modelos
+                locales con Ollama. Te asistimos en la integración técnica.
+              </p>
+            </div>
+
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 border border-white/60 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+              <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center mb-6 text-slate-800 text-2xl group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-500 relative z-10">
+                {/* @ts-expect-error iconify-icon is a web component */}
+                <iconify-icon icon="solar:box-linear" />
+              </div>
+              <h3 className="text-xl font-semibold text-[#1A1A1A] font-nunito mb-3 relative z-10">
+                3. Recibe tu sistema
+              </h3>
+              <p className="text-[14px] leading-relaxed text-slate-700 font-medium relative z-10">
+                Te entregamos AikaOS instalado y configurado con los expertos y
+                skills de tu industria. Listo para trabajar desde el día uno.
+              </p>
+            </div>
+
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 border border-white/60 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden">
+              <div className="absolute inset-0 bg-gradient-to-br from-white/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+              <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center mb-6 text-slate-800 text-2xl group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-500 relative z-10">
+                {/* @ts-expect-error iconify-icon is a web component */}
+                <iconify-icon icon="solar:refresh-circle-linear" />
+              </div>
+              <h3 className="text-xl font-semibold text-[#1A1A1A] font-nunito mb-3 relative z-10">
+                4. Soporte continuo
+              </h3>
+              <p className="text-[14px] leading-relaxed text-slate-700 font-medium relative z-10">
+                Tu plan incluye actualizaciones con nuevos modelos, integraciones
+                avanzadas y soporte técnico personalizado constante.
+              </p>
+            </div>
+          </div>
+        </section>
       </div>
+
+      {/* BYOM + Por qué local feature blocks */}
+      <section className="md:px-12 z-10 w-full max-w-7xl mr-auto ml-auto pt-12 pr-4 pb-24 pl-4 relative">
+        {/* Feature Block 1: BYOM */}
+        <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-24 mb-32">
+          {/* Mockup / Visual (Left) */}
+          <div className="w-full lg:w-[55%] relative group">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-white/10 backdrop-blur-3xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
+            <div className="md:p-12 transition-transform duration-500 group-hover:scale-[1.02] pt-8 pr-8 pb-8 pl-8 relative z-10">
+              <div className="overflow-hidden font-sans bg-white/70 backdrop-blur-xl max-w-lg border-white/80 border rounded-[28px] mr-auto ml-auto shadow-[0_20px_50px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,1)] p-8">
+                <h3 className="font-semibold text-lg text-slate-900 mb-6 font-nunito flex items-center gap-2">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:laptop-minimalistic-linear"
+                    class="text-xl text-slate-700"
+                  />
+                  Requisitos del sistema
+                </h3>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between p-4 bg-white/60 backdrop-blur-md rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:bg-white/80 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-b from-slate-50 to-slate-100 border border-white flex items-center justify-center shadow-sm">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon
+                          icon="solar:monitor-linear"
+                          class="text-slate-600 text-lg"
+                        />
+                      </div>
+                      <span className="text-[14px] font-semibold text-slate-800">
+                        Sistema Operativo
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold bg-white/80 px-3 py-1.5 rounded-full border border-slate-200/50 shadow-sm text-slate-700">
+                      macOS 12.0+
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 bg-white/60 backdrop-blur-md rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:bg-white/80 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-b from-slate-50 to-slate-100 border border-white flex items-center justify-center shadow-sm">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon
+                          icon="solar:cpu-linear"
+                          class="text-slate-600 text-lg"
+                        />
+                      </div>
+                      <span className="text-[14px] font-semibold text-slate-800">
+                        Procesador
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold bg-white/80 px-3 py-1.5 rounded-full border border-slate-200/50 shadow-sm text-slate-700">
+                      Apple M1 a M4
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between p-4 bg-white/60 backdrop-blur-md rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] hover:bg-white/80 transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-b from-slate-50 to-slate-100 border border-white flex items-center justify-center shadow-sm">
+                        {/* @ts-expect-error iconify-icon is a web component */}
+                        <iconify-icon
+                          icon="solar:database-linear"
+                          class="text-slate-600 text-lg"
+                        />
+                      </div>
+                      <span className="text-[14px] font-semibold text-slate-800">
+                        Memoria RAM
+                      </span>
+                    </div>
+                    <span className="text-xs font-semibold bg-white/80 px-3 py-1.5 rounded-full border border-slate-200/50 shadow-sm text-slate-700">
+                      8GB min (16GB rec.)
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Content (Right) */}
+          <div className="w-full lg:w-[45%]">
+            <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-4 block font-sans">
+              Flexibilidad total
+            </span>
+            <h2 className="lg:text-[40px] leading-[1.15] text-4xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+              Trae tu propio modelo (BYOM)
+            </h2>
+            <p className="leading-relaxed text-lg font-medium text-slate-700 font-sans mb-10">
+              AikaOS no te obliga a usar un modelo específico. Tú decides qué
+              inteligencia artificial potencia tu sistema y nosotros nos
+              aseguramos de que corra perfectamente en tu entorno.
+            </p>
+
+            <div className="space-y-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-[14px] bg-white/60 backdrop-blur-md border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] flex items-center justify-center shrink-0 mt-1">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:key-linear"
+                    class="text-slate-800 text-xl"
+                  />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900 text-[15px] mb-1">
+                    API key propia
+                  </h4>
+                  <p className="text-sm text-slate-700 font-medium leading-relaxed">
+                    Anthropic (Claude), OpenAI (GPT-4), DeepSeek, Google Gemini,
+                    o cualquier proveedor compatible.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-[14px] bg-white/60 backdrop-blur-md border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] flex items-center justify-center shrink-0 mt-1">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:server-square-linear"
+                    class="text-slate-800 text-xl"
+                  />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900 text-[15px] mb-1">
+                    Modelos locales
+                  </h4>
+                  <p className="text-sm text-slate-700 font-medium leading-relaxed">
+                    Ollama con Llama, Mistral, Phi u otros modelos que corren
+                    100% en tu máquina sin internet.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-[14px] bg-white/60 backdrop-blur-md border border-white shadow-[0_4px_10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] flex items-center justify-center shrink-0 mt-1">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:code-circle-linear"
+                    class="text-slate-800 text-xl"
+                  />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-slate-900 text-[15px] mb-1">
+                    OpenCode
+                  </h4>
+                  <p className="text-sm text-slate-700 font-medium leading-relaxed">
+                    Si ya tienes una suscripción de OpenCode, puedes conectarla
+                    directamente a AikaOS.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Feature Block 2: Por qué local */}
+        <div
+          id="por-que-local"
+          className="flex flex-col-reverse lg:flex-row items-center gap-12 lg:gap-24"
+        >
+          {/* Content (Left) */}
+          <div className="w-full lg:w-[45%]">
+            <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-4 block font-sans">
+              Seguridad y Control
+            </span>
+            <h2 className="lg:text-[40px] leading-[1.15] text-4xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+              ¿Por qué correr tu IA en local?
+            </h2>
+            <p className="text-lg text-slate-700 font-medium mb-8 leading-relaxed font-sans">
+              La mayoría de las herramientas de IA procesan tus datos en
+              servidores externos. Tus conversaciones y estrategias pasan por
+              manos de terceros. AikaOS funciona diferente: todo corre en tu
+              máquina.
+            </p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="flex items-start gap-3 p-4 rounded-[20px] border border-white/60 bg-white/40 backdrop-blur-xl shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 cursor-default">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-white to-white/60 border border-white flex items-center justify-center shadow-sm shrink-0">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:shield-check-linear"
+                    class="text-slate-800 text-lg"
+                  />
+                </div>
+                <div>
+                  <span className="text-[14px] font-semibold text-slate-900 block mb-0.5">
+                    Privacidad total
+                  </span>
+                  <span className="text-[12px] font-medium text-slate-600 leading-tight block">
+                    Tus datos nunca salen de tu máquina. Cero fugas.
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-4 rounded-[20px] border border-white/60 bg-white/40 backdrop-blur-xl shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 cursor-default">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-white to-white/60 border border-white flex items-center justify-center shadow-sm shrink-0">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:wallet-money-linear"
+                    class="text-slate-800 text-lg"
+                  />
+                </div>
+                <div>
+                  <span className="text-[14px] font-semibold text-slate-900 block mb-0.5">
+                    Costos predecibles
+                  </span>
+                  <span className="text-[12px] font-medium text-slate-600 leading-tight block">
+                    Precio fijo. Con modelos locales, $0 en tokens.
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-4 rounded-[20px] border border-white/60 bg-white/40 backdrop-blur-xl shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 cursor-default">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-white to-white/60 border border-white flex items-center justify-center shadow-sm shrink-0">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:link-broken-linear"
+                    class="text-slate-800 text-lg"
+                  />
+                </div>
+                <div>
+                  <span className="text-[14px] font-semibold text-slate-900 block mb-0.5">
+                    Sin dependencia
+                  </span>
+                  <span className="text-[12px] font-medium text-slate-600 leading-tight block">
+                    Cambia de proveedor (Claude, GPT) sin romper flujos.
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-start gap-3 p-4 rounded-[20px] border border-white/60 bg-white/40 backdrop-blur-xl shadow-[0_8px_20px_rgba(0,0,0,0.03),inset_0_1px_0_rgba(255,255,255,0.8)] hover:bg-white/60 hover:shadow-[0_12px_30px_rgba(0,0,0,0.08)] hover:-translate-y-1 transition-all duration-300 cursor-default">
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-b from-white to-white/60 border border-white flex items-center justify-center shadow-sm shrink-0">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:document-text-linear"
+                    class="text-slate-800 text-lg"
+                  />
+                </div>
+                <div>
+                  <span className="text-[14px] font-semibold text-slate-900 block mb-0.5">
+                    Cumplimiento
+                  </span>
+                  <span className="text-[12px] font-medium text-slate-600 leading-tight block">
+                    Cumple automáticamente con GDPR, LGPD y más.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Visual (Right) */}
+          <div className="w-full lg:w-[55%] relative group">
+            <div className="absolute inset-0 bg-gradient-to-bl from-white/40 to-white/10 backdrop-blur-3xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform -rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
+
+            <div className="md:p-12 transition-transform duration-500 group-hover:scale-[1.02] pt-8 pr-8 pb-8 pl-8 relative z-10 flex items-center justify-center">
+              <div className="font-sans bg-white/60 backdrop-blur-xl border-white/80 border rounded-full w-64 h-64 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.08),inset_0_2px_0_rgba(255,255,255,1)] relative overflow-hidden">
+                {/* Animated rings representing local processing */}
+                <div className="absolute inset-0 border-[6px] border-white/40 rounded-full animate-[spin_10s_linear_infinite]" />
+                <div className="absolute inset-5 border-[4px] border-blue-100/50 rounded-full animate-[spin_15s_linear_infinite_reverse]" />
+
+                <div className="w-20 h-20 rounded-full bg-gradient-to-b from-white to-slate-50 border border-white shadow-lg flex items-center justify-center mb-3 relative z-10">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon
+                    icon="solar:shield-check-linear"
+                    class="text-4xl text-slate-800"
+                  />
+                </div>
+                <span className="font-nunito font-semibold text-slate-900 text-lg relative z-10 tracking-tight">
+                  Local-first
+                </span>
+                <span className="text-xs font-medium text-slate-600 mt-0.5 relative z-10">
+                  100% procesado aquí
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Experts + Lo que puedes hacer */}
+      <section className="md:px-12 z-10 w-full max-w-7xl mr-auto ml-auto pt-12 pr-4 pb-24 pl-4 relative">
+        {/* Top Grid: Large Feature Cards */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 md:p-12 flex flex-col justify-between shadow-[0_20px_50px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            <div className="relative z-10">
+              <h3 className="md:text-[32px] leading-tight text-3xl font-medium text-[#1A1A1A] font-nunito max-w-md mb-6 drop-shadow-sm">
+                25 expertos preconfigurados para LATAM
+              </h3>
+              <p className="text-[16px] leading-relaxed text-slate-700 font-medium font-sans mb-10">
+                Cada experto incluye skills especializados, comandos listos para
+                usar y servidores MCP configurados. Disponibles a partir del
+                plan Profesional.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:diploma-linear" class="text-xl text-slate-600" /> Legal LATAM
+                </div>
+                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:chart-square-linear" class="text-xl text-slate-600" /> Contabilidad
+                </div>
+                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:cart-large-linear" class="text-xl text-slate-600" /> E-commerce
+                </div>
+                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:megaphone-linear" class="text-xl text-slate-600" /> Marketing
+                </div>
+                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:square-academic-cap-linear" class="text-xl text-slate-600" /> Educación
+                </div>
+                <div className="bg-white/40 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white/50 text-[14px] font-semibold text-slate-600 flex items-center gap-3">
+                  Y 20 más...
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 md:p-12 flex flex-col justify-between shadow-[0_20px_50px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group relative overflow-hidden">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/40 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+            <div className="relative z-10">
+              <h3 className="md:text-[32px] leading-tight text-3xl font-medium text-[#1A1A1A] font-nunito max-w-md mb-6 drop-shadow-sm">
+                + 5 expertos premium avanzados
+              </h3>
+              <p className="text-[16px] leading-relaxed text-slate-700 font-medium font-sans mb-10">
+                Expertos avanzados con 3 skills especializados y 5 comandos cada
+                uno. Se instalan como workers independientes. Incluidos en
+                planes Business.
+              </p>
+              <div className="flex flex-col gap-4">
+                <div className="bg-white/60 backdrop-blur-md p-5 rounded-2xl shadow-[0_4px_15px_rgba(0,0,0,0.03)] border border-white flex flex-col gap-1.5 transition-transform hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
+                    <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:global-linear" />
+                    </div>
+                    Investigador Web
+                  </div>
+                  <span className="text-[13px] font-medium text-slate-600 pl-11">
+                    Fact-checking (SIFT), verificación de fuentes.
+                  </span>
+                </div>
+                <div className="bg-white/60 backdrop-blur-md p-5 rounded-2xl shadow-[0_4px_15px_rgba(0,0,0,0.03)] border border-white flex flex-col gap-1.5 transition-transform hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
+                    <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:smartphone-linear" />
+                    </div>
+                    Creador de Contenido
+                  </div>
+                  <span className="text-[13px] font-medium text-slate-600 pl-11">
+                    Calendarios, hilos virales, copy (AIDA/PAS).
+                  </span>
+                </div>
+                <div className="bg-white/60 backdrop-blur-md p-5 rounded-2xl shadow-[0_4px_15px_rgba(0,0,0,0.03)] border border-white flex flex-col gap-1.5 transition-transform hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
+                    <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:handshake-linear" />
+                    </div>
+                    Ventas B2B Pro
+                  </div>
+                  <span className="text-[13px] font-medium text-slate-600 pl-11">
+                    BANT+MEDDIC, propuestas, manejo de objeciones.
+                  </span>
+                </div>
+                {/* Missing premium experts from original: Asistente Obsidian + Asistente Inmobiliario */}
+                <div className="bg-white/60 backdrop-blur-md p-5 rounded-2xl shadow-[0_4px_15px_rgba(0,0,0,0.03)] border border-white flex flex-col gap-1.5 transition-transform hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
+                    <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:notebook-linear" />
+                    </div>
+                    Asistente Obsidian
+                  </div>
+                  <span className="text-[13px] font-medium text-slate-600 pl-11">
+                    Zettelkasten, MOCs, weekly reviews, procesamiento de inbox.
+                  </span>
+                </div>
+                <div className="bg-white/60 backdrop-blur-md p-5 rounded-2xl shadow-[0_4px_15px_rgba(0,0,0,0.03)] border border-white flex flex-col gap-1.5 transition-transform hover:scale-[1.02]">
+                  <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
+                    <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
+                      {/* @ts-expect-error iconify-icon is a web component */}
+                      <iconify-icon icon="solar:home-2-linear" />
+                    </div>
+                    Asistente Inmobiliario
+                  </div>
+                  <span className="text-[13px] font-medium text-slate-600 pl-11">
+                    Fichas, análisis de inversión (Cap Rate, GRM), contratos por
+                    país.
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Bottom Grid: Small Feature Cards (Lo que puedes hacer) */}
+        <div className="mb-10 mt-16">
+          <h3 className="text-3xl font-medium text-[#1A1A1A] font-nunito drop-shadow-sm">
+            Lo que puedes hacer con AikaOS
+          </h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 flex flex-col items-start gap-5 shadow-[0_15px_30px_-10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_25px_50px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group">
+            <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center text-2xl text-slate-800 group-hover:scale-110 transition-transform duration-500">
+              {/* @ts-expect-error iconify-icon is a web component */}
+              <iconify-icon icon="solar:infinity-linear" />
+            </div>
+            <h4 className="text-[19px] font-semibold text-slate-900 font-nunito tracking-tight">
+              Sin límites de uso
+            </h4>
+            <p className="text-[14px] font-medium leading-relaxed text-slate-700">
+              Herramientas cloud limitan por ventanas de tiempo. Con AikaOS y un
+              modelo local, puedes trabajar todo el día sin interrupciones ni
+              costos extra por token.
+            </p>
+          </div>
+
+          <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 flex flex-col items-start gap-5 shadow-[0_15px_30px_-10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_25px_50px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group">
+            <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center text-2xl text-slate-800 group-hover:scale-110 transition-transform duration-500">
+              {/* @ts-expect-error iconify-icon is a web component */}
+              <iconify-icon icon="solar:wifi-router-minimalistic-linear" />
+            </div>
+            <h4 className="text-[19px] font-semibold text-slate-900 font-nunito tracking-tight">
+              Funciona sin internet
+            </h4>
+            <p className="text-[14px] font-medium leading-relaxed text-slate-700">
+              Con un modelo local (Ollama) instalado, AikaOS funciona
+              completamente offline. Especialmente valioso donde no hay acceso
+              confiable a internet.
+            </p>
+          </div>
+
+          <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 flex flex-col items-start gap-5 shadow-[0_15px_30px_-10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_25px_50px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group">
+            <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center text-2xl text-slate-800 group-hover:scale-110 transition-transform duration-500">
+              {/* @ts-expect-error iconify-icon is a web component */}
+              <iconify-icon icon="solar:layers-linear" />
+            </div>
+            <h4 className="text-[19px] font-semibold text-slate-900 font-nunito tracking-tight">
+              Multitarea paralela
+            </h4>
+            <p className="text-[14px] font-medium leading-relaxed text-slate-700">
+              Ejecuta múltiples hilos en paralelo y cambia de contexto entre
+              tareas de navegador y archivos locales al instante. Reutiliza
+              skills con tu equipo.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* Sectores (Scrolling) */}
+      <section
+        id="sectores"
+        className="w-full relative py-24 z-10 border-t border-white/30 overflow-hidden"
+      >
+        <div className="max-w-4xl mx-auto px-6 text-center mb-16 relative z-10">
+          <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-4 block font-sans">
+            Sectores
+          </span>
+          <h2 className="leading-[1.15] md:text-4xl text-3xl font-medium text-[#1A1A1A] tracking-tight font-nunito drop-shadow-sm">
+            Diseñado para las industrias de LATAM
+          </h2>
+        </div>
+
+        <div className="relative w-full overflow-hidden pb-10">
+          {/* Fade gradients on edges */}
+          <div className="absolute inset-y-0 left-0 w-16 md:w-32 bg-gradient-to-r from-[#ABCDE9] to-transparent z-20 pointer-events-none mix-blend-overlay" />
+          <div className="absolute inset-y-0 right-0 w-16 md:w-32 bg-gradient-to-l from-[#ABCDE9] to-transparent z-20 pointer-events-none mix-blend-overlay" />
+
+          <div className="flex animate-scroll-testimonials w-max gap-6 px-4">
+            {/* Set 1 */}
+            <div className="flex gap-6">
+              <SectorCard icon="solar:diploma-linear" title="Despachos legales" desc="Automatiza contratos, poderes notariales y revisión de documentos en minutos." />
+              <SectorCard icon="solar:chart-square-linear" title="Firmas contables" desc="Genera reportes fiscales, concilia cuentas y cumple con normativas locales." />
+              <SectorCard icon="solar:cart-large-linear" title="Comercio minorista" desc="Gestiona catálogos, responde clientes y analiza inventario automáticamente." />
+              <SectorCard icon="solar:megaphone-linear" title="Agencias de marketing" desc="Crea campañas, genera copy persuasivo y reporta métricas semanales." />
+              <SectorCard icon="solar:square-academic-cap-linear" title="Instituciones educativas" desc="Diseña planes de clase, rúbricas y exámenes alineados a estándares." />
+              <SectorCard icon="solar:buildings-2-linear" title="Gobierno municipal" desc="Redacta oficios, informes de transparencia y respuestas ciudadanas." />
+              <SectorCard icon="solar:heart-pulse-linear" title="Salud y clínicas" desc="Agenda citas, automatiza facturación, resúmenes clínicos y apoya el triaje." />
+              <SectorCard icon="solar:home-2-linear" title="Inmobiliaria / PropTech" desc="Publica propiedades, genera contratos de arrendamiento y automatiza valuaciones." />
+              <SectorCard icon="solar:routing-2-linear" title="Logística" desc="Predice demanda, rastrea envíos, coordina proveedores y genera reportes." />
+              <SectorCard icon="solar:leaf-linear" title="Agricultura" desc="Planifica cultivos, trámites de exportación y analiza datos climáticos offline." />
+              <SectorCard icon="solar:card-linear" title="Fintech" desc="Procesa documentos de crédito, automatiza onboarding y analiza riesgo crediticio." />
+              <SectorCard icon="solar:buildings-linear" title="Construcción" desc="Prepara licitaciones, documenta avance de obra y automatiza presupuestos de materiales." />
+            </div>
+
+            {/* Set 2 (Duplicate for seamless scroll) */}
+            <div className="flex gap-6">
+              <SectorCard icon="solar:diploma-linear" title="Despachos legales" desc="Automatiza contratos, poderes notariales y revisión de documentos en minutos." />
+              <SectorCard icon="solar:chart-square-linear" title="Firmas contables" desc="Genera reportes fiscales, concilia cuentas y cumple con normativas locales." />
+              <SectorCard icon="solar:cart-large-linear" title="Comercio minorista" desc="Gestiona catálogos, responde clientes y analiza inventario automáticamente." />
+              <SectorCard icon="solar:megaphone-linear" title="Agencias de marketing" desc="Crea campañas, genera copy persuasivo y reporta métricas semanales." />
+              <SectorCard icon="solar:square-academic-cap-linear" title="Instituciones educativas" desc="Diseña planes de clase, rúbricas y exámenes alineados a estándares." />
+              <SectorCard icon="solar:buildings-2-linear" title="Gobierno municipal" desc="Redacta oficios, informes de transparencia y respuestas ciudadanas." />
+              <SectorCard icon="solar:heart-pulse-linear" title="Salud y clínicas" desc="Agenda citas, automatiza facturación, resúmenes clínicos y apoya el triaje." />
+              <SectorCard icon="solar:home-2-linear" title="Inmobiliaria / PropTech" desc="Publica propiedades, genera contratos de arrendamiento y automatiza valuaciones." />
+              <SectorCard icon="solar:routing-2-linear" title="Logística" desc="Predice demanda, rastrea envíos, coordina proveedores y genera reportes." />
+              <SectorCard icon="solar:leaf-linear" title="Agricultura" desc="Planifica cultivos, trámites de exportación y analiza datos climáticos offline." />
+              <SectorCard icon="solar:card-linear" title="Fintech" desc="Procesa documentos de crédito, automatiza onboarding y analiza riesgo crediticio." />
+              <SectorCard icon="solar:buildings-linear" title="Construcción" desc="Prepara licitaciones, documenta avance de obra y automatiza presupuestos de materiales." />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Comparativa */}
+      <section className="w-full relative py-24 z-10 border-t border-white/30">
+        <div className="max-w-5xl mx-auto px-4">
+          <div className="text-center mb-16">
+            <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-4 block font-sans">
+              Comparativa
+            </span>
+            <h2 className="md:text-4xl text-3xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+              AikaOS vs la competencia
+            </h2>
+            <p className="text-slate-700 font-medium max-w-2xl mx-auto">
+              Existen otras herramientas agenticas, pero AikaOS está diseñado
+              para brindarte privacidad, control y usabilidad nativa.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto bg-white/50 backdrop-blur-2xl rounded-[32px] border border-white/80 shadow-[0_20px_50px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.9)] p-2">
+            <table className="w-full text-left text-[14px] font-medium text-slate-700 font-sans min-w-[800px] border-collapse">
+              <thead className="text-slate-900 font-nunito font-semibold text-base">
+                <tr>
+                  <th className="px-6 py-5 rounded-tl-[24px] w-1/4">
+                    Criterio
+                  </th>
+                  <th className="px-6 py-5 w-1/4 bg-blue-100/50 backdrop-blur-md rounded-t-[20px] text-blue-900 border-x border-t border-blue-200/50">
+                    AikaOS
+                  </th>
+                  <th className="px-6 py-5 w-1/4">OpenClaw</th>
+                  <th className="px-6 py-5 rounded-tr-[24px] w-1/4">
+                    Claude Cowork
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/40">
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Precio
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Desde $20 USD/mes. Incluye la app, actualizaciones y soporte.
+                    Sin costos ocultos.
+                  </td>
+                  <td className="px-6 py-5">
+                    Software gratuito, pero requiere Claude Max ($100-200/mes).
+                    Configuración por tu cuenta.
+                  </td>
+                  <td className="px-6 py-5">
+                    $20/mes (Pro) a $200/mes (Max 20x). Pago obligatorio para
+                    funciones agenticas.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Privacidad de datos
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    <strong className="text-green-700 bg-green-100/80 px-2 py-0.5 rounded-md mr-1 shadow-sm">
+                      Total.
+                    </strong>{" "}
+                    Corre en tu máquina. Nada sale sin permiso.
+                  </td>
+                  <td className="px-6 py-5">
+                    Parcial. Envía a APIs externas.
+                  </td>
+                  <td className="px-6 py-5">
+                    Limitada. Procesado en servidores ajenos.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Interfaz
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    App de escritorio nativa (GUI) moderna.
+                  </td>
+                  <td className="px-6 py-5">
+                    Terminal, WhatsApp, Telegram.
+                  </td>
+                  <td className="px-6 py-5">
+                    App web/escritorio, conexión constante.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Modelos de IA
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    <strong>BYOM:</strong> Claude, GPT-4, Locales (Ollama).
+                  </td>
+                  <td className="px-6 py-5">
+                    Recomienda Claude Max ($100+/m).
+                  </td>
+                  <td className="px-6 py-5">Solo Claude.</td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Funciona offline
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    <strong className="text-green-700 bg-green-100/80 px-2 py-0.5 rounded-md mr-1 shadow-sm">
+                      Sí
+                    </strong>
+                    , usando modelos locales instalados.
+                  </td>
+                  <td className="px-6 py-5">
+                    Parcial, necesita API externa.
+                  </td>
+                  <td className="px-6 py-5">
+                    No. Requiere internet siempre.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Límites de uso
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Sin límites. Usa todo lo que necesites, cuando lo necesites.
+                  </td>
+                  <td className="px-6 py-5">
+                    Sin límites propios, pero heredas los del modelo.
+                  </td>
+                  <td className="px-6 py-5">
+                    Límites estrictos por ventanas de 5 horas.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Aprobación de acciones
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Sí. Ves un plan claro antes de cada acción.
+                  </td>
+                  <td className="px-6 py-5">
+                    Limitada. Puede actuar sin permiso.
+                  </td>
+                  <td className="px-6 py-5">
+                    Parcial. Pide permiso solo para eliminar archivos.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Seguridad
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Sistema cerrado y verificado. Sin skills de terceros no
+                    auditados.
+                  </td>
+                  <td className="px-6 py-5">
+                    Riesgoso. Fugas documentadas en skills.
+                  </td>
+                  <td className="px-6 py-5">
+                    No usar para datos regulados.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Idioma
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Interfaz nativa en español. Expertos para LATAM (SAT, DIAN,
+                    AFIP).
+                  </td>
+                  <td className="px-6 py-5">
+                    Solo en inglés. Sin soporte para LATAM.
+                  </td>
+                  <td className="px-6 py-5">
+                    Multiidioma en chat, interfaz en inglés.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Puesta en marcha
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Nosotros lo instalamos y configuramos. Listo para trabajar.
+                  </td>
+                  <td className="px-6 py-5">
+                    Requiere Node 22+, CLI wizard, configuración avanzada.
+                  </td>
+                  <td className="px-6 py-5">
+                    Descarga la app, inicia sesión con cuenta de pago.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Actualizaciones
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Incluidas en tu plan. Nuevos modelos e integraciones
+                    automáticas.
+                  </td>
+                  <td className="px-6 py-5">
+                    Comunitarias. Sin garantía de estabilidad.
+                  </td>
+                  <td className="px-6 py-5">
+                    De Anthropic. No tienes control sobre qué cambia.
+                  </td>
+                </tr>
+                <tr className="hover:bg-white/30 transition-colors">
+                  <td className="px-6 py-5 font-semibold text-slate-900">
+                    Servidores MCP
+                  </td>
+                  <td className="px-6 py-5 bg-blue-50/40 backdrop-blur-md text-slate-800 border-x border-blue-100/30">
+                    Incluidos en Profesional+. En Enterprise, MCP a medida.
+                  </td>
+                  <td className="px-6 py-5">
+                    3,000+ skills sin verificación de seguridad.
+                  </td>
+                  <td className="px-6 py-5">
+                    Conectores limitados (Drive, Gmail). No puedes crear los
+                    tuyos.
+                  </td>
+                </tr>
+                <tr>
+                  <td className="px-6 py-5 font-semibold text-slate-900 rounded-bl-[24px]">
+                    Cumplimiento
+                  </td>
+                  <td className="px-6 py-5 bg-blue-100/50 backdrop-blur-md text-slate-800 border-x border-b border-blue-200/50 rounded-b-[20px]">
+                    GDPR/LGPD automático. Ideal datos sensibles.
+                  </td>
+                  <td className="px-6 py-5">
+                    Riesgoso. Fugas documentadas en skills.
+                  </td>
+                  <td className="px-6 py-5 rounded-br-[24px]">
+                    No usar para datos regulados.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* En resumen callout box */}
+          <div className="mt-8 bg-white/50 backdrop-blur-2xl rounded-[28px] border border-white/80 shadow-[0_15px_30px_rgba(0,0,0,0.04),inset_0_1px_0_rgba(255,255,255,0.9)] p-8">
+            <h3 className="mb-4 text-lg font-semibold text-slate-900 font-nunito">
+              En resumen: ¿por qué AikaOS?
+            </h3>
+            <ul className="space-y-3 text-[14px] leading-relaxed text-slate-700 font-medium">
+              <li>
+                <strong className="text-slate-900">vs OpenClaw:</strong> AikaOS
+                tiene interfaz gráfica completa (no necesitas terminal ni
+                WhatsApp), flujo de aprobación antes de cada acción, sistema
+                cerrado y verificado (sin skills de terceros no auditados), y
+                puesta en marcha profesional incluida.
+              </li>
+              <li>
+                <strong className="text-slate-900">vs Claude Cowork:</strong>{" "}
+                AikaOS funciona offline, no tiene límites de uso, tus datos
+                nunca salen de tu máquina, puedes usar cualquier modelo de IA, y
+                el precio incluye actualizaciones y soporte — no solo acceso a
+                la herramienta.
+              </li>
+              <li>
+                <strong className="text-slate-900">
+                  Exclusivo de AikaOS:
+                </strong>{" "}
+                Interfaz nativa en español, expertos preconfigurados para
+                industrias latinoamericanas, normativas locales integradas (SAT,
+                DIAN, AFIP), desarrollo de servidores MCP a medida, e
+                interconexión entre agentes para empresas.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      {/* Planes */}
+      <section
+        id="planes"
+        className="w-full z-10 border-t border-white/30 pt-24 pb-20 relative before:absolute before:inset-0 before:bg-gradient-to-b before:from-transparent before:to-white/30 before:-z-10"
+      >
+        <div className="max-w-7xl mx-auto px-6">
+          <div className="text-center max-w-3xl mx-auto mb-20 animate-fade-in">
+            <span className="text-xs font-semibold tracking-widest text-slate-600 uppercase mb-5 block font-sans">
+              Precios
+            </span>
+            <h2 className="md:text-[48px] leading-[1.1] text-4xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+              Planes para LATAM
+            </h2>
+            <p className="text-[16px] leading-relaxed text-slate-700 font-medium font-sans max-w-xl mx-auto">
+              Precios en USD. Todos los planes incluyen actualizaciones y
+              soporte.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start mb-20">
+            {/* Personal */}
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 flex flex-col h-full hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500">
+              <h3 className="text-[19px] font-semibold text-slate-900 font-nunito mb-2 tracking-tight">
+                Personal
+              </h3>
+              <div className="text-[40px] font-semibold font-nunito text-[#1A1A1A] tracking-tight mb-4">
+                $20
+                <span className="text-[15px] text-slate-600 font-medium ml-1">
+                  /mes
+                </span>
+              </div>
+              <p className="text-[14px] text-slate-700 font-medium mb-8 leading-relaxed">
+                1 instalación. La app base sin expertos preconfigurados. Ideal
+                para explorar.
+              </p>
+              <ul className="space-y-3.5 mb-8 flex-1">
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  App de escritorio (macOS)
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Trae tu propio modelo
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Actualizaciones incluidas
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Soporte por documentación
+                </li>
+              </ul>
+              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
+                Empezar
+              </a>
+            </div>
+
+            {/* Profesional */}
+            <div className="bg-gradient-to-b from-blue-50/80 to-white/60 backdrop-blur-2xl rounded-[36px] p-8 border border-white shadow-[0_30px_60px_-15px_rgba(37,99,235,0.15),inset_0_1px_0_rgba(255,255,255,0.9)] relative flex flex-col h-full lg:-mt-4 lg:mb-4 z-10 hover:-translate-y-2 transition-transform duration-500">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-[19px] font-semibold text-slate-900 font-nunito tracking-tight">
+                  Profesional
+                </h3>
+                <span className="bg-blue-600 text-white text-[10px] font-bold px-2.5 py-1 rounded-full shadow-sm uppercase tracking-wider">
+                  Más popular
+                </span>
+              </div>
+              <div className="text-[40px] font-semibold font-nunito text-[#1A1A1A] tracking-tight mb-4">
+                $50
+                <span className="text-[15px] text-slate-600 font-medium ml-1">
+                  /mes
+                </span>
+              </div>
+              <p className="text-[14px] text-slate-700 font-medium mb-8 leading-relaxed">
+                1 instalación. Todos los expertos y skills. Sistema listo para
+                trabajar.
+              </p>
+              <ul className="space-y-3.5 mb-8 flex-1">
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  Todo lo de Personal
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-semibold text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  25 expertos preconfigurados
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  Todos los skills y comandos
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  Servidores MCP incluidos
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-blue-600 mt-0.5 text-lg" />{" "}
+                  Puesta en marcha asistida
+                </li>
+              </ul>
+              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-slate-900 text-white font-semibold text-[14px] hover:bg-black shadow-[0_10px_20px_rgba(0,0,0,0.15)] hover:shadow-[0_15px_30px_rgba(0,0,0,0.25)] hover:-translate-y-0.5 transition-all border border-white/10 text-center block">
+                Empezar
+              </a>
+            </div>
+
+            {/* Business */}
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 flex flex-col h-full hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500">
+              <h3 className="text-[19px] font-semibold text-slate-900 font-nunito mb-2 tracking-tight">
+                Business
+              </h3>
+              <div className="text-[40px] font-semibold font-nunito text-[#1A1A1A] tracking-tight mb-4">
+                $150
+                <span className="text-[15px] text-slate-600 font-medium ml-1">
+                  /mes
+                </span>
+              </div>
+              <p className="text-[14px] text-slate-700 font-medium mb-8 leading-relaxed">
+                Hasta 5 instalaciones. Interconexión y asistencia de modelo.
+              </p>
+              <ul className="space-y-3.5 mb-8 flex-1">
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Todo lo de Profesional
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Hasta 5 instalaciones
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-semibold text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  + 5 expertos premium
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Interconexión entre agentes vía MCP
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Asistencia integración modelo
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Soporte prioritario
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Actualizaciones con prioridad
+                </li>
+              </ul>
+              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
+                Contactar ventas
+              </a>
+            </div>
+
+            {/* Enterprise */}
+            <div className="bg-white/40 backdrop-blur-2xl rounded-[36px] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 flex flex-col h-full hover:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] hover:-translate-y-2 transition-all duration-500">
+              <h3 className="text-[19px] font-semibold text-slate-900 font-nunito mb-2 tracking-tight">
+                Enterprise
+              </h3>
+              <div className="text-[40px] font-semibold font-nunito text-[#1A1A1A] tracking-tight mb-4">
+                $500
+                <span className="text-[15px] text-slate-600 font-medium ml-1">
+                  /mes
+                </span>
+              </div>
+              <p className="text-[14px] text-slate-700 font-medium mb-8 leading-relaxed">
+                10+ instalaciones. Desarrollo MCP a medida y arquitectura
+                custom.
+              </p>
+              <ul className="space-y-3.5 mb-8 flex-1">
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Todo lo de Business
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-semibold text-slate-900">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Instalaciones ilimitadas
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Servidores MCP custom
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Integración completa de modelo en tu infra
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Acceso anticipado a nuevas funciones
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Soporte dedicado + videollamada
+                </li>
+                <li className="flex items-start gap-2.5 text-[14px] font-medium text-slate-800">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon="solar:check-circle-linear" class="text-slate-900 mt-0.5 text-lg" />{" "}
+                  Arquitectura personalizada
+                </li>
+              </ul>
+              <a href="/enterprise#contacto" className="w-full py-4 rounded-full bg-white/60 backdrop-blur-md border border-white shadow-sm text-slate-900 font-semibold text-[14px] hover:bg-white hover:shadow-md transition-all text-center block">
+                Hablar con ventas
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ Section */}
+      <section
+        id="faq"
+        className="w-full z-10 border-t border-white/30 py-24 relative bg-white/30 backdrop-blur-3xl"
+      >
+        <div className="max-w-3xl mx-auto px-6">
+          <div className="text-center mb-16">
+            <h2 className="md:text-4xl text-3xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-4 drop-shadow-sm">
+              Preguntas frecuentes
+            </h2>
+          </div>
+
+          <div className="space-y-6">
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Qué diferencia hay entre AikaOS y un chatbot normal?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                Un chatbot te da respuestas de texto. AikaOS puede ejecutar
+                acciones reales: crear archivos, editar documentos, navegar la
+                web y correr comandos en tu máquina — siempre con tu aprobación.
+              </p>
+            </div>
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Necesito comprar un modelo de IA aparte?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                AikaOS funciona con el modelo que tú elijas (BYOM). Puedes usar
+                tu API key, modelos locales gratuitos con Ollama, o una
+                suscripción de OpenCode. En planes superiores te ayudamos a
+                integrarlo.
+              </p>
+            </div>
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Solo funciona en Mac?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                Actualmente está optimizado para macOS con procesadores Apple
+                Silicon (M1 a M4). Versiones para Windows y Linux están en
+                desarrollo.
+              </p>
+            </div>
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Mis datos están seguros?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                AikaOS corre localmente en tu computadora. No accede a archivos
+                ni ejecuta comandos sin tu permiso. Tus datos nunca pasan por
+                servidores de terceros. Es un sistema cerrado y verificado.
+              </p>
+            </div>
+            {/* Missing FAQ questions from original */}
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Funciona con normativas de mi país?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                Los expertos preconfigurados incluyen conocimiento de normativas
+                locales (SAT en México, DIAN en Colombia, AFIP en Argentina).
+                Puedes personalizar los skills para tu jurisdicción específica.
+              </p>
+            </div>
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Qué incluyen las actualizaciones?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                Todos los planes incluyen actualizaciones con nuevos modelos
+                compatibles, nuevas integraciones, mejoras de rendimiento y
+                nuevos skills. En planes Enterprise, también desarrollamos
+                funcionalidades a medida para tu empresa.
+              </p>
+            </div>
+            <div className="border-b border-white/60 pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿Qué son los servidores MCP?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                MCP (Model Context Protocol) permite que AikaOS se conecte con
+                herramientas externas: navegadores, bases de datos, APIs, CRMs y
+                más. En el plan Enterprise, desarrollamos servidores MCP
+                personalizados que conectan AikaOS con los sistemas específicos
+                de tu empresa.
+              </p>
+            </div>
+            <div className="pb-6">
+              <h4 className="font-semibold text-slate-900 mb-2 font-nunito text-lg">
+                ¿En qué se diferencia de OpenClaw o Claude Cowork?
+              </h4>
+              <p className="text-[15px] font-medium text-slate-700 leading-relaxed">
+                AikaOS es un sistema cerrado y verificado con interfaz gráfica
+                completa, a diferencia de OpenClaw que requiere terminal y tiene
+                problemas de seguridad documentados. A diferencia de Claude
+                Cowork, AikaOS funciona offline, no tiene límites de uso, tus
+                datos nunca salen de tu máquina, y puedes usar cualquier modelo
+                de IA. Además, es el único con interfaz nativa en español y
+                expertos para Latinoamérica.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA final */}
+      <section className="w-full z-10 py-24 relative">
+        <div className="max-w-3xl mx-auto px-6 text-center">
+          <h2 className="md:text-4xl text-3xl font-medium text-[#1A1A1A] tracking-tight font-nunito mb-6 drop-shadow-sm">
+            Empieza a automatizar tu empresa
+          </h2>
+          <p className="text-[16px] leading-relaxed text-slate-700 font-medium font-sans max-w-xl mx-auto mb-10">
+            Contáctanos para una demo personalizada. Te mostramos cómo AikaOS
+            puede automatizar los flujos de trabajo de tu industria.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <a
+              href="/enterprise#contacto"
+              className="text-[17px] hover:bg-black transition-all hover:shadow-[0_15px_30px_rgba(0,0,0,0.2)] hover:-translate-y-0.5 sm:w-auto font-normal text-white bg-[#1A1A1A] w-full rounded-full pt-3.5 pr-8 pb-3.5 pl-8 shadow-[0_10px_20px_rgba(0,0,0,0.15)] border border-white/10 text-center"
+            >
+              Solicitar demo
+            </a>
+            <a
+              href="#planes"
+              className="bg-white/40 backdrop-blur-xl border border-white/60 shadow-[0_8px_20px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.6)] text-[#1A1A1A] text-[17px] font-normal px-8 py-3.5 rounded-full hover:bg-white/60 hover:-translate-y-0.5 transition-all w-full sm:w-auto flex items-center justify-center gap-2"
+            >
+              Ver planes desde $20/mes
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="w-full z-10 border-t border-white/30 relative">
+        <div className="max-w-7xl mx-auto px-6 py-16">
+          <div className="flex flex-col md:flex-row items-start justify-between gap-12 mb-12">
+            {/* Logo + tagline */}
+            <div className="flex flex-col gap-3 max-w-xs">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-black rounded-tr-lg rounded-bl-lg shadow-md" />
+                <span className="text-xl font-semibold text-slate-900 tracking-tight font-nunito">
+                  AikaOS
+                </span>
+              </div>
+              <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                Tu equipo de IA privado, listo para trabajar. Por{" "}
+                <strong className="text-slate-800">AikaLabs</strong>.
+              </p>
+            </div>
+
+            {/* Nav links */}
+            <div className="flex flex-wrap gap-x-12 gap-y-6 text-[14px] font-medium text-slate-700">
+              <div className="flex flex-col gap-3">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Producto
+                </span>
+                <a href="#como-funciona" className="hover:text-black transition-colors">
+                  Cómo funciona
+                </a>
+                <a href="#por-que-local" className="hover:text-black transition-colors">
+                  Por qué local
+                </a>
+                <a href="#sectores" className="hover:text-black transition-colors">
+                  Sectores
+                </a>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Precios
+                </span>
+                <a href="#planes" className="hover:text-black transition-colors">
+                  Planes
+                </a>
+                <a href="/enterprise" className="hover:text-black transition-colors">
+                  Enterprise
+                </a>
+                <a href="/enterprise#contacto" className="hover:text-black transition-colors">
+                  Contacto
+                </a>
+              </div>
+              <div className="flex flex-col gap-3">
+                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+                  Soporte
+                </span>
+                <a href="#faq" className="hover:text-black transition-colors">
+                  FAQ
+                </a>
+                <a href="/terms" className="hover:text-black transition-colors">
+                  Términos
+                </a>
+                <a href="/privacy" className="hover:text-black transition-colors">
+                  Privacidad
+                </a>
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom bar */}
+          <div className="border-t border-white/40 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p className="text-sm text-slate-500 font-medium">
+              &copy; 2026 AikaLabs. Todos los derechos reservados.
+            </p>
+            <a
+              href="/enterprise#contacto"
+              className="text-sm font-semibold text-slate-700 hover:text-black transition-colors"
+            >
+              Solicitar demo &rarr;
+            </a>
+          </div>
+        </div>
+      </footer>
+    </>
+  );
+}
+
+/* ── Sector carousel card component ── */
+function SectorCard({
+  icon,
+  title,
+  desc,
+}: {
+  icon: string;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <div className="w-[320px] bg-white/50 backdrop-blur-2xl p-8 rounded-[32px] shadow-[0_15px_40px_-10px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,0.9)] border border-white/80 hover:-translate-y-2 transition-transform duration-500 cursor-default group">
+      <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center text-2xl text-slate-800 mb-6 group-hover:scale-110 transition-transform duration-500">
+        {/* @ts-expect-error iconify-icon is a web component */}
+        <iconify-icon icon={icon} />
+      </div>
+      <div className="text-[19px] font-semibold text-slate-900 font-nunito mb-3 tracking-tight">
+        {title}
+      </div>
+      <p className="text-[14px] font-medium text-slate-700 leading-relaxed font-sans">
+        {desc}
+      </p>
     </div>
   );
 }
