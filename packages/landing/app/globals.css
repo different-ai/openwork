@@ -17,23 +17,34 @@ html {
   scroll-behavior: smooth;
 }
 
+/* ── Prevent icon pop-in: reserve space while Iconify loads ── */
+iconify-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+}
+
 /* Chart bar animation */
 .chart-bar {
   transition: height 1s ease-out;
 }
 
+/* ── GPU-promote scrolling marquees for jank-free animation ── */
+
 /* Scrolling sectors carousel */
 @keyframes scroll-testimonials {
   0% {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   100% {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
 .animate-scroll-testimonials {
   animation: scroll-testimonials 50s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .animate-scroll-testimonials:hover {
@@ -43,25 +54,46 @@ html {
 /* Scrolling MCP integrations marquee */
 @keyframes scroll-integrations {
   0% {
-    transform: translateX(0);
+    transform: translate3d(0, 0, 0);
   }
   100% {
-    transform: translateX(-50%);
+    transform: translate3d(-50%, 0, 0);
   }
 }
 
 .animate-scroll-integrations {
   animation: scroll-integrations 40s linear infinite;
+  will-change: transform;
+  backface-visibility: hidden;
 }
 
 .animate-scroll-integrations:hover {
   animation-play-state: paused;
 }
 
+/* ── Reduce backdrop-blur cost on lower-end devices ── */
+@supports (backdrop-filter: blur(1px)) {
+  .backdrop-blur-2xl {
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+  }
+  .backdrop-blur-3xl {
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-scroll-testimonials,
   .animate-scroll-integrations {
     animation: none;
+    will-change: auto;
+  }
+  .animate-fade-in,
+  .animate-slide-up {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
   }
   html {
     scroll-behavior: auto;

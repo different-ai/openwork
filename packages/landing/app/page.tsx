@@ -3,23 +3,38 @@
 export default function Home() {
   return (
     <>
-      {/* Background Layer */}
+      {/* Background Layer — images are decorative, eager-load the main sky */}
       <div className="fixed inset-0 z-0 pointer-events-none">
         <img
           src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/bfd2f4cf-65ed-4b1a-86d1-a1710619267b_1600w.png"
-          alt="Sky Background"
+          alt=""
+          role="presentation"
+          width={1600}
+          height={900}
+          fetchPriority="high"
+          decoding="async"
           className="absolute inset-0 w-full h-full object-cover opacity-80 mix-blend-multiply"
         />
         <div className="absolute inset-0 bg-gradient-to-b from-[#A6CBE8]/20 via-[#BFD9EF]/40 to-[#EAE3D6]/60" />
         <img
           src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/4734259a-bad7-422f-981e-ce01e79184f2_1600w.jpg"
           className="absolute top-[20%] -left-[10%] w-[50%] opacity-40 mix-blend-screen blur-xl pointer-events-none"
-          alt="cloud"
+          alt=""
+          role="presentation"
+          width={800}
+          height={600}
+          loading="lazy"
+          decoding="async"
         />
         <img
           src="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/917d6f93-fb36-439a-8c48-884b67b35381_1600w.jpg"
           className="absolute top-[30%] -right-[10%] w-[50%] opacity-40 mix-blend-screen blur-xl pointer-events-none"
-          alt="cloud"
+          alt=""
+          role="presentation"
+          width={800}
+          height={600}
+          loading="lazy"
+          decoding="async"
         />
       </div>
 
@@ -110,6 +125,7 @@ export default function Home() {
               loop
               muted
               playsInline
+              preload="metadata"
               className="w-full block"
             >
               <source src="/app-demo.mp4" type="video/mp4" />
@@ -279,7 +295,7 @@ export default function Home() {
         <div className="flex flex-col lg:flex-row items-center gap-12 lg:gap-24 mb-32">
           {/* Mockup / Visual (Left) */}
           <div className="w-full lg:w-[55%] relative group">
-            <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-white/10 backdrop-blur-3xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
+            <div className="absolute inset-0 bg-gradient-to-br from-white/40 to-white/10 backdrop-blur-xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
             <div className="md:p-12 transition-transform duration-500 group-hover:scale-[1.02] pt-8 pr-8 pb-8 pl-8 relative z-10">
               <div className="overflow-hidden font-sans bg-white/70 backdrop-blur-xl max-w-lg border-white/80 border rounded-[28px] mr-auto ml-auto shadow-[0_20px_50px_rgba(0,0,0,0.08),inset_0_1px_0_rgba(255,255,255,1)] p-8">
                 <h3 className="font-semibold text-lg text-slate-900 mb-6 font-nunito flex items-center gap-2">
@@ -515,7 +531,7 @@ export default function Home() {
 
           {/* Visual (Right) */}
           <div className="w-full lg:w-[55%] relative group">
-            <div className="absolute inset-0 bg-gradient-to-bl from-white/40 to-white/10 backdrop-blur-3xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform -rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
+            <div className="absolute inset-0 bg-gradient-to-bl from-white/40 to-white/10 backdrop-blur-xl rounded-[40px] border border-white/60 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1),inset_0_1px_0_rgba(255,255,255,1)] transform -rotate-1 transition-all duration-700 group-hover:rotate-0 group-hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.15)]" />
 
             <div className="md:p-12 transition-transform duration-500 group-hover:scale-[1.02] pt-8 pr-8 pb-8 pl-8 relative z-10 flex items-center justify-center">
               <div className="font-sans bg-white/60 backdrop-blur-xl border-white/80 border rounded-full w-64 h-64 flex flex-col items-center justify-center shadow-[0_20px_50px_rgba(0,0,0,0.08),inset_0_2px_0_rgba(255,255,255,1)] relative overflow-hidden">
@@ -627,7 +643,7 @@ export default function Home() {
                   <div className="flex items-center gap-3 font-semibold text-slate-900 text-[15px]">
                     <div className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center text-slate-700">
                       {/* @ts-expect-error iconify-icon is a web component */}
-                      <iconify-icon icon="solar:handshake-linear" />
+                      <iconify-icon icon="solar:hand-shake-linear" />
                     </div>
                     Ventas B2B Pro
                   </div>
@@ -691,7 +707,7 @@ export default function Home() {
           <div className="bg-white/40 backdrop-blur-2xl rounded-[32px] p-8 flex flex-col items-start gap-5 shadow-[0_15px_30px_-10px_rgba(0,0,0,0.05),inset_0_1px_0_rgba(255,255,255,0.8)] border border-white/60 hover:shadow-[0_25px_50px_-15px_rgba(0,0,0,0.1)] transition-all duration-500 hover:-translate-y-2 group">
             <div className="w-14 h-14 rounded-[16px] bg-gradient-to-b from-white to-white/60 border border-white shadow-[0_8px_16px_rgba(0,0,0,0.06),inset_0_-3px_6px_rgba(0,0,0,0.02)] flex items-center justify-center text-2xl text-slate-800 group-hover:scale-110 transition-transform duration-500">
               {/* @ts-expect-error iconify-icon is a web component */}
-              <iconify-icon icon="solar:wifi-router-minimalistic-linear" />
+              <iconify-icon icon="solar:cloud-cross-linear" />
             </div>
             <h4 className="text-[19px] font-semibold text-slate-900 font-nunito tracking-tight">
               Funciona sin internet
@@ -1273,7 +1289,7 @@ export default function Home() {
       {/* FAQ Section */}
       <section
         id="faq"
-        className="w-full z-10 border-t border-white/30 py-24 relative bg-white/30 backdrop-blur-3xl"
+        className="w-full z-10 border-t border-white/30 py-24 relative bg-white/30 backdrop-blur-xl"
       >
         <div className="max-w-3xl mx-auto px-6">
           <div className="text-center mb-16">

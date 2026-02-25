@@ -27,11 +27,21 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" className={`${nunito.variable} ${inter.variable}`}>
+      <head>
+        {/* Preload hero background to avoid blank flash */}
+        <link
+          rel="preload"
+          href="https://hoirqrkdgbmvpwutwuwj.supabase.co/storage/v1/object/public/assets/assets/bfd2f4cf-65ed-4b1a-86d1-a1710619267b_1600w.png"
+          as="image"
+        />
+        {/* Preconnect to Iconify CDN for faster icon loading */}
+        <link rel="preconnect" href="https://api.iconify.design" />
+      </head>
       <body className="antialiased min-h-screen overflow-x-hidden selection:bg-black selection:text-white text-slate-800 font-sans bg-[#ABCDE9] relative">
         {children}
         <Script
           src="https://code.iconify.design/iconify-icon/2.0.0/iconify-icon.min.js"
-          strategy="afterInteractive"
+          strategy="beforeInteractive"
         />
       </body>
     </html>
