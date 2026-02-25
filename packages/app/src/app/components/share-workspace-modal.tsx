@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Copy, X } from "lucide-solid";
 
@@ -51,6 +51,17 @@ export default function ShareWorkspaceModal(props: {
     requestAnimationFrame(() => firstCopyRef?.focus());
   });
 
+  createEffect(() => {
+    if (!props.open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      props.onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => window.removeEventListener("keydown", handleKeyDown));
+  });
+
   const maskValue = (value: string) => (value ? "************" : "");
 
   const handleCopy = async (value: string, key: string) => {
@@ -69,7 +80,7 @@ export default function ShareWorkspaceModal(props: {
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-1/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
         <div
-          class="bg-gray-2 border border-gray-6 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+          class="bg-gray-2 border border-gray-6 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
           role="dialog"
           aria-modal="true"
         >
@@ -109,17 +120,17 @@ export default function ShareWorkspaceModal(props: {
                     isSecret() && !revealed() ? maskValue(field.value) : field.value;
 
                   return (
-                    <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                       <div class="min-w-0">
                         <div class="text-xs font-medium text-gray-11">{field.label}</div>
-                        <div class="text-xs text-gray-7 font-mono truncate">
+                        <div class="text-xs text-gray-7 font-mono break-all sm:break-normal sm:truncate">
                           {shownValue() || field.placeholder || "-"}
                         </div>
                         <Show when={field.hint && field.hint.trim()}>
                           <div class="text-[11px] text-gray-8 mt-1">{field.hint}</div>
                         </Show>
                       </div>
-                      <div class="flex items-center gap-2 shrink-0">
+                      <div class="flex items-center gap-2 shrink-0 self-end sm:self-auto">
                         <Show when={isSecret()}>
                           <Button
                             variant="outline"
