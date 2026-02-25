@@ -32,7 +32,7 @@ const PLANES = [
     destacado: true,
     features: [
       "Todo lo de Personal",
-      "10 expertos preconfigurados para LATAM",
+      "25 expertos preconfigurados para LATAM",
       "Todos los skills y comandos",
       "Servidores MCP incluidos",
       "Soporte por email",
@@ -51,6 +51,7 @@ const PLANES = [
     features: [
       "Todo lo de Profesional",
       "Hasta 5 instalaciones",
+      "+ 5 expertos premium avanzados",
       "Interconexión entre agentes vía MCP",
       "Asistencia de integración de modelo",
       "Soporte prioritario (email + chat)",
@@ -69,6 +70,7 @@ const PLANES = [
     features: [
       "Todo lo de Business",
       "10+ instalaciones (ilimitadas)",
+      "30 expertos (25 + 5 premium) + custom",
       "Desarrollo de servidores MCP custom",
       "Integración completa de modelo en tu infra",
       "Acceso anticipado a nuevas funciones",
@@ -203,7 +205,7 @@ export default function Enterprise() {
                       ["App de escritorio", true, true, true, true],
                       ["Trae tu propio modelo (BYOM)", true, true, true, true],
                       ["Actualizaciones incluidas", true, true, true, true],
-                      ["Expertos preconfigurados", false, true, true, true],
+                      ["Expertos preconfigurados", false, "25", "25 + 5 premium", "30 + custom"],
                       ["Skills y comandos completos", false, true, true, true],
                       ["Servidores MCP", false, true, true, true],
                       ["Puesta en marcha asistida", false, true, true, true],
