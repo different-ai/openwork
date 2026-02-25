@@ -25,11 +25,35 @@ type TextSegment =
 
 const WEB_LINK_RE = /^(?:https?:\/\/|www\.)/i;
 const FILE_URI_RE = /^file:\/\//i;
+const URI_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 const WINDOWS_PATH_RE = /^[A-Za-z]:[\\/][^\s"'`\)\]\}>]+$/;
 const POSIX_PATH_RE = /^\/(?!\/)[^\s"'`\)\]\}>][^\s"'`\)\]\}>]*$/;
 const TILDE_PATH_RE = /^~\/[^\s"'`\)\]\}>][^\s"'`\)\]\}>]*$/;
 const BARE_FILENAME_RE = /^(?!\.)(?!.*\.\.)(?:[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+)$/;
 const SAFE_PATH_CHAR_RE = /[^\s"'`\)\]\}>]/;
+
+const stripFileReferenceSuffix = (value: string) => {
+  const withoutQueryOrFragment = value.replace(/[?#].*$/, "").trim();
+  if (!withoutQueryOrFragment) return "";
+  return withoutQueryOrFragment.replace(/:(\d+)(?::\d+)?$/, "");
+};
+
+const isWorkspaceRelativeFilePath = (value: string) => {
+  const stripped = stripFileReferenceSuffix(value);
+  if (!stripped) return false;
+
+  const normalized = stripped.replace(/\\/g, "/");
+  if (!normalized.includes("/")) return false;
+  if (normalized.startsWith("/") || normalized.startsWith("~/") || normalized.startsWith("//")) {
+    return false;
+  }
+  if (URI_SCHEME_RE.test(normalized)) return false;
+  if (/^[A-Za-z]:\//.test(normalized)) return false;
+
+  const segments = normalized.split("/");
+  if (!segments.length) return false;
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+};
 
 const isRelativeFilePath = (value: string) => {
   if (value === "." || value === "..") return false;
@@ -78,6 +102,7 @@ const isLikelyFilePath = (value: string) => {
   if (TILDE_PATH_RE.test(value)) return true;
   if (isRelativeFilePath(value)) return true;
   if (isBareRelativeFilePath(value)) return true;
+  if (isWorkspaceRelativeFilePath(value)) return true;
 
   return false;
 };
@@ -200,6 +225,9 @@ const normalizeRelativePath = (relativePath: string, workspaceRoot: string) => {
 };
 
 const normalizeFilePath = (href: string, workspaceRoot: string): string | null => {
+  const strippedHref = stripFileReferenceSuffix(href);
+  if (!strippedHref) return null;
+
   if (FILE_URI_RE.test(href)) {
     try {
       const parsed = new URL(href);
@@ -220,8 +248,8 @@ const normalizeFilePath = (href: string, workspaceRoot: string): string | null =
     }
   }
 
-  const trimmed = href.trim();
-  if (isRelativeFilePath(trimmed) || isBareRelativeFilePath(trimmed)) {
+  const trimmed = strippedHref.trim();
+  if (isRelativeFilePath(trimmed) || isBareRelativeFilePath(trimmed) || isWorkspaceRelativeFilePath(trimmed)) {
     if (!workspaceRoot) return null;
     return normalizeRelativePath(trimmed, workspaceRoot);
   }
