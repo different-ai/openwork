@@ -1,7 +1,7 @@
 import { SiteFooter } from "../components/site-footer";
 import { SiteNav } from "../components/site-nav";
 import { HeroBeam } from "../components/hero-beam";
-import { SectionTitle } from "../components/section-title";
+import { HyperText } from "../components/magicui/hyper-text";
 
 /* ── 25 expertos incluidos en plan Profesional+ ── */
 const EXPERTOS = [
@@ -366,9 +366,8 @@ export default function Home() {
                 ── CÓMO FUNCIONA ──
                 ══════════════════════════════════════════════════════════ */}
             <section id="como-funciona" className="py-12">
-              <SectionTitle>Cómo funciona</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                Cómo funciona
+                <HyperText as="span" startOnView animateOnHover>Cómo funciona</HyperText>
               </h2>
               <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
                 AikaOS se instala en tu computadora y se conecta al modelo de
@@ -504,9 +503,8 @@ export default function Home() {
                 ── POR QUÉ LOCAL-FIRST ──
                 ══════════════════════════════════════════════════════════ */}
             <section id="local-first" className="py-12">
-              <SectionTitle>¿Por qué correr tu IA en local?</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                ¿Por qué correr tu IA en local?
+                <HyperText as="span" startOnView animateOnHover>¿Por qué correr tu IA en local?</HyperText>
               </h2>
               <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
                 La mayoría de las herramientas de IA procesan tus datos en
@@ -615,7 +613,9 @@ export default function Home() {
 
             {/* ── Visualización: AikaOS conecta tus herramientas con IA ── */}
             <section className="py-12">
-              <SectionTitle>Conecta todo con inteligencia artificial</SectionTitle>
+              <h2 className="mb-3 text-2xl font-bold md:text-3xl">
+                <HyperText as="span" startOnView animateOnHover>Conecta todo con inteligencia artificial</HyperText>
+              </h2>
               <HeroBeam />
             </section>
 
@@ -623,9 +623,8 @@ export default function Home() {
 
             {/* ── Expertos preconfigurados ── */}
             <section id="expertos" className="py-12">
-              <SectionTitle>25 expertos + 5 premium</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                25 expertos preconfigurados
+                <HyperText as="span" startOnView animateOnHover>25 expertos preconfigurados</HyperText>
               </h2>
               <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
                 Cada experto incluye skills especializados, comandos listos para
@@ -701,9 +700,8 @@ export default function Home() {
 
             {/* ── Funciones ── */}
             <section id="funciones" className="py-12">
-              <SectionTitle>Lo que puedes hacer con AikaOS</SectionTitle>
               <h2 className="mb-10 text-2xl font-bold md:text-3xl">
-                Lo que puedes hacer con AikaOS
+                <HyperText as="span" startOnView animateOnHover>Lo que puedes hacer con AikaOS</HyperText>
               </h2>
 
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 md:grid-cols-3">
@@ -790,9 +788,8 @@ export default function Home() {
                 ── COMPARATIVA VS COMPETENCIA ──
                 ══════════════════════════════════════════════════════════ */}
             <section id="comparativa" className="py-12">
-              <SectionTitle>AikaOS vs la competencia</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                AikaOS vs la competencia
+                <HyperText as="span" startOnView animateOnHover>AikaOS vs la competencia</HyperText>
               </h2>
               <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
                 Existen otras herramientas de IA agentica en el mercado. Aquí
@@ -915,9 +912,8 @@ export default function Home() {
 
             {/* ── Sectores objetivo ── */}
             <section id="sectores" className="py-12">
-              <SectionTitle>Diseñado para estos sectores</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                Diseñado para estos sectores
+                <HyperText as="span" startOnView animateOnHover>Diseñado para estos sectores</HyperText>
               </h2>
               <p className="mb-10 max-w-3xl text-base leading-relaxed text-gray-700">
                 AikaOS se adapta a las necesidades específicas de cada industria
@@ -942,9 +938,8 @@ export default function Home() {
 
             {/* ── Planes resumen ── */}
             <section id="planes" className="py-12">
-              <SectionTitle>Planes</SectionTitle>
               <h2 className="mb-3 text-center text-2xl font-bold md:text-3xl">
-                Planes
+                <HyperText as="span" startOnView animateOnHover>Planes</HyperText>
               </h2>
               <p className="mx-auto mb-10 max-w-2xl text-center text-base leading-relaxed text-gray-700">
                 Precios en USD para toda Latinoamérica. Todos los planes
@@ -1058,9 +1053,8 @@ export default function Home() {
 
             {/* ── FAQ ── */}
             <section id="faq" className="py-12">
-              <SectionTitle>Preguntas frecuentes</SectionTitle>
               <h2 className="mb-10 text-2xl font-bold md:text-3xl">
-                Preguntas frecuentes
+                <HyperText as="span" startOnView animateOnHover>Preguntas frecuentes</HyperText>
               </h2>
               <div className="space-y-12">
                 <div>
@@ -1170,9 +1164,8 @@ export default function Home() {
 
             {/* ── CTA final ── */}
             <section className="py-12 text-center">
-              <SectionTitle>Empieza a automatizar tu empresa</SectionTitle>
               <h2 className="mb-4 text-2xl font-bold md:text-3xl">
-                Empieza a automatizar tu empresa
+                <HyperText as="span" startOnView animateOnHover>Empieza a automatizar tu empresa</HyperText>
               </h2>
               <p className="mx-auto mb-8 max-w-2xl text-[15px] leading-relaxed text-gray-700">
                 Contáctanos para una demo personalizada. Te mostramos cómo
