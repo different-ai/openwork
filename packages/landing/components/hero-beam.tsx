@@ -25,14 +25,19 @@ Circle.displayName = "Circle";
 
 export function HeroBeam() {
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Left side refs (inputs)
   const userRef = useRef<HTMLDivElement>(null);
+  const docsRef = useRef<HTMLDivElement>(null);
+  const browserRef = useRef<HTMLDivElement>(null);
+
+  // Center ref
   const aikaRef = useRef<HTMLDivElement>(null);
+
+  // Right side refs (outputs)
   const claudeRef = useRef<HTMLDivElement>(null);
   const openaiRef = useRef<HTMLDivElement>(null);
   const ollamaRef = useRef<HTMLDivElement>(null);
-  const docsRef = useRef<HTMLDivElement>(null);
-  const browserRef = useRef<HTMLDivElement>(null);
-  const dbRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="w-full rounded-2xl border border-gray-100 bg-white p-6 shadow-2xl ring-1 ring-black/5 sm:p-10">
@@ -46,21 +51,24 @@ export function HeroBeam() {
 
       <div
         ref={containerRef}
-        className="relative flex w-full items-center justify-center overflow-hidden py-6 sm:py-10"
+        className="relative flex h-[300px] w-full items-center justify-center overflow-hidden py-6 sm:py-10"
       >
-        <div className="flex size-full max-w-2xl flex-row items-stretch justify-between gap-10">
-          {/* Left column: User */}
-          <div className="flex flex-col justify-center">
-            <Circle ref={userRef} className="size-14 border-gray-200">
+        <div className="flex size-full max-h-[200px] max-w-lg flex-col items-stretch justify-between gap-10">
+          {/* Top row */}
+          <div className="flex flex-row items-center justify-between">
+            <Circle ref={userRef} className="border-gray-200">
               <Icons.user />
             </Circle>
-            <span className="mt-2 text-center text-[11px] font-semibold text-gray-500">
-              Tú
-            </span>
+            <Circle ref={claudeRef}>
+              <Icons.anthropic />
+            </Circle>
           </div>
 
-          {/* Center: AikaOS */}
-          <div className="flex flex-col items-center justify-center">
+          {/* Middle row */}
+          <div className="flex flex-row items-center justify-between">
+            <Circle ref={docsRef}>
+              <Icons.docs />
+            </Circle>
             <Circle
               ref={aikaRef}
               className="size-16 border-aika-teal bg-teal-50 shadow-[0_0_30px_-8px_rgba(0,200,180,0.4)]"
@@ -69,112 +77,99 @@ export function HeroBeam() {
                 {">_"}
               </span>
             </Circle>
-            <span className="mt-2 text-center text-[11px] font-bold text-aika-teal">
-              AikaOS
-            </span>
-          </div>
-
-          {/* Right column: AI models & tools */}
-          <div className="flex flex-col items-center justify-center gap-5">
-            <Circle ref={claudeRef} className="size-11">
-              <Icons.anthropic />
-            </Circle>
-            <Circle ref={openaiRef} className="size-11">
+            <Circle ref={openaiRef}>
               <Icons.openai />
             </Circle>
-            <Circle ref={ollamaRef} className="size-11">
-              <Icons.ollama />
-            </Circle>
-            <Circle ref={docsRef} className="size-11">
-              <Icons.docs />
-            </Circle>
-            <Circle ref={browserRef} className="size-11">
+          </div>
+
+          {/* Bottom row */}
+          <div className="flex flex-row items-center justify-between">
+            <Circle ref={browserRef}>
               <Icons.browser />
             </Circle>
-            <Circle ref={dbRef} className="size-11">
-              <Icons.database />
+            <Circle ref={ollamaRef}>
+              <Icons.ollama />
             </Circle>
           </div>
         </div>
 
-        {/* Beams: User -> AikaOS */}
+        {/* Beams: left side -> AikaOS */}
         <AnimatedBeam
           containerRef={containerRef}
           fromRef={userRef}
           toRef={aikaRef}
+          curvature={-75}
+          endYOffset={-10}
           duration={3}
-          gradientStartColor="#00C8B4"
+          gradientStartColor="#6b7280"
+          gradientStopColor="#00C8B4"
+        />
+        <AnimatedBeam
+          containerRef={containerRef}
+          fromRef={docsRef}
+          toRef={aikaRef}
+          duration={3}
+          gradientStartColor="#f59e0b"
+          gradientStopColor="#00C8B4"
+        />
+        <AnimatedBeam
+          containerRef={containerRef}
+          fromRef={browserRef}
+          toRef={aikaRef}
+          curvature={75}
+          endYOffset={10}
+          duration={3}
+          gradientStartColor="#3b82f6"
           gradientStopColor="#00C8B4"
         />
 
-        {/* Beams: AikaOS -> each tool */}
+        {/* Beams: AikaOS -> right side */}
         <AnimatedBeam
           containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={claudeRef}
+          fromRef={claudeRef}
+          toRef={aikaRef}
+          curvature={-75}
+          endYOffset={-10}
+          reverse
           duration={3}
-          curvature={-40}
           gradientStartColor="#00C8B4"
           gradientStopColor="#9c40ff"
         />
         <AnimatedBeam
           containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={openaiRef}
+          fromRef={openaiRef}
+          toRef={aikaRef}
+          reverse
           duration={3}
-          curvature={-20}
           gradientStartColor="#00C8B4"
           gradientStopColor="#10a37f"
         />
         <AnimatedBeam
           containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={ollamaRef}
+          fromRef={ollamaRef}
+          toRef={aikaRef}
+          curvature={75}
+          endYOffset={10}
+          reverse
           duration={3}
           gradientStartColor="#00C8B4"
           gradientStopColor="#333333"
         />
-        <AnimatedBeam
-          containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={docsRef}
-          duration={3}
-          gradientStartColor="#00C8B4"
-          gradientStopColor="#f59e0b"
-        />
-        <AnimatedBeam
-          containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={browserRef}
-          duration={3}
-          curvature={20}
-          gradientStartColor="#00C8B4"
-          gradientStopColor="#3b82f6"
-        />
-        <AnimatedBeam
-          containerRef={containerRef}
-          fromRef={aikaRef}
-          toRef={dbRef}
-          duration={3}
-          curvature={40}
-          gradientStartColor="#00C8B4"
-          gradientStopColor="#ef4444"
-        />
       </div>
 
       {/* Labels */}
-      <div className="flex flex-wrap items-center justify-center gap-3 text-[11px] text-gray-400">
-        <span>Claude</span>
-        <span className="text-gray-200">|</span>
-        <span>GPT-4</span>
-        <span className="text-gray-200">|</span>
-        <span>Ollama</span>
-        <span className="text-gray-200">|</span>
-        <span>Documentos</span>
-        <span className="text-gray-200">|</span>
-        <span>Navegador</span>
-        <span className="text-gray-200">|</span>
-        <span>Bases de datos</span>
+      <div className="mt-2 flex flex-row items-center justify-between text-[11px] text-gray-400">
+        <div className="flex flex-col items-center gap-1">
+          <span>Tú</span>
+          <span>Documentos</span>
+          <span>Navegador</span>
+        </div>
+        <span className="text-[11px] font-bold text-aika-teal">AikaOS</span>
+        <div className="flex flex-col items-center gap-1">
+          <span>Claude</span>
+          <span>GPT-4</span>
+          <span>Ollama</span>
+        </div>
       </div>
     </div>
   );
@@ -208,7 +203,16 @@ const Icons = {
     </svg>
   ),
   ollama: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#191919" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="#191919"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="10" r="6" />
       <circle cx="10" cy="9" r="1" fill="#191919" stroke="none" />
       <circle cx="14" cy="9" r="1" fill="#191919" stroke="none" />
@@ -217,7 +221,16 @@ const Icons = {
     </svg>
   ),
   docs: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="#f59e0b"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
       <polyline points="14 2 14 8 20 8" />
       <line x1="16" y1="13" x2="8" y2="13" />
@@ -225,17 +238,19 @@ const Icons = {
     </svg>
   ),
   browser: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="#3b82f6"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <circle cx="12" cy="12" r="10" />
       <line x1="2" y1="12" x2="22" y2="12" />
       <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-    </svg>
-  ),
-  database: () => (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
     </svg>
   ),
 };
