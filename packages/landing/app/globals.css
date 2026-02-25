@@ -40,8 +40,27 @@ html {
   animation-play-state: paused;
 }
 
+/* Scrolling MCP integrations marquee */
+@keyframes scroll-integrations {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-scroll-integrations {
+  animation: scroll-integrations 40s linear infinite;
+}
+
+.animate-scroll-integrations:hover {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-scroll-testimonials {
+  .animate-scroll-testimonials,
+  .animate-scroll-integrations {
     animation: none;
   }
   html {

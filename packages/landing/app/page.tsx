@@ -122,6 +122,74 @@ export default function Home() {
           </p>
         </main>
 
+        {/* MCP Integrations Marquee */}
+        <div className="w-full py-10 relative overflow-hidden">
+          <p className="text-center text-xs font-semibold tracking-widest text-slate-600 uppercase mb-6 font-sans">
+            Integraciones MCP compatibles
+          </p>
+          {/* Fade edges */}
+          <div className="absolute inset-y-0 left-0 w-16 md:w-32 bg-gradient-to-r from-[#ABCDE9] to-transparent z-20 pointer-events-none" />
+          <div className="absolute inset-y-0 right-0 w-16 md:w-32 bg-gradient-to-l from-[#ABCDE9] to-transparent z-20 pointer-events-none" />
+          <div className="flex animate-scroll-integrations w-max gap-8 px-4">
+            {/* Set 1 */}
+            <div className="flex gap-8 items-center">
+              <IntegrationBadge icon="simple-icons:google" label="Google" />
+              <IntegrationBadge icon="simple-icons:gmail" label="Gmail" />
+              <IntegrationBadge icon="simple-icons:googlecalendar" label="Calendar" />
+              <IntegrationBadge icon="simple-icons:googledrive" label="Drive" />
+              <IntegrationBadge icon="simple-icons:googlesheets" label="Sheets" />
+              <IntegrationBadge icon="simple-icons:slack" label="Slack" />
+              <IntegrationBadge icon="simple-icons:whatsapp" label="WhatsApp" />
+              <IntegrationBadge icon="simple-icons:telegram" label="Telegram" />
+              <IntegrationBadge icon="simple-icons:notion" label="Notion" />
+              <IntegrationBadge icon="simple-icons:brave" label="Brave" />
+              <IntegrationBadge icon="simple-icons:ollama" label="Ollama" />
+              <IntegrationBadge icon="simple-icons:openai" label="OpenAI" />
+              <IntegrationBadge icon="simple-icons:anthropic" label="Claude" />
+              <IntegrationBadge icon="simple-icons:github" label="GitHub" />
+              <IntegrationBadge icon="simple-icons:discord" label="Discord" />
+              <IntegrationBadge icon="simple-icons:postgresql" label="PostgreSQL" />
+              <IntegrationBadge icon="simple-icons:docker" label="Docker" />
+              <IntegrationBadge icon="simple-icons:linear" label="Linear" />
+              <IntegrationBadge icon="simple-icons:figma" label="Figma" />
+              <IntegrationBadge icon="simple-icons:trello" label="Trello" />
+              <IntegrationBadge icon="simple-icons:airtable" label="Airtable" />
+              <IntegrationBadge icon="simple-icons:zapier" label="Zapier" />
+              <IntegrationBadge icon="simple-icons:stripe" label="Stripe" />
+              <IntegrationBadge icon="simple-icons:jira" label="Jira" />
+              <IntegrationBadge icon="simple-icons:microsoftteams" label="Teams" />
+            </div>
+            {/* Set 2 (duplicate for seamless loop) */}
+            <div className="flex gap-8 items-center">
+              <IntegrationBadge icon="simple-icons:google" label="Google" />
+              <IntegrationBadge icon="simple-icons:gmail" label="Gmail" />
+              <IntegrationBadge icon="simple-icons:googlecalendar" label="Calendar" />
+              <IntegrationBadge icon="simple-icons:googledrive" label="Drive" />
+              <IntegrationBadge icon="simple-icons:googlesheets" label="Sheets" />
+              <IntegrationBadge icon="simple-icons:slack" label="Slack" />
+              <IntegrationBadge icon="simple-icons:whatsapp" label="WhatsApp" />
+              <IntegrationBadge icon="simple-icons:telegram" label="Telegram" />
+              <IntegrationBadge icon="simple-icons:notion" label="Notion" />
+              <IntegrationBadge icon="simple-icons:brave" label="Brave" />
+              <IntegrationBadge icon="simple-icons:ollama" label="Ollama" />
+              <IntegrationBadge icon="simple-icons:openai" label="OpenAI" />
+              <IntegrationBadge icon="simple-icons:anthropic" label="Claude" />
+              <IntegrationBadge icon="simple-icons:github" label="GitHub" />
+              <IntegrationBadge icon="simple-icons:discord" label="Discord" />
+              <IntegrationBadge icon="simple-icons:postgresql" label="PostgreSQL" />
+              <IntegrationBadge icon="simple-icons:docker" label="Docker" />
+              <IntegrationBadge icon="simple-icons:linear" label="Linear" />
+              <IntegrationBadge icon="simple-icons:figma" label="Figma" />
+              <IntegrationBadge icon="simple-icons:trello" label="Trello" />
+              <IntegrationBadge icon="simple-icons:airtable" label="Airtable" />
+              <IntegrationBadge icon="simple-icons:zapier" label="Zapier" />
+              <IntegrationBadge icon="simple-icons:stripe" label="Stripe" />
+              <IntegrationBadge icon="simple-icons:jira" label="Jira" />
+              <IntegrationBadge icon="simple-icons:microsoftteams" label="Teams" />
+            </div>
+          </div>
+        </div>
+
         {/* Cómo funciona Section */}
         <section
           id="como-funciona"
@@ -489,30 +557,32 @@ export default function Home() {
                 usar y servidores MCP configurados. Disponibles a partir del
                 plan Profesional.
               </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:diploma-linear" class="text-xl text-slate-600" /> Legal LATAM
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:chart-square-linear" class="text-xl text-slate-600" /> Contabilidad
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:cart-large-linear" class="text-xl text-slate-600" /> E-commerce
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:megaphone-linear" class="text-xl text-slate-600" /> Marketing
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:square-academic-cap-linear" class="text-xl text-slate-600" /> Educación
-                </div>
-                <div className="bg-white/40 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white/50 text-[14px] font-semibold text-slate-600 flex items-center gap-3">
-                  Y 20 más...
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                <ExpertTag icon="solar:diploma-linear" label="Legal LATAM" />
+                <ExpertTag icon="solar:chart-square-linear" label="Contabilidad" />
+                <ExpertTag icon="solar:cart-large-linear" label="E-commerce" />
+                <ExpertTag icon="solar:megaphone-linear" label="Marketing" />
+                <ExpertTag icon="solar:square-academic-cap-linear" label="Educación" />
+                <ExpertTag icon="solar:buildings-2-linear" label="Gobierno" />
+                <ExpertTag icon="solar:heart-pulse-linear" label="Salud" />
+                <ExpertTag icon="solar:home-2-linear" label="Inmobiliaria" />
+                <ExpertTag icon="solar:routing-2-linear" label="Logística" />
+                <ExpertTag icon="solar:leaf-linear" label="Agricultura" />
+                <ExpertTag icon="solar:card-linear" label="Fintech" />
+                <ExpertTag icon="solar:buildings-linear" label="Construcción" />
+                <ExpertTag icon="solar:people-nearby-linear" label="RRHH" />
+                <ExpertTag icon="solar:clipboard-text-linear" label="Seguros" />
+                <ExpertTag icon="solar:calculator-linear" label="Fiscal" />
+                <ExpertTag icon="solar:chat-round-dots-linear" label="Soporte" />
+                <ExpertTag icon="solar:bag-4-linear" label="Retail" />
+                <ExpertTag icon="solar:document-text-linear" label="Notarial" />
+                <ExpertTag icon="solar:graph-up-linear" label="Analítica" />
+                <ExpertTag icon="solar:pen-new-square-linear" label="Copywriting" />
+                <ExpertTag icon="solar:translation-linear" label="Traductor" />
+                <ExpertTag icon="solar:calendar-linear" label="Productividad" />
+                <ExpertTag icon="solar:database-linear" label="Datos" />
+                <ExpertTag icon="solar:shield-check-linear" label="Compliance" />
+                <ExpertTag icon="solar:hand-money-linear" label="Cobranza" />
               </div>
             </div>
           </div>
@@ -1401,6 +1471,32 @@ export default function Home() {
         </div>
       </footer>
     </>
+  );
+}
+
+/* ── Integration badge for the MCP marquee ── */
+function IntegrationBadge({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2 shrink-0 group cursor-default">
+      <div className="w-14 h-14 rounded-2xl bg-white/70 backdrop-blur-md border border-white shadow-[0_4px_12px_rgba(0,0,0,0.04)] flex items-center justify-center group-hover:scale-110 group-hover:-translate-y-1 transition-all duration-300">
+        {/* @ts-expect-error iconify-icon is a web component */}
+        <iconify-icon icon={icon} class="text-2xl text-slate-700" />
+      </div>
+      <span className="text-[11px] font-semibold text-slate-600 whitespace-nowrap">
+        {label}
+      </span>
+    </div>
+  );
+}
+
+/* ── Expert tag component for the 25 experts grid ── */
+function ExpertTag({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div className="bg-white/60 backdrop-blur-md px-3 py-2.5 rounded-xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[13px] font-semibold text-slate-800 flex items-center gap-2 transition-transform hover:scale-[1.02]">
+      {/* @ts-expect-error iconify-icon is a web component */}
+      <iconify-icon icon={icon} class="text-lg text-slate-600 shrink-0" />
+      <span className="truncate">{label}</span>
+    </div>
   );
 }
 
