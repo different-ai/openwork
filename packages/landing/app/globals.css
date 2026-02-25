@@ -4,130 +4,44 @@
 
 :root {
   color-scheme: light;
-  --aika-teal: #00C8B4;
-  --aika-teal-hover: #00B0A0;
-  --aika-dark: #0F0F14;
 }
 
+/* Hide scrollbar for clean UI */
+::-webkit-scrollbar {
+  width: 0px;
+  background: transparent;
+}
+
+/* Custom smooth scroll behavior */
 html {
   scroll-behavior: smooth;
 }
 
-body {
-  font-family: var(--font-sora), ui-sans-serif, system-ui;
-  background: radial-gradient(1200px 600px at 10% -10%, #f0fdfb 0%, transparent 60%),
-    radial-gradient(900px 500px at 90% 0%, #f0fdfa 0%, transparent 55%),
-    #ffffff;
-  color: #111111;
+/* Chart bar animation */
+.chart-bar {
+  transition: height 1s ease-out;
 }
 
-.mono {
-  font-family: var(--font-mono), ui-monospace, SFMono-Regular, SFMono-Regular, Menlo,
-    Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-}
-
-.content-max-width {
-  max-width: 64rem;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.doc-button {
-  background-color: var(--aika-teal);
-  color: #ffffff;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: background-color 0.2s ease, opacity 0.2s ease;
-}
-
-.doc-button:hover {
-  background-color: var(--aika-teal-hover);
-}
-
-.doc-button-dark {
-  background-color: var(--aika-dark);
-  color: #ffffff;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: opacity 0.2s ease;
-}
-
-.doc-button-dark:hover {
-  opacity: 0.9;
-}
-
-.step-circle {
-  width: 24px;
-  height: 24px;
-  background: #f0fdfa;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 600;
-  color: #0F0F14;
-  border: 1px solid #d1faf4;
-}
-
-hr {
-  border: 0;
-  border-top: 1px solid #efefef;
-  margin: 40px 0;
-}
-
-.feature-card {
-  border: 1px solid #f0f0f0;
-  padding: 24px;
-  border-radius: 12px;
-  transition: border-color 0.2s ease, transform 0.2s ease;
-  background: #ffffff;
-}
-
-.feature-card:hover {
-  border-color: #d1faf4;
-  transform: translateY(-2px);
-}
-
-.alpha-tag {
-  background: #fffbeb;
-  color: #92400e;
-  border: 1px solid #fef3c7;
-  padding: 2px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.animate-fade-up {
-  animation: fade-up 600ms ease both;
-}
-
-@keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
+/* Scrolling sectors carousel */
+@keyframes scroll-testimonials {
+  0% {
+    transform: translateX(0);
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  100% {
+    transform: translateX(-50%);
   }
+}
+
+.animate-scroll-testimonials {
+  animation: scroll-testimonials 50s linear infinite;
+}
+
+.animate-scroll-testimonials:hover {
+  animation-play-state: paused;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-fade-up {
+  .animate-scroll-testimonials {
     animation: none;
   }
   html {
