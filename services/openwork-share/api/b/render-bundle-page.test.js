@@ -59,7 +59,10 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /data-openwork-bundle-type="skill"/);
   assert.match(html, /meta name="openwork:bundle-id" content="01TEST"/);
   assert.match(html, /\?format=json/);
+  assert.match(html, /openwork:\/\/import-bundle\?/);
   assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
+  assert.match(html, /ow_intent=new_worker/);
+  assert.match(html, /ow_source=share_service/);
   assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
 });

@@ -13,7 +13,11 @@ It is designed to be deployed on Vercel and backed by Vercel Blob.
 
 - `GET /b/:id`
   - Returns an HTML share page by default for browser requests.
-  - Includes an **Open in app** action that sends users to OpenWork app with `ow_bundle` query param.
+  - Includes an **Open in app** action that opens `openwork://import-bundle` with:
+    - `ow_bundle=<share-url>`
+    - `ow_intent=new_worker` (default import target)
+    - `ow_source=share_service`
+  - Also includes a web fallback action that opens `PUBLIC_OPENWORK_APP_URL` with the same query params.
   - Returns raw JSON for API/programmatic requests:
     - send `Accept: application/json`, or
     - append `?format=json`.

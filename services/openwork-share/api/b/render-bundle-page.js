@@ -54,14 +54,34 @@ function normalizeAppUrl(input) {
   return trimmed.replace(/\/+$/, "");
 }
 
-function buildOpenInAppUrl(shareUrl) {
+function buildOpenInAppUrls(shareUrl, options = {}) {
+  const query = new URLSearchParams();
+  query.set("ow_bundle", shareUrl);
+  query.set("ow_intent", "new_worker");
+  query.set("ow_source", "share_service");
+
+  const label = String(options.label ?? "").trim();
+  if (label) {
+    query.set("ow_label", label.slice(0, 120));
+  }
+
+  const openInAppDeepLink = `openwork://import-bundle?${query.toString()}`;
+
   const appUrl = normalizeAppUrl(OPENWORK_APP_URL) || "https://app.openwork.software";
   try {
     const url = new URL(appUrl);
-    url.searchParams.set("ow_bundle", shareUrl);
-    return url.toString();
+    for (const [key, value] of query.entries()) {
+      url.searchParams.set(key, value);
+    }
+    return {
+      openInAppDeepLink,
+      openInWebAppUrl: url.toString(),
+    };
   } catch {
-    return `${"https://app.openwork.software"}?ow_bundle=${encodeURIComponent(shareUrl)}`;
+    return {
+      openInAppDeepLink,
+      openInWebAppUrl: `${"https://app.openwork.software"}?${query.toString()}`,
+    };
   }
 }
 
@@ -166,7 +186,9 @@ export function wantsDownload(req) {
 export function renderBundlePage({ id, rawJson, req }) {
   const bundle = parseBundle(rawJson);
   const urls = buildBundleUrls(req, id);
-  const openInAppUrl = buildOpenInAppUrl(urls.shareUrl);
+  const { openInAppDeepLink, openInWebAppUrl } = buildOpenInAppUrls(urls.shareUrl, {
+    label: bundle.name || "Shared setup",
+  });
   const prettyBundleJson = prettyJson(rawJson);
   const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
   const typeLabel = humanizeType(bundle.type);
@@ -180,11 +202,11 @@ export function renderBundlePage({ id, rawJson, req }) {
   const skillsSetCount = listCount(bundle.skills);
   const installHint =
     bundle.type === "skill"
-      ? "Open OpenWork and import from this link to install this skill."
+      ? "Use Open in app to create a new worker and install this skill."
       : bundle.type === "skills-set"
-        ? "Use Open in app to import this full skills set in one step."
+        ? "Use Open in app to create a new worker and import this full skills set."
         : bundle.type === "workspace-profile"
-          ? "Use Open in app to import this full workspace profile (config, MCP, commands, and skills)."
+          ? "Use Open in app to create a new worker from this full workspace profile (config, MCP, commands, and skills)."
           : "Use the JSON endpoint if you want to import this bundle programmatically.";
   const contentLabel = bundle.type === "skill" && bundle.content.trim() ? "Skill content" : "Bundle payload";
   const contentPreview =
@@ -211,7 +233,7 @@ export function renderBundlePage({ id, rawJson, req }) {
   <meta name="openwork:bundle-id" content="${escapeHtml(id)}" />
   <meta name="openwork:bundle-type" content="${escapeHtml(bundle.type || "unknown")}" />
   <meta name="openwork:schema-version" content="${escapeHtml(schemaVersion)}" />
-  <meta name="openwork:open-in-app-url" content="${escapeHtml(openInAppUrl)}" />
+  <meta name="openwork:open-in-app-url" content="${escapeHtml(openInAppDeepLink)}" />
   <link rel="alternate" type="application/json" href="${escapeHtml(urls.jsonUrl)}" />
   <style>
     :root {
@@ -449,7 +471,8 @@ export function renderBundlePage({ id, rawJson, req }) {
       <h1>${escapeHtml(title)}</h1>
       <p>${escapeHtml(description)}</p>
       <div class="actions">
-        <a class="action-link primary" href="${escapeHtml(openInAppUrl)}" target="_blank" rel="noreferrer">Open in app</a>
+        <a class="action-link primary" href="${escapeHtml(openInAppDeepLink)}">Open in app (new worker)</a>
+        <a class="action-link secondary" href="${escapeHtml(openInWebAppUrl)}" target="_blank" rel="noreferrer">Open in web app</a>
         <button type="button" class="secondary" id="copy-link-button">Copy share link</button>
         <button type="button" class="secondary" id="copy-json-button">Copy bundle JSON</button>
         <a class="action-link secondary" href="${escapeHtml(urls.jsonUrl)}" target="_blank" rel="noreferrer">View raw JSON</a>
