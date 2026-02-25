@@ -899,13 +899,14 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!workspaceMenuId()) return;
-    const closeMenu = (event: MouseEvent) => {
+    const closeMenu = (event: PointerEvent) => {
+      if (!workspaceMenuRef) return;
       const target = event.target as Node | null;
       if (workspaceMenuRef && target && workspaceMenuRef.contains(target)) return;
       setWorkspaceMenuId(null);
     };
-    window.addEventListener("click", closeMenu);
-    onCleanup(() => window.removeEventListener("click", closeMenu));
+    window.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
   const attachmentsEnabled = createMemo(() => {
     if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
@@ -921,13 +922,13 @@ export default function SessionView(props: SessionViewProps) {
 
   createEffect(() => {
     if (!addWorkspaceMenuOpen()) return;
-    const closeMenu = (event: MouseEvent) => {
+    const closeMenu = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
       setAddWorkspaceMenuOpen(false);
     };
-    window.addEventListener("click", closeMenu);
-    onCleanup(() => window.removeEventListener("click", closeMenu));
+    window.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
@@ -2851,7 +2852,7 @@ export default function SessionView(props: SessionViewProps) {
                             <Loader2 size={14} class="animate-spin text-dls-secondary" />
                           </Show>
                         </div>
-                      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-60 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                         <button
                           type="button"
                           class="p-1 rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-active"
