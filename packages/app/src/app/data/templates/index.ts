@@ -90,6 +90,39 @@ export async function loadTemplate(id: string): Promise<AikaTemplate> {
       return (await import("./ventas-b2b/metadata")).default;
     case "recursos-humanos":
       return (await import("./recursos-humanos/metadata")).default;
+    // Tier 1 — Personal ($20/mes)
+    case "investigador-web":
+      return (await import("./investigador-web/metadata")).default;
+    case "gestor-email":
+      return (await import("./gestor-email/metadata")).default;
+    case "creador-contenido":
+      return (await import("./creador-contenido/metadata")).default;
+    case "asistente-obsidian":
+      return (await import("./asistente-obsidian/metadata")).default;
+    case "planificador-proyectos":
+      return (await import("./planificador-proyectos/metadata")).default;
+    // Tier 2 — Profesional ($50/mes)
+    case "asistente-fiscal":
+      return (await import("./asistente-fiscal/metadata")).default;
+    case "redactor-bilingue":
+      return (await import("./redactor-bilingue/metadata")).default;
+    case "analista-competencia":
+      return (await import("./analista-competencia/metadata")).default;
+    case "gestor-whatsapp":
+      return (await import("./gestor-whatsapp/metadata")).default;
+    case "asistente-inmobiliario":
+      return (await import("./asistente-inmobiliario/metadata")).default;
+    // Tier 3 — Business ($150/mes)
+    case "medico-clinica":
+      return (await import("./medico-clinica/metadata")).default;
+    case "abogado-migratorio":
+      return (await import("./abogado-migratorio/metadata")).default;
+    case "profesor-universitario":
+      return (await import("./profesor-universitario/metadata")).default;
+    case "freelancer-admin":
+      return (await import("./freelancer-admin/metadata")).default;
+    case "agente-aduanas":
+      return (await import("./agente-aduanas/metadata")).default;
     default:
       throw new Error(`Unknown template: ${id}`);
   }
@@ -199,5 +232,143 @@ export const templateCatalog: TemplateSummary[] = [
     locale: "es",
     category: "function",
     audience: "Departamentos de RRHH, reclutadores",
+  },
+  // Tier 1 — Personal ($20/mes)
+  {
+    id: "investigador-web",
+    name: "Investigador Web",
+    description: "Investigación profunda, comparación de opciones y resúmenes ejecutivos con fuentes verificadas.",
+    icon: "Search",
+    locale: "es",
+    category: "function",
+    audience: "Profesionales, estudiantes, analistas, emprendedores",
+  },
+  {
+    id: "gestor-email",
+    name: "Gestor de Email",
+    description: "Redacción profesional, clasificación inteligente y seguimiento de correos electrónicos.",
+    icon: "Mail",
+    locale: "es",
+    category: "function",
+    audience: "Profesionales, ejecutivos, equipos de ventas",
+  },
+  {
+    id: "creador-contenido",
+    name: "Creador de Contenido",
+    description: "Posts para redes sociales, calendarios editoriales y adaptación de contenido multiplataforma.",
+    icon: "PenTool",
+    locale: "es",
+    category: "function",
+    audience: "Community managers, creadores de contenido, marcas",
+  },
+  {
+    id: "asistente-obsidian",
+    name: "Asistente Obsidian",
+    description: "Lee tu vault, conecta notas, genera resúmenes semanales y mantiene tu segundo cerebro organizado.",
+    icon: "Brain",
+    locale: "es",
+    category: "function",
+    audience: "Usuarios de Obsidian, investigadores, profesionales del conocimiento",
+  },
+  {
+    id: "planificador-proyectos",
+    name: "Planificador de Proyectos",
+    description: "Roadmaps, desglose de tareas, estimaciones y reportes de avance para equipos y freelancers.",
+    icon: "GanttChart",
+    locale: "es",
+    category: "function",
+    audience: "Project managers, startups, freelancers, equipos de desarrollo",
+  },
+  // Tier 2 — Profesional ($50/mes)
+  {
+    id: "asistente-fiscal",
+    name: "Asistente Fiscal LATAM",
+    description: "Cálculos de impuestos, calendario de obligaciones y revisión de facturas para México, Colombia, Argentina, Chile y Perú.",
+    icon: "Receipt",
+    locale: "es",
+    category: "industry",
+    audience: "Contadores independientes, PyMEs, emprendedores",
+  },
+  {
+    id: "redactor-bilingue",
+    name: "Redactor Bilingüe EN↔ES",
+    description: "Traducción profesional, redacción bilingüe y localización para mercados US y LATAM.",
+    icon: "Languages",
+    locale: "es",
+    category: "function",
+    audience: "Empresas internacionales, exportadores, freelancers bilingües",
+  },
+  {
+    id: "analista-competencia",
+    name: "Analista de Competencia",
+    description: "Análisis de competidores, comparación de precios y monitoreo de tendencias de mercado.",
+    icon: "TrendingUp",
+    locale: "es",
+    category: "function",
+    audience: "Startups, e-commerce, agencias, equipos de estrategia",
+  },
+  {
+    id: "gestor-whatsapp",
+    name: "Gestor de WhatsApp Business",
+    description: "Respuestas rápidas, catálogos de productos y flujos de venta por WhatsApp.",
+    icon: "MessageCircle",
+    locale: "es",
+    category: "function",
+    audience: "PyMEs, tiendas online, negocios locales, vendedores independientes",
+  },
+  {
+    id: "asistente-inmobiliario",
+    name: "Asistente Inmobiliario",
+    description: "Fichas de propiedades, análisis de inversión, contratos de arrendamiento y comparación de precios por zona.",
+    icon: "Building2",
+    locale: "es",
+    category: "industry",
+    audience: "Agentes inmobiliarios, inversionistas, administradores de propiedades",
+  },
+  // Tier 3 — Business ($150/mes)
+  {
+    id: "medico-clinica",
+    name: "Médico / Clínica",
+    description: "Notas clínicas SOAP, referimientos a especialistas e indicaciones para pacientes en lenguaje claro.",
+    icon: "Stethoscope",
+    locale: "es",
+    category: "industry",
+    audience: "Médicos generales, especialistas, clínicas privadas",
+  },
+  {
+    id: "abogado-migratorio",
+    name: "Abogado Migratorio",
+    description: "Orientación sobre visas, checklists de documentos y borradores de cartas para trámites migratorios.",
+    icon: "Plane",
+    locale: "es",
+    category: "industry",
+    audience: "Migrantes, abogados migratorios, empresas con empleados internacionales",
+  },
+  {
+    id: "profesor-universitario",
+    name: "Profesor Universitario",
+    description: "Syllabus, exámenes, rúbricas y retroalimentación académica con taxonomía de Bloom.",
+    icon: "GraduationCap",
+    locale: "es",
+    category: "industry",
+    audience: "Profesores universitarios, coordinadores académicos, tutores",
+  },
+  {
+    id: "freelancer-admin",
+    name: "Freelancer Admin",
+    description: "Cotizaciones, contratos, control financiero y gestión de clientes para independientes.",
+    icon: "Briefcase",
+    locale: "es",
+    category: "function",
+    audience: "Freelancers, consultores independientes, profesionales autónomos",
+  },
+  {
+    id: "agente-aduanas",
+    name: "Agente de Aduanas",
+    description: "Cálculo de aranceles, clasificación arancelaria, documentos de exportación y logística internacional.",
+    icon: "Ship",
+    locale: "es",
+    category: "industry",
+    audience: "Importadores, exportadores, agentes aduanales, PyMEs de comercio exterior",
   },
 ];
