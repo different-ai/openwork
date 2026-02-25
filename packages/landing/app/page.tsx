@@ -339,7 +339,7 @@ export default function Home() {
             <div className="group relative mb-2 mt-8">
               <div className="relative overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-2xl transition-transform duration-500 group-hover:scale-[1.01] ring-1 ring-black/5">
                 {/* Overlay: tapa "OpenWork" en la esquina superior del video y muestra "AikaOS" */}
-                <div className="absolute left-0 top-0 z-10 flex items-center gap-2 bg-[#1e1e2e] px-4 py-2">
+                <div className="absolute left-0 top-0 z-10 flex items-center gap-2 bg-[#1e1e2e] px-6 py-2 min-w-[260px]">
                   <span className="font-mono text-sm font-bold text-aika-teal">{">_"}</span>
                   <span className="text-sm font-semibold text-white">AikaOS</span>
                 </div>
