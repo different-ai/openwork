@@ -3,6 +3,7 @@ import { SiteNav } from "../components/site-nav";
 import { HeroBeam } from "../components/hero-beam";
 import { SectionTitle } from "../components/section-title";
 
+/* ── 25 expertos incluidos en plan Profesional+ ── */
 const EXPERTOS = [
   {
     id: "legal-latam",
@@ -83,6 +84,50 @@ const EXPERTOS = [
     audiencia: "Desarrolladores, agencias, freelancers",
     color: "border-gray-200 bg-gray-50/40 ring-1 ring-gray-100/50",
     badge: "bg-gray-100 text-gray-700",
+  },
+];
+
+/* ── 5 expertos premium (Business+) — skills avanzados, más comandos ── */
+const EXPERTOS_PREMIUM = [
+  {
+    id: "investigador-web",
+    nombre: "Investigador Web",
+    desc: "Investigación profunda con fact-checking (SIFT), verificación de fuentes y reportes profesionales. 3 skills + 5 comandos.",
+    audiencia: "Periodistas, analistas, consultores",
+    color: "border-cyan-200 bg-cyan-50/40 ring-2 ring-cyan-200/60",
+    badge: "bg-cyan-50 text-cyan-800",
+  },
+  {
+    id: "creador-contenido",
+    nombre: "Creador de Contenido",
+    desc: "Posts nativos, calendarios editoriales, hilos virales y copywriting persuasivo (AIDA/PAS/BAB). 3 skills + 5 comandos.",
+    audiencia: "Community managers, freelancers",
+    color: "border-fuchsia-200 bg-fuchsia-50/40 ring-2 ring-fuchsia-200/60",
+    badge: "bg-fuchsia-50 text-fuchsia-800",
+  },
+  {
+    id: "asistente-obsidian",
+    nombre: "Asistente Obsidian",
+    desc: "Gestión de vault, Zettelkasten, MOCs, weekly reviews y procesamiento de inbox. 3 skills + 5 comandos.",
+    audiencia: "PKM, investigadores, escritores",
+    color: "border-purple-200 bg-purple-50/40 ring-2 ring-purple-200/60",
+    badge: "bg-purple-50 text-purple-800",
+  },
+  {
+    id: "ventas-b2b-premium",
+    nombre: "Ventas B2B Pro",
+    desc: "Pipeline completo: prospección BANT+MEDDIC, propuestas con 3 opciones de precio, 7 objeciones con scripts. 3 skills + 5 comandos.",
+    audiencia: "Equipos comerciales, SDRs",
+    color: "border-teal-200 bg-teal-50/40 ring-2 ring-teal-200/60",
+    badge: "bg-teal-50 text-teal-800",
+  },
+  {
+    id: "asistente-inmobiliario",
+    nombre: "Asistente Inmobiliario",
+    desc: "Fichas, análisis de inversión (Cap Rate, GRM), contratos por país, marketing para portales y redes. 3 skills + 5 comandos.",
+    audiencia: "Agentes inmobiliarios, inversionistas",
+    color: "border-rose-200 bg-rose-50/40 ring-2 ring-rose-200/60",
+    badge: "bg-rose-50 text-rose-800",
   },
 ];
 
@@ -578,9 +623,9 @@ export default function Home() {
 
             {/* ── Expertos preconfigurados ── */}
             <section id="expertos" className="py-12">
-              <SectionTitle>10 expertos preconfigurados</SectionTitle>
+              <SectionTitle>25 expertos + 5 premium</SectionTitle>
               <h2 className="mb-3 text-2xl font-bold md:text-3xl">
-                10 expertos preconfigurados
+                25 expertos preconfigurados
               </h2>
               <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
                 Cada experto incluye skills especializados, comandos listos para
@@ -612,6 +657,43 @@ export default function Home() {
                     </p>
                   </div>
                 ))}
+              </div>
+
+              {/* ── Expertos Premium (Business+) ── */}
+              <div className="mt-12">
+                <h3 className="mb-3 text-xl font-bold md:text-2xl">
+                  + 5 expertos premium
+                </h3>
+                <p className="mb-4 max-w-3xl text-base leading-relaxed text-gray-700">
+                  Expertos avanzados con 3 skills especializados y 5 comandos
+                  cada uno. Incluidos a partir del plan Business ($150/mes).
+                </p>
+                <p className="mb-8 max-w-3xl text-[14px] text-gray-500">
+                  Cada experto premium se instala como un worker independiente:
+                  descarga la carpeta, selecciónala en AikaOS y empieza a
+                  trabajar. Sin terminal, sin configuración.
+                </p>
+
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                  {EXPERTOS_PREMIUM.map((exp) => (
+                    <div
+                      key={exp.id}
+                      className={`feature-card ${exp.color}`}
+                    >
+                      <span
+                        className={`mb-3 inline-flex rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${exp.badge}`}
+                      >
+                        {exp.audiencia.split(",")[0]}
+                      </span>
+                      <h4 className="mb-2 text-[15px] font-bold">
+                        {exp.nombre}
+                      </h4>
+                      <p className="text-[14px] leading-relaxed text-gray-700">
+                        {exp.desc}
+                      </p>
+                    </div>
+                  ))}
+                </div>
               </div>
             </section>
 
@@ -908,7 +990,7 @@ export default function Home() {
                   </p>
                   <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
                     <li>Todo lo de Personal</li>
-                    <li>10 expertos preconfigurados</li>
+                    <li>25 expertos preconfigurados para LATAM</li>
                     <li>Todos los skills y comandos</li>
                     <li>Servidores MCP incluidos</li>
                     <li>Soporte por email</li>
@@ -933,6 +1015,7 @@ export default function Home() {
                   <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
                     <li>Todo lo de Profesional</li>
                     <li>Hasta 5 instalaciones</li>
+                    <li className="font-semibold text-teal-700">+ 5 expertos premium avanzados</li>
                     <li>Interconexión entre agentes vía MCP</li>
                     <li>Asistencia de integración de modelo</li>
                     <li>Soporte prioritario (email + chat)</li>
@@ -957,6 +1040,7 @@ export default function Home() {
                   <ul className="mb-8 flex-1 space-y-2 text-[13px] text-gray-700">
                     <li>Todo lo de Business</li>
                     <li>10+ instalaciones (ilimitadas)</li>
+                    <li className="font-semibold text-teal-700">30 expertos (25 + 5 premium) + custom</li>
                     <li>Desarrollo de servidores MCP custom</li>
                     <li>Integración completa de modelo en tu infra</li>
                     <li>Acceso anticipado a nuevas funciones</li>
