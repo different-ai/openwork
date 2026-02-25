@@ -356,6 +356,43 @@ function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) =
   return state;
 }
 
+const MARKDOWN_CACHE_MAX_ENTRIES = 100;
+const markdownHtmlCache = new Map<string, string>();
+const rendererByTone = new Map<"light" | "dark", ReturnType<typeof createCustomRenderer>>();
+
+function markdownCacheKey(tone: "light" | "dark", text: string) {
+  return `${tone}\u0000${text}`;
+}
+
+function readMarkdownCache(key: string) {
+  const cached = markdownHtmlCache.get(key);
+  if (cached === undefined) return;
+  markdownHtmlCache.delete(key);
+  markdownHtmlCache.set(key, cached);
+  return cached;
+}
+
+function writeMarkdownCache(key: string, html: string) {
+  if (markdownHtmlCache.has(key)) {
+    markdownHtmlCache.delete(key);
+  }
+  markdownHtmlCache.set(key, html);
+
+  while (markdownHtmlCache.size > MARKDOWN_CACHE_MAX_ENTRIES) {
+    const oldest = markdownHtmlCache.keys().next().value;
+    if (!oldest) break;
+    markdownHtmlCache.delete(oldest);
+  }
+}
+
+function rendererForTone(tone: "light" | "dark") {
+  const cached = rendererByTone.get(tone);
+  if (cached) return cached;
+  const next = createCustomRenderer(tone);
+  rendererByTone.set(tone, next);
+  return next;
+}
+
 function createCustomRenderer(tone: "light" | "dark") {
   const renderer = new marked.Renderer();
   const codeBlockClass =
@@ -496,10 +533,15 @@ export default function PartView(props: Props) {
     if (!renderMarkdown() || p().type !== "text") return null;
     const text = throttledMarkdownSource();
     if (!text.trim()) return "";
+
+    const toneKey = tone();
+    const cacheKey = markdownCacheKey(toneKey, text);
+    const cachedHtml = readMarkdownCache(cacheKey);
+    if (cachedHtml !== undefined) return cachedHtml;
     
     try {
       const startedAt = perfNow();
-      const renderer = createCustomRenderer(tone());
+      const renderer = rendererForTone(toneKey);
       const result = marked.parse(text, { 
         breaks: true, 
         gfm: true,
@@ -516,8 +558,10 @@ export default function PartView(props: Props) {
           ms: parseMs,
         });
       }
-      
-      return typeof result === 'string' ? result : '';
+
+      const html = typeof result === "string" ? result : "";
+      writeMarkdownCache(cacheKey, html);
+      return html;
     } catch (error) {
       console.error('Markdown parsing error:', error);
       return null;

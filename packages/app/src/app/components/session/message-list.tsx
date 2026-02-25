@@ -3,7 +3,7 @@ import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 
-import type { MessageGroup, MessageWithParts } from "../../types";
+import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types";
 import { groupMessageParts, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
@@ -26,10 +26,15 @@ export type MessageListProps = {
 type StepClusterBlock = {
   kind: "steps-cluster";
   id: string;
-  stepIds: string[];
-  partsGroups: Part[][];
+  stepGroups: StepTimelineGroup[];
   messageIds: string[];
   isUser: boolean;
+};
+
+type StepTimelineGroup = {
+  id: string;
+  parts: Part[];
+  mode: StepGroupMode;
 };
 
 type MessageBlock = {
@@ -42,6 +47,83 @@ type MessageBlock = {
 };
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
+
+const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
+
+type ExplorationSummary = {
+  files: number;
+  searches: number;
+  lists: number;
+};
+
+function isExplorationTool(part: Part) {
+  if (part.type !== "tool") return false;
+  const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  return EXPLORATION_TOOL_NAMES.has(tool);
+}
+
+function normalizePath(path: string) {
+  const normalized = path.replace(/\\/g, "/").trim().replace(/\/+/g, "/");
+  if (!normalized || normalized === "/") return normalized;
+  return normalized.replace(/\/+$/, "");
+}
+
+function summarizeExploration(parts: Part[]): ExplorationSummary {
+  const files = new Set<string>();
+  let fileWithoutPath = 0;
+  let searches = 0;
+  let lists = 0;
+
+  parts.forEach((part) => {
+    if (part.type !== "tool") return;
+    const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+    const state = (part as any).state ?? {};
+    const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+
+    if (tool === "read") {
+      const filePath = typeof input.filePath === "string" ? normalizePath(input.filePath) : "";
+      if (filePath) {
+        files.add(filePath);
+      } else {
+        fileWithoutPath += 1;
+      }
+      return;
+    }
+
+    if (tool === "glob" || tool === "grep" || tool === "search") {
+      searches += 1;
+      return;
+    }
+
+    if (tool === "list" || tool === "list_files") {
+      lists += 1;
+    }
+  });
+
+  return {
+    files: files.size + fileWithoutPath,
+    searches,
+    lists,
+  };
+}
+
+function formatExplorationSummary(summary: ExplorationSummary) {
+  const items: string[] = [];
+  if (summary.files > 0) items.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
+  if (summary.searches > 0) items.push(`${summary.searches} search${summary.searches === 1 ? "" : "es"}`);
+  if (summary.lists > 0) items.push(`${summary.lists} list${summary.lists === 1 ? "" : "s"}`);
+  return items.length > 0 ? items.join(" · ") : "context activity";
+}
+
+function explorationStatus(parts: Part[]) {
+  const pending = parts.some((part) => {
+    if (part.type !== "tool") return false;
+    if (!isExplorationTool(part)) return false;
+    const state = (part as any).state ?? {};
+    return state.status === "running" || state.status === "pending";
+  });
+  return pending ? "exploring" : "explored";
+}
 
 /** Icon for a given tool category */
 function ToolIcon(props: { category: string; size?: number }) {
@@ -84,9 +166,9 @@ function statusDotClass(status?: string): string {
   }
 }
 
-function latestStepPart(partsGroups: Part[][]): Part | undefined {
-  for (let groupIndex = partsGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
-    const parts = partsGroups[groupIndex] ?? [];
+function latestStepPart(stepGroups: StepTimelineGroup[]): Part | undefined {
+  for (let groupIndex = stepGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+    const parts = stepGroups[groupIndex]?.parts ?? [];
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = parts[partIndex];
       if (part.type === "tool" || part.type === "reasoning") {
@@ -261,15 +343,16 @@ export default function MessageList(props: MessageListProps) {
       const groups = groupMessageParts(renderableParts, groupId);
       const isUser = (message.info as any).role === "user";
       const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
-      const stepGroups = isStepsOnly ? (groups as { kind: "steps"; id: string; parts: Part[]; segment: "execution" }[]) : [];
+      const stepGroups = isStepsOnly
+        ? (groups as { kind: "steps"; id: string; parts: Part[]; segment: "execution"; mode: StepGroupMode }[])
+        : [];
       stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
 
       if (isStepsOnly) {
         blocks.push({
           kind: "steps-cluster",
           id: stepGroups[0].id,
-          stepIds: stepGroups.map((group) => group.id),
-          partsGroups: stepGroups.map((group) => group.parts),
+          stepGroups: stepGroups.map((group) => ({ id: group.id, parts: group.parts, mode: group.mode })),
           messageIds: [messageId],
           isUser,
         });
@@ -341,7 +424,7 @@ export default function MessageList(props: MessageListProps) {
   };
 
   /** Compact single-line step row */
-  const StepRow = (rowProps: { part: Part; isUser: boolean }) => {
+  const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
     const category = createMemo(() => summary().toolCategory ?? "tool");
     const status = createMemo(() => summary().status);
@@ -350,7 +433,11 @@ export default function MessageList(props: MessageListProps) {
     if (rowProps.part.type === "reasoning") {
       return (
         <div class="py-2">
-          <div class="rounded-2xl border border-gray-6/60 bg-gray-2/40 px-3 py-2.5">
+          <div
+            class={`rounded-2xl border border-gray-6/60 bg-gray-2/40 px-3 py-2.5 ${
+              rowProps.groupMode === "exploration" ? "opacity-85" : ""
+            }`}
+          >
             <div class="text-[12px] font-medium text-gray-12">{summary().title}</div>
             <Show when={summary().detail}>
               {(detail) => (
@@ -424,12 +511,12 @@ export default function MessageList(props: MessageListProps) {
   };
 
   /** Compact steps list */
-  const StepsList = (listProps: { parts: Part[]; isUser: boolean }) => (
+  const StepsList = (listProps: { parts: Part[]; isUser: boolean; groupMode: StepGroupMode }) => (
     <div class="divide-y divide-gray-6/40">
       <For each={listProps.parts}>
         {(part) => (
           <div>
-            <StepRow part={part} isUser={listProps.isUser} />
+            <StepRow part={part} isUser={listProps.isUser} groupMode={listProps.groupMode} />
             <Show when={props.developerMode && part.type !== "reasoning" && (part.type !== "tool" || props.showThinking)}>
               <div class="pl-6 pb-2 text-xs text-gray-10">
                 <PartView
@@ -451,23 +538,30 @@ export default function MessageList(props: MessageListProps) {
   const StepsContainer = (containerProps: {
     id: string;
     relatedIds?: string[];
-    partsGroups: Part[][];
+    stepGroups: StepTimelineGroup[];
     isUser: boolean;
     isInline?: boolean;
   }) => {
-    const relatedIds = () => containerProps.relatedIds ?? [];
+    const relatedIds = () =>
+      containerProps.relatedIds ?? containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
     const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
-    const latestStep = () => latestStepPart(containerProps.partsGroups);
+    const latestStep = () => latestStepPart(containerProps.stepGroups);
+    const allStepParts = () => containerProps.stepGroups.flatMap((group) => group.parts);
     const toolCallCount = () =>
-      containerProps.partsGroups.reduce(
-        (sum, parts) => sum + parts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0),
+      containerProps.stepGroups.reduce(
+        (sum, group) => sum + group.parts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0),
         0,
       );
     const reasoningCount = () =>
-      containerProps.partsGroups.reduce(
-        (sum, parts) => sum + parts.reduce((count, part) => (part.type === "reasoning" ? count + 1 : count), 0),
+      containerProps.stepGroups.reduce(
+        (sum, group) => sum + group.parts.reduce((count, part) => (part.type === "reasoning" ? count + 1 : count), 0),
         0,
       );
+    const explorationGroups = () => containerProps.stepGroups.filter((group) => group.mode === "exploration");
+    const explorationOnly = () =>
+      explorationGroups().length > 0 && explorationGroups().length === containerProps.stepGroups.length;
+    const explorationSummary = () => summarizeExploration(explorationGroups().flatMap((group) => group.parts));
+    const explorationState = () => explorationStatus(explorationGroups().flatMap((group) => group.parts));
 
     const executionSummary = () => {
       const tools = toolCallCount();
@@ -546,12 +640,12 @@ export default function MessageList(props: MessageListProps) {
         return file ? `Update ${file}` : "Update file";
       }
 
-      if (tool === "grep" || tool === "glob") {
+      if (tool === "grep" || tool === "glob" || tool === "search") {
         const pattern = pick("pattern", "query");
         return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
       }
 
-      if (tool === "list") {
+      if (tool === "list" || tool === "list_files") {
         const path = target("path");
         return path ? `List ${path}` : "List files";
       }
@@ -602,13 +696,41 @@ export default function MessageList(props: MessageListProps) {
       return "Last step";
     };
     const hasRunning = () =>
-      containerProps.partsGroups.some((parts) =>
-        parts.some((part) => {
-          if (part.type !== "tool") return false;
-          const state = (part as any).state ?? {};
-          return state.status === "running" || state.status === "pending";
-        }),
-      );
+      allStepParts().some((part) => {
+        if (part.type !== "tool") return false;
+        const state = (part as any).state ?? {};
+        return state.status === "running" || state.status === "pending";
+      });
+
+    const collapsedLabel = () => {
+      if (explorationOnly()) {
+        return explorationState() === "exploring" ? "Exploring" : "Explored";
+      }
+      return expanded() ? "Hide timeline" : "Execution timeline";
+    };
+
+    const collapsedSummary = () => {
+      if (explorationOnly()) {
+        return formatExplorationSummary(explorationSummary());
+      }
+      return executionSummary();
+    };
+
+    const collapsedDetail = () => {
+      if (explorationOnly()) return "";
+      if (expanded()) return executionSummary();
+      return `${executionSummary()} - ${latestStepLabel()}`;
+    };
+
+    const groupHeaderLabel = (group: StepTimelineGroup) => {
+      if (group.mode !== "exploration") return "";
+      return explorationStatus(group.parts) === "exploring" ? "Exploring" : "Explored";
+    };
+
+    const groupHeaderSummary = (group: StepTimelineGroup) => {
+      if (group.mode !== "exploration") return "";
+      return formatExplorationSummary(summarizeExploration(group.parts));
+    };
 
     return (
       <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
@@ -629,15 +751,16 @@ export default function MessageList(props: MessageListProps) {
             <Show when={hasRunning()}>
               <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
             </Show>
-            <span class="truncate max-w-[58ch]">
-              {expanded() ? "Hide timeline" : "Execution timeline"}
-            </span>
+            <span class="truncate max-w-[58ch]">{collapsedLabel()}</span>
           </span>
-          <Show when={!expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{`${executionSummary()} - ${latestStepLabel()}`}</span>
+          <Show when={explorationOnly()}>
+            <span class="text-[11px] text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
           </Show>
-          <Show when={expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{executionSummary()}</span>
+          <Show when={!explorationOnly() && !expanded()}>
+            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
+          </Show>
+          <Show when={!explorationOnly() && expanded()}>
+            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
           </Show>
         </button>
 
@@ -650,8 +773,8 @@ export default function MessageList(props: MessageListProps) {
                 : "border-gray-6/60"
             }`}
           >
-            <For each={containerProps.partsGroups}>
-              {(parts, index) => (
+            <For each={containerProps.stepGroups}>
+              {(group, index) => (
                 <div
                   class={
                     index() === 0
@@ -659,7 +782,19 @@ export default function MessageList(props: MessageListProps) {
                       : "mt-2 pt-2 border-t border-gray-6/40"
                   }
                 >
-                  <StepsList parts={parts} isUser={containerProps.isUser} />
+                  <Show when={group.mode === "exploration"}>
+                    <div class="mb-1 flex items-center gap-2 text-[11px] text-gray-9">
+                      <span
+                        class={`font-medium ${
+                          groupHeaderLabel(group) === "Exploring" ? "text-blue-11" : "text-gray-10"
+                        }`}
+                      >
+                        {groupHeaderLabel(group)}
+                      </span>
+                      <span class="truncate">{groupHeaderSummary(group)}</span>
+                    </div>
+                  </Show>
+                  <StepsList parts={group.parts} isUser={containerProps.isUser} groupMode={group.mode} />
                 </div>
               )}
             </For>
@@ -699,8 +834,8 @@ export default function MessageList(props: MessageListProps) {
                 >
                   <StepsContainer
                     id={block.id}
-                    relatedIds={block.stepIds.filter((stepId) => stepId !== block.id)}
-                    partsGroups={block.partsGroups}
+                    relatedIds={block.stepGroups.map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== block.id)}
+                    stepGroups={block.stepGroups}
                     isUser={block.isUser}
                   />
                 </div>
@@ -773,11 +908,17 @@ export default function MessageList(props: MessageListProps) {
                       </Show>
                       {group.kind === "steps" &&
                         (() => {
-                          const stepGroup = group as { kind: "steps"; id: string; parts: Part[]; segment: "execution" };
+                          const stepGroup = group as {
+                            kind: "steps";
+                            id: string;
+                            parts: Part[];
+                            segment: "execution";
+                            mode: StepGroupMode;
+                          };
                           return (
                             <StepsContainer
                               id={stepGroup.id}
-                              partsGroups={[stepGroup.parts]}
+                              stepGroups={[{ id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode }]}
                               isUser={block.isUser}
                               isInline={true}
                             />
