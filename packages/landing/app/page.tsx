@@ -122,6 +122,85 @@ export default function Home() {
           </p>
         </main>
 
+        {/* Integrations Marquee */}
+        <section className="w-full py-12 relative z-10 overflow-hidden">
+          <p className="text-center text-xs font-semibold tracking-widest text-slate-500 uppercase mb-6">
+            Integraciones MCP &amp; modelos compatibles
+          </p>
+          <div className="relative w-full overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_10%,black_90%,transparent)]">
+            <div className="flex w-max animate-scroll-integrations">
+              {/* Set 1 */}
+              {[
+                { icon: "simple-icons:google", name: "Google" },
+                { icon: "simple-icons:gmail", name: "Gmail" },
+                { icon: "simple-icons:googlecalendar", name: "Calendar" },
+                { icon: "simple-icons:googledrive", name: "Drive" },
+                { icon: "simple-icons:googlesheets", name: "Sheets" },
+                { icon: "simple-icons:slack", name: "Slack" },
+                { icon: "simple-icons:whatsapp", name: "WhatsApp" },
+                { icon: "simple-icons:telegram", name: "Telegram" },
+                { icon: "simple-icons:notion", name: "Notion" },
+                { icon: "simple-icons:obsidian", name: "Obsidian" },
+                { icon: "simple-icons:github", name: "GitHub" },
+                { icon: "simple-icons:brave", name: "Brave" },
+                { icon: "simple-icons:discord", name: "Discord" },
+                { icon: "simple-icons:linear", name: "Linear" },
+                { icon: "simple-icons:figma", name: "Figma" },
+                { icon: "simple-icons:postgresql", name: "PostgreSQL" },
+                { icon: "simple-icons:supabase", name: "Supabase" },
+                { icon: "simple-icons:stripe", name: "Stripe" },
+                { icon: "simple-icons:zapier", name: "Zapier" },
+                { icon: "simple-icons:airtable", name: "Airtable" },
+                { icon: "simple-icons:ollama", name: "Ollama" },
+                { icon: "simple-icons:openai", name: "OpenAI" },
+                { icon: "simple-icons:anthropic", name: "Claude" },
+                { icon: "simple-icons:meta", name: "Llama" },
+                { icon: "simple-icons:googlegemini", name: "Gemini" },
+              ].map((item) => (
+                <div key={`a-${item.name}`} className="flex flex-col items-center justify-center gap-2 mx-5 min-w-[72px]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon={item.icon} class="text-2xl text-slate-600" />
+                  <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">{item.name}</span>
+                </div>
+              ))}
+              {/* Set 2 (duplicate for seamless loop) */}
+              {[
+                { icon: "simple-icons:google", name: "Google" },
+                { icon: "simple-icons:gmail", name: "Gmail" },
+                { icon: "simple-icons:googlecalendar", name: "Calendar" },
+                { icon: "simple-icons:googledrive", name: "Drive" },
+                { icon: "simple-icons:googlesheets", name: "Sheets" },
+                { icon: "simple-icons:slack", name: "Slack" },
+                { icon: "simple-icons:whatsapp", name: "WhatsApp" },
+                { icon: "simple-icons:telegram", name: "Telegram" },
+                { icon: "simple-icons:notion", name: "Notion" },
+                { icon: "simple-icons:obsidian", name: "Obsidian" },
+                { icon: "simple-icons:github", name: "GitHub" },
+                { icon: "simple-icons:brave", name: "Brave" },
+                { icon: "simple-icons:discord", name: "Discord" },
+                { icon: "simple-icons:linear", name: "Linear" },
+                { icon: "simple-icons:figma", name: "Figma" },
+                { icon: "simple-icons:postgresql", name: "PostgreSQL" },
+                { icon: "simple-icons:supabase", name: "Supabase" },
+                { icon: "simple-icons:stripe", name: "Stripe" },
+                { icon: "simple-icons:zapier", name: "Zapier" },
+                { icon: "simple-icons:airtable", name: "Airtable" },
+                { icon: "simple-icons:ollama", name: "Ollama" },
+                { icon: "simple-icons:openai", name: "OpenAI" },
+                { icon: "simple-icons:anthropic", name: "Claude" },
+                { icon: "simple-icons:meta", name: "Llama" },
+                { icon: "simple-icons:googlegemini", name: "Gemini" },
+              ].map((item) => (
+                <div key={`b-${item.name}`} className="flex flex-col items-center justify-center gap-2 mx-5 min-w-[72px]">
+                  {/* @ts-expect-error iconify-icon is a web component */}
+                  <iconify-icon icon={item.icon} class="text-2xl text-slate-600" />
+                  <span className="text-[11px] font-medium text-slate-500 whitespace-nowrap">{item.name}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
         {/* Cómo funciona Section */}
         <section
           id="como-funciona"
@@ -489,30 +568,39 @@ export default function Home() {
                 usar y servidores MCP configurados. Disponibles a partir del
                 plan Profesional.
               </p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:diploma-linear" class="text-xl text-slate-600" /> Legal LATAM
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:chart-square-linear" class="text-xl text-slate-600" /> Contabilidad
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:cart-large-linear" class="text-xl text-slate-600" /> E-commerce
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:megaphone-linear" class="text-xl text-slate-600" /> Marketing
-                </div>
-                <div className="bg-white/60 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[14px] font-semibold text-slate-800 flex items-center gap-3 transition-transform hover:scale-[1.02]">
-                  {/* @ts-expect-error iconify-icon is a web component */}
-                  <iconify-icon icon="solar:square-academic-cap-linear" class="text-xl text-slate-600" /> Educación
-                </div>
-                <div className="bg-white/40 backdrop-blur-md px-4 py-3.5 rounded-2xl border border-white/50 text-[14px] font-semibold text-slate-600 flex items-center gap-3">
-                  Y 20 más...
-                </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {[
+                  { icon: "solar:diploma-linear", name: "Legal LATAM" },
+                  { icon: "solar:chart-square-linear", name: "Contabilidad" },
+                  { icon: "solar:cart-large-linear", name: "E-commerce" },
+                  { icon: "solar:megaphone-linear", name: "Marketing" },
+                  { icon: "solar:square-academic-cap-linear", name: "Educacion" },
+                  { icon: "solar:buildings-linear", name: "RRHH" },
+                  { icon: "solar:clipboard-list-linear", name: "Fiscal (SAT/DIAN)" },
+                  { icon: "solar:wallet-money-linear", name: "Finanzas" },
+                  { icon: "solar:stethoscope-linear", name: "Salud" },
+                  { icon: "solar:home-2-linear", name: "Inmobiliaria" },
+                  { icon: "solar:shield-check-linear", name: "Compliance" },
+                  { icon: "solar:document-text-linear", name: "Contratos" },
+                  { icon: "solar:inbox-line-linear", name: "Email Pro" },
+                  { icon: "solar:database-linear", name: "Data Analyst" },
+                  { icon: "solar:code-square-linear", name: "Dev Assistant" },
+                  { icon: "solar:users-group-rounded-linear", name: "CRM" },
+                  { icon: "solar:delivery-linear", name: "Logistica" },
+                  { icon: "solar:bill-list-linear", name: "Facturacion" },
+                  { icon: "solar:chat-round-dots-linear", name: "Soporte al Cliente" },
+                  { icon: "solar:graph-up-linear", name: "SEO" },
+                  { icon: "solar:calendar-linear", name: "Project Manager" },
+                  { icon: "solar:translation-linear", name: "Traductor" },
+                  { icon: "solar:pen-new-square-linear", name: "Copywriter" },
+                  { icon: "solar:presentation-graph-linear", name: "Presentaciones" },
+                  { icon: "solar:lock-password-linear", name: "Ciberseguridad" },
+                ].map((expert) => (
+                  <div key={expert.name} className="bg-white/60 backdrop-blur-md px-3 py-2.5 rounded-xl border border-white shadow-[0_2px_10px_rgba(0,0,0,0.02)] text-[13px] font-semibold text-slate-800 flex items-center gap-2 transition-transform hover:scale-[1.02]">
+                    {/* @ts-expect-error iconify-icon is a web component */}
+                    <iconify-icon icon={expert.icon} class="text-lg text-slate-600 shrink-0" /> {expert.name}
+                  </div>
+                ))}
               </div>
             </div>
           </div>

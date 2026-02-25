@@ -40,8 +40,18 @@ html {
   animation-play-state: paused;
 }
 
+/* Integrations marquee — faster scroll */
+.animate-scroll-integrations {
+  animation: scroll-testimonials 35s linear infinite;
+}
+
+.animate-scroll-integrations:hover {
+  animation-play-state: paused;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .animate-scroll-testimonials {
+  .animate-scroll-testimonials,
+  .animate-scroll-integrations {
     animation: none;
   }
   html {
