@@ -29,6 +29,11 @@ Frontend for `app.openwork.software`.
   - The web panel appends `/connect-remote` and injects worker URL/token params automatically.
 - `NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL` (client): Canonical URL used for GitHub auth callback redirects.
   - default: `https://app.openwork.software`
+- `NEXT_PUBLIC_POSTHOG_KEY` (client): PostHog project key used for Den analytics.
+  - set this to the same project key used by `packages/landing`
+- `NEXT_PUBLIC_POSTHOG_HOST` (client): PostHog host URL.
+  - default: `https://us.i.posthog.com`
+- `LOOPS_API_KEY` (server-only): Loops API key for signup contact capture.
 
 ## Deploy on Vercel
 

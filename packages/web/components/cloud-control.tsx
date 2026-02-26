@@ -61,6 +61,25 @@ type LaunchEvent = {
   at: string;
 };
 
+type PosthogClient = {
+  capture?: (eventName: string, properties?: Record<string, unknown>) => void;
+  identify?: (distinctId?: string, properties?: Record<string, unknown>) => void;
+  reset?: () => void;
+};
+
+type DenSignupTrackPayload = {
+  email: string;
+  name: string | null;
+  userId: string;
+  authMethod: "email" | "github";
+};
+
+declare global {
+  interface Window {
+    posthog?: PosthogClient;
+  }
+}
+
 function getAuthInfoForMode(mode: AuthMode): string {
   return mode === "sign-up"
     ? "Create an account to launch and manage cloud workers."
@@ -68,10 +87,77 @@ function getAuthInfoForMode(mode: AuthMode): string {
 }
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
+const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "openwork:web:pending-github-signup";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
+
+function getEmailDomain(email: string): string {
+  const atIndex = email.lastIndexOf("@");
+  if (atIndex === -1 || atIndex + 1 >= email.length) {
+    return "unknown";
+  }
+  return email.slice(atIndex + 1).toLowerCase();
+}
+
+function trackPosthogEvent(eventName: string, properties: Record<string, unknown> = {}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.posthog?.capture?.(eventName, properties);
+  } catch {
+    // Ignore analytics delivery failures.
+  }
+}
+
+function identifyPosthogUser(user: AuthUser) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.posthog?.identify?.(user.id, {
+      email: user.email,
+      name: user.name ?? undefined
+    });
+  } catch {
+    // Ignore analytics delivery failures.
+  }
+}
+
+function resetPosthogUser() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.posthog?.reset?.();
+  } catch {
+    // Ignore analytics delivery failures.
+  }
+}
+
+async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    await fetch("/api/loops/den-signup", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload),
+      keepalive: true
+    });
+  } catch {
+    // Ignore analytics delivery failures.
+  }
+}
 
 function getGithubCallbackUrl(): string {
   try {
@@ -880,6 +966,32 @@ export function CloudControlPanel() {
   }, [user?.id, authToken]);
 
   useEffect(() => {
+    if (!user || typeof window === "undefined") {
+      return;
+    }
+
+    identifyPosthogUser(user);
+
+    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    if (!pendingSignup) {
+      return;
+    }
+
+    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    trackPosthogEvent("den_signup_completed", {
+      mode: "sign-up",
+      method: "github",
+      email_domain: getEmailDomain(user.email)
+    });
+    void trackDenSignupInLoops({
+      email: user.email,
+      name: user.name,
+      userId: user.id,
+      authMethod: "github"
+    });
+  }, [user?.id]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -894,6 +1006,10 @@ export function CloudControlPanel() {
     setCheckoutUrl(null);
     setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
     appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
+    trackPosthogEvent("den_paywall_checkout_returned", {
+      source: "polar",
+      session_token_present: true
+    });
 
     params.delete("customer_session_token");
     const nextQuery = params.toString();
@@ -1018,6 +1134,10 @@ export function CloudControlPanel() {
 
     setAuthBusy(true);
     setAuthError(null);
+    trackPosthogEvent("den_auth_submitted", {
+      mode: authMode,
+      method: "email"
+    });
 
     try {
       const endpoint = authMode === "sign-up" ? "/api/auth/sign-up/email" : "/api/auth/sign-in/email";
@@ -1041,6 +1161,11 @@ export function CloudControlPanel() {
 
       if (!response.ok) {
         setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
+        trackPosthogEvent("den_auth_failed", {
+          mode: authMode,
+          method: "email",
+          status: response.status
+        });
         return;
       }
 
@@ -1049,8 +1174,10 @@ export function CloudControlPanel() {
         setAuthToken(token);
       }
 
+      let authenticatedUser: AuthUser | null = null;
       const payloadUser = getUser(payload);
       if (payloadUser) {
+        authenticatedUser = payloadUser;
         setUser(payloadUser);
         setAuthInfo(`Signed in as ${payloadUser.email}.`);
         appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", payloadUser.email);
@@ -1059,7 +1186,30 @@ export function CloudControlPanel() {
         if (!refreshed) {
           setAuthInfo("Authentication succeeded, but session details are still syncing.");
         } else {
+          authenticatedUser = refreshed;
           appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+        }
+      }
+
+      if (authenticatedUser) {
+        identifyPosthogUser(authenticatedUser);
+
+        const analyticsPayload = {
+          mode: authMode,
+          method: "email",
+          email_domain: getEmailDomain(authenticatedUser.email)
+        };
+
+        if (authMode === "sign-up") {
+          trackPosthogEvent("den_signup_completed", analyticsPayload);
+          void trackDenSignupInLoops({
+            email: authenticatedUser.email,
+            name: authenticatedUser.name,
+            userId: authenticatedUser.id,
+            authMethod: "email"
+          });
+        } else {
+          trackPosthogEvent("den_signin_completed", analyticsPayload);
         }
       }
 
@@ -1067,6 +1217,11 @@ export function CloudControlPanel() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
+      trackPosthogEvent("den_auth_failed", {
+        mode: authMode,
+        method: "email",
+        reason: "network_error"
+      });
     } finally {
       setAuthBusy(false);
     }
@@ -1077,9 +1232,18 @@ export function CloudControlPanel() {
       return;
     }
 
+    const shouldTrackGithubSignup = authMode === "sign-up";
+    if (shouldTrackGithubSignup) {
+      window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
+    }
+
     setAuthBusy(true);
     setAuthError(null);
     setAuthInfo("Redirecting to GitHub...");
+    trackPosthogEvent("den_auth_submitted", {
+      mode: authMode,
+      method: "github"
+    });
 
     try {
       const callbackURL = getGithubCallbackUrl();
@@ -1093,8 +1257,16 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
+        if (shouldTrackGithubSignup) {
+          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        }
         setAuthInfo(getAuthInfoForMode(authMode));
         setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
+        trackPosthogEvent("den_auth_failed", {
+          mode: authMode,
+          method: "github",
+          status: response.status
+        });
         setAuthBusy(false);
         return;
       }
@@ -1104,17 +1276,37 @@ export function CloudControlPanel() {
       const redirectUrl = payloadUrl || headerUrl;
 
       if (!redirectUrl) {
+        if (shouldTrackGithubSignup) {
+          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        }
         setAuthInfo(getAuthInfoForMode(authMode));
         setAuthError("GitHub sign-in did not return a redirect URL.");
+        trackPosthogEvent("den_auth_failed", {
+          mode: authMode,
+          method: "github",
+          reason: "missing_redirect_url"
+        });
         setAuthBusy(false);
         return;
       }
 
+      trackPosthogEvent("den_auth_redirected", {
+        mode: authMode,
+        method: "github"
+      });
       window.location.assign(redirectUrl);
     } catch (error) {
+      if (shouldTrackGithubSignup) {
+        window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      }
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthInfo(getAuthInfoForMode(authMode));
       setAuthError(message);
+      trackPosthogEvent("den_auth_failed", {
+        mode: authMode,
+        method: "github",
+        reason: "network_error"
+      });
       setAuthBusy(false);
     }
   }
@@ -1163,9 +1355,12 @@ export function CloudControlPanel() {
     setAuthInfo(getAuthInfoForMode("sign-up"));
     setLaunchStatus("Name your worker and click launch.");
     setEvents([]);
+    resetPosthogUser();
+    trackPosthogEvent("den_signout_completed", { method: "manual" });
 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
     }
   }
 
@@ -1180,6 +1375,9 @@ export function CloudControlPanel() {
     setCheckoutUrl(null);
     setLaunchStatus("Checking subscription and launch eligibility...");
     appendEvent("info", "Launch requested", workerName.trim() || "Cloud worker");
+    trackPosthogEvent("den_worker_launch_requested", {
+      worker_name_present: Boolean(workerName.trim())
+    });
 
     try {
       const { response, payload } = await requestJson(
@@ -1201,6 +1399,9 @@ export function CloudControlPanel() {
         setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
         setLaunchError(url ? null : "Checkout URL missing from paywall response.");
         appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
+        trackPosthogEvent("den_paywall_required", {
+          checkout_url_present: Boolean(url)
+        });
         return;
       }
 
@@ -1209,6 +1410,9 @@ export function CloudControlPanel() {
         setLaunchError(message);
         setLaunchStatus("Launch failed. Fix the error and retry.");
         appendEvent("error", "Launch failed", message);
+        trackPosthogEvent("den_worker_launch_failed", {
+          status: response.status
+        });
         return;
       }
 
@@ -1217,6 +1421,9 @@ export function CloudControlPanel() {
         setLaunchError("Launch response was missing worker details.");
         setLaunchStatus("Launch response format was unexpected.");
         appendEvent("error", "Launch failed", "Worker payload missing");
+        trackPosthogEvent("den_worker_launch_failed", {
+          reason: "missing_worker_payload"
+        });
         return;
       }
 
@@ -1234,6 +1441,11 @@ export function CloudControlPanel() {
         setLaunchStatus(getWorkerStatusCopy(resolvedWorker.status));
         appendEvent("success", "Worker launched", `Worker ID ${parsedWorker.workerId}`);
       }
+
+      trackPosthogEvent("den_worker_launch_succeeded", {
+        worker_status: resolvedWorker.status,
+        worker_provider: resolvedWorker.provider ?? "unknown"
+      });
     } catch (error) {
       const message =
         error instanceof DOMException && error.name === "AbortError"
@@ -1245,6 +1457,9 @@ export function CloudControlPanel() {
       setLaunchError(message);
       setLaunchStatus("Launch request failed.");
       appendEvent("error", "Launch failed", message);
+      trackPosthogEvent("den_worker_launch_failed", {
+        reason: "network_error"
+      });
     } finally {
       setLaunchBusy(false);
       void refreshWorkers({ keepSelection: true });

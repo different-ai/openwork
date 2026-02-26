@@ -67,9 +67,11 @@ export type MessageWithParts = {
   parts: Part[];
 };
 
+export type StepGroupMode = "exploration" | "standalone";
+
 export type MessageGroup =
   | { kind: "text"; part: Part; segment: "intent" | "result" }
-  | { kind: "steps"; id: string; parts: Part[]; segment: "execution" };
+  | { kind: "steps"; id: string; parts: Part[]; segment: "execution"; mode: StepGroupMode };
 
 export type PromptMode = "prompt" | "shell";
 

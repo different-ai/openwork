@@ -2380,12 +2380,13 @@ export function createWorkspaceStore(options: {
       return false;
     }
 
-    if (activeWorkspaceInfo()?.workspaceType === "remote") {
+    const overrideWorkspacePath = optionsOverride?.workspacePath?.trim() ?? "";
+    if (activeWorkspaceInfo()?.workspaceType === "remote" && !overrideWorkspacePath) {
       options.setError(t("app.error.host_requires_local", currentLocale()));
       return false;
     }
 
-    const dir = (optionsOverride?.workspacePath ?? activeWorkspacePath() ?? projectDir()).trim();
+    const dir = (overrideWorkspacePath || activeWorkspacePath() || projectDir()).trim();
     if (!dir) {
       options.setError(t("app.error.pick_workspace_folder", currentLocale()));
       return false;
