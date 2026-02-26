@@ -6,15 +6,15 @@
 :root {
   color-scheme: light;
   --dls-surface: #ffffff;
-  --dls-sidebar: #f3f3f3;
-  --dls-border: #e4e6eb;
-  --dls-accent: #2563eb;
+  --dls-sidebar: #f9fafb;
+  --dls-border: #e2e8f0;
+  --dls-accent: #1b29ff;
   --dls-accent-hover: #1d4ed8;
-  --dls-accent-rgb: 37 99 235;
+  --dls-accent-rgb: 27 41 255;
   --dls-text-primary: #111827;
-  --dls-text-secondary: #5f6773;
-  --dls-hover: #f9fafb;
-  --dls-active: #e5e5e7;
+  --dls-text-secondary: #64748b;
+  --dls-hover: #f8fafc;
+  --dls-active: #eaebef;
   --dls-radius: 8px;
   --dls-radius-lg: 16px;
 }
@@ -41,6 +41,9 @@ body {
 body {
   margin: 0;
   font-family:
+    "IBM Plex Sans",
+    Geist,
+    "Avenir Next",
     Inter,
     ui-sans-serif,
     system-ui,

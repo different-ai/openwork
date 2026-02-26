@@ -805,7 +805,7 @@ export default function MessageList(props: MessageListProps) {
   };
 
   return (
-    <div class="space-y-6 pb-32" style={{ contain: "layout paint style" }}>
+    <div class="space-y-5 pb-24" style={{ contain: "layout paint style" }}>
       <For each={messageBlocks()}>
         {(block, blockIndex) => {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
@@ -828,8 +828,8 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                      : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-slate-800 text-[14px] leading-relaxed font-medium"
+                      : "max-w-[650px] text-[15px] leading-[1.65] text-slate-800 font-serif antialiased group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -854,8 +854,8 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                    : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-slate-800 text-[14px] leading-relaxed font-medium"
+                    : "max-w-[650px] text-[15px] leading-[1.65] text-slate-800 font-serif antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
