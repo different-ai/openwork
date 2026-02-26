@@ -14,8 +14,13 @@ export function SiteNav(props: Props) {
     <nav className="sticky top-0 z-50 py-4">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-6">
         <div className="flex items-center gap-6">
-          <Link href="/" className="text-lg font-bold tracking-tight">
-            OpenWork
+          <Link href="/" className="inline-flex items-center gap-2 text-lg font-bold tracking-tight">
+            <img
+              src="/openwork-logo.svg"
+              alt="OpenWork"
+              className="h-7 w-7 rounded-sm"
+            />
+            <span>OpenWork</span>
           </Link>
           <div className="hidden items-center gap-6 text-[15px] text-gray-700 md:flex">
             <Link href="/#install" className="transition hover:text-black">
@@ -26,6 +31,9 @@ export function SiteNav(props: Props) {
             </Link>
             <Link href="/#faq" className="transition hover:text-black">
               FAQ
+            </Link>
+            <Link href="/docs" className="transition hover:text-black">
+              Docs
             </Link>
             <Link href="/download" className={navLink(props.active === "download")}>
               Download

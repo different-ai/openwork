@@ -497,9 +497,17 @@ export function isStepPart(part: Part) {
   return part.type === "reasoning" || part.type === "tool";
 }
 
+const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
+
+function isExplorationToolPart(part: Part) {
+  if (part.type !== "tool") return false;
+  const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  return EXPLORATION_TOOL_NAMES.has(tool);
+}
+
 export function groupMessageParts(parts: Part[], messageId: string): MessageGroup[] {
   const groups: MessageGroup[] = [];
-  const steps: Part[] = [];
+  const explorationSteps: Part[] = [];
   let textBuffer = "";
   let stepGroupIndex = 0;
   let sawExecution = false;
@@ -514,34 +522,40 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
     textBuffer = "";
   };
 
-  const flushSteps = () => {
-    if (!steps.length) return;
+  const pushSteps = (stepParts: Part[], mode: "exploration" | "standalone") => {
+    if (!stepParts.length) return;
     groups.push({
       kind: "steps",
       id: `steps-${messageId}-${stepGroupIndex}`,
-      parts: steps.splice(0, steps.length),
+      parts: stepParts,
       segment: "execution",
+      mode,
     });
     stepGroupIndex += 1;
     sawExecution = true;
   };
 
+  const flushExplorationSteps = () => {
+    if (!explorationSteps.length) return;
+    pushSteps(explorationSteps.splice(0, explorationSteps.length), "exploration");
+  };
+
   parts.forEach((part) => {
     if (part.type === "text") {
-      flushSteps();
+      flushExplorationSteps();
       textBuffer += (part as { text?: string }).text ?? "";
       return;
     }
 
     if (part.type === "agent") {
-      flushSteps();
+      flushExplorationSteps();
       const name = (part as { name?: string }).name ?? "";
       textBuffer += name ? `@${name}` : "@agent";
       return;
     }
 
     if (part.type === "file") {
-      flushSteps();
+      flushExplorationSteps();
       flushText();
       groups.push({ kind: "text", part, segment: sawExecution ? "result" : "intent" });
       return;
@@ -553,16 +567,23 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
 
     flushText();
 
-    if (part.type === "reasoning" && steps.length > 0) {
-      flushSteps();
+    if (isExplorationToolPart(part)) {
+      explorationSteps.push(part);
+      return;
     }
 
-    steps.push(part);
+    if (part.type === "reasoning" && explorationSteps.length > 0) {
+      explorationSteps.push(part);
+      return;
+    }
+
+    flushExplorationSteps();
+    pushSteps([part], "standalone");
   });
 
   flushText();
 
-  flushSteps();
+  flushExplorationSteps();
 
   return groups;
 }
@@ -670,12 +691,12 @@ function buildToolTitle(state: any, toolName: string): string {
     return "Apply patch";
   }
 
-  if (lower === "list") {
+  if (lower === "list" || lower === "list_files") {
     const target = file("path");
     return target ? `List ${target}` : "List files";
   }
 
-  if (lower === "grep" || lower === "glob") {
+  if (lower === "grep" || lower === "glob" || lower === "search") {
     const pattern = pick("pattern", "query");
     return pattern ? `Search ${truncateStepText(pattern, 44)}` : "Search code";
   }
@@ -734,7 +755,7 @@ function buildToolDetail(state: any, toolName: string): string | undefined {
     if (command) return truncateStepText(command, 80);
   }
 
-  if (lower === "grep" || lower === "glob") {
+  if (lower === "grep" || lower === "glob" || lower === "search") {
     const root = pick("path");
     if (root) return `in ${normalizePathToken(root)}`;
   }

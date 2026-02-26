@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenWork Share Flow Redesign</title>
+    <style>
+      :root {
+        color-scheme: only light;
+        --bg: #f7f5f0;
+        --card: #ffffff;
+        --line: #d7d1c5;
+        --ink: #1f1b16;
+        --muted: #6b6153;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--ink);
+        background: radial-gradient(circle at 5% -5%, #efe9dc 0, transparent 30%), var(--bg);
+        padding: 24px;
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+
+      p {
+        margin: 0 0 20px;
+        color: var(--muted);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 14px;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.04);
+      }
+
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      img {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>OpenWork Share Flow Redesign</h1>
+    <p>
+      Free/default sharing remains first-class. Organization is an optional hub for indexing and governed discovery of the same links.
+    </p>
+    <section class="grid">
+      <article class="card">
+        <h2>1) Free default share</h2>
+        <img src="01-free-default-share.png" alt="Free default share flow" />
+      </article>
+      <article class="card">
+        <h2>2) Open in app creates new worker</h2>
+        <img src="02-open-in-app-new-worker.png" alt="Open in app new worker flow" />
+      </article>
+      <article class="card">
+        <h2>3) Org hub overlays the same links</h2>
+        <img src="03-org-library-overlay.png" alt="Organization library overlay flow" />
+      </article>
+      <article class="card">
+        <h2>4) Remix and versioning loop</h2>
+        <img src="04-remix-and-versioning.png" alt="Remix and versioning flow" />
+      </article>
+    </section>
+  </body>
+</html>

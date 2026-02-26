@@ -733,7 +733,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
           Let people reach your worker through messaging apps. Connect a channel and
           your worker will automatically read and respond to messages.
         </p>
-        <div class="mt-1.5 text-[11px] text-gray-8 font-mono truncate">
+        <div class="mt-1.5 text-[11px] text-gray-8 font-mono break-all">
           Workspace scope: {scopedOpenworkBaseUrl().trim() || props.openworkServerUrl.trim() || "Not set"}
         </div>
         <Show when={reconnectStatus()}>

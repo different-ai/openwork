@@ -2,6 +2,11 @@
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
   "name": "OpenWork Docs",
+  "favicon": "/logo/light.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
   "colors": {
     "primary": "#0F766E",
     "light": "#14B8A6",
@@ -51,7 +56,7 @@
     "primary": {
       "type": "button",
       "label": "Download OpenWork",
-      "href": "https://github.com/different-ai/openwork/releases"
+      "href": "https://openwork.software/download"
     }
   }
 }

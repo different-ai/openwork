@@ -57,6 +57,7 @@ export type SettingsViewProps = {
   developerMode: boolean;
   toggleDeveloperMode: () => void;
   stopHost: () => void;
+  restartLocalServer: () => Promise<boolean>;
   engineSource: "path" | "sidecar" | "custom";
   setEngineSource: (value: "path" | "sidecar" | "custom") => void;
   engineCustomBinPath: string;
@@ -319,6 +320,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const [providerConnectError, setProviderConnectError] = createSignal<string | null>(null);
   const [openworkReconnectStatus, setOpenworkReconnectStatus] = createSignal<string | null>(null);
   const [openworkReconnectError, setOpenworkReconnectError] = createSignal<string | null>(null);
+  const [openworkRestartBusy, setOpenworkRestartBusy] = createSignal(false);
+  const [openworkRestartStatus, setOpenworkRestartStatus] = createSignal<string | null>(null);
+  const [openworkRestartError, setOpenworkRestartError] = createSignal<string | null>(null);
   const providerConnectedCount = createMemo(() => (props.providerConnectedIds ?? []).length);
   const providerAvailableCount = createMemo(() => (props.providers ?? []).length);
   const connectedProviderNames = createMemo(() => {
@@ -380,6 +384,26 @@ export default function SettingsView(props: SettingsViewProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setOpenworkReconnectError(message || "Failed to reconnect OpenWork server.");
+    }
+  };
+
+  const handleRestartLocalServer = async () => {
+    if (props.busy || openworkRestartBusy()) return;
+    setOpenworkRestartStatus(null);
+    setOpenworkRestartError(null);
+    setOpenworkRestartBusy(true);
+    try {
+      const ok = await props.restartLocalServer();
+      if (!ok) {
+        setOpenworkRestartError("Restart failed. Check logs and try again.");
+        return;
+      }
+      setOpenworkRestartStatus("Restarted local server.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setOpenworkRestartError(message || "Failed to restart local server.");
+    } finally {
+      setOpenworkRestartBusy(false);
     }
   };
 
@@ -875,7 +899,7 @@ export default function SettingsView(props: SettingsViewProps) {
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-gray-12">Connection</div>
               <div class="text-xs text-gray-9">{props.headerStatus}</div>
-              <div class="text-xs text-gray-8 font-mono">{props.baseUrl}</div>
+              <div class="text-xs text-gray-8 font-mono break-all">{props.baseUrl}</div>
               <div class="pt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -886,6 +910,17 @@ export default function SettingsView(props: SettingsViewProps) {
                   <RefreshCcw size={14} class={`text-dls-secondary ${props.openworkReconnectBusy ? "animate-spin" : ""}`} />
                   {props.openworkReconnectBusy ? "Reconnecting..." : "Reconnect server"}
                 </button>
+                <Show when={isLocalEngineRunning()}>
+                  <button
+                    type="button"
+                    class={compactOutlineActionClass}
+                    onClick={handleRestartLocalServer}
+                    disabled={props.busy || openworkRestartBusy()}
+                  >
+                    <RefreshCcw size={14} class={`text-dls-secondary ${openworkRestartBusy() ? "animate-spin" : ""}`} />
+                    {openworkRestartBusy() ? "Restarting..." : "Restart local server"}
+                  </button>
+                </Show>
                 <Show when={isLocalEngineRunning()}>
                   <button
                     type="button"
@@ -912,6 +947,12 @@ export default function SettingsView(props: SettingsViewProps) {
                 {(value) => <div class="text-xs text-gray-10">{value()}</div>}
               </Show>
               <Show when={openworkReconnectError()}>
+                {(value) => <div class="text-xs text-red-11">{value()}</div>}
+              </Show>
+              <Show when={openworkRestartStatus()}>
+                {(value) => <div class="text-xs text-gray-10">{value()}</div>}
+              </Show>
+              <Show when={openworkRestartError()}>
                 {(value) => <div class="text-xs text-red-11">{value()}</div>}
               </Show>
             </div>
