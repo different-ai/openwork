@@ -2643,8 +2643,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   return (
-    <div class="flex h-screen w-full bg-[#f9fafb] text-slate-900 font-sans overflow-hidden">
-      <aside class="w-[260px] hidden lg:flex flex-col bg-[#f9fafb] border-r border-slate-200/70 p-3 pt-5">
+    <div class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden">
+      <aside class="w-[260px] hidden lg:flex flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-5">
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -2698,8 +2698,8 @@ export default function SessionView(props: SessionViewProps) {
 
       </aside>
 
-      <main class="flex-1 flex flex-col overflow-hidden bg-white">
-        <header class="h-14 border-b border-slate-100 flex items-center justify-between px-6 bg-white z-10 shrink-0">
+      <main class="flex-1 flex flex-col overflow-hidden bg-gray-1">
+        <header class="h-14 border-b border-gray-5 flex items-center justify-between px-6 bg-gray-1 z-10 shrink-0">
           <div class="flex items-center gap-3 min-w-0">
             <Show when={showUpdatePill()}>
               <button
@@ -2729,7 +2729,7 @@ export default function SessionView(props: SessionViewProps) {
               </button>
             </Show>
 
-            <h1 class="text-[13.5px] font-medium text-slate-700 truncate">{selectedSessionTitle() || "Explore and identify available topics"}</h1>
+            <h1 class="text-[13.5px] font-medium text-gray-11 truncate">{selectedSessionTitle() || "Explore and identify available topics"}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
@@ -2743,8 +2743,8 @@ export default function SessionView(props: SessionViewProps) {
               type="button"
               class={`h-9 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-mono transition-colors ${
                 commandPaletteOpen()
-                  ? "bg-slate-200 text-slate-800"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                  ? "bg-gray-4 text-gray-12"
+                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
               }`}
               onClick={(event) => {
                 event.preventDefault();
@@ -2764,8 +2764,8 @@ export default function SessionView(props: SessionViewProps) {
               type="button"
               class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
                 searchOpen()
-                  ? "bg-slate-200 text-slate-800"
-                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+                  ? "bg-gray-4 text-gray-12"
+                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
               }`}
               onClick={() => {
                 if (searchOpen()) {
@@ -2781,7 +2781,7 @@ export default function SessionView(props: SessionViewProps) {
             </button>
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={undoLastMessage}
               disabled={!canUndoLastMessage() || historyActionBusy() !== null}
               title="Undo last message"
@@ -2793,7 +2793,7 @@ export default function SessionView(props: SessionViewProps) {
             </button>
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={redoLastMessage}
               disabled={!canRedoLastMessage() || historyActionBusy() !== null}
               title="Redo last reverted message"
@@ -2805,7 +2805,7 @@ export default function SessionView(props: SessionViewProps) {
             </button>
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={compactSessionHistory}
               disabled={!canCompactSession() || historyActionBusy() !== null}
               title="Compact session context"
@@ -2818,7 +2818,7 @@ export default function SessionView(props: SessionViewProps) {
             <div ref={(el) => (sessionMenuRef = el)} class="relative">
               <button
                 type="button"
-                class="h-9 w-9 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={!props.selectedSessionId}
                 title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
                 aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
@@ -2833,12 +2833,12 @@ export default function SessionView(props: SessionViewProps) {
 
               <Show when={sessionMenuOpen() && props.selectedSessionId}>
                 <div
-                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-slate-200 bg-white shadow-lg p-1"
+                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
                   onClick={(event) => event.stopPropagation()}
                 >
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100 disabled:opacity-60"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 disabled:opacity-60"
                     onClick={() => {
                       setSessionMenuOpen(false);
                       void compactSessionHistory();
@@ -2849,14 +2849,14 @@ export default function SessionView(props: SessionViewProps) {
                   </button>
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                     onClick={openRenameModal}
                   >
                     Rename session
                   </button>
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100 text-red-600"
+                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
                     onClick={openDeleteSessionModal}
                   >
                     Delete session
@@ -2868,9 +2868,9 @@ export default function SessionView(props: SessionViewProps) {
         </header>
 
         <Show when={searchOpen()}>
-          <div class="border-b border-slate-100 bg-slate-50/70 px-6 py-2">
-            <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
-              <Search size={14} class="text-slate-400" />
+          <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
+            <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2">
+              <Search size={14} class="text-gray-9" />
               <input
                 ref={(el) => (searchInputEl = el)}
                 type="text"
@@ -2890,14 +2890,14 @@ export default function SessionView(props: SessionViewProps) {
                     closeSearch();
                   }
                 }}
-                class="min-w-0 flex-1 bg-transparent text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none"
+                class="min-w-0 flex-1 bg-transparent text-sm text-gray-11 placeholder:text-gray-9 focus:outline-none"
                 placeholder="Search in this chat"
                 aria-label="Search in this chat"
               />
-              <span class="text-[11px] text-slate-500 tabular-nums">{activeSearchPositionLabel()}</span>
+              <span class="text-[11px] text-gray-10 tabular-nums">{activeSearchPositionLabel()}</span>
               <button
                 type="button"
-                class="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60"
+                class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(-1)}
                 aria-label="Previous match"
@@ -2906,7 +2906,7 @@ export default function SessionView(props: SessionViewProps) {
               </button>
               <button
                 type="button"
-                class="rounded-md border border-slate-200 px-2 py-1 text-[11px] text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors disabled:opacity-60"
+                class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(1)}
                 aria-label="Next match"
@@ -2915,7 +2915,7 @@ export default function SessionView(props: SessionViewProps) {
               </button>
               <button
                 type="button"
-                class="h-7 w-7 flex items-center justify-center rounded-md text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+                class="h-7 w-7 flex items-center justify-center rounded-md text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors"
                 onClick={closeSearch}
                 aria-label="Close search"
               >
@@ -2926,9 +2926,9 @@ export default function SessionView(props: SessionViewProps) {
         </Show>
 
         <div class="flex-1 flex overflow-hidden">
-          <div class="flex-1 min-w-0 relative overflow-hidden bg-white">
+          <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class="h-full overflow-y-auto px-8 pt-12 pb-56 scroll-smooth bg-white"
+              class="h-full overflow-y-auto px-8 pt-12 pb-56 scroll-smooth bg-gray-1"
               style={{ contain: "layout paint style" }}
               ref={(el) => (chatContainerEl = el)}
             >
@@ -3036,10 +3036,10 @@ export default function SessionView(props: SessionViewProps) {
 
             <Show when={props.messages.length > 0 && !nearBottom()}>
               <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
-                <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-slate-200 bg-white/95 p-1 shadow-lg shadow-slate-900/5 backdrop-blur-md">
+                <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1/95 p-1 shadow-lg shadow-gray-12/5 backdrop-blur-md">
                   <button
                     type="button"
-                    class="rounded-full px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-100 transition-colors"
+                    class="rounded-full px-3 py-1.5 text-xs text-gray-11 hover:bg-gray-3 transition-colors"
                     onClick={() => jumpToLatest("smooth")}
                   >
                     Jump to latest
@@ -3050,7 +3050,7 @@ export default function SessionView(props: SessionViewProps) {
          </div>
 
           <Show when={markdownEditorOpen()}>
-            <aside class="hidden lg:flex w-[50%] min-w-[450px] shrink-0 border-l border-slate-200/70 bg-white shadow-[-8px_0_32px_rgba(0,0,0,0.03)]">
+            <aside class="hidden lg:flex w-[50%] min-w-[450px] shrink-0 border-l border-gray-6/70 bg-gray-1 shadow-[-8px_0_32px_rgba(0,0,0,0.03)]">
               <ArtifactMarkdownEditor
                 open={markdownEditorOpen()}
                 path={markdownEditorPath()}
@@ -3182,15 +3182,15 @@ export default function SessionView(props: SessionViewProps) {
         />
       </main>
 
-      <aside class="w-[280px] hidden xl:flex flex-col bg-[#f9fafb] border-l border-slate-200/70 p-3">
+      <aside class="w-[280px] hidden xl:flex flex-col bg-dls-sidebar border-l border-gray-6/70 p-3">
         <div class="flex-1 overflow-y-auto space-y-5 pt-2">
           <div class="space-y-1 mb-2">
           <button
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "scheduled"
-                ? "bg-slate-200 text-slate-900"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
             }`}
             onClick={() => {
               props.setTab("scheduled");
@@ -3204,8 +3204,8 @@ export default function SessionView(props: SessionViewProps) {
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "soul"
-                ? "bg-slate-200 text-slate-900"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
             }`}
             onClick={() => openSoul()}
           >
@@ -3216,8 +3216,8 @@ export default function SessionView(props: SessionViewProps) {
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "skills"
-                ? "bg-slate-200 text-slate-900"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
             }`}
             onClick={() => {
               props.setTab("skills");
@@ -3231,8 +3231,8 @@ export default function SessionView(props: SessionViewProps) {
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-                ? "bg-slate-200 text-slate-900"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
             }`}
             onClick={() => {
               props.setTab("mcp");
@@ -3246,8 +3246,8 @@ export default function SessionView(props: SessionViewProps) {
             type="button"
             class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
               showRightSidebarSelection() && props.tab === "identities"
-                ? "bg-slate-200 text-slate-900"
-                : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                ? "bg-gray-4 text-gray-12"
+                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
             }`}
             onClick={() => {
               props.setTab("identities");
@@ -3262,8 +3262,8 @@ export default function SessionView(props: SessionViewProps) {
               type="button"
               class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
                 showRightSidebarSelection() && props.tab === "config"
-                  ? "bg-slate-200 text-slate-900"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                  ? "bg-gray-4 text-gray-12"
+                  : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
               }`}
               onClick={openConfig}
             >

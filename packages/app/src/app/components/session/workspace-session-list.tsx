@@ -173,11 +173,11 @@ export default function WorkspaceSessionList(props: Props) {
               <div class="space-y-2">
                 <Show when={isFirstInSection()}>
                   <div class="px-2 pb-1">
-                    <div class="flex items-center gap-1.5 text-slate-700">
-                      <ChevronDown size={14} class="text-slate-500" />
+                    <div class="flex items-center gap-1.5 text-gray-11">
+                      <ChevronDown size={14} class="text-gray-10" />
                       <span class="text-[14px] font-medium leading-tight">{heading().title}</span>
                     </div>
-                    <div class="pl-6 pt-0.5 text-[12px] text-slate-500">{heading().subtitle}</div>
+                    <div class="pl-6 pt-0.5 text-[12px] text-gray-10">{heading().subtitle}</div>
                   </div>
                 </Show>
 
@@ -185,7 +185,7 @@ export default function WorkspaceSessionList(props: Props) {
                   <div
                     role="button"
                     tabIndex={0}
-                    class="w-full flex items-center justify-between min-h-11 px-3 rounded-xl text-left transition-colors text-slate-900 hover:bg-slate-100/70"
+                    class="w-full flex items-center justify-between min-h-11 px-3 rounded-xl text-left transition-colors text-gray-12 hover:bg-gray-3/70"
                     onClick={() => {
                       expandWorkspace(workspace().id);
                       void Promise.resolve(props.onActivateWorkspace(workspace().id));
@@ -200,7 +200,7 @@ export default function WorkspaceSessionList(props: Props) {
                   >
                     <button
                       type="button"
-                      class="mr-2 -ml-1 p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-200/80"
+                      class="mr-2 -ml-1 p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
                       aria-label={isWorkspaceExpanded(workspace().id) ? "Collapse" : "Expand"}
                       onClick={(event) => {
                         event.stopPropagation();
@@ -217,10 +217,10 @@ export default function WorkspaceSessionList(props: Props) {
 
                     <div class="min-w-0 flex-1">
                       <div class="text-[14px] font-medium truncate">{workspaceLabel(workspace())}</div>
-                      <div class="text-[11px] text-slate-500 flex items-center gap-1.5">
+                      <div class="text-[11px] text-gray-10 flex items-center gap-1.5">
                         <span>{workspaceKindLabel(workspace())}</span>
                         <Show when={soulEnabled()}>
-                          <span class="inline-flex items-center gap-1 rounded-full border border-rose-300 bg-rose-50 px-1.5 py-0.5 text-[10px] text-rose-600">
+                          <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
                             <HeartPulse size={10} />
                             Soul
                           </span>
@@ -229,15 +229,15 @@ export default function WorkspaceSessionList(props: Props) {
                     </div>
 
                     <Show when={group.status === "loading"}>
-                      <Loader2 size={14} class="animate-spin text-slate-500 mr-1" />
+                      <Loader2 size={14} class="animate-spin text-gray-10 mr-1" />
                     </Show>
 
                     <Show when={group.status === "error"}>
                       <span
                         class={`text-[10px] px-2 py-0.5 rounded-full border ${
                           taskLoadError().tone === "offline"
-                            ? "border-amber-300 text-amber-600 bg-amber-50"
-                            : "border-red-300 text-red-600 bg-red-50"
+                            ? "border-amber-7 text-amber-11 bg-amber-3"
+                            : "border-red-7 text-red-11 bg-red-3"
                         }`}
                         title={taskLoadError().title}
                       >
@@ -246,14 +246,14 @@ export default function WorkspaceSessionList(props: Props) {
                     </Show>
 
                     <Show when={isConnecting()}>
-                      <Loader2 size={14} class="animate-spin text-slate-500" />
+                      <Loader2 size={14} class="animate-spin text-gray-10" />
                     </Show>
                   </div>
 
                   <div class="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
                     <button
                       type="button"
-                      class="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-200/80"
+                      class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
                       onClick={(event) => {
                         event.stopPropagation();
                         props.onCreateTaskInWorkspace(workspace().id);
@@ -266,7 +266,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                     <button
                       type="button"
-                      class="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-200/80"
+                      class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
                       onClick={(event) => {
                         event.stopPropagation();
                         setWorkspaceMenuId((current) =>
@@ -282,12 +282,12 @@ export default function WorkspaceSessionList(props: Props) {
                   <Show when={isMenuOpen()}>
                     <div
                       ref={(el) => (workspaceMenuRef = el)}
-                      class="absolute right-2 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-slate-200 bg-white shadow-lg p-1"
+                      class="absolute right-2 top-[calc(100%+4px)] z-20 w-44 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
                       onClick={(event) => event.stopPropagation()}
                     >
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                         onClick={() => {
                           props.onOpenRenameWorkspace(workspace().id);
                           setWorkspaceMenuId(null);
@@ -297,7 +297,7 @@ export default function WorkspaceSessionList(props: Props) {
                       </button>
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                         onClick={() => {
                           props.onShareWorkspace(workspace().id);
                           setWorkspaceMenuId(null);
@@ -307,7 +307,7 @@ export default function WorkspaceSessionList(props: Props) {
                       </button>
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                         onClick={() => {
                           props.onOpenSoul(workspace().id);
                           setWorkspaceMenuId(null);
@@ -318,7 +318,7 @@ export default function WorkspaceSessionList(props: Props) {
                       <Show when={workspace().workspaceType === "remote"}>
                         <button
                           type="button"
-                          class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                          class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                           onClick={() => {
                             void Promise.resolve(props.onTestWorkspaceConnection(workspace().id));
                             setWorkspaceMenuId(null);
@@ -329,7 +329,7 @@ export default function WorkspaceSessionList(props: Props) {
                         </button>
                         <button
                           type="button"
-                          class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100"
+                          class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                           onClick={() => {
                             props.onEditWorkspaceConnection(workspace().id);
                             setWorkspaceMenuId(null);
@@ -341,7 +341,7 @@ export default function WorkspaceSessionList(props: Props) {
                       </Show>
                       <button
                         type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-slate-100 text-red-600"
+                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
                         onClick={() => {
                           props.onForgetWorkspace(workspace().id);
                           setWorkspaceMenuId(null);
@@ -353,7 +353,7 @@ export default function WorkspaceSessionList(props: Props) {
                   </Show>
                 </div>
 
-                <div class="mt-0.5 space-y-0.5 border-l border-slate-200 ml-2">
+                <div class="mt-0.5 space-y-0.5 border-l border-gray-6 ml-2">
                   <Show
                     when={isWorkspaceExpanded(workspace().id)}
                     fallback={
@@ -366,7 +366,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 role="button"
                                 tabIndex={0}
                                 class={`group flex items-center justify-between min-h-9 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
-                                  isSelected() ? "bg-slate-200/90 text-slate-900" : "hover:bg-slate-100/70"
+                                  isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70"
                                 }`}
                                 onClick={() => props.onOpenSession(workspace().id, session.id)}
                                 onKeyDown={(event) => {
@@ -376,9 +376,9 @@ export default function WorkspaceSessionList(props: Props) {
                                   props.onOpenSession(workspace().id, session.id);
                                 }}
                               >
-                                <span class="text-[13px] text-slate-700 truncate mr-2 font-medium">{session.title}</span>
+                                <span class="text-[13px] text-gray-11 truncate mr-2 font-medium">{session.title}</span>
                                 <Show when={session.time?.updated}>
-                                  <span class="text-[11px] text-slate-400 whitespace-nowrap group-hover:text-slate-500 transition-colors">
+                                  <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
                                     {formatRelativeTime(session.time?.updated ?? Date.now())}
                                   </span>
                                 </Show>
@@ -399,8 +399,8 @@ export default function WorkspaceSessionList(props: Props) {
                               <div
                                 class={`w-full px-3 py-2 text-xs ml-2 text-left rounded-lg border ${
                                   taskLoadError().tone === "offline"
-                                    ? "text-amber-700 bg-amber-50 border-amber-300"
-                                    : "text-red-700 bg-red-50 border-red-300"
+                                    ? "text-amber-11 bg-amber-3 border-amber-7"
+                                    : "text-red-11 bg-red-3 border-red-7"
                                 }`}
                                 title={taskLoadError().title}
                               >
@@ -417,7 +417,7 @@ export default function WorkspaceSessionList(props: Props) {
                                   role="button"
                                   tabIndex={0}
                                   class={`group flex items-center justify-between min-h-9 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
-                                    isSelected() ? "bg-slate-200/90 text-slate-900" : "hover:bg-slate-100/70"
+                                    isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70"
                                   }`}
                                   onClick={() => props.onOpenSession(workspace().id, session.id)}
                                   onKeyDown={(event) => {
@@ -427,9 +427,9 @@ export default function WorkspaceSessionList(props: Props) {
                                     props.onOpenSession(workspace().id, session.id);
                                   }}
                                 >
-                                  <span class="text-[13px] text-slate-700 truncate mr-2 font-medium">{session.title}</span>
+                                  <span class="text-[13px] text-gray-11 truncate mr-2 font-medium">{session.title}</span>
                                   <Show when={session.time?.updated}>
-                                    <span class="text-[11px] text-slate-400 whitespace-nowrap group-hover:text-slate-500 transition-colors">
+                                    <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
                                       {formatRelativeTime(session.time?.updated ?? Date.now())}
                                     </span>
                                   </Show>
@@ -441,7 +441,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={group.sessions.length === 0 && group.status === "ready"}>
                             <button
                               type="button"
-                              class="group/empty w-full px-3 py-2 text-xs text-slate-500 ml-2 text-left rounded-lg hover:bg-slate-100/70 hover:text-slate-700 transition-colors"
+                              class="group/empty w-full px-3 py-2 text-xs text-gray-10 ml-2 text-left rounded-lg hover:bg-gray-3/70 hover:text-gray-11 transition-colors"
                               onClick={() => props.onCreateTaskInWorkspace(workspace().id)}
                               disabled={props.newTaskDisabled}
                             >
@@ -453,7 +453,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={group.sessions.length > previewCount(workspace().id)}>
                             <button
                               type="button"
-                              class="ml-2 w-[calc(100%-0.5rem)] px-3 py-2 text-xs text-slate-500 hover:text-slate-700 hover:bg-slate-100/70 rounded-lg transition-colors text-left"
+                              class="ml-2 w-[calc(100%-0.5rem)] px-3 py-2 text-xs text-gray-10 hover:text-gray-11 hover:bg-gray-3/70 rounded-lg transition-colors text-left"
                               onClick={() => showMoreSessions(workspace().id, group.sessions.length)}
                             >
                               {showMoreLabel(workspace().id, group.sessions.length)}
@@ -462,7 +462,7 @@ export default function WorkspaceSessionList(props: Props) {
                         </Show>
                       }
                     >
-                      <div class="w-full px-3 py-2 text-xs text-slate-500 ml-2 text-left rounded-lg">
+                      <div class="w-full px-3 py-2 text-xs text-gray-10 ml-2 text-left rounded-lg">
                         Loading tasks...
                       </div>
                     </Show>
@@ -477,7 +477,7 @@ export default function WorkspaceSessionList(props: Props) {
       <div class="relative" ref={(el) => (addWorkspaceMenuRef = el)}>
         <button
           type="button"
-          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] font-medium text-slate-600 border border-slate-200 bg-white hover:bg-slate-50 shadow-sm transition-colors"
+          class="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-[13px] font-medium text-gray-11 border border-gray-6 bg-gray-1 hover:bg-gray-2 shadow-sm transition-colors"
           onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
         >
           <Plus size={14} />
@@ -485,10 +485,10 @@ export default function WorkspaceSessionList(props: Props) {
         </button>
 
         <Show when={addWorkspaceMenuOpen()}>
-          <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-slate-200 bg-white shadow-xl overflow-hidden z-20">
+          <div class="absolute left-0 right-0 top-full mt-2 rounded-lg border border-gray-6 bg-gray-1 shadow-xl overflow-hidden z-20">
             <button
               type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
               onClick={() => {
                 props.onOpenCreateWorkspace();
                 setAddWorkspaceMenuOpen(false);
@@ -499,7 +499,7 @@ export default function WorkspaceSessionList(props: Props) {
             </button>
             <button
               type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
+              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
               onClick={() => {
                 props.onOpenCreateRemoteWorkspace();
                 setAddWorkspaceMenuOpen(false);
@@ -510,7 +510,7 @@ export default function WorkspaceSessionList(props: Props) {
             </button>
             <button
               type="button"
-              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="w-full flex items-center gap-2 px-3 py-2 text-xs text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               disabled={props.importingWorkspaceConfig}
               onClick={() => {
                 props.onImportWorkspaceConfig();

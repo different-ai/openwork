@@ -154,16 +154,16 @@ export default function InboxPanel(props: InboxPanelProps) {
   return (
     <div id={props.id}>
       <div class="flex items-center justify-between px-2 mb-3">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-500">Inbox</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Inbox</span>
         <div class="flex items-center gap-2">
           <Show when={(items() ?? []).length > 0}>
-            <span class="text-[11px] font-medium bg-slate-200/60 text-slate-500 px-1.5 rounded">
+            <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
               {(items() ?? []).length}
             </span>
           </Show>
           <button
             type="button"
-            class="rounded-md p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+            class="rounded-md p-1 text-gray-9 hover:text-gray-11 hover:bg-gray-3 transition-colors"
             onClick={() => void refresh()}
             title="Refresh inbox"
             aria-label="Refresh inbox"
@@ -189,8 +189,8 @@ export default function InboxPanel(props: InboxPanelProps) {
 
       <button
         type="button"
-        class={`w-full border border-dashed border-slate-300 rounded-xl px-4 py-4 text-left transition-colors ${
-          dragOver() ? "bg-slate-100" : "bg-slate-50/50 hover:bg-slate-50"
+        class={`w-full border border-dashed border-gray-7 rounded-xl px-4 py-4 text-left transition-colors ${
+          dragOver() ? "bg-gray-3" : "bg-gray-2/60 hover:bg-gray-2"
         } ${!connected() ? "opacity-70" : ""}`}
         onClick={() => fileInputRef?.click()}
         onDragOver={(event: DragEvent) => {
@@ -211,23 +211,23 @@ export default function InboxPanel(props: InboxPanelProps) {
         title={connected() ? "Drop files here to upload" : "Connect to a worker to upload"}
       >
         <div class="flex flex-col items-center justify-center text-center">
-          <UploadCloud size={18} class="text-slate-400 mb-2" />
-          <span class="text-[13px] font-medium text-slate-700">
+          <UploadCloud size={18} class="text-gray-9 mb-2" />
+          <span class="text-[13px] font-medium text-gray-11">
             {uploading() ? "Uploading..." : "Drop files or click to upload"}
           </span>
-          <span class="mt-0.5 text-[11px] text-slate-400">{helperText}</span>
+          <span class="mt-0.5 text-[11px] text-gray-9">{helperText}</span>
         </div>
       </button>
 
       <div class="mt-2 space-y-1">
         <Show when={error()}>
-          <div class="text-xs text-red-600 px-1 py-1">{error()}</div>
+          <div class="text-xs text-red-11 px-1 py-1">{error()}</div>
         </Show>
 
         <Show
           when={visibleItems().length > 0}
           fallback={
-            <div class="text-xs text-slate-500 px-1 py-1">
+            <div class="text-xs text-gray-10 px-1 py-1">
               <Show when={connected()} fallback={"Connect to see inbox files."}>
                 No inbox files yet.
               </Show>
@@ -242,7 +242,7 @@ export default function InboxPanel(props: InboxPanelProps) {
               const updatedAt = () => (typeof item.updatedAt === "number" ? item.updatedAt : null);
 
               return (
-                <div class="group flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">
+                <div class="group flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-2 transition-colors border border-transparent hover:border-gray-6/80">
                   <button
                     type="button"
                     class="min-w-0 flex-1 text-left"
@@ -251,8 +251,8 @@ export default function InboxPanel(props: InboxPanelProps) {
                     aria-label={rel() ? `Copy ${INBOX_PREFIX}${rel()}` : "Copy inbox path"}
                     disabled={!connected()}
                   >
-                    <div class="truncate text-xs font-medium text-slate-700">{name()}</div>
-                    <div class="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-slate-400">
+                    <div class="truncate text-xs font-medium text-gray-11">{name()}</div>
+                    <div class="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-gray-9">
                       <Show when={bytes() != null}>
                         <span class="font-mono">{formatBytes(bytes() as number)}</span>
                       </Show>
@@ -267,7 +267,7 @@ export default function InboxPanel(props: InboxPanelProps) {
 
                   <button
                     type="button"
-                    class="shrink-0 rounded-md p-1 text-slate-400 opacity-0 group-hover:opacity-100 hover:text-slate-700 hover:bg-slate-100"
+                    class="shrink-0 rounded-md p-1 text-gray-9 opacity-0 group-hover:opacity-100 hover:text-gray-11 hover:bg-gray-3"
                     onClick={() => void downloadItem(item)}
                     title="Download"
                     aria-label="Download"
@@ -282,7 +282,7 @@ export default function InboxPanel(props: InboxPanelProps) {
         </Show>
 
         <Show when={hiddenCount() > 0}>
-          <div class="text-[11px] text-slate-500 px-1 py-1">Showing first {maxPreview()}.</div>
+          <div class="text-[11px] text-gray-10 px-1 py-1">Showing first {maxPreview()}.</div>
         </Show>
       </div>
     </div>

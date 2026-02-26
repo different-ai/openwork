@@ -828,8 +828,8 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-slate-800 text-[14px] leading-relaxed font-medium"
-                      : "max-w-[650px] text-[15px] leading-[1.65] text-slate-800 font-serif antialiased group"
+                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-gray-12 text-[14px] leading-relaxed font-medium"
+                      : "max-w-[650px] text-[15px] leading-[1.65] text-gray-12 font-serif antialiased group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -854,8 +854,8 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-slate-800 text-[14px] leading-relaxed font-medium"
-                    : "max-w-[650px] text-[15px] leading-[1.65] text-slate-800 font-serif antialiased group"
+                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-[#f0f0f0] text-gray-12 text-[14px] leading-relaxed font-medium"
+                    : "max-w-[650px] text-[15px] leading-[1.65] text-gray-12 font-serif antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
