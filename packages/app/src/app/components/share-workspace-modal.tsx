@@ -382,7 +382,7 @@ export default function ShareWorkspaceModal(props: {
                     <button
                       onClick={() => props.onOpenBots?.()}
                       disabled={!props.onOpenBots}
-                      class="px-4 py-2 bg-white border border-gray-6 hover:border-gray-12 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-6 disabled:hover:text-gray-11"
+                      class="px-4 py-2 bg-gray-1 border border-gray-6 hover:border-gray-12 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-6 disabled:hover:text-gray-11"
                     >
                       Open setup
                     </button>
@@ -393,7 +393,7 @@ export default function ShareWorkspaceModal(props: {
           </div>
 
           {/* Persistent Footer Shadow Fade */}
-          <div class="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-white to-transparent pointer-events-none rounded-b-2xl" />
+          <div class="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-gray-1 to-transparent pointer-events-none rounded-b-2xl" />
         </div>
       </div>
     </Show>
