@@ -3198,6 +3198,21 @@ export default function App() {
     }
   };
 
+  const restartLocalServer = async () => {
+    const activeWorkspace = workspaceStore.activeWorkspaceDisplay();
+    const activeLocalPath =
+      activeWorkspace.workspaceType === "local" ? workspaceStore.activeWorkspacePath().trim() : "";
+    const runningProjectDir = workspaceStore.engine()?.projectDir?.trim() ?? "";
+    const workspacePath = activeLocalPath || runningProjectDir;
+
+    if (!workspacePath) {
+      setError("Pick a local worker folder before restarting the local server.");
+      return false;
+    }
+
+    return workspaceStore.startHost({ workspacePath, navigate: false });
+  };
+
   const openWorkspaceConnectionSettings = (workspaceId: string) => {
     const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
     if (workspace?.workspaceType === "remote" && workspace.remoteType === "openwork") {
@@ -5621,6 +5636,7 @@ export default function App() {
       toggleDeveloperMode: () => setDeveloperMode((v) => !v),
       developerMode: developerMode(),
       stopHost,
+      restartLocalServer,
       openResetModal,
       resetModalBusy: resetModalBusy(),
       onResetStartupPreference: () => {

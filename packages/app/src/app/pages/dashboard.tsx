@@ -267,6 +267,7 @@ export type DashboardViewProps = {
   toggleDeveloperMode: () => void;
   developerMode: boolean;
   stopHost: () => void;
+  restartLocalServer: () => Promise<boolean>;
   openResetModal: (mode: "onboarding" | "all") => void;
   resetModalBusy: boolean;
   onResetStartupPreference: () => void;
@@ -1716,6 +1717,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   developerMode={props.developerMode}
                   toggleDeveloperMode={props.toggleDeveloperMode}
                   stopHost={props.stopHost}
+                  restartLocalServer={props.restartLocalServer}
                   engineSource={props.engineSource}
                   setEngineSource={props.setEngineSource}
                   engineCustomBinPath={props.engineCustomBinPath}
