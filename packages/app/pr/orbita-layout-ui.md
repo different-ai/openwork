@@ -33,4 +33,4 @@ Branch: `task/orbita-layout-ui`
 - `pnpm --filter @different-ai/openwork-ui build`
 - `pnpm --filter @different-ai/openwork-ui test:health` (fails in this environment: `Unauthorized` waiting for `/global/health`)
 - `packaging/docker/dev-up.sh`
-- Chrome MCP: open `http://localhost:52034/session`, send `smoke: hello from chrome mcp`, verify response rendered.
+- Chrome MCP: open printed Docker URL `http://localhost:57465/session`, send `smoke: hello from chrome mcp`, verify response rendered (`Hello! How can I help you today?`).
