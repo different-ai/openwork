@@ -12,6 +12,10 @@
 #   OPENWORK_PORT         — host port to map to container :8787 (default: 8787)
 #   WEB_PORT              — host port to map to container :5173 (default: 5173)
 #   OPENWORK_DEV_ID       — unique ID for this stack (default: default)
+#   OPENWORK_OPENCODE_CONFIG_DIR      — host OpenCode config dir detection override (read by dev-up.sh)
+#   OPENWORK_OPENCODE_DATA_DIR        — host OpenCode data dir detection override (read by dev-up.sh)
+#   OPENWORK_HOST_OPENCODE_CONFIG_DIR — resolved mount source for host OpenCode config (set by dev-up.sh)
+#   OPENWORK_HOST_OPENCODE_DATA_DIR   — resolved mount source for host OpenCode data (set by dev-up.sh)
 
 x-shared: &shared
   image: node:22-bookworm-slim
@@ -22,6 +26,8 @@ x-shared: &shared
     - pnpm-store:/root/.local/share/pnpm/store
     - bun-install:/root/.bun
     - ${OPENWORK_WORKSPACE:-./workspace}:/workspace
+    - ${OPENWORK_HOST_OPENCODE_CONFIG_DIR:-./workspace/.openwork-host-opencode-config}:/persist/.config/opencode:ro
+    - ${OPENWORK_HOST_OPENCODE_DATA_DIR:-./workspace/.openwork-host-opencode-data}:/persist/.openwork-host-opencode-data:ro
 
 services:
   orchestrator:
@@ -91,6 +97,16 @@ services:
         if [ -z "$$OPENWORK_HOST_TOKEN" ]; then
           OPENWORK_HOST_TOKEN=$$(cat /proc/sys/kernel/random/uuid)
           export OPENWORK_HOST_TOKEN
+        fi
+
+        # --- Import host OpenCode config + auth material when mounted ---
+        mkdir -p /root/.config/opencode /root/.local/share/opencode
+        if [ -d /persist/.config/opencode ]; then
+          cp -R /persist/.config/opencode/. /root/.config/opencode 2>/dev/null || true
+        fi
+        if [ -d /persist/.openwork-host-opencode-data ]; then
+          cp /persist/.openwork-host-opencode-data/auth.json /root/.local/share/opencode/auth.json 2>/dev/null || true
+          cp /persist/.openwork-host-opencode-data/mcp-auth.json /root/.local/share/opencode/mcp-auth.json 2>/dev/null || true
         fi
 
         # Write tokens so the web service can source them
