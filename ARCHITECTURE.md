@@ -69,7 +69,7 @@ These are all opencode primitives you can read the docs to find out exactly how 
 
 - uses all these primitives
 - uses native OpenCode commands for reusable flows (markdown files in `.opencode/commands`)
-- adds a new abstraction "workspace" is a project fodler and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
+- adds a new abstraction "workspace" is a project folder and a simple .json file that includes a list of opencode primitives that map perfectly to an opencode workdir (not fully implemented)
   - openwork can open a workpace.json and decide where to populate a folder with thse settings (not implemented today
 
 ## Core Architecture
