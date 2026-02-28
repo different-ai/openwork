@@ -4717,9 +4717,15 @@ export default function App() {
 
     if (typeof window !== "undefined") {
       try {
-        const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
-        if (storedBaseUrl) {
-          setBaseUrl(storedBaseUrl);
+        // In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.
+        // OpenCode is assigned a random port on every restart, so the stored URL is
+        // always stale after a relaunch. The correct baseUrl is provided by engine_info().
+        // Web mode still needs the cached value since it connects to a fixed server URL.
+        if (!isTauriRuntime()) {
+          const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
+          if (storedBaseUrl) {
+            setBaseUrl(storedBaseUrl);
+          }
         }
 
         const storedClientDir = window.localStorage.getItem(
