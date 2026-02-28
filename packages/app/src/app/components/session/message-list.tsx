@@ -452,7 +452,7 @@ export default function MessageList(props: MessageListProps) {
     }
 
     return (
-      <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">
+      <div class="flex items-center gap-2 py-1 min-h-[24px] leading-5 group/step">
         {/* Status dot */}
         <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
         {/* Tool icon */}
@@ -464,29 +464,29 @@ export default function MessageList(props: MessageListProps) {
           <ToolIcon category={category()} size={13} />
         </div>
         {/* Title */}
-        <span class="text-[13px] text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
+        <span class="text-[13px] leading-4 text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
           {summary().title}
         </span>
         {/* Skill badge */}
         <Show when={summary().isSkill}>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
+          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
             skill
           </span>
         </Show>
         <Show when={task().isTask}>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
+          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
             subagent
           </span>
         </Show>
         {/* Detail - truncated to single line */}
         <Show when={summary().detail}>
-          <span class="text-[12px] text-gray-9 truncate min-w-0">
+          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
             {summary().detail}
           </span>
         </Show>
         <Show when={task().agentType && !summary().detail}>
           {(agentType) => (
-            <span class="text-[12px] text-gray-9 truncate min-w-0">
+            <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
               {agentType()} agent
             </span>
           )}
@@ -736,7 +736,7 @@ export default function MessageList(props: MessageListProps) {
       <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
         {/* Toggle button - clean, compact */}
         <button
-          class={`flex items-center gap-2 py-1.5 text-[13px] transition-colors ${
+          class={`flex items-center gap-2 py-1 leading-5 text-[13px] transition-colors ${
             containerProps.isUser
               ? "text-gray-10 hover:text-gray-11"
               : "text-gray-10 hover:text-gray-12"
@@ -747,20 +747,20 @@ export default function MessageList(props: MessageListProps) {
             size={14}
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
-          <span class="font-medium inline-flex items-center gap-1.5 text-xs sm:text-[13px] text-gray-11">
+          <span class="font-medium inline-flex items-center gap-1.5 leading-4 text-xs sm:text-[13px] text-gray-11">
             <Show when={hasRunning()}>
               <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
             </Show>
             <span class="truncate max-w-[58ch]">{collapsedLabel()}</span>
           </span>
           <Show when={explorationOnly()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
           </Show>
           <Show when={!explorationOnly() && !expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
           </Show>
           <Show when={!explorationOnly() && expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
           </Show>
         </button>
 
@@ -805,7 +805,7 @@ export default function MessageList(props: MessageListProps) {
   };
 
   return (
-    <div class="space-y-5 pb-24" style={{ contain: "layout paint style" }}>
+    <div class="space-y-4 pb-24" style={{ contain: "layout paint style" }}>
       <For each={messageBlocks()}>
         {(block, blockIndex) => {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
@@ -829,7 +829,7 @@ export default function MessageList(props: MessageListProps) {
                   class={`w-full relative ${
                     block.isUser
                       ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                      : "max-w-[650px] text-[15px] leading-7 text-gray-12 group"
+                      : "max-w-[650px] text-[15px] leading-6 text-gray-12 group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
