@@ -75,6 +75,16 @@ fn collect_global_skill_roots() -> Vec<PathBuf> {
         if claude_root.is_dir() {
             roots.push(claude_root);
         }
+
+        let agents_root = home.join(".agents").join("skills");
+        if agents_root.is_dir() {
+            roots.push(agents_root);
+        }
+
+        let legacy_agents_root = home.join(".agent").join("skills");
+        if legacy_agents_root.is_dir() {
+            roots.push(legacy_agents_root);
+        }
     }
 
     roots

@@ -227,7 +227,7 @@ export default {
   "skills.install_package": "安装",
   "skills.registry_notice": "发布到 OpenPackage 注册表（`opkg push`）目前需要身份验证。计划添加注册表搜索和精选列表同步。",
   "skills.installed": "已安装的 skills",
-  "skills.no_skills": "在 `.opencode/skills` 或 `.claude/skills` 中未检测到 skills。",
+  "skills.no_skills": "在 `.opencode/skills`、`.claude/skills` 或 `~/.agents/skills` 中未检测到 skills。",
   "skills.desktop_required": "技能管理需要桌面应用。",
   "skills.host_only_error": "技能管理需要本地工作区或已连接的 OpenWork 服务器。",
   "skills.install_skill_creator": "安装 skill creator",

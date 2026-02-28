@@ -129,8 +129,12 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   if (includeGlobal) {
     const globalOpenWork = join(homedir(), ".config", "opencode", "skills");
     const globalClaude = join(homedir(), ".claude", "skills");
+    const globalAgents = join(homedir(), ".agents", "skills");
+    const globalAgentLegacy = join(homedir(), ".agent", "skills");
     items.push(...(await listSkillsInDir(globalOpenWork, "global")));
     items.push(...(await listSkillsInDir(globalClaude, "global")));
+    items.push(...(await listSkillsInDir(globalAgents, "global")));
+    items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
   }
 
   const seen = new Set<string>();

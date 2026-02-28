@@ -226,7 +226,7 @@ export default {
   "skills.install_package": "Install",
   "skills.registry_notice": "Publishing to the OpenPackage registry (`opkg push`) requires authentication today. A registry search + curated list sync is planned.",
   "skills.installed": "Installed skills",
-  "skills.no_skills": "No skills detected in `.opencode/skills` or `.claude/skills`.",
+  "skills.no_skills": "No skills detected in `.opencode/skills`, `.claude/skills`, or `~/.agents/skills`.",
   "skills.desktop_required": "Skill management requires the desktop app.",
   "skills.host_only_error": "Skill management requires a local worker or connected OpenWork server.",
   "skills.install_skill_creator": "Install skill creator",
