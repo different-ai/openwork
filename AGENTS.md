@@ -93,6 +93,14 @@ If you cannot complete steps 4-8 (Docker, Chrome MCP, missing credentials, or en
 
 If you open a PR, you must run tests and report what you ran (commands + result).
 
+Before moving to the next issue/PR, check GitHub status for the current branch and PR:
+
+* `gh status`
+* `gh pr view <number> --repo different-ai/openwork`
+* `gh pr checks <number> --repo different-ai/openwork`
+
+If checks are failing, report whether they are code failures or external/auth/environment blockers.
+
 To maximize merge speed, include evidence of the end-to-end flow:
 
 * Ideally: attach a short video/screen recording showing the flow running successfully.
