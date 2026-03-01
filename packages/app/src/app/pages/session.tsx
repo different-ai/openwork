@@ -1243,6 +1243,34 @@ export default function SessionView(props: SessionViewProps) {
     return null;
   });
 
+  const runProgressSignature = createMemo(() => {
+    if (!showRunIndicator()) return "";
+    const part = latestRunPart();
+    const partTotal = totalPartCount();
+    if (!part) {
+      return `messages:${props.messages.length}:parts:${partTotal}:todos:${props.todos.length}`;
+    }
+
+    if (part.type === "reasoning" || part.type === "text") {
+      const text = typeof (part as any).text === "string" ? (part as any).text : "";
+      return `${part.type}:${text.length}:${text.slice(-48)}:parts:${partTotal}:todos:${props.todos.length}`;
+    }
+
+    if (part.type === "tool") {
+      const state = (part as any).state ?? {};
+      const status = typeof state.status === "string" ? state.status : "";
+      const outputSize =
+        typeof state.output === "string"
+          ? state.output.length
+          : Array.isArray(state.output)
+            ? state.output.length
+            : 0;
+      return `tool:${status}:${outputSize}:parts:${partTotal}:todos:${props.todos.length}`;
+    }
+
+    return `${part.type}:parts:${partTotal}:todos:${props.todos.length}`;
+  });
+
   const runLabel = createMemo(() => {
     switch (runPhase()) {
       case "sending":
@@ -1468,6 +1496,13 @@ export default function SessionView(props: SessionViewProps) {
     setRunTick(Date.now());
     const id = window.setInterval(() => setRunTick(Date.now()), 50);
     onCleanup(() => window.clearInterval(id));
+  });
+
+  createEffect(() => {
+    if (!showRunIndicator()) return;
+    runProgressSignature();
+    if (!nearBottom()) return;
+    scheduleScrollToLatest("auto");
   });
 
   createEffect(
