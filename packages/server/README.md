@@ -112,6 +112,14 @@ Inbox/outbox:
 - `POST /workspace/:id/inbox` (multipart upload into `.opencode/openwork/inbox/`)
 - `GET /workspace/:id/artifacts`
 - `GET /workspace/:id/artifacts/:artifactId`
+- `POST /workspace/:id/files/sessions`
+- `POST /files/sessions/:sessionId/renew`
+- `DELETE /files/sessions/:sessionId`
+- `GET /files/sessions/:sessionId/catalog/snapshot`
+- `GET /files/sessions/:sessionId/catalog/events`
+- `POST /files/sessions/:sessionId/read-batch`
+- `POST /files/sessions/:sessionId/write-batch`
+- `POST /files/sessions/:sessionId/ops`
 
 Toy UI (static assets served by the server):
 
