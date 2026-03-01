@@ -18,6 +18,14 @@ describe("normalizeLocalFilePath", () => {
     expect(normalizeLocalFilePath("file://server/share/note.md")).toBe("//server/share/note.md");
   });
 
+  test("treats localhost file uri as local path", () => {
+    expect(normalizeLocalFilePath("file://localhost/tmp/notes.md")).toBe("/tmp/notes.md");
+  });
+
+  test("handles case-insensitive file uri scheme", () => {
+    expect(normalizeLocalFilePath("FILE:///tmp/notes.md")).toBe("/tmp/notes.md");
+  });
+
   test("does not throw on malformed percent-encoded pathname", () => {
     expect(() => normalizeLocalFilePath("file:///tmp/100%/note.md")).not.toThrow();
     expect(normalizeLocalFilePath("file:///tmp/100%/note.md")).toBe("/tmp/100%/note.md");

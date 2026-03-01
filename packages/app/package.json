@@ -21,7 +21,7 @@
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "bun test test/local-file-path.test.ts",
     "test:browser-entry": "node scripts/browser-entry.mjs",
-    "test:e2e": "node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
+    "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",
     "bump:major": "node scripts/bump-version.mjs major",
