@@ -758,12 +758,115 @@ export default function SessionView(props: SessionViewProps) {
     return out;
   });
 
-  const resolveArtifactLocalPath = async (file: string) => {
+  const resolveLocalFileCandidates = async (file: string) => {
     const trimmed = file.trim();
-    if (!trimmed) return null;
+    if (!trimmed) return [];
+    if (isAbsolutePath(trimmed)) return [trimmed];
+
     const root = props.activeWorkspaceRoot.trim();
-    if (!isAbsolutePath(trimmed) && !root) return null;
-    return !isAbsolutePath(trimmed) && root ? await join(root, trimmed) : trimmed;
+    if (!root) return [];
+
+    const normalized = trimmed.replace(/[\\/]+/g, "/").replace(/^\.\/+/, "").replace(/\/+$/, "");
+    const candidates: string[] = [];
+    const seen = new Set<string>();
+
+    const pushCandidate = (value: string) => {
+      const key = value.trim().replace(/[\\/]+/g, "/").toLowerCase();
+      if (!key || seen.has(key)) return;
+      seen.add(key);
+      candidates.push(value);
+    };
+
+    pushCandidate(await join(root, normalized));
+
+    if (normalized.startsWith(".opencode/openwork/outbox/")) {
+      pushCandidate(await join(root, normalized));
+      return candidates;
+    }
+
+    if (normalized.startsWith("openwork/outbox/")) {
+      const suffix = normalized.slice("openwork/outbox/".length);
+      if (suffix) {
+        pushCandidate(await join(root, ".opencode", "openwork", "outbox", suffix));
+      }
+      return candidates;
+    }
+
+    if (normalized.startsWith("outbox/")) {
+      const suffix = normalized.slice("outbox/".length);
+      if (suffix) {
+        pushCandidate(await join(root, ".opencode", "openwork", "outbox", suffix));
+      }
+      return candidates;
+    }
+
+    if (!normalized.startsWith(".opencode/")) {
+      pushCandidate(await join(root, ".opencode", "openwork", "outbox", normalized));
+    }
+
+    return candidates;
+  };
+
+  const runLocalFileAction = async (
+    file: string,
+    mode: "open" | "reveal" | "obsidian",
+    action: (candidate: string) => Promise<void>,
+  ) => {
+    const candidates = await resolveLocalFileCandidates(file);
+    if (!candidates.length) {
+      return { ok: false as const, reason: "missing-root" as const };
+    }
+
+    let lastError: unknown = null;
+    for (let index = 0; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      const startedAt = perfNow();
+      try {
+        recordPerfLog(props.developerMode, "session.file-open", "attempt", {
+          mode,
+          input: file,
+          target: candidate,
+          candidateIndex: index,
+          candidateCount: candidates.length,
+        });
+        await action(candidate);
+        finishPerf(props.developerMode, "session.file-open", "success", startedAt, {
+          mode,
+          input: file,
+          target: candidate,
+          candidateIndex: index,
+          candidateCount: candidates.length,
+        });
+        return { ok: true as const, path: candidate };
+      } catch (error) {
+        lastError = error;
+        console.warn("[session.file-open] candidate failed", {
+          mode,
+          input: file,
+          target: candidate,
+          candidateIndex: index,
+          candidateCount: candidates.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        finishPerf(props.developerMode, "session.file-open", "candidate-failed", startedAt, {
+          mode,
+          input: file,
+          target: candidate,
+          candidateIndex: index,
+          candidateCount: candidates.length,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const suffix =
+      candidates.length > 1
+        ? ` (tried ${candidates.length} paths: workspace root and outbox fallbacks)`
+        : "";
+    return {
+      ok: false as const,
+      reason: `${lastError instanceof Error ? lastError.message : "File open failed"}${suffix}`,
+    };
   };
 
   const toWorkerRelativeArtifactPath = (file: string) => {
@@ -852,16 +955,21 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
     try {
-      const target = await resolveArtifactLocalPath(file);
-      if (!target) {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      const result = await runLocalFileAction(file, "reveal", async (candidate) => {
+        if (isWindowsPlatform()) {
+          await openPath(candidate);
+          return;
+        }
+        await revealItemInDir(candidate);
+      });
+      if (!result.ok && result.reason === "missing-root") {
         setToastMessage("Pick a worker to reveal files.");
         return;
       }
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      if (isWindowsPlatform()) {
-        await openPath(target);
-      } else {
-        await revealItemInDir(target);
+      if (!result.ok) {
+        setToastMessage(result.reason);
+        return;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to reveal file";
@@ -885,18 +993,18 @@ export default function SessionView(props: SessionViewProps) {
 
     try {
       if (preferLocalOpen) {
-        const target = await resolveArtifactLocalPath(file);
-        if (target) {
-          try {
-            await openInObsidian(target);
-            return;
-          } catch (error) {
-            if (!isRemoteWorkspace) {
-              throw error;
-            }
-          }
-        } else if (!isRemoteWorkspace) {
+        const localResult = await runLocalFileAction(file, "obsidian", async (candidate) => {
+          await openInObsidian(candidate);
+        });
+        if (localResult.ok) {
+          return;
+        }
+        if (localResult.reason === "missing-root" && !isRemoteWorkspace) {
           setToastMessage("Pick a worker to open files.");
+          return;
+        }
+        if (!isRemoteWorkspace) {
+          setToastMessage(localResult.reason);
           return;
         }
       }
@@ -1053,13 +1161,17 @@ export default function SessionView(props: SessionViewProps) {
 
     try {
       const { openPath } = await import("@tauri-apps/plugin-opener");
-      const root = props.activeWorkspaceRoot.trim();
-      if (!isAbsolutePath(trimmed) && !root) {
+      const result = await runLocalFileAction(trimmed, "open", async (candidate) => {
+        await openPath(candidate);
+      });
+      if (!result.ok && result.reason === "missing-root") {
         setToastMessage("Pick a worker to open files.");
         return;
       }
-      const target = !isAbsolutePath(trimmed) && root ? await join(root, trimmed) : trimmed;
-      await openPath(target);
+      if (!result.ok) {
+        setToastMessage(result.reason);
+        return;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to open file";
       setToastMessage(message);

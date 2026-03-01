@@ -291,24 +291,39 @@ pub fn obsidian_is_available() -> bool {
 #[tauri::command]
 pub fn open_in_obsidian(file_path: String) -> Result<(), String> {
     let trimmed = file_path.trim();
+    println!("[misc][obsidian] open request path={trimmed}");
     if trimmed.is_empty() {
+        println!("[misc][obsidian] rejected: empty path");
         return Err("file_path is required".to_string());
     }
 
     let path = PathBuf::from(trimmed);
     if !path.is_absolute() {
+        println!(
+            "[misc][obsidian] rejected: non-absolute path={}",
+            path.display()
+        );
         return Err("file_path must be an absolute path".to_string());
     }
     if !path.exists() {
+        println!(
+            "[misc][obsidian] missing path={} cwd={}",
+            path.display(),
+            std::env::current_dir()
+                .map(|dir| dir.display().to_string())
+                .unwrap_or_else(|_| "(unknown)".to_string())
+        );
         return Err(format!("File does not exist: {}", path.display()));
     }
 
     #[cfg(target_os = "macos")]
     {
         if !obsidian_is_available() {
+            println!("[misc][obsidian] rejected: app not installed");
             return Err("Obsidian is not installed.".to_string());
         }
 
+        println!("[misc][obsidian] launching path={}", path.display());
         let status = std::process::Command::new("open")
             .arg("-a")
             .arg("Obsidian")
@@ -316,8 +331,13 @@ pub fn open_in_obsidian(file_path: String) -> Result<(), String> {
             .status()
             .map_err(|e| format!("Failed to launch Obsidian: {e}"))?;
         if status.success() {
+            println!("[misc][obsidian] launch success path={}", path.display());
             return Ok(());
         }
+        println!(
+            "[misc][obsidian] launch failed path={} status={status}",
+            path.display()
+        );
         return Err(format!(
             "Failed to launch Obsidian (exit status: {status})."
         ));
@@ -325,6 +345,10 @@ pub fn open_in_obsidian(file_path: String) -> Result<(), String> {
 
     #[cfg(not(target_os = "macos"))]
     {
+        println!(
+            "[misc][obsidian] unsupported platform request path={}",
+            path.display()
+        );
         Err("Open in Obsidian is currently supported on macOS only.".to_string())
     }
 }
