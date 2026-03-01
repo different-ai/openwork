@@ -758,8 +758,31 @@ export default function SessionView(props: SessionViewProps) {
     return out;
   });
 
+  const normalizeLocalFilePath = (value: string) => {
+    const trimmed = value.trim();
+    if (!/^file:\/\//i.test(trimmed)) return trimmed;
+
+    try {
+      const parsed = new URL(trimmed);
+      if (parsed.protocol !== "file:") return trimmed;
+
+      const pathname = decodeURIComponent(parsed.pathname || "");
+      if (!pathname) return trimmed;
+      if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1);
+      if (parsed.hostname && parsed.hostname.toLowerCase() !== "localhost") {
+        return `//${parsed.hostname}${pathname}`;
+      }
+      return pathname;
+    } catch {
+      const decoded = decodeURIComponent(trimmed.replace(/^file:\/\//i, ""));
+      if (!decoded) return trimmed;
+      if (/^\/[A-Za-z]:\//.test(decoded)) return decoded.slice(1);
+      return decoded;
+    }
+  };
+
   const resolveLocalFileCandidates = async (file: string) => {
-    const trimmed = file.trim();
+    const trimmed = normalizeLocalFilePath(file).trim();
     if (!trimmed) return [];
     if (isAbsolutePath(trimmed)) return [trimmed];
 
@@ -780,7 +803,6 @@ export default function SessionView(props: SessionViewProps) {
     pushCandidate(await join(root, normalized));
 
     if (normalized.startsWith(".opencode/openwork/outbox/")) {
-      pushCandidate(await join(root, normalized));
       return candidates;
     }
 
