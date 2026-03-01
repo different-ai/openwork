@@ -60,6 +60,12 @@ const sortSessionsByActivity = (list: Session[]) =>
       return a.id.localeCompare(b.id);
     });
 
+const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
+  /^\s*continue if you have next steps,\s*or stop and ask for clarification if you are unsure how to proceed\.?\s*$/i;
+const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
+const COMPACTION_LOOP_WARN_THRESHOLD = 3;
+const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
   sessionID: part.sessionID,
@@ -150,6 +156,8 @@ export function createSessionStore(options: {
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
+  const syntheticContinueEventTimesBySession = new Map<string, number[]>();
+  const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -359,6 +367,52 @@ export function createSessionStore(options: {
     const tool = typeof record.tool === "string" && record.tool.trim() ? record.tool.trim() : "(unknown tool)";
     const hint = invalidToolNextStepHint(part);
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
+  };
+
+  const isSyntheticContinueControlPart = (part: Part) => {
+    if (part.type !== "text") return false;
+    const record = part as Part & { text?: unknown; synthetic?: unknown; ignored?: unknown };
+    if (record.synthetic !== true) return false;
+    if (record.ignored === true) return false;
+    const text = typeof record.text === "string" ? record.text.trim() : "";
+    if (!text) return false;
+    return SYNTHETIC_CONTINUE_CONTROL_PATTERN.test(text);
+  };
+
+  const recordSyntheticContinueDiagnostic = (part: Part) => {
+    if (!isSyntheticContinueControlPart(part)) return;
+    const sessionID = part.sessionID;
+    const now = Date.now();
+    const windowStart = now - COMPACTION_DIAGNOSTIC_WINDOW_MS;
+    const previous = syntheticContinueEventTimesBySession.get(sessionID) ?? [];
+    const next = previous.filter((timestamp) => timestamp >= windowStart);
+    next.push(now);
+    syntheticContinueEventTimesBySession.set(sessionID, next);
+
+    const countInWindow = next.length;
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue", {
+      sessionID,
+      messageID: part.messageID,
+      partID: part.id,
+      countPerMinute: countInWindow,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+
+    if (countInWindow < COMPACTION_LOOP_WARN_THRESHOLD) return;
+
+    const lastWarnAt = syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
+    if (now - lastWarnAt < COMPACTION_LOOP_WARN_MIN_INTERVAL_MS) return;
+    syntheticContinueLoopLastWarnAtBySession.set(sessionID, now);
+    sessionDebug("compaction:synthetic-continue-loop", {
+      sessionID,
+      countPerMinute: countInWindow,
+    });
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue-loop-suspected", {
+      sessionID,
+      countPerMinute: countInWindow,
+      threshold: COMPACTION_LOOP_WARN_THRESHOLD,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
   };
 
   const addError = (error: unknown, fallback = "Unknown error") => {
@@ -893,6 +947,8 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const info = record.info as Session | undefined;
         if (info?.id) {
+          syntheticContinueEventTimesBySession.delete(info.id);
+          syntheticContinueLoopLastWarnAtBySession.delete(info.id);
           setStore("sessions", (current) => removeSession(current, info.id));
         }
       }
@@ -1022,6 +1078,10 @@ export function createSessionStore(options: {
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          const resolvedPart =
+            store.parts[part.messageID]?.find((item) => item.id === part.id) ??
+            part;
+          recordSyntheticContinueDiagnostic(resolvedPart);
           const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
             const textLength =
