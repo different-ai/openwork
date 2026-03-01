@@ -10,6 +10,7 @@ description: "What opencode-router is and when to use it"
 - Routes messages using `(channel, identity, peer) -> directory` bindings.
 - Lets teams interact with workers from Slack or Telegram.
 - Keeps chat surfaces mapped to the correct workspace.
+- Handles text, files, images, and audio as first-class message parts.
 
 ## Quick start
 
@@ -38,6 +39,7 @@ opencode-router telegram list
 opencode-router slack list
 opencode-router bindings list
 opencode-router bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
+opencode-router send --channel slack --identity default --to D123 --file ./report.pdf
 ```
 
 ## In OpenWork UI

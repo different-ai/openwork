@@ -75,6 +75,8 @@ Slack support uses Socket Mode and replies in threads when @mentioned in channel
    - `chat:write`
    - `app_mentions:read`
    - `im:history`
+   - `files:read`
+   - `files:write`
 4) Subscribe to events (bot events):
    - `app_mention`
    - `message.im`
@@ -115,6 +117,33 @@ curl -sS "http://127.0.0.1:${OPENCODE_ROUTER_HEALTH_PORT:-3005}/send" \
   -d '{"channel":"telegram","directory":"/path/to/workdir","text":"hello"}'
 ```
 
+Send text + media in one request:
+
+```bash
+curl -sS "http://127.0.0.1:${OPENCODE_ROUTER_HEALTH_PORT:-3005}/send" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "channel":"slack",
+    "peerId":"D12345678",
+    "text":"Here is the export",
+    "parts":[
+      {"type":"file","filePath":"./artifacts/report.pdf"},
+      {"type":"image","filePath":"./artifacts/plot.png","caption":"latest trend"}
+    ]
+  }'
+```
+
+Supported media part types:
+- `image`
+- `audio`
+- `file`
+
+Each media part accepts:
+- `filePath` (absolute path, or relative to the send directory/workspace root)
+- optional `caption`
+- optional `filename`
+- optional `mimeType`
+
 ## Commands
 
 ```bash
@@ -129,6 +158,10 @@ opencode-router slack add <xoxb> <xapp> --id default
 
 opencode-router bindings list
 opencode-router bindings set --channel telegram --identity default --peer <chatId> --dir /path/to/workdir
+
+opencode-router send --channel telegram --identity default --to <chatId> --message "hello"
+opencode-router send --channel telegram --identity default --to <chatId> --image ./plot.png --caption "plot"
+opencode-router send --channel slack --identity default --to D123 --file ./report.pdf
 ```
 
 ## Defaults

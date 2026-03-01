@@ -2,6 +2,8 @@ import http from "node:http";
 
 import type { Logger } from "pino";
 
+import type { OutboundMessagePart, PartDeliveryResult } from "./media.js";
+
 export type HealthSnapshot = {
   ok: boolean;
   opencode: {
@@ -112,7 +114,8 @@ export type SendMessageInput = {
   directory?: string;
   peerId?: string;
   autoBind?: boolean;
-  text: string;
+  text?: string;
+  parts?: OutboundMessagePart[];
 };
 
 export type SendMessageResult = {
@@ -123,6 +126,13 @@ export type SendMessageResult = {
   attempted: number;
   sent: number;
   failures?: Array<{ identityId: string; peerId: string; error: string }>;
+  targets?: Array<{
+    identityId: string;
+    peerId: string;
+    attemptedParts: number;
+    sentParts: number;
+    partResults: PartDeliveryResult[];
+  }>;
   reason?: string;
 };
 
@@ -606,9 +616,17 @@ export async function startHealthServer(
           const peerId = typeof payload.peerId === "string" ? payload.peerId.trim() : "";
           const autoBind = payload.autoBind === true;
           const text = typeof payload.text === "string" ? payload.text : "";
-          if (!channel || !text.trim() || (!directory && !peerId)) {
+          const parts = Array.isArray(payload.parts) ? (payload.parts as OutboundMessagePart[]) : undefined;
+          const hasText = text.trim().length > 0;
+          const hasParts = Array.isArray(parts) && parts.length > 0;
+          if (!channel || (!hasText && !hasParts) || (!directory && !peerId)) {
             res.writeHead(400, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({ ok: false, error: "channel, text, and either directory or peerId are required" }));
+            res.end(
+              JSON.stringify({
+                ok: false,
+                error: "channel, at least one of text/parts, and either directory or peerId are required",
+              }),
+            );
             return;
           }
 
@@ -618,7 +636,8 @@ export async function startHealthServer(
             ...(directory ? { directory } : {}),
             ...(peerId ? { peerId } : {}),
             ...(autoBind ? { autoBind: true } : {}),
-            text,
+            ...(hasText ? { text } : {}),
+            ...(hasParts ? { parts } : {}),
           });
           res.writeHead(200, { "Content-Type": "application/json" });
           res.end(JSON.stringify({ ok: true, ...result }));

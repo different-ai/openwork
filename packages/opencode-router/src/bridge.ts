@@ -9,8 +9,11 @@ import type { Logger } from "pino";
 import type { Config, ChannelName, OpenCodeRouterConfigFile } from "./config.js";
 import { readConfigFile, writeConfigFile } from "./config.js";
 import { BridgeStore } from "./db.js";
+import { classifyDeliveryError } from "./delivery.js";
 import { normalizeEvent } from "./events.js";
 import { startHealthServer, type HealthSnapshot } from "./health.js";
+import { type InboundMessagePart, type MessageDeliveryResult, type OutboundMessagePart, normalizeOutboundParts, summarizeInboundPartsForPrompt, summarizeInboundPartsForReporter, textFromInboundParts } from "./media.js";
+import { MediaStore } from "./media-store.js";
 import { buildPermissionRules, createClient } from "./opencode.js";
 import { chunkText, formatInputSummary, truncateText } from "./text.js";
 import { createSlackAdapter } from "./slack.js";
@@ -23,6 +26,7 @@ type Adapter = {
   maxTextLength: number;
   start(): Promise<void>;
   stop(): Promise<void>;
+  sendMessage?: (peerId: string, message: { parts: OutboundMessagePart[] }) => Promise<MessageDeliveryResult>;
   sendText(peerId: string, text: string): Promise<void>;
   sendFile?: (peerId: string, filePath: string, caption?: string) => Promise<void>;
   sendTyping?: (peerId: string) => Promise<void>;
@@ -94,8 +98,17 @@ type InboundMessage = {
   identityId: string;
   peerId: string;
   text: string;
+  parts?: InboundMessagePart[];
   raw: unknown;
   fromMe?: boolean;
+};
+
+type SendTargetDelivery = {
+  identityId: string;
+  peerId: string;
+  attemptedParts: number;
+  sentParts: number;
+  partResults: MessageDeliveryResult["partResults"];
 };
 
 type ModelRef = {
@@ -236,6 +249,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   const clients = new Map<string, ReturnType<typeof createClient>>();
   const defaultDirectory = config.opencodeDirectory;
   const workspaceRoot = resolve(defaultDirectory || process.cwd());
+  const mediaStore = new MediaStore(join(workspaceRoot, ".opencode-router", "media"));
+  await mediaStore.ensureReady();
   const workspaceAgentFilePath = join(workspaceRoot, OPENCODE_ROUTER_AGENT_FILE_RELATIVE_PATH);
   const agentPromptCache = new Map<string, { mtimeMs: number; config: MessagingAgentConfig }>();
   let latestAgentConfig: MessagingAgentConfig = {
@@ -401,7 +416,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     for (const bot of enabledTelegram) {
       const key = adapterKey("telegram", bot.id);
       logger.debug({ identityId: bot.id }, "telegram adapter enabled");
-      const base = createTelegramAdapter(bot, config, logger, handleInbound);
+      const base = createTelegramAdapter(bot, config, logger, handleInbound, mediaStore);
       adapters.set(key, { ...base, key });
     }
 
@@ -413,7 +428,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     for (const app of enabledSlack) {
       const key = adapterKey("slack", app.id);
       logger.debug({ identityId: app.id }, "slack adapter enabled");
-      const base = createSlackAdapter(app, config, logger, handleInbound);
+      const base = createSlackAdapter(app, config, logger, handleInbound, undefined, mediaStore);
       adapters.set(key, { ...base, key });
     }
   }
@@ -584,6 +599,139 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
   };
 
   await loadMessagingAgentConfig();
+
+  const outboundMediaMaxBytesRaw = Number.parseInt(process.env.OPENCODE_ROUTER_MAX_MEDIA_BYTES ?? "", 10);
+  const outboundMediaMaxBytes =
+    Number.isFinite(outboundMediaMaxBytesRaw) && outboundMediaMaxBytesRaw > 0
+      ? outboundMediaMaxBytesRaw
+      : 50 * 1024 * 1024;
+
+  const resolveOutboundParts = async (
+    baseDirectory: string,
+    input: { text?: string; parts?: unknown },
+  ): Promise<OutboundMessagePart[]> => {
+    const normalized = normalizeOutboundParts(input);
+    if (normalized.length === 0) {
+      const error = new Error("text or parts is required") as Error & { status?: number };
+      error.status = 400;
+      throw error;
+    }
+
+    const resolved: OutboundMessagePart[] = [];
+    for (const part of normalized) {
+      if (part.type === "text") {
+        resolved.push(part);
+        continue;
+      }
+
+      const file = await mediaStore.resolveOutboundFile({
+        filePath: part.filePath,
+        baseDirectory,
+        maxBytes: outboundMediaMaxBytes,
+      });
+      resolved.push({
+        ...part,
+        filePath: file.filePath,
+        ...(part.filename ? {} : { filename: file.filename }),
+      });
+    }
+
+    return resolved;
+  };
+
+  const deliverParts = async (
+    channel: ChannelName,
+    identityId: string,
+    peerId: string,
+    parts: OutboundMessagePart[],
+    options: { kind?: OutboundKind; display?: boolean } = {},
+  ): Promise<MessageDeliveryResult> => {
+    const adapter = adapters.get(adapterKey(channel, identityId));
+    if (!adapter) {
+      return {
+        attemptedParts: parts.length,
+        sentParts: 0,
+        partResults: parts.map((part, index) => ({
+          index,
+          type: part.type,
+          sent: false,
+          error: "Adapter not running",
+          code: "not_found",
+          retryable: false,
+        })),
+      };
+    }
+
+    const kind = options.kind ?? "system";
+    if (options.display !== false) {
+      for (const part of parts) {
+        const preview =
+          part.type === "text"
+            ? truncateText(part.text, 240)
+            : `[${part.type}] ${part.filename || part.filePath}`;
+        reporter?.onOutbound?.({ channel, identityId, peerId, text: preview, kind });
+      }
+    }
+
+    recordOutboundActivity(Date.now());
+
+    if (adapter.sendMessage) {
+      try {
+        return await adapter.sendMessage(peerId, { parts });
+      } catch (error) {
+        const classified = classifyDeliveryError(error);
+        return {
+          attemptedParts: parts.length,
+          sentParts: 0,
+          partResults: parts.map((part, index) => ({
+            index,
+            type: part.type,
+            sent: false,
+            error: classified.message,
+            code: classified.code,
+            retryable: classified.retryable,
+          })),
+        };
+      }
+    }
+
+    const partResults: MessageDeliveryResult["partResults"] = [];
+    let sentParts = 0;
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      try {
+        if (part.type === "text") {
+          const chunks = chunkText(part.text, adapter.maxTextLength);
+          for (const chunk of chunks) {
+            await adapter.sendText(peerId, chunk);
+          }
+        } else if (adapter.sendFile) {
+          await adapter.sendFile(peerId, part.filePath, part.caption);
+        } else {
+          throw new Error(`Adapter does not support ${part.type} media`);
+        }
+
+        sentParts += 1;
+        partResults.push({ index, type: part.type, sent: true });
+      } catch (error) {
+        const classified = classifyDeliveryError(error);
+        partResults.push({
+          index,
+          type: part.type,
+          sent: false,
+          error: classified.message,
+          code: classified.code,
+          retryable: classified.retryable,
+        });
+      }
+    }
+
+    return {
+      attemptedParts: parts.length,
+      sentParts,
+      partResults,
+    };
+  };
 
   let stopHealthServer: (() => void) | null = null;
   if (!deps.disableHealthServer && config.healthPort) {
@@ -818,6 +966,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             config,
             logger,
             handleInbound,
+            mediaStore,
           );
           const adapter = { ...base, key };
           adapters.set(key, adapter);
@@ -1007,6 +1156,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             config,
             logger,
             handleInbound,
+            undefined,
+            mediaStore,
           );
           const adapter = { ...base, key };
           adapters.set(key, adapter);
@@ -1142,7 +1293,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           identityId?: string;
           directory?: string;
           peerId?: string;
-          text: string;
+          text?: string;
+          parts?: OutboundMessagePart[];
           autoBind?: boolean;
         }) => {
           const channelRaw = input.channel.trim().toLowerCase();
@@ -1154,10 +1306,6 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           const directoryInput = (input.directory ?? "").trim();
           const peerId = (input.peerId ?? "").trim();
           const autoBind = input.autoBind === true;
-          const text = input.text ?? "";
-          if (!text.trim()) {
-            throw new Error("text is required");
-          }
 
           if (!directoryInput && !peerId) {
             throw new Error("directory or peerId is required");
@@ -1175,6 +1323,38 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             return scoped.directory;
           })() : "";
+
+          const baseDirectory = normalizedDir || workspaceRoot;
+          const outboundParts = await resolveOutboundParts(baseDirectory, {
+            text: input.text,
+            parts: input.parts,
+          });
+
+          const makeTargetError = (
+            targetIdentityId: string,
+            targetPeerId: string,
+            errorMessage: string,
+            errorCode = "not_found",
+          ): SendTargetDelivery => ({
+            identityId: targetIdentityId,
+            peerId: targetPeerId,
+            attemptedParts: outboundParts.length,
+            sentParts: 0,
+            partResults: outboundParts.map((part, index) => ({
+              index,
+              type: part.type,
+              sent: false,
+              error: errorMessage,
+              code: errorCode,
+              retryable: false,
+            })),
+          });
+
+          const deliveryFailed = (delivery: MessageDeliveryResult) =>
+            delivery.attemptedParts > 0 && delivery.sentParts < delivery.attemptedParts;
+
+          const primaryFailureMessage = (delivery: MessageDeliveryResult) =>
+            delivery.partResults.find((part) => !part.sent)?.error || "Delivery failed";
 
           const resolveSendIdentityId = () => {
             if (identityId) return identityId;
@@ -1199,12 +1379,14 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               attempted: 0,
               sent: 0,
               reason: `No ${channel} adapter is running for direct send`,
+              targets: [],
             };
           }
 
           if (peerId && targetIdentityId) {
             const adapter = adapters.get(adapterKey(channel, targetIdentityId));
             if (!adapter) {
+              const target = makeTargetError(targetIdentityId, peerId, "Adapter not running");
               return {
                 channel,
                 directory: normalizedDir || workspaceRootNormalized,
@@ -1213,6 +1395,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
                 attempted: 1,
                 sent: 0,
                 failures: [{ identityId: targetIdentityId, peerId, error: "Adapter not running" }],
+                targets: [target],
               };
             }
 
@@ -1222,31 +1405,39 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               ensureEventSubscription(normalizedDir);
             }
 
-            try {
-              await sendText(channel, targetIdentityId, peerId, text, { kind: "system", display: false });
-              return {
-                channel,
-                directory: normalizedDir || workspaceRootNormalized,
-                identityId: targetIdentityId,
-                peerId,
-                attempted: 1,
-                sent: 1,
-              };
-            } catch (error) {
-              return {
-                channel,
-                directory: normalizedDir || workspaceRootNormalized,
-                identityId: targetIdentityId,
-                peerId,
-                attempted: 1,
-                sent: 0,
-                failures: [{
+            const delivery = await deliverParts(channel, targetIdentityId, peerId, outboundParts, {
+              kind: "system",
+              display: false,
+            });
+            const failed = deliveryFailed(delivery);
+            return {
+              channel,
+              directory: normalizedDir || workspaceRootNormalized,
+              identityId: targetIdentityId,
+              peerId,
+              attempted: 1,
+              sent: failed ? 0 : 1,
+              ...(failed
+                ? {
+                    failures: [
+                      {
+                        identityId: targetIdentityId,
+                        peerId,
+                        error: primaryFailureMessage(delivery),
+                      },
+                    ],
+                  }
+                : {}),
+              targets: [
+                {
                   identityId: targetIdentityId,
                   peerId,
-                  error: error instanceof Error ? error.message : String(error),
-                }],
-              };
-            }
+                  attemptedParts: delivery.attemptedParts,
+                  sentParts: delivery.sentParts,
+                  partResults: delivery.partResults,
+                },
+              ],
+            };
           }
 
           const bindings = store.listBindings({
@@ -1262,10 +1453,12 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               attempted: 0,
               sent: 0,
               reason: `No bound conversations for ${channel}${identityId ? `/${identityId}` : ""} at directory ${normalizedDir}`,
+              targets: [],
             };
           }
 
           const failures: Array<{ identityId: string; peerId: string; error: string }> = [];
+          const targets: SendTargetDelivery[] = [];
           let attempted = 0;
           let sent = 0;
           for (const binding of bindings) {
@@ -1273,6 +1466,13 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             if (channel === "telegram" && !isTelegramPeerId(binding.peer_id)) {
               store.deleteBinding(channel, binding.identity_id, binding.peer_id);
               store.deleteSession(channel, binding.identity_id, binding.peer_id);
+              const target = makeTargetError(
+                binding.identity_id,
+                binding.peer_id,
+                "Invalid Telegram peerId binding removed (expected numeric chat_id)",
+                "invalid_target",
+              );
+              targets.push(target);
               failures.push({
                 identityId: binding.identity_id,
                 peerId: binding.peer_id,
@@ -1282,6 +1482,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             }
             const adapter = adapters.get(adapterKey(channel, binding.identity_id));
             if (!adapter) {
+              const target = makeTargetError(binding.identity_id, binding.peer_id, "Adapter not running");
+              targets.push(target);
               failures.push({
                 identityId: binding.identity_id,
                 peerId: binding.peer_id,
@@ -1289,15 +1491,25 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
               });
               continue;
             }
-            try {
-              await sendText(channel, binding.identity_id, binding.peer_id, text, { kind: "system", display: false });
-              sent += 1;
-            } catch (error) {
+            const delivery = await deliverParts(channel, binding.identity_id, binding.peer_id, outboundParts, {
+              kind: "system",
+              display: false,
+            });
+            targets.push({
+              identityId: binding.identity_id,
+              peerId: binding.peer_id,
+              attemptedParts: delivery.attemptedParts,
+              sentParts: delivery.sentParts,
+              partResults: delivery.partResults,
+            });
+            if (deliveryFailed(delivery)) {
               failures.push({
                 identityId: binding.identity_id,
                 peerId: binding.peer_id,
-                error: error instanceof Error ? error.message : String(error),
+                error: primaryFailureMessage(delivery),
               });
+            } else {
+              sent += 1;
             }
           }
 
@@ -1308,6 +1520,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
             attempted,
             sent,
             ...(failures.length ? { failures } : {}),
+            targets,
           };
         },
       },
@@ -1435,28 +1648,14 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     text: string,
     options: { kind?: OutboundKind; display?: boolean } = {},
   ) {
-    const adapter = adapters.get(adapterKey(channel, identityId));
-    if (!adapter) return;
-    recordOutboundActivity(Date.now());
-    const kind = options.kind ?? "system";
-    logger.debug({ channel, identityId, peerId, kind, length: text.length }, "sendText requested");
-    if (options.display !== false) {
-      reporter?.onOutbound?.({ channel, identityId, peerId, text, kind });
-    }
-
-    // CHECK IF IT'S A FILE COMMAND
-    if (text.startsWith("FILE:")) {
-      const filePath = text.substring(5).trim();
-      if (adapter.sendFile) {
-        await adapter.sendFile(peerId, filePath);
-        return; // Stop here, don't send text
-      }
-    }
-
-    const chunks = chunkText(text, adapter.maxTextLength);
-    for (const chunk of chunks) {
-      logger.info({ channel, peerId, length: chunk.length }, "sending message");
-      await adapter.sendText(peerId, chunk);
+    const parts: OutboundMessagePart[] =
+      text.startsWith("FILE:") && text.substring(5).trim()
+        ? [{ type: "file", filePath: text.substring(5).trim() }]
+        : [{ type: "text", text }];
+    const delivery = await deliverParts(channel, identityId, peerId, parts, options);
+    if (delivery.sentParts < delivery.attemptedParts) {
+      const message = delivery.partResults.find((part) => !part.sent)?.error || "Failed to send message";
+      throw new Error(message);
     }
   }
 
@@ -1550,20 +1749,33 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
     const adapter = adapters.get(adapterKey(message.channel, message.identityId));
     if (!adapter) return;
     recordInboundActivity(Date.now());
-    let inbound = message;
+    const normalizedParts: InboundMessagePart[] =
+      Array.isArray(message.parts) && message.parts.length
+        ? message.parts
+        : message.text.trim()
+          ? [{ type: "text", text: message.text }]
+          : [];
+    const inboundText = textFromInboundParts(normalizedParts, message.text).trim();
+    let inbound: InboundMessage = {
+      ...message,
+      text: inboundText,
+      ...(normalizedParts.length ? { parts: normalizedParts } : {}),
+    };
+    const reporterInboundText =
+      inbound.text || summarizeInboundPartsForReporter(inbound.parts) || "[empty message]";
     logger.debug(
       {
         channel: inbound.channel,
         identityId: inbound.identityId,
         peerId: inbound.peerId,
         fromMe: inbound.fromMe,
-        length: inbound.text.length,
-        preview: truncateText(inbound.text.trim(), 120),
+        length: reporterInboundText.length,
+        preview: truncateText(reporterInboundText.trim(), 120),
       },
       "inbound received",
     );
     logger.info(
-      { channel: inbound.channel, identityId: inbound.identityId, peerId: inbound.peerId, length: inbound.text.length },
+      { channel: inbound.channel, identityId: inbound.identityId, peerId: inbound.peerId, length: reporterInboundText.length },
       "received message",
     );
     const peerKey = inbound.peerId;
@@ -1601,7 +1813,7 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       channel: inbound.channel,
       identityId: inbound.identityId,
       peerId: inbound.peerId,
-      text: inbound.text,
+      text: reporterInboundText,
       fromMe: inbound.fromMe,
     });
 
@@ -1682,6 +1894,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           .map((value) => value.trim())
           .filter(Boolean)
           .join("\n\n");
+        const attachmentSummary = summarizeInboundPartsForPrompt(inbound.parts);
+        const incomingText = inbound.text || "(no text; user sent media)";
         const promptText = [
           "You are handling a Slack/Telegram message via OpenWork.",
           `Workspace agent file: ${messagingAgent.filePath}`,
@@ -1690,7 +1904,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
           effectiveInstructions,
           "",
           "Incoming user message:",
-          inbound.text,
+          incomingText,
+          ...(attachmentSummary.length ? ["", "Incoming attachments:", ...attachmentSummary] : []),
         ].join("\n");
         logger.debug(
           {
@@ -2018,7 +2233,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
       channel: ChannelName;
       identityId?: string;
       peerId: string;
-      text: string;
+      text?: string;
+      parts?: InboundMessagePart[];
       raw?: unknown;
       fromMe?: boolean;
     }) {
@@ -2027,7 +2243,8 @@ export async function startBridge(config: Config, logger: Logger, reporter?: Bri
         channel: message.channel,
         identityId,
         peerId: message.peerId,
-        text: message.text,
+        text: message.text ?? "",
+        ...(Array.isArray(message.parts) ? { parts: message.parts } : {}),
         raw: message.raw ?? null,
         fromMe: message.fromMe,
       });
