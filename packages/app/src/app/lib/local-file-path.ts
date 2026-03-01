@@ -1,4 +1,4 @@
-const FILE_URI_PREFIX_RE = /^file:\/\//i;
+const FILE_URI_PREFIX_RE = /^file:(?:\/\/)?/i;
 const WINDOWS_DRIVE_URI_PATH_RE = /^\/[A-Za-z]:\//;
 
 const safeDecodeURIComponent = (value: string) => {

@@ -10,6 +10,10 @@ describe("normalizeLocalFilePath", () => {
     expect(normalizeLocalFilePath("file:///tmp/notes.md")).toBe("/tmp/notes.md");
   });
 
+  test("normalizes single-slash posix file uri", () => {
+    expect(normalizeLocalFilePath("file:/tmp/notes.md")).toBe("/tmp/notes.md");
+  });
+
   test("normalizes windows drive file uri", () => {
     expect(normalizeLocalFilePath("file:///C:/Users/xj/note.md")).toBe("C:/Users/xj/note.md");
   });
