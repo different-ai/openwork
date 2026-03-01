@@ -77,6 +77,7 @@ import type {
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 import { join } from "@tauri-apps/api/path";
 import {
+  isUserVisiblePart,
   isTauriRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
@@ -448,6 +449,9 @@ export default function SessionView(props: SessionViewProps) {
     };
 
     for (const part of message.parts) {
+      if (!isUserVisiblePart(part)) {
+        continue;
+      }
       if (part.type === "text") {
         const text = (part as { text?: string }).text ?? "";
         push(text);

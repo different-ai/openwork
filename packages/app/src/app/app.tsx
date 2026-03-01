@@ -99,6 +99,7 @@ import {
   formatModelRef,
   formatRelativeTime,
   groupMessageParts,
+  isVisibleTextPart,
   isTauriRuntime,
   modelEquals,
   normalizeDirectoryPath,
@@ -1597,7 +1598,7 @@ export default function App() {
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
     const text = message.parts
-      .filter((part) => part.type === "text")
+      .filter(isVisibleTextPart)
       .map((part) => String((part as { text?: string }).text ?? ""))
       .join("");
     setPrompt(text);

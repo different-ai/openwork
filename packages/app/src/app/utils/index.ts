@@ -497,6 +497,15 @@ export function isStepPart(part: Part) {
   return part.type === "reasoning" || part.type === "tool";
 }
 
+export function isUserVisiblePart(part: Part) {
+  const flags = part as { synthetic?: boolean; ignored?: boolean };
+  return !flags.synthetic && !flags.ignored;
+}
+
+export function isVisibleTextPart(part: Part) {
+  return part.type === "text" && isUserVisiblePart(part);
+}
+
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
 
 function isExplorationToolPart(part: Part) {
@@ -542,6 +551,9 @@ export function groupMessageParts(parts: Part[], messageId: string): MessageGrou
 
   parts.forEach((part) => {
     if (part.type === "text") {
+      if (!isVisibleTextPart(part)) {
+        return;
+      }
       flushExplorationSteps();
       textBuffer += (part as { text?: string }).text ?? "";
       return;

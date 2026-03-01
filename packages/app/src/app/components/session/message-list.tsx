@@ -4,7 +4,7 @@ import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 
 import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types";
-import { groupMessageParts, summarizeStep } from "../../utils";
+import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
@@ -299,6 +299,10 @@ export default function MessageList(props: MessageListProps) {
 
   const renderablePartsForMessage = (message: MessageWithParts) =>
     message.parts.filter((part) => {
+      if (!props.developerMode && !isUserVisiblePart(part)) {
+        return false;
+      }
+
       if (part.type === "reasoning") {
         return props.showThinking;
       }
