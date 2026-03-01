@@ -141,6 +141,19 @@ export function createSessionStore(options: {
       // ignore
     }
   };
+
+  const sessionWarn = (label: string, payload?: unknown) => {
+    if (!sessionDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.warn(`[WSWARN] ${label}`);
+      } else {
+        console.warn(`[WSWARN] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
   const MAX_RELOAD_DETECTION_KEYS = 5000;
 
   const [store, setStore] = createStore<StoreState>({
@@ -403,7 +416,7 @@ export function createSessionStore(options: {
     const lastWarnAt = syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
     if (now - lastWarnAt < COMPACTION_LOOP_WARN_MIN_INTERVAL_MS) return;
     syntheticContinueLoopLastWarnAtBySession.set(sessionID, now);
-    sessionDebug("compaction:synthetic-continue-loop", {
+    sessionWarn("compaction:synthetic-continue-loop", {
       sessionID,
       countPerMinute: countInWindow,
     });
