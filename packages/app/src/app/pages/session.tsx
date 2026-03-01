@@ -801,10 +801,24 @@ export default function SessionView(props: SessionViewProps) {
     for (const byte of bytes) {
       binary += String.fromCharCode(byte);
     }
+    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
+    if (typeof btoa !== "function") {
+      if (!fallbackBuffer) {
+        throw new Error("Base64 encoder is unavailable");
+      }
+      return fallbackBuffer.from(value, "utf8").toString("base64");
+    }
     return btoa(binary);
   };
 
   const base64ToUtf8 = (value: string) => {
+    const fallbackBuffer = (globalThis as { Buffer?: { from: (input: string, encoding: string) => { toString: (encoding: string) => string } } }).Buffer;
+    if (typeof atob !== "function") {
+      if (!fallbackBuffer) {
+        throw new Error("Base64 decoder is unavailable");
+      }
+      return fallbackBuffer.from(value, "base64").toString("utf8");
+    }
     const binary = atob(value);
     const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
     return new TextDecoder().decode(bytes);
