@@ -703,6 +703,31 @@ export async function writeObsidianMirrorFile(
   });
 }
 
+export type ObsidianMirrorFileContent = {
+  exists: boolean;
+  path: string;
+  content: string | null;
+  updatedAtMs: number | null;
+};
+
+export async function readObsidianMirrorFile(
+  workspaceId: string,
+  filePath: string,
+): Promise<ObsidianMirrorFileContent> {
+  const safeWorkspaceId = workspaceId.trim();
+  const safePath = filePath.trim();
+  if (!safeWorkspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<ObsidianMirrorFileContent>("read_obsidian_mirror_file", {
+    workspaceId: safeWorkspaceId,
+    filePath: safePath,
+  });
+}
+
 export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
   return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }

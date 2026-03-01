@@ -23,6 +23,7 @@ import type {
 import {
   obsidianIsAvailable,
   openInObsidian,
+  readObsidianMirrorFile,
   writeObsidianMirrorFile,
   type EngineInfo,
   type OpenworkServerInfo,
@@ -67,11 +68,11 @@ import {
   parseOpenworkWorkspaceIdFromUrl,
 } from "../lib/openwork-server";
 import type {
+  OpenworkFileSession,
   OpenworkServerClient,
   OpenworkServerSettings,
   OpenworkServerStatus,
   OpenworkSoulStatus,
-  OpenworkWorkspaceFileContent,
   OpenworkWorkspaceExport,
 } from "../lib/openwork-server";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
@@ -766,6 +767,75 @@ export default function SessionView(props: SessionViewProps) {
     return !isAbsolutePath(trimmed) && root ? await join(root, trimmed) : trimmed;
   };
 
+  type RemoteMirrorTrackedFile = {
+    path: string;
+    localPath: string;
+    remoteRevision: string;
+    localFingerprint: string;
+    syncingLocal: boolean;
+  };
+
+  type RemoteFileSyncSession = OpenworkFileSession & { cursor: number };
+
+  const remoteMirrorTrackedFiles = new Map<string, RemoteMirrorTrackedFile>();
+  const [remoteFileSyncSession, setRemoteFileSyncSession] = createSignal<RemoteFileSyncSession | null>(null);
+  const remoteMirrorWorkspaceKey = createMemo(
+    () => props.openworkServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker",
+  );
+  let remoteMirrorSyncTimer: number | undefined;
+  let remoteMirrorSyncInFlight = false;
+  let remoteMirrorLastErrorAt = 0;
+
+  const textFingerprint = (value: string) => {
+    let hash = 2166136261;
+    for (let idx = 0; idx < value.length; idx += 1) {
+      hash ^= value.charCodeAt(idx);
+      hash = Math.imul(hash, 16777619);
+    }
+    return `${value.length}:${hash >>> 0}`;
+  };
+
+  const utf8ToBase64 = (value: string) => {
+    const bytes = new TextEncoder().encode(value);
+    let binary = "";
+    for (const byte of bytes) {
+      binary += String.fromCharCode(byte);
+    }
+    return btoa(binary);
+  };
+
+  const base64ToUtf8 = (value: string) => {
+    const binary = atob(value);
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+
+  const stopRemoteMirrorSyncLoop = () => {
+    if (remoteMirrorSyncTimer !== undefined) {
+      window.clearInterval(remoteMirrorSyncTimer);
+      remoteMirrorSyncTimer = undefined;
+    }
+  };
+
+  const closeRemoteFileSyncSession = async (session: RemoteFileSyncSession | null) => {
+    const client = props.openworkServerClient;
+    if (!client || !session) return;
+    try {
+      await client.closeFileSession(session.id);
+    } catch {
+      // best effort
+    }
+  };
+
+  const resetRemoteFileSync = async () => {
+    stopRemoteMirrorSyncLoop();
+    remoteMirrorSyncInFlight = false;
+    remoteMirrorTrackedFiles.clear();
+    const existing = remoteFileSyncSession();
+    setRemoteFileSyncSession(null);
+    await closeRemoteFileSyncSession(existing);
+  };
+
   const toWorkerRelativeArtifactPath = (file: string) => {
     const normalized = file.trim().replace(/^file:\/\//i, "").replace(/[\\/]+/g, "/");
     if (!normalized) return "";
@@ -804,43 +874,294 @@ export default function SessionView(props: SessionViewProps) {
     return relative;
   };
 
-  const readRemoteArtifactForObsidian = async (file: string): Promise<OpenworkWorkspaceFileContent> => {
+  const toRemoteArtifactCandidates = (file: string) => {
+    const target = toWorkerRelativeArtifactPath(file);
+    if (!target) return [] as string[];
+    const outboxPath = `.opencode/openwork/outbox/${target}`.replace(/\/+/g, "/");
+    if (
+      target.startsWith(".opencode/openwork/outbox/") ||
+      target.startsWith("./.opencode/openwork/outbox/") ||
+      outboxPath === target
+    ) {
+      return [target];
+    }
+    return [target, outboxPath];
+  };
+
+  const ensureRemoteFileSyncSession = async (): Promise<RemoteFileSyncSession> => {
     const client = props.openworkServerClient;
     const workspaceId = props.openworkServerWorkspaceId?.trim() ?? "";
     if (!client || !workspaceId) {
-      throw new Error("Connect to OpenWork server to open remote files in Obsidian.");
+      throw new Error("Connect to OpenWork server to sync remote files.");
     }
 
-    const target = toWorkerRelativeArtifactPath(file);
-    if (!target) {
-      throw new Error("Only worker-relative files can be opened in Obsidian.");
-    }
-
-    try {
-      const result = (await client.readWorkspaceFile(workspaceId, target)) as OpenworkWorkspaceFileContent;
-      return { ...result, path: result.path?.trim() || target };
-    } catch (error) {
-      const candidateOutbox = `.opencode/openwork/outbox/${target}`.replace(/\/+/g, "/");
-      const shouldTryOutbox =
-        !(target.startsWith(".opencode/openwork/outbox/") || target.startsWith("./.opencode/openwork/outbox/")) &&
-        error instanceof OpenworkServerError &&
-        error.status === 404;
-
-      if (!shouldTryOutbox) {
-        throw error;
+    const existing = remoteFileSyncSession();
+    if (existing && existing.workspaceId === workspaceId) {
+      if (Date.now() + 45_000 < existing.expiresAt) {
+        return existing;
       }
 
-      const result = (await client.readWorkspaceFile(workspaceId, candidateOutbox)) as OpenworkWorkspaceFileContent;
-      return { ...result, path: result.path?.trim() || candidateOutbox };
+      try {
+        const renewed = await client.renewFileSession(existing.id, { ttlSeconds: 15 * 60 });
+        const next: RemoteFileSyncSession = {
+          ...renewed.session,
+          cursor: existing.cursor,
+        };
+        setRemoteFileSyncSession(next);
+        return next;
+      } catch (error) {
+        if (!(error instanceof OpenworkServerError) || error.code !== "file_session_not_found") {
+          throw error;
+        }
+      }
     }
+
+    if (existing) {
+      await closeRemoteFileSyncSession(existing);
+      setRemoteFileSyncSession(null);
+    }
+
+    const created = await client.createFileSession(workspaceId, {
+      ttlSeconds: 15 * 60,
+      write: true,
+    });
+    const next: RemoteFileSyncSession = {
+      ...created.session,
+      cursor: 0,
+    };
+    setRemoteFileSyncSession(next);
+    return next;
+  };
+
+  const refreshTrackedRemoteMirrorFile = async (session: RemoteFileSyncSession, path: string) => {
+    const client = props.openworkServerClient;
+    if (!client) throw new Error("OpenWork server client unavailable");
+
+    const result = await client.readFileBatch(session.id, [path]);
+    const item = result.items[0];
+    if (!item?.ok) {
+      if (item?.code === "file_not_found") {
+        remoteMirrorTrackedFiles.delete(path);
+        return null;
+      }
+      throw new Error(item?.message ?? `Unable to read ${path}`);
+    }
+
+    const content = base64ToUtf8(item.contentBase64);
+    const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), path, content);
+    const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
+    const fingerprint = textFingerprint(local.content ?? content);
+
+    const previous = remoteMirrorTrackedFiles.get(path);
+    remoteMirrorTrackedFiles.set(path, {
+      path,
+      localPath,
+      remoteRevision: item.revision,
+      localFingerprint: fingerprint,
+      syncingLocal: previous?.syncingLocal ?? false,
+    });
+
+    return localPath;
+  };
+
+  const createConflictPath = (path: string) => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const marker = `.openwork-conflict-${stamp}`;
+    const dot = path.lastIndexOf(".");
+    if (dot <= 0) {
+      return `${path}${marker}`;
+    }
+    return `${path.slice(0, dot)}${marker}${path.slice(dot)}`;
+  };
+
+  const runRemoteMirrorSyncTick = async () => {
+    if (remoteMirrorSyncInFlight) return;
+    if (remoteMirrorTrackedFiles.size === 0) {
+      stopRemoteMirrorSyncLoop();
+      return;
+    }
+
+    const client = props.openworkServerClient;
+    if (!client) {
+      stopRemoteMirrorSyncLoop();
+      return;
+    }
+
+    remoteMirrorSyncInFlight = true;
+    try {
+      let session = await ensureRemoteFileSyncSession();
+
+      const events = await client.listFileSessionEvents(session.id, { since: session.cursor });
+      if (events.cursor !== session.cursor) {
+        session = { ...session, cursor: events.cursor };
+        setRemoteFileSyncSession(session);
+      }
+
+      const refreshPaths = new Set<string>();
+      for (const event of events.items) {
+        if (event.type === "write" && remoteMirrorTrackedFiles.has(event.path)) {
+          const tracked = remoteMirrorTrackedFiles.get(event.path);
+          if (!tracked?.syncingLocal) {
+            refreshPaths.add(event.path);
+          }
+          continue;
+        }
+
+        if (event.type === "rename") {
+          const tracked = remoteMirrorTrackedFiles.get(event.path);
+          if (!tracked) continue;
+          remoteMirrorTrackedFiles.delete(event.path);
+          if (event.toPath?.trim()) {
+            const nextPath = event.toPath.trim();
+            remoteMirrorTrackedFiles.set(nextPath, {
+              ...tracked,
+              path: nextPath,
+            });
+            refreshPaths.add(nextPath);
+          }
+          continue;
+        }
+
+        if (event.type === "delete") {
+          remoteMirrorTrackedFiles.delete(event.path);
+        }
+      }
+
+      for (const path of refreshPaths) {
+        await refreshTrackedRemoteMirrorFile(session, path);
+      }
+
+      for (const [path, tracked] of remoteMirrorTrackedFiles) {
+        if (tracked.syncingLocal) continue;
+
+        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), path);
+        if (!local.exists || local.content === null) continue;
+        const nextFingerprint = textFingerprint(local.content);
+        if (nextFingerprint === tracked.localFingerprint) continue;
+
+        tracked.syncingLocal = true;
+        try {
+          const write = await client.writeFileBatch(session.id, [
+            {
+              path,
+              contentBase64: utf8ToBase64(local.content),
+              ifMatchRevision: tracked.remoteRevision,
+            },
+          ]);
+          const item = write.items[0];
+          if (item?.ok) {
+            tracked.remoteRevision = item.revision;
+            tracked.localFingerprint = nextFingerprint;
+            continue;
+          }
+
+          if (!item?.ok && item?.code === "conflict") {
+            const conflictPath = createConflictPath(path);
+            await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), conflictPath, local.content);
+            await refreshTrackedRemoteMirrorFile(session, path);
+            setToastMessage(`Conflict syncing ${path}. Saved local changes to ${conflictPath}.`);
+            continue;
+          }
+
+          throw new Error(item?.message ?? `Unable to sync ${path}`);
+        } finally {
+          tracked.syncingLocal = false;
+        }
+      }
+    } catch (error) {
+      if (Date.now() - remoteMirrorLastErrorAt > 6_000) {
+        remoteMirrorLastErrorAt = Date.now();
+        const message = error instanceof Error ? error.message : "Remote file sync failed";
+        setToastMessage(message);
+      }
+    } finally {
+      remoteMirrorSyncInFlight = false;
+    }
+  };
+
+  const ensureRemoteMirrorSyncLoop = () => {
+    if (!isTauriRuntime()) return;
+    if (remoteMirrorTrackedFiles.size === 0) return;
+    if (remoteMirrorSyncTimer !== undefined) return;
+    remoteMirrorSyncTimer = window.setInterval(() => {
+      void runRemoteMirrorSyncTick();
+    }, 2500);
+    void runRemoteMirrorSyncTick();
   };
 
   const mirrorRemoteArtifactForObsidian = async (file: string) => {
-    const remote = await readRemoteArtifactForObsidian(file);
-    const workspaceKey =
-      props.openworkServerWorkspaceId?.trim() || props.activeWorkspaceDisplay.id?.trim() || "remote-worker";
-    return await writeObsidianMirrorFile(workspaceKey, remote.path, remote.content ?? "");
+    const session = await ensureRemoteFileSyncSession();
+    const client = props.openworkServerClient;
+    if (!client) {
+      throw new Error("Connect to OpenWork server to sync remote files.");
+    }
+
+    const candidates = toRemoteArtifactCandidates(file);
+    if (candidates.length === 0) {
+      throw new Error("Only worker-relative files can be opened in Obsidian.");
+    }
+
+    let lastError: Error | null = null;
+    for (const candidate of candidates) {
+      try {
+        const result = await client.readFileBatch(session.id, [candidate]);
+        const item = result.items[0];
+        if (!item?.ok) {
+          if (item?.code === "file_not_found") continue;
+          throw new Error(item?.message ?? `Unable to read ${candidate}`);
+        }
+
+        const content = base64ToUtf8(item.contentBase64);
+        const localPath = await writeObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate, content);
+        const local = await readObsidianMirrorFile(remoteMirrorWorkspaceKey(), candidate);
+        const fingerprint = textFingerprint(local.content ?? content);
+
+        remoteMirrorTrackedFiles.set(candidate, {
+          path: candidate,
+          localPath,
+          remoteRevision: item.revision,
+          localFingerprint: fingerprint,
+          syncingLocal: false,
+        });
+        ensureRemoteMirrorSyncLoop();
+        return localPath;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+
+    throw lastError ?? new Error("Unable to open file in Obsidian");
   };
+
+  createEffect(
+    on(
+      () =>
+        [
+          isTauriRuntime(),
+          props.activeWorkspaceDisplay.workspaceType,
+          props.openworkServerWorkspaceId?.trim() ?? "",
+          Boolean(props.openworkServerClient),
+        ] as const,
+      ([desktopRuntime, workspaceType, workspaceId, hasClient], previous) => {
+        const previousWorkspaceId = previous?.[2] ?? "";
+        const hasRemoteContext = desktopRuntime && workspaceType === "remote" && workspaceId.length > 0 && hasClient;
+        if (!hasRemoteContext) {
+          if (remoteFileSyncSession() || remoteMirrorTrackedFiles.size > 0 || remoteMirrorSyncTimer !== undefined) {
+            void resetRemoteFileSync();
+          }
+          return;
+        }
+
+        if (previousWorkspaceId && previousWorkspaceId !== workspaceId) {
+          void resetRemoteFileSync();
+        }
+      },
+    ),
+  );
+
+  onCleanup(() => {
+    void resetRemoteFileSync();
+  });
 
   const revealArtifact = async (file: string) => {
     if (props.activeWorkspaceDisplay.workspaceType === "remote") {

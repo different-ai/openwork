@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
 
 use crate::engine::doctor::resolve_engine_path;
 use crate::paths::home_dir;
@@ -445,6 +446,72 @@ pub fn write_obsidian_mirror_file(
         .map_err(|e| format!("Failed to write {}: {e}", target.display()))?;
 
     Ok(target.to_string_lossy().to_string())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObsidianMirrorFileContent {
+    pub exists: bool,
+    pub path: String,
+    pub content: Option<String>,
+    pub updated_at_ms: Option<u64>,
+}
+
+#[tauri::command]
+pub fn read_obsidian_mirror_file(
+    app: AppHandle,
+    workspace_id: String,
+    file_path: String,
+) -> Result<ObsidianMirrorFileContent, String> {
+    let workspace_trimmed = workspace_id.trim();
+    if workspace_trimmed.is_empty() {
+        return Err("workspace_id is required".to_string());
+    }
+
+    let workspace_key = sanitize_obsidian_workspace_id(workspace_trimmed);
+    if workspace_key.is_empty() {
+        return Err("workspace_id must contain at least one alphanumeric character".to_string());
+    }
+
+    let relative_path = normalize_obsidian_mirror_relative_path(&file_path)?;
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+
+    let mirror_root = app_data_dir.join("obsidian-mirror").join(workspace_key);
+    let target = mirror_root.join(relative_path);
+    let path_string = target.to_string_lossy().to_string();
+
+    if !target.exists() {
+        return Ok(ObsidianMirrorFileContent {
+            exists: false,
+            path: path_string,
+            content: None,
+            updated_at_ms: None,
+        });
+    }
+
+    let metadata =
+        fs::metadata(&target).map_err(|e| format!("Failed to stat {}: {e}", target.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("Mirror path is not a file: {}", target.display()));
+    }
+
+    let content = fs::read_to_string(&target)
+        .map_err(|e| format!("Failed to read {}: {e}", target.display()))?;
+    let updated_at_ms = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as u64);
+
+    Ok(ObsidianMirrorFileContent {
+        exists: true,
+        path: path_string,
+        content: Some(content),
+        updated_at_ms,
+    })
 }
 
 #[cfg(test)]
