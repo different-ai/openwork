@@ -143,6 +143,13 @@ import {
   type OpenCodeRouterInfo,
 } from "./lib/tauri";
 import {
+  FONT_ZOOM_STEP,
+  applyFontZoom,
+  parseFontZoomShortcut,
+  persistFontZoom,
+  readStoredFontZoom,
+} from "./lib/font-zoom";
+import {
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkBundleInviteFromSearch,
   readOpenworkConnectInviteFromSearch,
@@ -774,6 +781,38 @@ export default function App() {
     update();
     document.addEventListener("visibilitychange", update);
     onCleanup(() => document.removeEventListener("visibilitychange", update));
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isTauriRuntime()) return;
+
+    const applyAndPersistFontZoom = (value: number) => {
+      const next = applyFontZoom(document.documentElement.style, value);
+      persistFontZoom(window.localStorage, next);
+      return next;
+    };
+
+    let fontZoom = applyAndPersistFontZoom(readStoredFontZoom(window.localStorage) ?? 1);
+
+    const handleZoomShortcut = (event: KeyboardEvent) => {
+      const action = parseFontZoomShortcut(event);
+      if (!action) return;
+
+      if (action === "in") {
+        fontZoom = applyAndPersistFontZoom(fontZoom + FONT_ZOOM_STEP);
+      } else if (action === "out") {
+        fontZoom = applyAndPersistFontZoom(fontZoom - FONT_ZOOM_STEP);
+      } else {
+        fontZoom = applyAndPersistFontZoom(1);
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener("keydown", handleZoomShortcut, true);
+    onCleanup(() => window.removeEventListener("keydown", handleZoomShortcut, true));
   });
 
   createEffect(() => {

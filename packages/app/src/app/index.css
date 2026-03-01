@@ -38,6 +38,10 @@ body {
   height: 100%;
 }
 
+html {
+  font-size: var(--openwork-font-size, 16px);
+}
+
 body {
   margin: 0;
   font-family:
@@ -56,7 +60,7 @@ body {
     "Noto Sans",
     "Apple Color Emoji",
     "Segoe UI Emoji";
-  font-size: 14px;
+  font-size: 0.875rem;
   line-height: 1.5;
   color: var(--dls-text-primary);
   background-color: var(--dls-surface);
