@@ -83,6 +83,7 @@ import {
   parseTemplateFrontmatter,
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import { normalizeLocalFilePath } from "../lib/local-file-path";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -757,29 +758,6 @@ export default function SessionView(props: SessionViewProps) {
 
     return out;
   });
-
-  const normalizeLocalFilePath = (value: string) => {
-    const trimmed = value.trim();
-    if (!/^file:\/\//i.test(trimmed)) return trimmed;
-
-    try {
-      const parsed = new URL(trimmed);
-      if (parsed.protocol !== "file:") return trimmed;
-
-      const pathname = decodeURIComponent(parsed.pathname || "");
-      if (!pathname) return trimmed;
-      if (/^\/[A-Za-z]:\//.test(pathname)) return pathname.slice(1);
-      if (parsed.hostname && parsed.hostname.toLowerCase() !== "localhost") {
-        return `//${parsed.hostname}${pathname}`;
-      }
-      return pathname;
-    } catch {
-      const decoded = decodeURIComponent(trimmed.replace(/^file:\/\//i, ""));
-      if (!decoded) return trimmed;
-      if (/^\/[A-Za-z]:\//.test(decoded)) return decoded.slice(1);
-      return decoded;
-    }
-  };
 
   const resolveLocalFileCandidates = async (file: string) => {
     const trimmed = normalizeLocalFilePath(file).trim();
