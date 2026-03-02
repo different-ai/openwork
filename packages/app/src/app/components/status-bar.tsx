@@ -34,6 +34,18 @@ export default function StatusBar(props: StatusBarProps) {
   const [documentVisible, setDocumentVisible] = createSignal(true);
   const [statusDetailOpen, setStatusDetailOpen] = createSignal(false);
   let statusPopoverRef: HTMLDivElement | undefined;
+  let statusAutoCloseTimer: number | undefined;
+
+  const openStatusDetail = () => {
+    setStatusDetailOpen(true);
+    if (statusAutoCloseTimer) window.clearTimeout(statusAutoCloseTimer);
+    statusAutoCloseTimer = window.setTimeout(() => setStatusDetailOpen(false), 5000);
+  };
+
+  const closeStatusDetail = () => {
+    setStatusDetailOpen(false);
+    if (statusAutoCloseTimer) window.clearTimeout(statusAutoCloseTimer);
+  };
 
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
@@ -243,7 +255,7 @@ export default function StatusBar(props: StatusBarProps) {
             type="button"
             class="flex items-center gap-2 hover:opacity-80 transition-opacity"
             title={`Status: ${unifiedStatusMeta().label}`}
-            onClick={() => setStatusDetailOpen((v) => !v)}
+            onClick={() => (statusDetailOpen() ? closeStatusDetail() : openStatusDetail())}
           >
             <span class={`w-2 h-2 rounded-full ${unifiedStatusMeta().dot}`} />
             <span class={`font-medium ${unifiedStatusMeta().text}`}>
@@ -254,7 +266,7 @@ export default function StatusBar(props: StatusBarProps) {
           <Show when={statusDetailOpen()}>
             <div
               class="fixed inset-0 z-[999]"
-              onClick={() => setStatusDetailOpen(false)}
+              onClick={closeStatusDetail}
             />
             <div
               ref={statusPopoverRef}
