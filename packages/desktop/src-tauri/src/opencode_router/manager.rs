@@ -37,6 +37,7 @@ impl OpenCodeRouterManager {
             version: state.version.clone(),
             workspace_path: state.workspace_path.clone(),
             opencode_url: state.opencode_url.clone(),
+            health_port: state.health_port,
             pid,
             last_stdout: state.last_stdout.clone(),
             last_stderr: state.last_stderr.clone(),

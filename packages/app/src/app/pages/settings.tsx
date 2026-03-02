@@ -22,8 +22,10 @@ import type {
 } from "../lib/tauri";
 import {
   appBuildInfo,
+  engineRestart,
   opencodeRouterRestart,
   opencodeRouterStop,
+  openworkServerRestart,
   pickFile,
 } from "../lib/tauri";
 import { currentLocale, t } from "../../i18n";
@@ -477,6 +479,10 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const [opencodeRouterRestarting, setOpenCodeRouterRestarting] = createSignal(false);
   const [opencodeRouterRestartError, setOpenCodeRouterRestartError] = createSignal<string | null>(null);
+  const [openworkServerRestarting, setOpenworkServerRestarting] = createSignal(false);
+  const [openworkServerRestartError, setOpenworkServerRestartError] = createSignal<string | null>(null);
+  const [opencodeRestarting, setOpencodeRestarting] = createSignal(false);
+  const [opencodeRestartError, setOpencodeRestartError] = createSignal<string | null>(null);
 
   const handleOpenCodeRouterRestart = async () => {
     if (opencodeRouterRestarting()) return;
@@ -514,6 +520,34 @@ export default function SettingsView(props: SettingsViewProps) {
       setOpenCodeRouterRestartError(e instanceof Error ? e.message : String(e));
     } finally {
       setOpenCodeRouterRestarting(false);
+    }
+  };
+
+  const handleOpenworkServerRestart = async () => {
+    if (openworkServerRestarting() || !isTauriRuntime()) return;
+    setOpenworkServerRestarting(true);
+    setOpenworkServerRestartError(null);
+    try {
+      await openworkServerRestart();
+      await props.reconnectOpenworkServer();
+    } catch (e) {
+      setOpenworkServerRestartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpenworkServerRestarting(false);
+    }
+  };
+
+  const handleOpenCodeRestart = async () => {
+    if (opencodeRestarting() || !isTauriRuntime()) return;
+    setOpencodeRestarting(true);
+    setOpencodeRestartError(null);
+    try {
+      await engineRestart();
+      await props.reconnectOpenworkServer();
+    } catch (e) {
+      setOpencodeRestartError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOpencodeRestarting(false);
     }
   };
 
@@ -1411,6 +1445,59 @@ export default function SettingsView(props: SettingsViewProps) {
                     <div class="text-xs text-gray-10">Sidecar health, capabilities, and audit trail.</div>
                   </div>
 
+                  <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">Service restarts</div>
+                      <div class="text-xs text-gray-10">Restart specific host services without leaving this screen.</div>
+                    </div>
+                    <div class="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                      <Button
+                        variant="secondary"
+                        onClick={handleRestartLocalServer}
+                        disabled={props.busy || openworkRestartBusy() || !isTauriRuntime()}
+                        class="text-xs px-3 py-1.5 justify-center"
+                      >
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkRestartBusy() ? "animate-spin" : ""}`} />
+                        {openworkRestartBusy() ? "Restarting..." : "Restart orchestrator"}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={handleOpenCodeRestart}
+                        disabled={opencodeRestarting() || !isTauriRuntime()}
+                        class="text-xs px-3 py-1.5 justify-center"
+                      >
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRestarting() ? "animate-spin" : ""}`} />
+                        {opencodeRestarting() ? "Restarting..." : "Restart OpenCode"}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={handleOpenworkServerRestart}
+                        disabled={openworkServerRestarting() || !isTauriRuntime()}
+                        class="text-xs px-3 py-1.5 justify-center"
+                      >
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkServerRestarting() ? "animate-spin" : ""}`} />
+                        {openworkServerRestarting() ? "Restarting..." : "Restart OpenWork server"}
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={handleOpenCodeRouterRestart}
+                        disabled={opencodeRouterRestarting() || !isTauriRuntime()}
+                        class="text-xs px-3 py-1.5 justify-center"
+                      >
+                        <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
+                        {opencodeRouterRestarting() ? "Restarting..." : "Restart OpenCodeRouter"}
+                      </Button>
+                    </div>
+                    <Show when={openworkRestartStatus()}>
+                      <div class="text-xs text-green-11 bg-green-3/50 border border-green-6 rounded-lg p-2">{openworkRestartStatus()}</div>
+                    </Show>
+                    <Show when={openworkRestartError() || opencodeRestartError() || openworkServerRestartError() || opencodeRouterRestartError()}>
+                      <div class="text-xs text-red-11 bg-red-3/50 border border-red-6 rounded-lg p-2">
+                        {openworkRestartError() || opencodeRestartError() || openworkServerRestartError() || opencodeRouterRestartError()}
+                      </div>
+                    </Show>
+                  </div>
+
                   <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     <div class="bg-gray-1 p-4 rounded-xl border border-gray-6 space-y-3">
                       <div>
@@ -1612,6 +1699,9 @@ export default function SettingsView(props: SettingsViewProps) {
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">
                           {props.opencodeRouterInfo?.workspacePath?.trim() || "No worker directory"}
+                        </div>
+                        <div class="text-[11px] text-gray-7 font-mono truncate">
+                          Health port: {props.opencodeRouterInfo?.healthPort ?? "—"}
                         </div>
                         <div class="text-[11px] text-gray-7 font-mono truncate">PID: {props.opencodeRouterInfo?.pid ?? "—"}</div>
                       </div>

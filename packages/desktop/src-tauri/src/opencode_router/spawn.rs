@@ -10,10 +10,9 @@ use tauri_plugin_shell::ShellExt;
 pub const DEFAULT_OPENCODE_ROUTER_HEALTH_PORT: u16 = 3005;
 
 pub fn resolve_opencode_router_health_port() -> Result<u16, String> {
-    if TcpListener::bind(("0.0.0.0", DEFAULT_OPENCODE_ROUTER_HEALTH_PORT)).is_ok() {
-        return Ok(DEFAULT_OPENCODE_ROUTER_HEALTH_PORT);
-    }
-    let listener = TcpListener::bind(("0.0.0.0", 0)).map_err(|e| e.to_string())?;
+    // Pick an ephemeral localhost port by default to avoid conflicts when
+    // multiple OpenWork desktop instances run on the same machine.
+    let listener = TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     Ok(port)
 }

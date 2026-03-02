@@ -20,7 +20,9 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
-use commands::engine::{engine_doctor, engine_info, engine_install, engine_start, engine_stop};
+use commands::engine::{
+    engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
+};
 use commands::misc::{
     app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
     opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache, reset_openwork_state,
@@ -30,7 +32,7 @@ use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
     opencodeRouter_stop,
 };
-use commands::openwork_server::openwork_server_info;
+use commands::openwork_server::{openwork_server_info, openwork_server_restart};
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
@@ -96,6 +98,7 @@ pub fn run() {
             engine_info,
             engine_doctor,
             engine_install,
+            engine_restart,
             orchestrator_status,
             orchestrator_workspace_activate,
             orchestrator_instance_dispose,
@@ -104,6 +107,7 @@ pub fn run() {
             sandbox_stop,
             sandbox_cleanup_openwork_containers,
             openwork_server_info,
+            openwork_server_restart,
             opencodeRouter_info,
             opencodeRouter_start,
             opencodeRouter_stop,

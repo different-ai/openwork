@@ -361,6 +361,10 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
+export async function engineRestart(): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_restart");
+}
+
 export async function orchestratorStatus(): Promise<OrchestratorStatus> {
   return invoke<OrchestratorStatus>("orchestrator_status");
 }
@@ -459,6 +463,10 @@ export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDocker
 
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
+}
+
+export async function openworkServerRestart(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_restart");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {
@@ -765,6 +773,7 @@ export type OpenCodeRouterInfo = {
   version: string | null;
   workspacePath: string | null;
   opencodeUrl: string | null;
+  healthPort: number | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;
