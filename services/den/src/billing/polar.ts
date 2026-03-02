@@ -414,15 +414,28 @@ async function listSubscriptionsByExternalCustomer(
     params.set("product_id", env.polar.productId)
   }
   params.set("limit", String(options.limit ?? 1))
-  params.set("sorting", "-created_at")
+  params.set("sorting", "-started_at")
 
   if (options.activeOnly === true) {
     params.set("active", "true")
   }
 
-  const { response, payload, text } = await polarFetchJson<PolarListResource<PolarSubscription>>(`/v1/subscriptions/?${params.toString()}`, {
+  const lookup = await polarFetchJson<PolarListResource<PolarSubscription>>(`/v1/subscriptions/?${params.toString()}`, {
     method: "GET",
   })
+  let response = lookup.response
+  let payload = lookup.payload
+  let text = lookup.text
+
+  if (response.status === 422 && params.has("sorting")) {
+    params.delete("sorting")
+    const fallbackLookup = await polarFetchJson<PolarListResource<PolarSubscription>>(`/v1/subscriptions/?${params.toString()}`, {
+      method: "GET",
+    })
+    response = fallbackLookup.response
+    payload = fallbackLookup.payload
+    text = fallbackLookup.text
+  }
 
   if (!response.ok) {
     throw new Error(`Polar subscriptions lookup failed (${response.status}): ${text.slice(0, 400)}`)
@@ -652,7 +665,7 @@ export async function getCloudWorkerBillingStatus(
   let invoices: CloudWorkerBillingInvoice[] = []
 
   const [subscriptionResult, priceResult, portalResult, invoicesResult] = await Promise.all([
-    getPrimarySubscriptionForCustomer(input.userId),
+    getPrimarySubscriptionForCustomer(input.userId).catch(() => null),
     env.polar.productId ? getProductBillingPrice(env.polar.productId).catch(() => null) : Promise.resolve<CloudWorkerBillingPrice | null>(null),
     includePortalUrl ? createCustomerPortalUrl(input.userId).catch(() => null) : Promise.resolve<string | null>(null),
     includeInvoices ? listBillingInvoices(input.userId).catch(() => []) : Promise.resolve<CloudWorkerBillingInvoice[]>([]),
