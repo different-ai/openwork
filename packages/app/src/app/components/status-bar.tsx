@@ -10,7 +10,7 @@ import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
 
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
-import type { McpStatusMap } from "../types";
+import type { McpStatusMap, StartupPreference } from "../types";
 import { getOpenCodeRouterStatus } from "../lib/tauri";
 
 import Button from "./button";
@@ -18,6 +18,7 @@ import Button from "./button";
 type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
+  startupPreference: StartupPreference | null;
   developerMode: boolean;
   onOpenSettings: () => void;
   onOpenMessaging: () => void;
@@ -281,7 +282,7 @@ export default function StatusBar(props: StatusBarProps) {
                   />
                   <Server class="w-3.5 h-3.5 text-gray-11" />
                   <span class="text-xs text-gray-12 font-medium">
-                    OpenWork Server
+                    {props.startupPreference === "server" ? "Remote Server" : "Local Server"}
                   </span>
                   <span class={`ml-auto text-xs ${openworkStatusMeta().text}`}>
                     {openworkStatusMeta().label}

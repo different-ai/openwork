@@ -18,6 +18,7 @@ import type {
   WorkspaceConnectionState,
   WorkspaceDisplay,
   WorkspaceSessionGroup,
+  StartupPreference,
 } from "../types";
 
 import {
@@ -124,6 +125,7 @@ export type SessionViewProps = {
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
+  startupPreference: StartupPreference | null;
   openworkServerClient: OpenworkServerClient | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
@@ -3664,6 +3666,7 @@ export default function SessionView(props: SessionViewProps) {
         <StatusBar
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
+          startupPreference={props.startupPreference}
           developerMode={props.developerMode}
           onOpenSettings={() => openSettings("general")}
           onOpenMessaging={openConfig}
