@@ -47,6 +47,16 @@ export default function StatusBar(props: StatusBarProps) {
     if (statusAutoCloseTimer) window.clearTimeout(statusAutoCloseTimer);
   };
 
+  createEffect(() => {
+    if (!statusDetailOpen()) return;
+    const onClick = (e: MouseEvent) => {
+      if (statusPopoverRef?.contains(e.target as Node)) return;
+      closeStatusDetail();
+    };
+    window.addEventListener("click", onClick, true);
+    onCleanup(() => window.removeEventListener("click", onClick, true));
+  });
+
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
     text: props.clientConnected ? "text-green-11" : "text-gray-10",
@@ -265,12 +275,8 @@ export default function StatusBar(props: StatusBarProps) {
 
           <Show when={statusDetailOpen()}>
             <div
-              class="fixed inset-0 z-[999]"
-              onClick={closeStatusDetail}
-            />
-            <div
               ref={statusPopoverRef}
-              class="absolute bottom-full left-0 mb-2 z-[1000] w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
+              class="absolute bottom-full left-0 mb-2 z-[200] w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
             >
               <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">
                 Service Status
