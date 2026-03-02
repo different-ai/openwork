@@ -59,7 +59,7 @@ export default async function Den() {
           </div>
 
           <div className="mb-8 text-[20px] font-semibold text-black">
-            $1 first month, then $50/month per worker. Cancel anytime.
+            $50/month per worker. Cancel anytime.
           </div>
           <p className="mb-12 max-w-3xl text-[15px] leading-relaxed text-gray-600">
             Early adopters get priority onboarding and custom workflow setup

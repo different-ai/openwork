@@ -29,6 +29,13 @@ export type CloudWorkerAccess =
       checkoutUrl: string
     }
 
+export type CloudWorkerBillingStatus = {
+  featureGateEnabled: boolean
+  hasActivePlan: boolean
+  checkoutRequired: boolean
+  checkoutUrl: string | null
+}
+
 type CloudAccessInput = {
   userId: string
   email: string
@@ -190,16 +197,33 @@ async function createCheckoutSession(input: CloudAccessInput): Promise<string> {
   return checkout.url
 }
 
-export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise<CloudWorkerAccess> {
+type CloudWorkerAccessEvaluation = {
+  featureGateEnabled: boolean
+  hasActivePlan: boolean
+  checkoutUrl: string | null
+}
+
+async function evaluateCloudWorkerAccess(
+  input: CloudAccessInput,
+  options: { includeCheckoutUrl?: boolean } = {},
+): Promise<CloudWorkerAccessEvaluation> {
   if (!env.polar.featureGateEnabled) {
-    return { allowed: true }
+    return {
+      featureGateEnabled: false,
+      hasActivePlan: true,
+      checkoutUrl: null,
+    }
   }
 
   assertPaywallConfig()
 
   const externalState = await getCustomerStateByExternalId(input.userId)
   if (hasRequiredBenefit(externalState)) {
-    return { allowed: true }
+    return {
+      featureGateEnabled: true,
+      hasActivePlan: true,
+      checkoutUrl: null,
+    }
   }
 
   const customer = await getCustomerByEmail(input.email)
@@ -207,13 +231,49 @@ export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise
     const emailState = await getCustomerStateById(customer.id)
     if (hasRequiredBenefit(emailState)) {
       await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
-      return { allowed: true }
+      return {
+        featureGateEnabled: true,
+        hasActivePlan: true,
+        checkoutUrl: null,
+      }
     }
   }
 
-  const checkoutUrl = await createCheckoutSession(input)
+  return {
+    featureGateEnabled: true,
+    hasActivePlan: false,
+    checkoutUrl: options.includeCheckoutUrl ? await createCheckoutSession(input) : null,
+  }
+}
+
+export async function requireCloudWorkerAccess(input: CloudAccessInput): Promise<CloudWorkerAccess> {
+  const evaluation = await evaluateCloudWorkerAccess(input, { includeCheckoutUrl: true })
+  if (evaluation.hasActivePlan) {
+    return { allowed: true }
+  }
+
+  if (!evaluation.checkoutUrl) {
+    throw new Error("Polar checkout URL unavailable")
+  }
+
   return {
     allowed: false,
-    checkoutUrl,
+    checkoutUrl: evaluation.checkoutUrl,
+  }
+}
+
+export async function getCloudWorkerBillingStatus(
+  input: CloudAccessInput,
+  options: { includeCheckoutUrl?: boolean } = {},
+): Promise<CloudWorkerBillingStatus> {
+  const evaluation = await evaluateCloudWorkerAccess(input, {
+    includeCheckoutUrl: options.includeCheckoutUrl,
+  })
+
+  return {
+    featureGateEnabled: evaluation.featureGateEnabled,
+    hasActivePlan: evaluation.hasActivePlan,
+    checkoutRequired: evaluation.featureGateEnabled && !evaluation.hasActivePlan,
+    checkoutUrl: evaluation.checkoutUrl,
   }
 }

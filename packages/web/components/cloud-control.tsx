@@ -7,6 +7,15 @@ type AuthMode = "sign-in" | "sign-up";
 type ShellView = "workers" | "billing";
 type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
 
+type BillingSummary = {
+  featureGateEnabled: boolean;
+  hasActivePlan: boolean;
+  checkoutRequired: boolean;
+  checkoutUrl: string | null;
+  productId: string | null;
+  benefitId: string | null;
+};
+
 type AuthUser = {
   id: string;
   email: string;
@@ -304,6 +313,34 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   }
 
   return { clientToken, hostToken, openworkUrl, workspaceId };
+}
+
+function getBillingSummary(payload: unknown): BillingSummary | null {
+  if (!isRecord(payload) || !isRecord(payload.billing)) {
+    return null;
+  }
+
+  const billing = payload.billing;
+  const featureGateEnabled = billing.featureGateEnabled;
+  const hasActivePlan = billing.hasActivePlan;
+  const checkoutRequired = billing.checkoutRequired;
+
+  if (
+    typeof featureGateEnabled !== "boolean" ||
+    typeof hasActivePlan !== "boolean" ||
+    typeof checkoutRequired !== "boolean"
+  ) {
+    return null;
+  }
+
+  return {
+    featureGateEnabled,
+    hasActivePlan,
+    checkoutRequired,
+    checkoutUrl: typeof billing.checkoutUrl === "string" ? billing.checkoutUrl : null,
+    productId: typeof billing.productId === "string" ? billing.productId : null,
+    benefitId: typeof billing.benefitId === "string" ? billing.benefitId : null
+  };
 }
 
 function parseWorkerListItem(value: unknown): WorkerListItem | null {
@@ -735,6 +772,10 @@ export function CloudControlPanel() {
   const [launchStatus, setLaunchStatus] = useState("Name your worker and click launch.");
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  const [billingBusy, setBillingBusy] = useState(false);
+  const [billingCheckoutBusy, setBillingCheckoutBusy] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
   const [paymentReturned, setPaymentReturned] = useState(false);
 
   const [events, setEvents] = useState<LaunchEvent[]>([]);
@@ -793,6 +834,7 @@ export function CloudControlPanel() {
 
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
+  const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -910,6 +952,73 @@ export function CloudControlPanel() {
     }
   }
 
+  async function refreshBilling(options: { includeCheckout?: boolean; quiet?: boolean } = {}) {
+    if (!user) {
+      setBillingSummary(null);
+      setBillingError(null);
+      return null;
+    }
+
+    const includeCheckout = options.includeCheckout === true;
+    const quiet = options.quiet === true;
+
+    if (includeCheckout) {
+      setBillingCheckoutBusy(true);
+    } else {
+      setBillingBusy(true);
+    }
+
+    if (!quiet) {
+      setBillingError(null);
+    }
+
+    try {
+      const query = includeCheckout ? "?includeCheckout=1" : "";
+      const { response, payload } = await requestJson(`/v1/workers/billing${query}`, {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      }, 12000);
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Billing lookup failed with ${response.status}.`);
+        if (!quiet) {
+          setBillingError(message);
+          appendEvent("error", "Billing check failed", message);
+        }
+        return null;
+      }
+
+      const summary = getBillingSummary(payload);
+      if (!summary) {
+        if (!quiet) {
+          setBillingError("Billing response was missing details.");
+          appendEvent("error", "Billing check failed", "Billing summary missing");
+        }
+        return null;
+      }
+
+      setBillingSummary(summary);
+      if (summary.checkoutUrl) {
+        setCheckoutUrl(summary.checkoutUrl);
+      }
+
+      return summary;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      if (!quiet) {
+        setBillingError(message);
+        appendEvent("error", "Billing check failed", message);
+      }
+      return null;
+    } finally {
+      if (includeCheckout) {
+        setBillingCheckoutBusy(false);
+      } else {
+        setBillingBusy(false);
+      }
+    }
+  }
+
   async function copyToClipboard(field: string, value: string | null) {
     if (!value) {
       return;
@@ -966,6 +1075,24 @@ export function CloudControlPanel() {
   }, [user?.id, authToken]);
 
   useEffect(() => {
+    if (!user) {
+      setBillingSummary(null);
+      setBillingError(null);
+      return;
+    }
+
+    void refreshBilling({ quiet: true });
+  }, [user?.id, authToken]);
+
+  useEffect(() => {
+    if (!user || shellView !== "billing") {
+      return;
+    }
+
+    void refreshBilling({ quiet: true });
+  }, [shellView, user?.id, authToken]);
+
+  useEffect(() => {
     if (!user || typeof window === "undefined") {
       return;
     }
@@ -1004,6 +1131,7 @@ export function CloudControlPanel() {
 
     setPaymentReturned(true);
     setCheckoutUrl(null);
+    setShellView("billing");
     setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
     appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
     trackPosthogEvent("den_paywall_checkout_returned", {
@@ -1016,6 +1144,14 @@ export function CloudControlPanel() {
     const nextUrl = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
     window.history.replaceState({}, "", nextUrl);
   }, []);
+
+  useEffect(() => {
+    if (!paymentReturned || !user) {
+      return;
+    }
+
+    void refreshBilling({ quiet: true });
+  }, [paymentReturned, user?.id, authToken]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1339,6 +1475,10 @@ export function CloudControlPanel() {
     setWorkersError(null);
     setLaunchError(null);
     setCheckoutUrl(null);
+    setBillingSummary(null);
+    setBillingError(null);
+    setBillingBusy(false);
+    setBillingCheckoutBusy(false);
     setPaymentReturned(false);
     setTokenFetchedForWorkerId(null);
     setDeleteBusyWorkerId(null);
@@ -1396,12 +1536,30 @@ export function CloudControlPanel() {
       if (response.status === 402) {
         const url = getCheckoutUrl(payload);
         setCheckoutUrl(url);
+        setShellView("billing");
+        setBillingSummary((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            hasActivePlan: false,
+            checkoutRequired: true,
+            checkoutUrl: url ?? current.checkoutUrl
+          };
+        });
         setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
         setLaunchError(url ? null : "Checkout URL missing from paywall response.");
         appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
         trackPosthogEvent("den_paywall_required", {
           checkout_url_present: Boolean(url)
         });
+
+        if (!url) {
+          void refreshBilling({ includeCheckout: true, quiet: true });
+        }
+
         return;
       }
 
@@ -1914,11 +2072,11 @@ export function CloudControlPanel() {
                         </div>
                       ) : null}
 
-                      {checkoutUrl ? (
+                      {effectiveCheckoutUrl ? (
                         <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
                           <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
                           <a
-                            href={checkoutUrl}
+                            href={effectiveCheckoutUrl}
                             rel="noreferrer"
                             className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
                           >
@@ -2288,22 +2446,104 @@ export function CloudControlPanel() {
               </div>
             ) : (
               <section className="flex h-full flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-                <h2 className="text-2xl font-bold tracking-tight text-slate-900">Billing</h2>
-                <p className="mt-1 text-sm text-slate-500">Handle checkout when launching a new worker.</p>
-                {checkoutUrl ? (
-                  <div className="mt-5 rounded-[16px] border border-amber-200 bg-amber-50 p-4">
-                    <p className="text-sm font-semibold text-amber-800">Checkout in progress</p>
-                    <a
-                      href={checkoutUrl}
-                      rel="noreferrer"
-                      className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
-                    >
-                      Continue to checkout
-                    </a>
+                <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">Billing</h2>
+                    <p className="mt-1 text-sm text-slate-500">Check plan status and manage checkout for cloud workers.</p>
                   </div>
-                ) : (
-                  <p className="mt-4 text-sm text-slate-600">No payment action right now.</p>
-                )}
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded-[12px] border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => void refreshBilling()}
+                      disabled={billingBusy || billingCheckoutBusy}
+                    >
+                      {billingBusy ? "Refreshing..." : "Refresh"}
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-[12px] bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
+                      onClick={() => setShellView("workers")}
+                    >
+                      Back to workers
+                    </button>
+                  </div>
+                </div>
+
+                {billingError ? (
+                  <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                    {billingError}
+                  </div>
+                ) : null}
+
+                {billingBusy && !billingSummary ? <p className="text-sm text-slate-500">Loading billing status...</p> : null}
+
+                {billingSummary ? (
+                  <div className="space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Plan status</p>
+                        <p className="mt-2 text-lg font-semibold text-slate-900">
+                          {!billingSummary.featureGateEnabled
+                            ? "Billing disabled"
+                            : billingSummary.hasActivePlan
+                              ? "Active plan"
+                              : "Payment required"}
+                        </p>
+                        <p className="mt-1 text-sm text-slate-600">
+                          {!billingSummary.featureGateEnabled
+                            ? "Cloud billing gates are disabled in this environment."
+                            : billingSummary.hasActivePlan
+                              ? "Your account can launch cloud workers right now."
+                              : "Complete checkout to unlock cloud worker launches."}
+                        </p>
+                      </div>
+
+                      <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Account</p>
+                        <p className="mt-2 break-all text-sm font-semibold text-slate-900">{(user?.email ?? email) || "account"}</p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          Product: {billingSummary.productId ? shortValue(billingSummary.productId) : "Not configured"}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          Benefit: {billingSummary.benefitId ? shortValue(billingSummary.benefitId) : "Not configured"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {effectiveCheckoutUrl ? (
+                      <div className="rounded-[16px] border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-sm font-semibold text-amber-800">Checkout available</p>
+                        <p className="mt-1 text-sm text-amber-700">Use this link to finish billing setup, then return here.</p>
+                        <a
+                          href={effectiveCheckoutUrl}
+                          rel="noreferrer"
+                          className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
+                        >
+                          Continue to checkout
+                        </a>
+                      </div>
+                    ) : null}
+
+                    {billingSummary.featureGateEnabled && !billingSummary.hasActivePlan && !effectiveCheckoutUrl ? (
+                      <div className="rounded-[16px] border border-slate-200 bg-white p-4">
+                        <p className="text-sm font-semibold text-slate-900">Need a checkout link?</p>
+                        <p className="mt-1 text-sm text-slate-600">Generate a fresh checkout session for this account.</p>
+                        <button
+                          type="button"
+                          className="mt-3 rounded-[10px] bg-[#1B29FF] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
+                          onClick={() => void refreshBilling({ includeCheckout: true })}
+                          disabled={billingCheckoutBusy || billingBusy}
+                        >
+                          {billingCheckoutBusy ? "Generating checkout..." : "Generate checkout link"}
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : !billingBusy ? (
+                  <p className="text-sm text-slate-600">No billing details available yet. Click refresh to retry.</p>
+                ) : null}
               </section>
             )}
           </div>

@@ -78,7 +78,7 @@ export default async function Enterprise() {
                 </div>
                 <h3 className="mb-2 text-[18px] font-bold">Den preorder</h3>
                 <p className="mb-4 text-[13px] leading-relaxed text-gray-600">
-                  $1 first month, then $50/month per worker. Cancel anytime.
+                  $50/month per worker. Cancel anytime.
                   Includes priority onboarding and custom workflows.
                 </p>
                 <a href="/den" className="doc-button">

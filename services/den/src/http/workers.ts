@@ -4,7 +4,7 @@ import { fromNodeHeaders } from "better-auth/node"
 import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { auth } from "../auth.js"
-import { requireCloudWorkerAccess } from "../billing/polar.js"
+import { getCloudWorkerBillingStatus, requireCloudWorkerAccess } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { AuditEventTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
@@ -112,6 +112,19 @@ function getConnectUrlCandidates(workerId: string, instanceUrl: string | null) {
   }
 
   return candidates
+}
+
+function queryIncludesCheckout(value: unknown): boolean {
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase()
+    return normalized === "1" || normalized === "true" || normalized === "yes"
+  }
+
+  if (Array.isArray(value)) {
+    return value.some((entry) => queryIncludesCheckout(entry))
+  }
+
+  return false
 }
 
 async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: string | null, clientToken: string) {
@@ -385,6 +398,29 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     },
     instance: null,
     launch: parsed.data.destination === "cloud" ? { mode: "async", pollAfterMs: 5000 } : { mode: "instant", pollAfterMs: 0 },
+  })
+}))
+
+workersRouter.get("/billing", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const includeCheckoutUrl = queryIncludesCheckout(req.query.includeCheckout)
+  const billing = await getCloudWorkerBillingStatus(
+    {
+      userId: session.user.id,
+      email: session.user.email ?? `${session.user.id}@placeholder.local`,
+      name: session.user.name ?? session.user.email ?? "OpenWork User",
+    },
+    { includeCheckoutUrl },
+  )
+
+  res.json({
+    billing: {
+      ...billing,
+      productId: env.polar.productId,
+      benefitId: env.polar.benefitId,
+    },
   })
 }))
 
