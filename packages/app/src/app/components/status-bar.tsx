@@ -236,7 +236,7 @@ export default function StatusBar(props: StatusBarProps) {
   });
 
   return (
-    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
+    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md z-[100] relative">
       <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
         <div class="relative">
           <button
