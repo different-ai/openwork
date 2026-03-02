@@ -23,6 +23,8 @@ type StatusBarProps = {
 export default function StatusBar(props: StatusBarProps) {
   const [opencodeRouterStatus, setOpenCodeRouterStatus] = createSignal<OpenCodeRouterStatus | null>(null);
   const [documentVisible, setDocumentVisible] = createSignal(true);
+  const [statusDetailOpen, setStatusDetailOpen] = createSignal(false);
+  let statusPopoverRef: HTMLDivElement | undefined;
 
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
@@ -39,6 +41,13 @@ export default function StatusBar(props: StatusBarProps) {
       default:
         return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
     }
+  });
+
+  const unifiedStatusMeta = createMemo(() => {
+    const allGreen = props.clientConnected && props.openworkServerStatus === "connected";
+    return allGreen
+      ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
+      : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
   });
 
   const messagingMeta = createMemo(() => {
@@ -190,27 +199,45 @@ export default function StatusBar(props: StatusBarProps) {
   return (
     <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
       <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
-        <div
-          class="flex items-center gap-2"
-          title={`OpenCode Engine: ${opencodeStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
-          <Cpu class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || !props.clientConnected}>
-            <span class="text-gray-11 font-medium">OpenCode</span>
-            <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
-          </Show>
-        </div>
-        <div class="w-px h-4 bg-gray-6/70" />
-        <div
-          class="flex items-center gap-2"
-          title={`OpenWork Server: ${openworkStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
-          <Server class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || props.openworkServerStatus !== "connected"}>
-            <span class="text-gray-11 font-medium">OpenWork</span>
-            <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
+        <div class="relative">
+          <button
+            type="button"
+            class="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            title={`Status: ${unifiedStatusMeta().label}`}
+            onClick={() => setStatusDetailOpen((v) => !v)}
+          >
+            <span class={`w-2 h-2 rounded-full ${unifiedStatusMeta().dot}`} />
+            <span class={`font-medium ${unifiedStatusMeta().text}`}>{unifiedStatusMeta().label}</span>
+          </button>
+
+          <Show when={statusDetailOpen()}>
+            <div
+              class="fixed inset-0 z-40"
+              onClick={() => setStatusDetailOpen(false)}
+            />
+            <div
+              ref={statusPopoverRef}
+              class="absolute bottom-full left-0 mb-2 z-50 w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
+            >
+              <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">Service Status</div>
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
+                  <Cpu class="w-3.5 h-3.5 text-gray-11" />
+                  <span class="text-xs text-gray-12 font-medium">OpenCode Engine</span>
+                  <span class={`ml-auto text-xs ${opencodeStatusMeta().text}`}>{opencodeStatusMeta().label}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
+                  <Server class="w-3.5 h-3.5 text-gray-11" />
+                  <span class="text-xs text-gray-12 font-medium">OpenWork Server</span>
+                  <span class={`ml-auto text-xs ${openworkStatusMeta().text}`}>{openworkStatusMeta().label}</span>
+                </div>
+              </div>
+              <div class="text-[10px] text-gray-9 border-t border-gray-6 pt-2">
+                Green means the service is connected and operational.
+              </div>
+            </div>
           </Show>
         </div>
         <div class="ml-auto flex items-center gap-2">
