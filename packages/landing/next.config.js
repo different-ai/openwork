@@ -3,6 +3,60 @@ const mintlifyOrigin = "https://differentai.mintlify.app";
 
 const nextConfig = {
   reactStrictMode: true,
+  async redirects() {
+    return [
+      {
+        source: "/introduction",
+        destination: "/docs",
+        permanent: false,
+      },
+      {
+        source: "/get-started",
+        destination: "/docs/quickstart",
+        permanent: false,
+      },
+      {
+        source: "/quickstart",
+        destination: "/docs/quickstart",
+        permanent: false,
+      },
+      {
+        source: "/development",
+        destination: "/docs/development",
+        permanent: false,
+      },
+      {
+        source: "/openwork",
+        destination: "/docs/openwork",
+        permanent: false,
+      },
+      {
+        source: "/opencode-router",
+        destination: "/docs/opencode-router",
+        permanent: false,
+      },
+      {
+        source: "/cli",
+        destination: "/docs/cli",
+        permanent: false,
+      },
+      {
+        source: "/create-openwork-instance",
+        destination: "/docs/create-openwork-instance",
+        permanent: false,
+      },
+      {
+        source: "/tutorials/:path*",
+        destination: "/docs/tutorials/:path*",
+        permanent: false,
+      },
+      {
+        source: "/api-reference/:path*",
+        destination: "/docs/api-reference/:path*",
+        permanent: false,
+      },
+    ];
+  },
   async rewrites() {
     return [
       {
@@ -15,73 +69,15 @@ const nextConfig = {
       },
       {
         source: "/docs",
-        destination: `${mintlifyOrigin}/`,
+        destination: `${mintlifyOrigin}/introduction`,
       },
       {
         source: "/docs/get-started",
         destination: `${mintlifyOrigin}/quickstart`,
       },
       {
-        source: "/docs/llms.txt",
-        destination: `${mintlifyOrigin}/llms.txt`,
-      },
-      {
-        source: "/docs/llms-full.txt",
-        destination: `${mintlifyOrigin}/llms-full.txt`,
-      },
-      {
-        source: "/docs/sitemap.xml",
-        destination: `${mintlifyOrigin}/sitemap.xml`,
-      },
-      {
-        source: "/docs/robots.txt",
-        destination: `${mintlifyOrigin}/robots.txt`,
-      },
-      {
-        source: "/docs/mcp",
-        destination: `${mintlifyOrigin}/mcp`,
-      },
-      {
         source: "/docs/:path*",
         destination: `${mintlifyOrigin}/:path*`,
-      },
-      // Mintlify emits root-based links (e.g. /cli) even when embedded under /docs.
-      // Mirror key docs routes at the root so in-doc navigation does not break.
-      {
-        source: "/get-started",
-        destination: `${mintlifyOrigin}/quickstart`,
-      },
-      {
-        source: "/quickstart",
-        destination: `${mintlifyOrigin}/quickstart`,
-      },
-      {
-        source: "/development",
-        destination: `${mintlifyOrigin}/development`,
-      },
-      {
-        source: "/openwork",
-        destination: `${mintlifyOrigin}/openwork`,
-      },
-      {
-        source: "/opencode-router",
-        destination: `${mintlifyOrigin}/opencode-router`,
-      },
-      {
-        source: "/cli",
-        destination: `${mintlifyOrigin}/cli`,
-      },
-      {
-        source: "/create-openwork-instance",
-        destination: `${mintlifyOrigin}/create-openwork-instance`,
-      },
-      {
-        source: "/tutorials/:path*",
-        destination: `${mintlifyOrigin}/tutorials/:path*`,
-      },
-      {
-        source: "/api-reference/:path*",
-        destination: `${mintlifyOrigin}/api-reference/:path*`,
       },
       {
         source: "/mintlify-assets/:path+",
