@@ -185,7 +185,9 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 
 - Review `AGENTS.md` plus `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, and `ARCHITECTURE.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
-- Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
+- Run `pnpm install` once per checkout, then run the canonical verify gate: `pnpm verify`.
+- `pnpm verify` runs dependency preflight plus baseline checks (`typecheck` and `test:e2e`).
+- CI uses the equivalent gate via `pnpm verify:ci` in `.github/workflows/ci-tests.yml`.
 - Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## For Teams & Businesses

@@ -30,6 +30,9 @@ jobs:
         with:
           version: 10.27.0
 
+      - name: Verify dependencies preflight
+        run: pnpm verify:preflight -- --ci --no-opencode
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -53,6 +56,9 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 10.27.0
+
+      - name: Verify dependencies preflight
+        run: pnpm verify:preflight -- --ci --no-opencode
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -82,6 +88,9 @@ jobs:
         uses: oven-sh/setup-bun@v1
         with:
           bun-version: 1.3.9
+
+      - name: Verify dependencies preflight
+        run: pnpm verify:preflight -- --ci --no-opencode --require-bun
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

@@ -139,5 +139,5 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run e2e tests
-        run: pnpm --filter @different-ai/openwork-ui test:e2e
+      - name: Run canonical verify gate
+        run: pnpm verify:ci

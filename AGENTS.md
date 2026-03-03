@@ -93,6 +93,8 @@ If you cannot complete steps 4-8 (Docker, Chrome MCP, missing credentials, or en
 
 If you open a PR, you must run tests and report what you ran (commands + result).
 
+Use `pnpm verify` as the default local verification gate before opening a PR.
+
 To maximize merge speed, include evidence of the end-to-end flow:
 
 * Ideally: attach a short video/screen recording showing the flow running successfully.
