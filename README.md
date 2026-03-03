@@ -34,6 +34,8 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
 ## Quick start
 Download the dmg here https://github.com/different-ai/openwork/releases (or install from source below)
 
+For a full end-to-end onboarding flow, follow `USER_TUTORIAL.md`.
+
 ## Why
 
 Current CLI and GUIs for opencode are anchored around developers. That means a focus on file diffs, tool names, and hard to extend capabilities without relying on exposing some form of cli.
