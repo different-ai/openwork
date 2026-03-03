@@ -103,6 +103,7 @@ import {
   isVisibleTextPart,
   isTauriRuntime,
   modelEquals,
+  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
@@ -2481,7 +2482,7 @@ export default function App() {
       if (!directory) {
         try {
           const pathInfo = unwrap(await c.path.get());
-          const discovered = normalizeDirectoryPath(pathInfo.directory ?? "");
+          const discovered = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
           if (discovered) {
             directory = discovered;
             c = createClient(config.baseUrl, directory, config.auth);
@@ -2491,13 +2492,7 @@ export default function App() {
         }
       }
 
-      const queryDirectory = (() => {
-        const trimmed = (directory ?? "").trim();
-        if (!trimmed) return undefined;
-        const unified = trimmed.replace(/\\/g, "/");
-        const withoutTrailing = unified.replace(/\/+$/, "");
-        return withoutTrailing || "/";
-      })();
+      const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
 
       // Fetch sessions scoped to the workspace directory to avoid loading the
       // full global session list for every workspace.
@@ -4310,7 +4305,7 @@ export default function App() {
     if (!resolvedProjectDir) {
       try {
         const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryPath(pathInfo.directory ?? "");
+        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
         const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
         if (discovered) {
           resolvedProjectDir = discovered;
@@ -4500,7 +4495,7 @@ export default function App() {
     if (!resolvedProjectDir) {
       try {
         const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryPath(pathInfo.directory ?? "");
+        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
         const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
         if (discovered) {
           resolvedProjectDir = discovered;

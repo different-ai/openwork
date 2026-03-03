@@ -18,6 +18,7 @@ import type {
 } from "../types";
 import {
   addOpencodeCacheHint,
+  normalizeDirectoryQueryPath,
   modelFromUserMessage,
   normalizeDirectoryPath,
   normalizeEvent,
@@ -592,13 +593,7 @@ export function createSessionStore(options: {
     // Note: We intentionally normalize slashes + trailing separators but do NOT
     // lowercase on Windows for the query value because the server does strict
     // string equality against the stored session.directory.
-    const queryDirectory = (() => {
-      const trimmed = (scopeRoot ?? "").trim();
-      if (!trimmed) return undefined;
-      const unified = trimmed.replace(/\\/g, "/");
-      const withoutTrailing = unified.replace(/\/+$/, "");
-      return withoutTrailing || "/";
-    })();
+    const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });

@@ -180,12 +180,17 @@ export function formatBytes(bytes: number) {
   return `${rounded} ${units[idx]}`;
 }
 
-export function normalizeDirectoryPath(input?: string | null) {
+export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
   const unified = trimmed.replace(/\\/g, "/");
   const withoutTrailing = unified.replace(/\/+$/, "");
-  const normalized = withoutTrailing || "/";
+  return withoutTrailing || "/";
+}
+
+export function normalizeDirectoryPath(input?: string | null) {
+  const normalized = normalizeDirectoryQueryPath(input);
+  if (!normalized) return "";
   return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
 }
 
