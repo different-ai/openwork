@@ -72,6 +72,8 @@ export type SettingsViewProps = {
   openDefaultModelPicker: () => void;
   showThinking: boolean;
   toggleShowThinking: () => void;
+  autoCompactContext: boolean;
+  toggleAutoCompactContext: () => void;
   hideTitlebar: boolean;
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
@@ -883,6 +885,21 @@ export default function SettingsView(props: SettingsViewProps) {
                   disabled={props.busy}
                 >
                   {props.showThinking ? "On" : "Off"}
+                </Button>
+              </div>
+
+              <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
+                <div class="min-w-0">
+                  <div class="text-sm text-gray-12">Auto context compaction</div>
+                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  class="text-xs h-8 py-0 px-3 shrink-0"
+                  onClick={props.toggleAutoCompactContext}
+                  disabled={props.busy}
+                >
+                  {props.autoCompactContext ? "On" : "Off"}
                 </Button>
               </div>
 

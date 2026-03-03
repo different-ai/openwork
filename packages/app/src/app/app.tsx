@@ -51,6 +51,7 @@ import {
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import {
+  AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
@@ -1617,6 +1618,34 @@ export default function App() {
     }
   }
 
+  const triggerAutoCompaction = async (sessionID: string) => {
+    if (!autoCompactContext()) return;
+    if (autoCompactingSessionId() === sessionID) return;
+
+    setAutoCompactingSessionId(sessionID);
+    try {
+      await compactCurrentSession(sessionID);
+    } catch {
+      // ignore auto-compaction failures; manual compact remains available
+    } finally {
+      setAutoCompactingSessionId((current) => (current === sessionID ? null : current));
+    }
+  };
+
+  const [lastSessionStatus, setLastSessionStatus] = createSignal<string | null>(null);
+  createEffect(() => {
+    const sessionID = selectedSessionId();
+    const status = sessionID ? sessionStatusById()[sessionID] ?? null : null;
+    const previous = lastSessionStatus();
+    setLastSessionStatus(status);
+
+    if (!sessionID) return;
+    if (!autoCompactContext()) return;
+    if (status !== "idle") return;
+    if (!previous || previous === "idle") return;
+    void triggerAutoCompaction(sessionID);
+  });
+
   const messageIdFromInfo = (message: MessageWithParts) => {
     const id = (message.info as { id?: string | number }).id;
     if (typeof id === "string") return id;
@@ -2255,7 +2284,9 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+  const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", label: "None" },
@@ -4862,6 +4893,18 @@ export default function App() {
           }
         }
 
+        const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
+        if (storedAutoCompactContext != null) {
+          try {
+            const parsed = JSON.parse(storedAutoCompactContext);
+            if (typeof parsed === "boolean") {
+              setAutoCompactContext(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         const storedVariant = window.localStorage.getItem(VARIANT_PREF_KEY);
         if (storedVariant && storedVariant.trim()) {
           const normalized = normalizeModelVariant(storedVariant);
@@ -5300,6 +5343,15 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(autoCompactContext()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
       const value = modelVariant();
       if (value) {
         window.localStorage.setItem(VARIANT_PREF_KEY, value);
@@ -5711,6 +5763,8 @@ export default function App() {
       openDefaultModelPicker,
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
+      autoCompactContext: autoCompactContext(),
+      toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
@@ -5884,6 +5938,8 @@ export default function App() {
     busyLabel: busyLabel(),
     developerMode: developerMode(),
     showThinking: showThinking(),
+    autoCompactContext: autoCompactContext(),
+    toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
