@@ -1,11 +1,11 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
 # OpenWork
+
 > OpenWork helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
 
-
-  
 ## Core Philosophy
+
 - Local-first, cloud-ready: OpenWork runs on your machine in one click. Send a message instantly.
 - Composable: desktop app, WhatsApp/Slack/Telegram connector, or server. Use what fits, no lock-in.
 - Ejectable: OpenWork is powered by OpenCode, so everything OpenCode can do works in OpenWork, even without a UI yet.
@@ -15,9 +15,7 @@
   <img src="./app-demo.gif" alt="OpenWork demo" width="800" />
 </p>
 
-
 OpenWork is designed around the idea that you can easily ship your agentic workflows as a repeatable, productized process.
-
 
 ## Alternate UIs
 
@@ -30,8 +28,8 @@ OpenWork is designed around the idea that you can easily ship your agentic workf
   - run: `openwork start --workspace /path/to/workspace --approval auto`
   - docs: [packages/orchestrator/README.md](./packages/orchestrator/README.md)
 
-
 ## Quick start
+
 Download the dmg here https://github.com/different-ai/openwork/releases (or install from source below)
 
 ## Why
@@ -39,12 +37,13 @@ Download the dmg here https://github.com/different-ai/openwork/releases (or inst
 Current CLI and GUIs for opencode are anchored around developers. That means a focus on file diffs, tool names, and hard to extend capabilities without relying on exposing some form of cli.
 
 OpenWork is designed to be:
+
 - **Extensible**: skill and opencode plugins are installable modules.
 - **Auditable**: show what happened, when, and why.
 - **Permissioned**: access to privileged flows.
 - **Local/Remote**: OpenWork works locally as well as can connect to remote servers.
 
-## What’s Included 
+## What’s Included
 
 - **Host mode**: runs opencode locally on your computer
 - **Client mode**: connect to an existing OpenCode server by URL.
@@ -57,15 +56,14 @@ OpenWork is designed to be:
   - list installed `.opencode/skills` folders
   - install from OpenPackage (`opkg install ...`)
   - import a local skill folder into `.opencode/skills/<skill-name>`
- 
 
-## Skill Manager    
+## Skill Manager
+
 <img width="1292" height="932" alt="image" src="https://github.com/user-attachments/assets/b500c1c6-a218-42ce-8a11-52787f5642b6" />
 
-
 ## Works on local computer or servers
-<img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 05 16 PM" src="https://github.com/user-attachments/assets/9c864390-de69-48f2-82c1-93b328dd60c3" />
 
+<img width="1292" height="932" alt="Screenshot 2026-01-13 at 7 05 16 PM" src="https://github.com/user-attachments/assets/9c864390-de69-48f2-82c1-93b328dd60c3" />
 
 ## Quick Start
 
@@ -118,12 +116,11 @@ This lets you run agentic workflows, send prompts, and see progress entirely on 
   - subscribe to SSE events(Server-Sent Events are used to stream real-time updates from the server to the UI.)
   - read todos and permission requests
 
-
-
 ## Folder Picker
 
 The folder picker uses the Tauri dialog plugin.
 Capability permissions are defined in:
+
 - `packages/desktop/src-tauri/capabilities/default.json`
 
 ## OpenPackage Notes
@@ -187,6 +184,21 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
 - Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
+
+Community docs:
+
+- `CODE_OF_CONDUCT.md`
+- `SECURITY.md`
+- `SUPPORT.md`
+- `TRIAGE.md`
+
+First contribution checklist:
+
+- [ ] Run `pnpm install` and baseline verification commands.
+- [ ] Confirm your change has a clear issue link and scope.
+- [ ] Add/update tests for behavioral changes.
+- [ ] Include commands run and outcomes in your PR.
+- [ ] Add screenshots/video for user-facing flow changes.
 
 ## For Teams & Businesses
 
