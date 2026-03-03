@@ -30,7 +30,7 @@ export default async function Home() {
           <div className="content-max-width px-6">
           <div className="animate-fade-up">
             <h1 className="mb-4 max-w-4xl text-5xl font-bold tracking-tight md:text-6xl">
-              OpenWork is the team layer for your existing agent setup.
+              The team layer for your existing agent setup.
             </h1>
             <p className="mb-10 max-w-4xl text-xl font-medium leading-relaxed text-gray-900/80">
               Whether you&apos;re using Claude Code, Codex, OpenCode, or your own
@@ -84,6 +84,7 @@ export default async function Home() {
                 autoPlay
                 loop
                 muted
+                defaultMuted
                 playsInline
                 className="w-full block"
               >
