@@ -28,7 +28,7 @@ import {
   openworkServerRestart,
   pickFile,
 } from "../lib/tauri";
-import { currentLocale, t } from "../../i18n";
+import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -76,6 +76,8 @@ export type SettingsViewProps = {
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
+  language: Language;
+  setLanguage: (value: Language) => void;
   themeMode: "light" | "dark" | "system";
   setThemeMode: (value: "light" | "dark" | "system") => void;
   updateAutoCheck: boolean;
@@ -839,6 +841,25 @@ export default function SettingsView(props: SettingsViewProps) {
                 >
                   Dark
                 </Button>
+              </div>
+
+              <div class="space-y-2">
+                <div class="text-xs font-medium text-gray-11">{translate("settings.language")}</div>
+                <div class="text-xs text-gray-9">{translate("settings.language.description")}</div>
+                <div class="flex flex-wrap gap-2">
+                  <For each={LANGUAGE_OPTIONS}>
+                    {(option) => (
+                      <Button
+                        variant={props.language === option.value ? "secondary" : "outline"}
+                        class="text-xs h-8 py-0 px-3"
+                        onClick={() => props.setLanguage(option.value)}
+                        disabled={props.busy}
+                      >
+                        {option.nativeName}
+                      </Button>
+                    )}
+                  </For>
+                </div>
               </div>
 
               <div class="text-xs text-gray-8">

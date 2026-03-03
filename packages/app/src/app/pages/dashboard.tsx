@@ -70,6 +70,7 @@ import {
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
+import type { Language } from "../../i18n";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -241,6 +242,8 @@ export type DashboardViewProps = {
   toggleHideTitlebar: () => void;
   modelVariantLabel: string;
   editModelVariant: () => void;
+  language: Language;
+  setLanguage: (value: Language) => void;
   updateAutoCheck: boolean;
   toggleUpdateAutoCheck: () => void;
   updateAutoDownload: boolean;
@@ -1332,6 +1335,8 @@ export default function DashboardView(props: DashboardViewProps) {
                   toggleHideTitlebar={props.toggleHideTitlebar}
                   modelVariantLabel={props.modelVariantLabel}
                   editModelVariant={props.editModelVariant}
+                  language={props.language}
+                  setLanguage={props.setLanguage}
                   updateAutoCheck={props.updateAutoCheck}
                   toggleUpdateAutoCheck={props.toggleUpdateAutoCheck}
                   updateAutoDownload={props.updateAutoDownload}
