@@ -186,6 +186,8 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 - Review `AGENTS.md` plus `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, and `ARCHITECTURE.md` to understand the product goals before making changes.
 - Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
+- Use `.github/pull_request_template.md` when opening PRs and include exact commands, outcomes, manual verification steps, and evidence.
+- If CI fails, classify failures in the PR body as either code-related regressions or external/environment/auth blockers.
 - Add new PRDs to `packages/app/pr/<name>.md` following the `.opencode/skills/prd-conventions/SKILL.md` conventions described in `AGENTS.md`.
 
 ## For Teams & Businesses
