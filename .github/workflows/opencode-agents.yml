@@ -29,11 +29,11 @@ jobs:
           ISSUE_TITLE: ${{ github.event.issue.title }}
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: |
-          opencode run --agent triage "The following issue was just opened, triage it:
-
-          Title: $ISSUE_TITLE
-
-          $ISSUE_BODY"
+          cat > /tmp/issue_prompt.txt <<'PROMPT_EOF'
+          The following issue was just opened, triage it:
+          PROMPT_EOF
+          printf '\nTitle: %s\n\n%s\n' "$ISSUE_TITLE" "$ISSUE_BODY" >> /tmp/issue_prompt.txt
+          opencode run --agent triage "$(cat /tmp/issue_prompt.txt)"
 
   duplicate-prs:
     if: github.event_name == 'pull_request_target' && github.event.pull_request.user.login != 'opencode-agent[bot]'
@@ -72,8 +72,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          COMMENT=$(opencode run --agent duplicate-pr "$(cat pr_info.txt)")
+          opencode run --agent duplicate-pr "$(cat pr_info.txt)" > /tmp/comment_output.txt
 
-          gh pr comment "$PR_NUMBER" --body "_The following comment was made by an LLM, it may be inaccurate:_
-
-          $COMMENT"
+          {
+            echo "_The following comment was made by an LLM, it may be inaccurate:_"
+            echo ""
+            cat /tmp/comment_output.txt
+          } > /tmp/comment_body.txt
+          gh pr comment "$PR_NUMBER" --body-file /tmp/comment_body.txt
