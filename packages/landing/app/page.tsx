@@ -84,7 +84,6 @@ export default async function Home() {
                 autoPlay
                 loop
                 muted
-                defaultMuted
                 playsInline
                 className="w-full block"
               >
