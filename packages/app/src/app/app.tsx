@@ -1464,6 +1464,7 @@ export default function App() {
       const parts = buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
+      const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
         ? ({ reasoning_effort: reasoningEffort } as const)
         : undefined;
@@ -1498,7 +1499,7 @@ export default function App() {
             arguments: command.arguments,
             agent: agent ?? undefined,
             model: modelString,
-            variant: selectedVariant,
+            variant: requestVariant,
             ...(promptOverrides ?? {}),
             parts: files.length ? files : undefined,
           }),
@@ -1509,7 +1510,7 @@ export default function App() {
           sessionID,
           model,
           agent: agent ?? undefined,
-          variant: selectedVariant,
+          variant: requestVariant,
           ...(promptOverrides ?? {}),
           parts,
         });
