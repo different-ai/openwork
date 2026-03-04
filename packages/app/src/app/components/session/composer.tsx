@@ -61,6 +61,7 @@ type ComposerProps = {
 };
 
 const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_EMBED_BYTES = 2_000_000;
 const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
@@ -160,40 +161,52 @@ const compressImageFile = async (file: File): Promise<File> => {
   }
 
   const bitmap = await createImageBitmap(file);
-  const { width, height } = bitmap;
+  const sourceW = bitmap.width;
+  const sourceH = bitmap.height;
 
-  // Calculate scaled dimensions
-  const maxDim = Math.max(width, height);
-  const scale = maxDim > IMAGE_COMPRESS_MAX_PX ? IMAGE_COMPRESS_MAX_PX / maxDim : 1;
-  const targetW = Math.round(width * scale);
-  const targetH = Math.round(height * scale);
+  const maxDim = Math.max(sourceW, sourceH);
 
-  let blob: Blob | null = null;
-
-  if (typeof OffscreenCanvas !== "undefined") {
-    const offscreen = new OffscreenCanvas(targetW, targetH);
-    const ctx = offscreen.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-      blob = await offscreen.convertToBlob({ type: "image/jpeg", quality: IMAGE_COMPRESS_QUALITY });
+  const renderJpeg = async (width: number, height: number, quality: number) => {
+    if (typeof OffscreenCanvas !== "undefined") {
+      const offscreen = new OffscreenCanvas(width, height);
+      const ctx = offscreen.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(bitmap, 0, 0, width, height);
+        return offscreen.convertToBlob({ type: "image/jpeg", quality });
+      }
     }
-  }
 
-  if (!blob) {
     const canvas = document.createElement("canvas");
-    canvas.width = targetW;
-    canvas.height = targetH;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext("2d");
-    if (!ctx) return file;
-    ctx.drawImage(bitmap, 0, 0, targetW, targetH);
-    blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", IMAGE_COMPRESS_QUALITY),
-    );
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    return new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+  };
+
+  const steps = [
+    { maxPx: IMAGE_COMPRESS_MAX_PX, quality: IMAGE_COMPRESS_QUALITY },
+    { maxPx: 1792, quality: 0.75 },
+    { maxPx: 1536, quality: 0.68 },
+    { maxPx: 1280, quality: 0.6 },
+  ];
+  let blob: Blob | null = null;
+  for (const step of steps) {
+    const stepScale = maxDim > step.maxPx ? step.maxPx / maxDim : 1;
+    const width = Math.max(1, Math.round(sourceW * stepScale));
+    const height = Math.max(1, Math.round(sourceH * stepScale));
+    const candidate = await renderJpeg(width, height, step.quality);
+    if (!candidate) continue;
+    if (!blob || candidate.size < blob.size) {
+      blob = candidate;
+    }
+    if (candidate.size <= IMAGE_COMPRESS_TARGET_BYTES) break;
   }
 
   bitmap.close();
 
-  if (!blob || blob.size >= file.size) {
+  if (!blob || (blob.size >= file.size && blob.size > IMAGE_COMPRESS_TARGET_BYTES)) {
     return file; // Compression didn't help
   }
 
@@ -1081,8 +1094,13 @@ export default function Composer(props: ComposerProps) {
         const dataUrl = await fileToDataUrl(processed);
         // Pre-check: data URL will be embedded in JSON body; reject if too large
         const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead
-        if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
-          props.onToast(`${file.name} is too large after encoding. Try a smaller image.`);
+        const maxJsonBytes = isImageMime(processed.type) ? MAX_IMAGE_EMBED_BYTES : MAX_ATTACHMENT_BYTES;
+        if (estimatedJsonBytes > maxJsonBytes) {
+          props.onToast(
+            isImageMime(processed.type)
+              ? `${file.name} is too large for fast vision runs. Try a smaller image.`
+              : `${file.name} is too large after encoding. Try a smaller file.`,
+          );
           continue;
         }
         next.push({
