@@ -1094,6 +1094,7 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  const [autoCreateAttemptedByWorkspace, setAutoCreateAttemptedByWorkspace] = createSignal<Record<string, boolean>>({});
   const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
   const readSessionByWorkspace = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
@@ -2770,7 +2771,28 @@ export default function App() {
     if (selectedSessionId()) return;
 
     const list = sessions();
-    if (!list.length) return;
+    if (!list.length) {
+      const workspaceKey = workspaceStore.activeWorkspaceId().trim() || "__default__";
+      if (autoCreateAttemptedByWorkspace()[workspaceKey]) {
+        return;
+      }
+      setAutoCreateAttemptedByWorkspace((prev) => ({
+        ...prev,
+        [workspaceKey]: true,
+      }));
+      void createSessionAndOpen();
+      return;
+    }
+
+    const workspaceKey = workspaceStore.activeWorkspaceId().trim() || "__default__";
+    if (autoCreateAttemptedByWorkspace()[workspaceKey]) {
+      setAutoCreateAttemptedByWorkspace((prev) => {
+        if (!prev[workspaceKey]) return prev;
+        const next = { ...prev };
+        delete next[workspaceKey];
+        return next;
+      });
+    }
 
     const workspaceId = workspaceStore.activeWorkspaceId();
     const map = workspaceId ? readSessionByWorkspace() : null;
