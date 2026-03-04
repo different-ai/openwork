@@ -22,6 +22,7 @@ export type MessageListProps = {
   searchHighlightQuery?: string;
   workspaceRoot?: string;
   scrollElement?: () => HTMLElement | null | undefined;
+  scrollReady?: boolean;
   virtualizationThreshold?: number;
   footer?: JSX.Element;
 };
@@ -439,7 +440,9 @@ export default function MessageList(props: MessageListProps) {
   };
 
   const virtualizationThreshold = () => props.virtualizationThreshold ?? 30;
-  const shouldVirtualize = createMemo(() => messageBlocks().length >= virtualizationThreshold());
+  const shouldVirtualize = createMemo(
+    () => Boolean(props.scrollReady) && messageBlocks().length >= virtualizationThreshold(),
+  );
 
   const virtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
     get count() {
@@ -466,6 +469,15 @@ export default function MessageList(props: MessageListProps) {
     if (index < 0) return;
     virtualizer.scrollToIndex(index, { align: "center" });
   });
+
+  createEffect(() => {
+    if (!shouldVirtualize()) return;
+    queueMicrotask(() => {
+      virtualizer.measure();
+    });
+  });
+
+  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
 
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
@@ -1000,27 +1012,36 @@ export default function MessageList(props: MessageListProps) {
           </For>
         }
       >
-        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-          <For each={virtualizer.getVirtualItems()}>
-            {(item) => {
-              const block = () => messageBlocks()[item.index];
-              return (
-                <div
-                  ref={(el) => virtualizer.measureElement(el)}
-                  style={{
-                    position: "absolute",
-                    top: "0",
-                    left: "0",
-                    width: "100%",
-                    transform: `translateY(${item.start}px)`,
-                  }}
-                >
-                  <Show when={block()}>{(value) => renderBlock(value(), item.index)}</Show>
-                </div>
-              );
-            }}
-          </For>
-        </div>
+        <Show
+          when={virtualItems().length > 0}
+          fallback={
+            <For each={messageBlocks()}>
+              {(block, index) => renderBlock(block, index())}
+            </For>
+          }
+        >
+          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+            <For each={virtualItems()}>
+              {(item) => {
+                const block = () => messageBlocks()[item.index];
+                return (
+                  <div
+                    ref={(el) => virtualizer.measureElement(el)}
+                    style={{
+                      position: "absolute",
+                      top: "0",
+                      left: "0",
+                      width: "100%",
+                      transform: `translateY(${item.start}px)`,
+                    }}
+                  >
+                    <Show when={block()}>{(value) => renderBlock(value(), item.index)}</Show>
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
       </Show>
       <Show when={props.footer}>{props.footer}</Show>
     </div>

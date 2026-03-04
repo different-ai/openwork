@@ -294,6 +294,7 @@ export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
@@ -3548,7 +3549,10 @@ export default function SessionView(props: SessionViewProps) {
             <div
               class="h-full overflow-y-auto px-8 pt-12 pb-56 scroll-smooth bg-gray-1"
               style={{ contain: "layout paint style" }}
-              ref={(el) => (chatContainerEl = el)}
+              ref={(el) => {
+                chatContainerEl = el;
+                setIsChatContainerReady(Boolean(el));
+              }}
             >
               <div class="max-w-[650px] mx-auto w-full">
            <Show when={props.messages.length === 0}>
@@ -3619,6 +3623,7 @@ export default function SessionView(props: SessionViewProps) {
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             searchHighlightQuery={searchQueryDebounced().trim()}
             scrollElement={() => chatContainerEl}
+            scrollReady={isChatContainerReady()}
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">
