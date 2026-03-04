@@ -3618,6 +3618,7 @@ export default function SessionView(props: SessionViewProps) {
             searchMatchMessageIds={searchMatchMessageIds()}
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             searchHighlightQuery={searchQueryDebounced().trim()}
+            scrollElement={() => chatContainerEl}
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">

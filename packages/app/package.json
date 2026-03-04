@@ -38,6 +38,7 @@
     "@solid-primitives/event-bus": "^1.1.2",
     "@solid-primitives/storage": "^4.3.3",
     "@solidjs/router": "^0.15.4",
+    "@tanstack/solid-virtual": "^3.13.19",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-deep-link": "^2.4.7",
     "@tauri-apps/plugin-dialog": "~2.6.0",

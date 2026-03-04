@@ -1,7 +1,8 @@
-import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types";
 import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
@@ -20,6 +21,8 @@ export type MessageListProps = {
   activeSearchMessageId?: string | null;
   searchHighlightQuery?: string;
   workspaceRoot?: string;
+  scrollElement?: () => HTMLElement | null | undefined;
+  virtualizationThreshold?: number;
   footer?: JSX.Element;
 };
 
@@ -427,6 +430,43 @@ export default function MessageList(props: MessageListProps) {
     };
   };
 
+  const blockContainsMessageId = (block: MessageBlockItem, messageId: string) => {
+    if (!messageId) return false;
+    if (block.kind === "steps-cluster") {
+      return block.messageIds.includes(messageId);
+    }
+    return block.messageId === messageId;
+  };
+
+  const virtualizationThreshold = () => props.virtualizationThreshold ?? 30;
+  const shouldVirtualize = createMemo(() => messageBlocks().length >= virtualizationThreshold());
+
+  const virtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
+    get count() {
+      return shouldVirtualize() ? messageBlocks().length : 0;
+    },
+    getScrollElement: () => props.scrollElement?.() ?? null,
+    estimateSize: () => 220,
+    overscan: 6,
+    getItemKey: (index) => {
+      const block = messageBlocks()[index];
+      if (!block) return `block-${index}`;
+      if (block.kind === "steps-cluster") {
+        return `steps-${block.messageIds.join(",")}`;
+      }
+      return `message-${block.messageId}`;
+    },
+  });
+
+  createEffect(() => {
+    if (!shouldVirtualize()) return;
+    const activeMessageId = props.activeSearchMessageId?.trim();
+    if (!activeMessageId) return;
+    const index = messageBlocks().findIndex((block) => blockContainsMessageId(block, activeMessageId));
+    if (index < 0) return;
+    virtualizer.scrollToIndex(index, { align: "center" });
+  });
+
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
@@ -809,10 +849,7 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
-  return (
-    <div class="space-y-4 pb-24" style={{ contain: "layout paint style" }}>
-      <For each={messageBlocks()}>
-        {(block, blockIndex) => {
+  const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
           const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
           const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
@@ -828,7 +865,7 @@ export default function MessageList(props: MessageListProps) {
                 class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
                 data-message-role={block.isUser ? "user" : "assistant"}
                 data-message-id={block.messageIds[0] ?? ""}
-                style={blockPerfStyle(blockIndex())}
+                style={blockPerfStyle(blockIndex)}
               >
                 <div
                   class={`w-full relative ${
@@ -854,7 +891,7 @@ export default function MessageList(props: MessageListProps) {
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
-              style={blockPerfStyle(blockIndex())}
+              style={blockPerfStyle(blockIndex)}
             >
               <div
                 class={`w-full relative ${
@@ -951,8 +988,40 @@ export default function MessageList(props: MessageListProps) {
               </div>
             </div>
           );
-        }}
-      </For>
+        };
+
+  return (
+    <div class="space-y-4 pb-24" style={{ contain: "layout paint style" }}>
+      <Show
+        when={shouldVirtualize()}
+        fallback={
+          <For each={messageBlocks()}>
+            {(block, index) => renderBlock(block, index())}
+          </For>
+        }
+      >
+        <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
+          <For each={virtualizer.getVirtualItems()}>
+            {(item) => {
+              const block = () => messageBlocks()[item.index];
+              return (
+                <div
+                  ref={(el) => virtualizer.measureElement(el)}
+                  style={{
+                    position: "absolute",
+                    top: "0",
+                    left: "0",
+                    width: "100%",
+                    transform: `translateY(${item.start}px)`,
+                  }}
+                >
+                  <Show when={block()}>{(value) => renderBlock(value(), item.index)}</Show>
+                </div>
+              );
+            }}
+          </For>
+        </div>
+      </Show>
       <Show when={props.footer}>{props.footer}</Show>
     </div>
   );
