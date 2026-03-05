@@ -297,6 +297,7 @@ export default function SessionView(props: SessionViewProps) {
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
+  let scrollMessageIntoViewById: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null = null;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
@@ -1846,7 +1847,10 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(
     on(
       () => props.selectedSessionId,
-      (sessionId) => {
+      (sessionId, previousSessionId) => {
+        if (sessionId === previousSessionId) {
+          return;
+        }
         setSearchOpen(false);
         setSearchQuery("");
         setSearchQueryDebounced("");
@@ -1906,6 +1910,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     const active = activeSearchHit();
     if (!active) return;
+    if (scrollMessageIntoViewById?.(active.messageId, "smooth")) return;
     const container = chatContainerEl;
     if (!container) return;
     const escapedId = active.messageId.replace(/"/g, '\\"');
@@ -3747,7 +3752,9 @@ export default function SessionView(props: SessionViewProps) {
             activeSearchMessageId={activeSearchHit()?.messageId ?? null}
             searchHighlightQuery={searchQueryDebounced().trim()}
             scrollElement={() => chatContainerEl}
-            scrollReady={isChatContainerReady()}
+            setScrollToMessageById={(handler) => {
+              scrollMessageIntoViewById = handler;
+            }}
             footer={
               showRunIndicator() ? (
                 <div class="flex justify-start pl-2">

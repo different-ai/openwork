@@ -21,9 +21,8 @@ export type MessageListProps = {
   activeSearchMessageId?: string | null;
   searchHighlightQuery?: string;
   workspaceRoot?: string;
-  scrollElement?: () => HTMLElement | null | undefined;
-  scrollReady?: boolean;
-  virtualizationThreshold?: number;
+  scrollElement?: () => HTMLElement | undefined;
+  setScrollToMessageById?: (handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null) => void;
   footer?: JSX.Element;
 };
 
@@ -53,6 +52,8 @@ type MessageBlock = {
 type MessageBlockItem = MessageBlock | StepClusterBlock;
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
+const VIRTUALIZATION_THRESHOLD = 500;
+const VIRTUAL_OVERSCAN = 4;
 
 type ExplorationSummary = {
   files: number;
@@ -420,37 +421,33 @@ export default function MessageList(props: MessageListProps) {
     return "";
   });
 
-  const shouldUseContentVisibility = createMemo(() => messageBlocks().length > 500);
-  const blockPerfStyle = (index: number): JSX.CSSProperties | undefined => {
-    if (!shouldUseContentVisibility()) return undefined;
-    const total = messageBlocks().length;
-    if (index >= total - 24) return undefined;
-    return {
-      "content-visibility": "auto",
-      "contain-intrinsic-size": "220px",
-    };
-  };
+  const blockIndexByMessageId = createMemo(() => {
+    const next = new Map<string, number>();
+    messageBlocks().forEach((block, index) => {
+      if (block.kind === "steps-cluster") {
+        block.messageIds.forEach((id) => {
+          if (id) next.set(id, index);
+        });
+        return;
+      }
+      if (block.messageId) {
+        next.set(block.messageId, index);
+      }
+    });
+    return next;
+  });
 
-  const blockContainsMessageId = (block: MessageBlockItem, messageId: string) => {
-    if (!messageId) return false;
-    if (block.kind === "steps-cluster") {
-      return block.messageIds.includes(messageId);
-    }
-    return block.messageId === messageId;
-  };
-
-  const virtualizationThreshold = () => props.virtualizationThreshold ?? 500;
   const shouldVirtualize = createMemo(
-    () => Boolean(props.scrollReady) && messageBlocks().length >= virtualizationThreshold(),
+    () => Boolean(props.scrollElement?.()) && messageBlocks().length >= VIRTUALIZATION_THRESHOLD,
   );
 
   const virtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
     get count() {
-      return shouldVirtualize() ? messageBlocks().length : 0;
+      return messageBlocks().length;
     },
     getScrollElement: () => props.scrollElement?.() ?? null,
     estimateSize: () => 220,
-    overscan: 4,
+    overscan: VIRTUAL_OVERSCAN,
     getItemKey: (index) => {
       const block = messageBlocks()[index];
       if (!block) return `block-${index}`;
@@ -461,13 +458,64 @@ export default function MessageList(props: MessageListProps) {
     },
   });
 
+  let cachedVirtualRows: ReturnType<typeof virtualizer.getVirtualItems> = [];
+  const virtualRows = createMemo(() => {
+    if (!shouldVirtualize()) {
+      cachedVirtualRows = [];
+      return [];
+    }
+    const rows = virtualizer.getVirtualItems();
+    if (rows.length > 0) {
+      cachedVirtualRows = rows;
+      return rows;
+    }
+    return cachedVirtualRows;
+  });
+
+  const virtualRowByIndex = createMemo(() => {
+    const map = new Map<number, ReturnType<typeof virtualizer.getVirtualItems>[number]>();
+    virtualRows().forEach((row) => {
+      map.set(row.index, row);
+    });
+    return map;
+  });
+
+  const virtualRowIndices = createMemo(() => virtualRows().map((row) => row.index));
+
+  const shouldUseContentVisibility = createMemo(() => !shouldVirtualize() && messageBlocks().length > 500);
+  const blockPerfStyle = (index: number): JSX.CSSProperties | undefined => {
+    if (!shouldUseContentVisibility()) return undefined;
+    const total = messageBlocks().length;
+    if (index >= total - 24) return undefined;
+    return {
+      "content-visibility": "auto",
+      "contain-intrinsic-size": "220px",
+    };
+  };
+
   createEffect(() => {
-    if (!shouldVirtualize()) return;
-    const activeMessageId = props.activeSearchMessageId?.trim();
-    if (!activeMessageId) return;
-    const index = messageBlocks().findIndex((block) => blockContainsMessageId(block, activeMessageId));
-    if (index < 0) return;
-    virtualizer.scrollToIndex(index, { align: "center" });
+    const setScrollToMessageById = props.setScrollToMessageById;
+    if (!setScrollToMessageById) return;
+    const indexById = blockIndexByMessageId();
+    const useVirtualization = shouldVirtualize();
+
+    setScrollToMessageById((messageId, behavior = "smooth") => {
+      const index = indexById.get(messageId);
+      if (index === undefined) return false;
+
+      if (useVirtualization) {
+        virtualizer.scrollToIndex(index, { align: "center" });
+        return true;
+      }
+
+      const container = props.scrollElement?.();
+      if (!container) return false;
+      const escapedId = messageId.replace(/"/g, '\\"');
+      const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
+      if (!target) return false;
+      target.scrollIntoView({ behavior, block: "center" });
+      return true;
+    });
   });
 
   createEffect(() => {
@@ -477,7 +525,9 @@ export default function MessageList(props: MessageListProps) {
     });
   });
 
-  const virtualItems = createMemo(() => virtualizer.getVirtualItems());
+  onCleanup(() => {
+    props.setScrollToMessageById?.(null);
+  });
 
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
@@ -1003,39 +1053,46 @@ export default function MessageList(props: MessageListProps) {
         };
 
   return (
-    <div class="space-y-4 pb-24" style={{ contain: "layout paint style" }}>
+    <div class="pb-24" style={{ contain: "layout paint style" }}>
       <Show
         when={shouldVirtualize()}
-        fallback={
-          <For each={messageBlocks()}>
-            {(block, index) => renderBlock(block, index())}
-          </For>
-        }
+        fallback={(
+          <div class="space-y-4">
+            <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+          </div>
+        )}
       >
         <Show
-          when={virtualItems().length > 0}
-          fallback={
-            <For each={messageBlocks()}>
-              {(block, index) => renderBlock(block, index())}
-            </For>
-          }
+          when={virtualRows().length > 0}
+          fallback={(
+            <div class="space-y-4">
+              <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+            </div>
+          )}
         >
-          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-            <For each={virtualItems()}>
-              {(item) => {
-                const block = () => messageBlocks()[item.index];
+          <div
+            class="relative"
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+            }}
+          >
+            <For each={virtualRowIndices()}>
+              {(rowIndex) => {
+                const virtualRow = virtualRowByIndex().get(rowIndex);
+                if (!virtualRow) return null;
+                const block = messageBlocks()[rowIndex];
+                if (!block) return null;
                 return (
                   <div
+                    data-index={rowIndex}
                     ref={(el) => virtualizer.measureElement(el)}
+                    class="absolute left-0 top-0 w-full pb-4"
                     style={{
-                      position: "absolute",
-                      top: "0",
-                      left: "0",
-                      width: "100%",
-                      transform: `translateY(${item.start}px)`,
+                      transform: `translateY(${virtualRow.start}px)`,
                     }}
                   >
-                    <Show when={block()}>{(value) => renderBlock(value(), item.index)}</Show>
+                    {renderBlock(block, rowIndex)}
                   </div>
                 );
               }}
