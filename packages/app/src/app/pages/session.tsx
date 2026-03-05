@@ -223,6 +223,9 @@ export type SessionViewProps = {
   setSessionAgent: (sessionId: string, agent: string | null) => void;
   saveSession: (sessionId: string) => Promise<string>;
   sessionStatusById: Record<string, string>;
+  hasEarlierMessages: boolean;
+  loadingEarlierMessages: boolean;
+  loadEarlierMessages: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
 };
 
@@ -333,12 +336,13 @@ export default function SessionView(props: SessionViewProps) {
   const [messageWindowStart, setMessageWindowStart] = createSignal(0);
   const [messageWindowSessionId, setMessageWindowSessionId] = createSignal<string | null>(null);
   const [messageWindowExpanded, setMessageWindowExpanded] = createSignal(false);
+  const [initialAnchorPending, setInitialAnchorPending] = createSignal(false);
 
   const [obsidianAvailable, setObsidianAvailable] = createSignal(false);
 
-  // When a session is selected (i.e. we are in SessionView), the right sidebar is
-  // navigation-only. Avoid showing any tab as "selected" to reduce confusion.
-  const showRightSidebarSelection = createMemo(() => !props.selectedSessionId);
+  // In Session view the right sidebar is navigation-only; never pre-highlight a
+  // dashboard tab here so first-run feels chat-first rather than Automations-first.
+  const showRightSidebarSelection = createMemo(() => false);
   let commandPaletteInputEl: HTMLInputElement | undefined;
   const commandPaletteOptionRefs: HTMLButtonElement[] = [];
 
@@ -665,20 +669,37 @@ export default function SessionView(props: SessionViewProps) {
     return Math.min(hidden, MESSAGE_WINDOW_LOAD_CHUNK);
   });
 
-  const revealEarlierMessages = () => {
+  const hasServerEarlierMessages = createMemo(
+    () => !searchActive() && Boolean(props.selectedSessionId) && props.hasEarlierMessages,
+  );
+
+  const revealEarlierMessages = async () => {
     const hidden = hiddenMessageCount();
-    if (hidden <= 0) return;
-    const nextStart = Math.max(0, messageWindowStart() - MESSAGE_WINDOW_LOAD_CHUNK);
-    if (props.developerMode) {
-      recordPerfLog(true, "session.window", "reveal", {
-        sessionID: props.selectedSessionId,
-        hiddenBefore: hidden,
-        nextStart,
-      });
+    if (hidden > 0) {
+      const nextStart = Math.max(0, messageWindowStart() - MESSAGE_WINDOW_LOAD_CHUNK);
+      if (props.developerMode) {
+        recordPerfLog(true, "session.window", "reveal", {
+          sessionID: props.selectedSessionId,
+          hiddenBefore: hidden,
+          nextStart,
+        });
+      }
+      setMessageWindowStart(nextStart);
+      if (nextStart === 0) {
+        setMessageWindowExpanded(true);
+      }
+      return;
     }
-    setMessageWindowStart(nextStart);
-    if (nextStart === 0) {
-      setMessageWindowExpanded(true);
+
+    if (!hasServerEarlierMessages()) return;
+    if (!props.selectedSessionId) return;
+    setMessageWindowExpanded(true);
+    setMessageWindowStart(0);
+    await props.loadEarlierMessages(props.selectedSessionId);
+    if (props.developerMode) {
+      recordPerfLog(true, "session.window", "load-earlier", {
+        sessionID: props.selectedSessionId,
+      });
     }
   };
 
@@ -1394,6 +1415,9 @@ export default function SessionView(props: SessionViewProps) {
     return `${todoCompletedCount()} out of ${total} tasks completed`;
   });
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
+  let initialAnchorRafA: number | undefined;
+  let initialAnchorRafB: number | undefined;
+  let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
     if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
     return props.openworkServerStatus === "connected";
@@ -1408,6 +1432,10 @@ export default function SessionView(props: SessionViewProps) {
 
   const scrollToLatest = (behavior: ScrollBehavior = "auto") => {
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
+  };
+
+  const pinToLatestNow = () => {
+    messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
   };
 
   const scheduleScrollToLatest = (behavior: ScrollBehavior = "auto") => {
@@ -1428,7 +1456,43 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const cancelInitialAnchorFrames = () => {
+    if (initialAnchorRafA !== undefined) {
+      window.cancelAnimationFrame(initialAnchorRafA);
+      initialAnchorRafA = undefined;
+    }
+    if (initialAnchorRafB !== undefined) {
+      window.cancelAnimationFrame(initialAnchorRafB);
+      initialAnchorRafB = undefined;
+    }
+    if (initialAnchorGuardTimer) {
+      clearTimeout(initialAnchorGuardTimer);
+      initialAnchorGuardTimer = undefined;
+    }
+  };
+
+  const applyInitialBottomAnchor = (sessionId: string) => {
+    cancelInitialAnchorFrames();
+    initialAnchorGuardTimer = setTimeout(() => {
+      initialAnchorGuardTimer = undefined;
+      if (props.selectedSessionId !== sessionId) return;
+      setInitialAnchorPending(false);
+    }, 200);
+    pinToLatestNow();
+    initialAnchorRafA = window.requestAnimationFrame(() => {
+      initialAnchorRafA = undefined;
+      pinToLatestNow();
+      initialAnchorRafB = window.requestAnimationFrame(() => {
+        initialAnchorRafB = undefined;
+        pinToLatestNow();
+        if (props.selectedSessionId !== sessionId) return;
+        setInitialAnchorPending(false);
+      });
+    });
+  };
+
   onCleanup(() => {
+    cancelInitialAnchorFrames();
     if (scrollFrame !== undefined) {
       window.cancelAnimationFrame(scrollFrame);
       scrollFrame = undefined;
@@ -1791,22 +1855,39 @@ export default function SessionView(props: SessionViewProps) {
         if (!sessionId) return;
         const firstVisit = !topInitializedSessionIds.has(sessionId);
         topInitializedSessionIds.add(sessionId);
+        setInitialAnchorPending(true);
 
         if (!firstVisit) {
           queueMicrotask(() => {
-            if (nearBottom()) {
-              scheduleScrollToLatest("auto");
-            }
+            applyInitialBottomAnchor(sessionId);
           });
           return;
         }
 
         queueMicrotask(() => {
-          const container = chatContainerEl;
-          if (!container) return;
-          container.scrollTop = 0;
+          applyInitialBottomAnchor(sessionId);
         });
       },
+    ),
+  );
+
+  createEffect(
+    on(
+      () => [props.selectedSessionId, props.messages.length, isChatContainerReady(), initialAnchorPending()] as const,
+      ([sessionId, count, ready, pending]) => {
+        if (!pending) return;
+        if (!sessionId) {
+          setInitialAnchorPending(false);
+          return;
+        }
+        if (!ready) return;
+        if (count === 0) {
+          setInitialAnchorPending(false);
+          return;
+        }
+        queueMicrotask(() => applyInitialBottomAnchor(sessionId));
+      },
+      { defer: true },
     ),
   );
 
@@ -1955,6 +2036,7 @@ export default function SessionView(props: SessionViewProps) {
   createEffect(() => {
     if (!showRunIndicator()) return;
     runProgressSignature();
+    if (initialAnchorPending()) return;
     if (!nearBottom()) return;
     scheduleScrollToLatest("auto");
   });
@@ -2296,6 +2378,10 @@ export default function SessionView(props: SessionViewProps) {
     }
     return "";
   });
+  const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
+  const showWorkspaceSetupEmptyState = createMemo(
+    () => !hasWorkspaceConfigured() && !props.selectedSessionId && props.messages.length === 0,
+  );
 
   const renameCanSave = createMemo(() => {
     if (renameBusy()) return false;
@@ -3293,6 +3379,7 @@ export default function SessionView(props: SessionViewProps) {
             workspaceSessionGroups={props.workspaceSessionGroups}
             activeWorkspaceId={props.activeWorkspaceId}
             selectedSessionId={props.selectedSessionId}
+            sessionStatusById={props.sessionStatusById}
             connectingWorkspaceId={props.connectingWorkspaceId}
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
@@ -3348,7 +3435,11 @@ export default function SessionView(props: SessionViewProps) {
               </button>
             </Show>
 
-            <h1 class="text-[13.5px] font-medium text-gray-11 truncate">{selectedSessionTitle() || "Explore and identify available topics"}</h1>
+            <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
+              {showWorkspaceSetupEmptyState()
+                ? "Create or connect a worker"
+                : (selectedSessionTitle() || "New session")}
+            </h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
             </Show>
@@ -3547,7 +3638,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class="h-full overflow-y-auto px-8 pt-12 pb-56 scroll-smooth bg-gray-1"
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-56"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
@@ -3555,11 +3646,38 @@ export default function SessionView(props: SessionViewProps) {
               }}
             >
               <div class="max-w-[650px] mx-auto w-full">
-           <Show when={props.messages.length === 0}>
-             <div class="text-center py-16 px-6 space-y-6">
-               <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
-                 <Zap class="text-dls-secondary" />
-               </div>
+            <Show when={showWorkspaceSetupEmptyState()}>
+              <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
+                  <HardDrive size={24} />
+                </div>
+                <h3 class="text-2xl font-semibold text-gray-12">Set up your first worker</h3>
+                <p class="mt-2 text-sm text-gray-10">
+                  OpenWork needs a local or remote worker before you can start a session.
+                </p>
+                <div class="mt-6 grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    onClick={props.openCreateWorkspace}
+                  >
+                    Create local worker
+                  </button>
+                  <button
+                    type="button"
+                    class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
+                    onClick={props.openCreateRemoteWorkspace}
+                  >
+                    Connect remote worker
+                  </button>
+                </div>
+              </div>
+            </Show>
+            <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState()}>
+              <div class="text-center py-16 px-6 space-y-6">
+                <div class="w-16 h-16 bg-dls-hover rounded-3xl mx-auto flex items-center justify-center border border-dls-border">
+                  <Zap class="text-dls-secondary" />
+                </div>
               <div class="space-y-2">
                 <h3 class="text-xl font-medium">What do you want to do?</h3>
                 <p class="text-dls-secondary text-sm max-w-sm mx-auto">
@@ -3597,15 +3715,21 @@ export default function SessionView(props: SessionViewProps) {
             </div>
           </Show>
 
-          <Show when={hiddenMessageCount() > 0}>
+          <Show when={hiddenMessageCount() > 0 || hasServerEarlierMessages()}>
             <div class="mb-4 flex justify-center">
               <button
                 type="button"
                 class="rounded-full border border-dls-border bg-dls-hover/70 px-3 py-1 text-xs text-dls-secondary transition-colors hover:bg-dls-active hover:text-dls-text"
-                onClick={revealEarlierMessages}
+                onClick={() => {
+                  void revealEarlierMessages();
+                }}
+                disabled={props.loadingEarlierMessages}
               >
-                Show {nextRevealCount().toLocaleString()} earlier message
-                {nextRevealCount() === 1 ? "" : "s"}
+                {props.loadingEarlierMessages
+                  ? "Loading earlier messages..."
+                  : hiddenMessageCount() > 0
+                    ? `Show ${nextRevealCount().toLocaleString()} earlier message${nextRevealCount() === 1 ? "" : "s"}`
+                    : "Load earlier messages"}
               </button>
             </div>
           </Show>
@@ -3739,47 +3863,49 @@ export default function SessionView(props: SessionViewProps) {
         </div>
       </Show>
 
-      <Composer
-        prompt={props.prompt}
-        developerMode={props.developerMode}
-        busy={props.busy}
-        isStreaming={showRunIndicator()}
-        onSend={handleSendPrompt}
-        onStop={cancelRun}
-        onDraftChange={handleDraftChange}
-        selectedModelLabel={props.selectedSessionModelLabel || "Model"}
-        onModelClick={props.openSessionModelPicker}
-        modelVariantLabel={props.modelVariantLabel}
-        modelVariant={props.modelVariant}
-        onModelVariantChange={props.setModelVariant}
-        agentLabel={agentLabel()}
-        selectedAgent={props.selectedSessionAgent}
-        agentPickerOpen={agentPickerOpen()}
-        agentPickerBusy={agentPickerBusy()}
-        agentPickerError={agentPickerError()}
-        agentOptions={agentOptions()}
-        onToggleAgentPicker={openAgentPicker}
-        onSelectAgent={(agent) => {
-          applySessionAgent(agent);
-          setAgentPickerOpen(false);
-        }}
-        setAgentPickerRef={(el) => {
-          agentPickerRef = el;
-        }}
-        showNotionBanner={props.showTryNotionPrompt}
-        onNotionBannerClick={props.onTryNotionPrompt}
-        toast={toastMessage()}
-        onToast={(message) => setToastMessage(message)}
-        listAgents={props.listAgents}
-        recentFiles={props.workingFiles}
-        searchFiles={props.searchFiles}
-        listCommands={props.listCommands}
-        isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
-        isSandboxWorkspace={isSandboxWorkspace()}
-        onUploadInboxFiles={uploadInboxFiles}
-        attachmentsEnabled={attachmentsEnabled()}
-        attachmentsDisabledReason={attachmentsDisabledReason()}
-      />
+      <Show when={!showWorkspaceSetupEmptyState()}>
+        <Composer
+          prompt={props.prompt}
+          developerMode={props.developerMode}
+          busy={props.busy}
+          isStreaming={showRunIndicator()}
+          onSend={handleSendPrompt}
+          onStop={cancelRun}
+          onDraftChange={handleDraftChange}
+          selectedModelLabel={props.selectedSessionModelLabel || "Model"}
+          onModelClick={props.openSessionModelPicker}
+          modelVariantLabel={props.modelVariantLabel}
+          modelVariant={props.modelVariant}
+          onModelVariantChange={props.setModelVariant}
+          agentLabel={agentLabel()}
+          selectedAgent={props.selectedSessionAgent}
+          agentPickerOpen={agentPickerOpen()}
+          agentPickerBusy={agentPickerBusy()}
+          agentPickerError={agentPickerError()}
+          agentOptions={agentOptions()}
+          onToggleAgentPicker={openAgentPicker}
+          onSelectAgent={(agent) => {
+            applySessionAgent(agent);
+            setAgentPickerOpen(false);
+          }}
+          setAgentPickerRef={(el) => {
+            agentPickerRef = el;
+          }}
+          showNotionBanner={props.showTryNotionPrompt}
+          onNotionBannerClick={props.onTryNotionPrompt}
+          toast={toastMessage()}
+          onToast={(message) => setToastMessage(message)}
+          listAgents={props.listAgents}
+          recentFiles={props.workingFiles}
+          searchFiles={props.searchFiles}
+          listCommands={props.listCommands}
+          isRemoteWorkspace={props.activeWorkspaceDisplay.workspaceType === "remote"}
+          isSandboxWorkspace={isSandboxWorkspace()}
+          onUploadInboxFiles={uploadInboxFiles}
+          attachmentsEnabled={attachmentsEnabled()}
+          attachmentsDisabledReason={attachmentsDisabledReason()}
+        />
+      </Show>
 
         <StatusBar
           clientConnected={props.clientConnected}

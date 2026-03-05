@@ -66,6 +66,8 @@ const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
 const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
 const COMPACTION_LOOP_WARN_THRESHOLD = 3;
 const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+const INITIAL_SESSION_MESSAGE_LIMIT = 140;
+const SESSION_MESSAGE_LOAD_CHUNK = 120;
 
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
@@ -168,6 +170,9 @@ export function createSessionStore(options: {
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
+  const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
+  const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
@@ -583,6 +588,18 @@ export function createSessionStore(options: {
     return store.todos[id] ?? [];
   });
 
+  const selectedSessionHasEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return !messageCompleteBySession()[id];
+  });
+
+  const selectedSessionLoadingEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return Boolean(messageLoadBusyBySession()[id]);
+  });
+
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
@@ -706,11 +723,19 @@ export function createSessionStore(options: {
       }
       if (abortIfStale("selection changed after health")) return;
 
-      mark("calling session.messages");
-      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12000, "session.messages"));
-      mark("session.messages done");
+      const existingLimit = messageLimitBySession()[sessionID] ?? 0;
+      const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      mark("calling session.messages", { limit: requestLimit });
+      const msgs = unwrap(
+        await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
+      );
+      mark("session.messages done", { limit: requestLimit, count: msgs.length });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       if (abortIfStale("selection changed before messages applied")) return;
       setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
 
       const model = options.lastUserModelFromMessages(msgs);
       if (model) {
@@ -760,15 +785,40 @@ export function createSessionStore(options: {
         messageCount: msgs.length,
         todoCount: (store.todos[sessionID] ?? []).length,
       });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
     })();
 
     selectInFlightBySession.set(sessionID, run);
     try {
       await run;
     } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       if (selectInFlightBySession.get(sessionID) === run) {
         selectInFlightBySession.delete(sessionID);
       }
+    }
+  }
+
+  async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
+    const c = options.client();
+    if (!c) return;
+    if (!sessionID) return;
+    if (messageLoadBusyBySession()[sessionID]) return;
+    if (messageCompleteBySession()[sessionID]) return;
+
+    const currentLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
+    const nextLimit = currentLimit + Math.max(1, chunk);
+
+    setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+    try {
+      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
+      setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
+    } catch (error) {
+      addError(error);
+    } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
     }
   }
 
@@ -1377,6 +1427,7 @@ export function createSessionStore(options: {
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    loadEarlierMessages,
     renameSession,
     respondPermission,
     respondQuestion,
@@ -1387,5 +1438,7 @@ export function createSessionStore(options: {
     setTodos,
     setPendingPermissions,
     setPendingQuestions,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
   };
 }

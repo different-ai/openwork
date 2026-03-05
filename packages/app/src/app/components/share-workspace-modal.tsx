@@ -76,9 +76,9 @@ export default function ShareWorkspaceModal(props: {
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-1/60 backdrop-blur-sm p-4 font-sans animate-in fade-in duration-200">
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-gray-1/70 backdrop-blur-sm p-4 font-sans animate-in fade-in duration-200">
         <div
-          class="bg-white w-full max-w-lg rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.15)] border border-gray-6 overflow-hidden animate-in fade-in zoom-in-95 duration-300 relative flex flex-col max-h-[90vh]"
+          class="bg-gray-1 w-full max-w-lg rounded-2xl shadow-[0_20px_50px_-12px_rgba(0,0,0,0.45)] border border-gray-6 overflow-hidden animate-in fade-in zoom-in-95 duration-300 relative flex flex-col max-h-[90vh]"
           role="dialog"
           aria-modal="true"
         >
@@ -110,12 +110,12 @@ export default function ShareWorkspaceModal(props: {
             </div>
 
             {/* Tab Switcher */}
-            <div class="flex p-1 bg-gray-2/80 rounded-xl mt-6">
+            <div class="flex p-1 bg-gray-2 rounded-xl mt-6 border border-gray-6">
               <button
                 onClick={() => setActiveTab("access")}
                 class={`flex-1 flex items-center justify-center gap-2 text-[13px] font-bold py-2 px-3 rounded-lg transition-all ${
                   activeTab() === "access"
-                    ? "bg-white shadow-sm text-gray-12"
+                    ? "bg-gray-1 shadow-sm text-gray-12 border border-gray-6"
                     : "text-gray-9 hover:text-gray-11 hover:bg-gray-4/50"
                 }`}
               >
@@ -126,7 +126,7 @@ export default function ShareWorkspaceModal(props: {
                 onClick={() => setActiveTab("links")}
                 class={`flex-1 flex items-center justify-center gap-2 text-[13px] font-bold py-2 px-3 rounded-lg transition-all ${
                   activeTab() === "links"
-                    ? "bg-white shadow-sm text-gray-12"
+                    ? "bg-gray-1 shadow-sm text-gray-12 border border-gray-6"
                     : "text-gray-9 hover:text-gray-11 hover:bg-gray-4/50"
                 }`}
               >
@@ -141,7 +141,7 @@ export default function ShareWorkspaceModal(props: {
             {/* TAB: LIVE ACCESS */}
             <Show when={activeTab() === "access"}>
               <div class="space-y-6 pt-2 animate-in fade-in slide-in-from-bottom-3 duration-300">
-                <div class="bg-amber-2/50 border border-amber-6 p-3 rounded-xl">
+                <div class="bg-amber-2 border border-amber-6 p-3 rounded-xl">
                   <p class="text-[13px] text-amber-11 leading-relaxed flex items-start gap-2">
                     <span class="mt-0.5">⚠️</span>
                     <span>Share with trusted people only. These credentials grant direct access to your local environment.</span>
@@ -165,7 +165,7 @@ export default function ShareWorkspaceModal(props: {
                               type={isSecret() && !revealed() ? "password" : "text"}
                               readonly
                               value={field.value || field.placeholder || ""}
-                              class="w-full bg-gray-2 border border-gray-6 group-hover:border-gray-8 rounded-xl py-3 pl-4 pr-24 text-[13px] font-mono text-gray-12 transition-all outline-none focus:ring-2 focus:ring-gray-12/5 focus:bg-white"
+                              class="w-full bg-gray-2 border border-gray-6 group-hover:border-gray-8 rounded-xl py-3 pl-4 pr-24 text-[13px] font-mono text-gray-12 transition-all outline-none focus:ring-2 focus:ring-gray-8/40 focus:bg-gray-1"
                             />
                             <div class="absolute right-2 flex items-center gap-1">
                               <Show when={isSecret()}>
@@ -224,7 +224,7 @@ export default function ShareWorkspaceModal(props: {
                 </div>
 
                 {/* Card: Workspace Profile */}
-                <div class="bg-white border border-gray-6 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all group">
+                <div class="bg-gray-1 border border-gray-6 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all group">
                   <div class="flex items-center gap-3 mb-3">
                     <div class="p-2 bg-gray-2 rounded-lg text-gray-9 group-hover:text-gray-12 group-hover:bg-gray-3 transition-colors">
                       <FolderCode size={18} />
@@ -250,7 +250,7 @@ export default function ShareWorkspaceModal(props: {
                       <button
                         onClick={() => props.onShareWorkspaceProfile?.()}
                         disabled={Boolean(props.shareWorkspaceProfileDisabledReason) || !props.onShareWorkspaceProfile || props.shareWorkspaceProfileBusy}
-                        class="w-full py-2.5 bg-gray-12 hover:bg-gray-11 text-white text-[13px] font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50"
+                        class="w-full py-2.5 bg-gray-12 hover:bg-gray-11 text-gray-1 text-[13px] font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50"
                       >
                         {props.shareWorkspaceProfileBusy ? "Publishing..." : "Create Public Link"}
                       </button>
@@ -265,7 +265,7 @@ export default function ShareWorkspaceModal(props: {
                       />
                       <button
                         onClick={() => handleCopy(props.shareWorkspaceProfileUrl ?? "", "share-workspace-profile")}
-                        class="p-2 bg-gray-12 text-white rounded-lg hover:bg-gray-11 transition-colors"
+                        class="p-2 bg-gray-12 text-gray-1 rounded-lg hover:bg-gray-11 transition-colors"
                       >
                         <Show when={copiedKey() === "share-workspace-profile"} fallback={<Copy size={16} />}>
                           <Check size={16} />
@@ -283,7 +283,7 @@ export default function ShareWorkspaceModal(props: {
                 </div>
 
                 {/* Card: Skills Set */}
-                <div class="bg-white border border-gray-6 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all group">
+                <div class="bg-gray-1 border border-gray-6 rounded-2xl p-4 shadow-sm hover:shadow-md transition-all group">
                   <div class="flex items-center gap-3 mb-3">
                     <div class="p-2 bg-gray-2 rounded-lg text-gray-9 group-hover:text-gray-12 group-hover:bg-gray-3 transition-colors">
                       <Boxes size={18} />
@@ -343,9 +343,9 @@ export default function ShareWorkspaceModal(props: {
 
                 {/* Section: Local Export */}
                 <div class="pt-4 mt-2 border-t border-gray-4">
-                  <div class="flex items-center justify-between p-3 bg-gray-2 rounded-2xl group hover:bg-gray-3/50 transition-all border border-transparent hover:border-gray-6">
+                  <div class="flex items-center justify-between p-3 bg-gray-2 rounded-2xl group hover:bg-gray-3 transition-all border border-gray-6">
                     <div class="flex items-center gap-3">
-                      <div class="p-2 bg-white rounded-lg text-gray-9 shadow-sm">
+                      <div class="p-2 bg-gray-1 rounded-lg text-gray-9 shadow-sm border border-gray-6">
                         <Download size={18} />
                       </div>
                       <div>
@@ -356,7 +356,7 @@ export default function ShareWorkspaceModal(props: {
                     <button
                       onClick={() => props.onExportConfig?.()}
                       disabled={!props.onExportConfig || Boolean(props.exportDisabledReason)}
-                      class="px-4 py-2 bg-white border border-gray-6 hover:border-gray-12 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-6 disabled:hover:text-gray-11"
+                      class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
                     >
                       Export
                     </button>
@@ -365,16 +365,16 @@ export default function ShareWorkspaceModal(props: {
 
                 {/* Section: Bots */}
                 <div class="pt-2">
-                  <div class="flex items-center justify-between p-3 bg-gray-2 rounded-2xl group hover:bg-gray-3/50 transition-all border border-transparent hover:border-gray-6">
+                  <div class="flex items-center justify-between p-3 bg-gray-2 rounded-2xl group hover:bg-gray-3 transition-all border border-gray-6">
                     <div class="flex items-center gap-3">
-                      <div class="p-2 bg-white rounded-lg text-gray-9 shadow-sm relative overflow-hidden flex items-center justify-center font-bold font-mono">
+                      <div class="p-2 bg-gray-1 rounded-lg text-gray-9 shadow-sm border border-gray-6 relative overflow-hidden flex items-center justify-center font-bold font-mono">
                         B
                         <div class="absolute inset-0 bg-amber-400 opacity-20"></div>
                       </div>
                       <div>
                         <div class="flex items-center gap-2">
                           <h4 class="text-[13px] font-bold text-gray-12">Bots</h4>
-                          <span class="text-[9px] px-1.5 py-0.5 uppercase tracking-wider font-bold rounded-full border border-gray-6 text-gray-10 bg-white">alpha</span>
+                          <span class="text-[9px] px-1.5 py-0.5 uppercase tracking-wider font-bold rounded-full border border-gray-6 text-gray-10 bg-gray-1">alpha</span>
                         </div>
                         <p class="text-[12px] text-gray-10">Configure messaging surfaces</p>
                       </div>
@@ -382,7 +382,7 @@ export default function ShareWorkspaceModal(props: {
                     <button
                       onClick={() => props.onOpenBots?.()}
                       disabled={!props.onOpenBots}
-                      class="px-4 py-2 bg-gray-1 border border-gray-6 hover:border-gray-12 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-6 disabled:hover:text-gray-11"
+                      class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
                     >
                       Open setup
                     </button>

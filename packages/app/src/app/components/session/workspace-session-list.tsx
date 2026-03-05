@@ -10,6 +10,7 @@ type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   activeWorkspaceId: string;
   selectedSessionId: string | null;
+  sessionStatusById?: Record<string, string>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
@@ -368,6 +369,7 @@ export default function WorkspaceSessionList(props: Props) {
                         <For each={previewSessions(workspace().id, group.sessions)}>
                           {(session) => {
                             const isSelected = () => props.selectedSessionId === session.id;
+                            const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
                             return (
                               <div
                                 role="button"
@@ -383,7 +385,12 @@ export default function WorkspaceSessionList(props: Props) {
                                   props.onOpenSession(workspace().id, session.id);
                                 }}
                               >
-                                <span class="text-[13px] text-gray-11 truncate mr-2 font-medium">{session.title}</span>
+                                <div class="flex min-w-0 items-center gap-1.5 mr-2">
+                                  <Show when={isSessionActive()}>
+                                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                  </Show>
+                                  <span class="text-[13px] text-gray-11 truncate font-medium">{session.title}</span>
+                                </div>
                                 <Show when={session.time?.updated}>
                                   <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
                                     {formatRelativeTime(session.time?.updated ?? Date.now())}
@@ -419,6 +426,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <For each={previewSessions(workspace().id, group.sessions)}>
                             {(session) => {
                               const isSelected = () => props.selectedSessionId === session.id;
+                              const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
                               return (
                                 <div
                                   role="button"
@@ -434,7 +442,12 @@ export default function WorkspaceSessionList(props: Props) {
                                     props.onOpenSession(workspace().id, session.id);
                                   }}
                                 >
-                                  <span class="text-[13px] text-gray-11 truncate mr-2 font-medium">{session.title}</span>
+                                  <div class="flex min-w-0 items-center gap-1.5 mr-2">
+                                    <Show when={isSessionActive()}>
+                                      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                    </Show>
+                                    <span class="text-[13px] text-gray-11 truncate font-medium">{session.title}</span>
+                                  </div>
                                   <Show when={session.time?.updated}>
                                     <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
                                       {formatRelativeTime(session.time?.updated ?? Date.now())}

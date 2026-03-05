@@ -639,11 +639,6 @@ export default function App() {
         goToSession(sessionId);
         return;
       }
-      const fallback = activeSessionId();
-      if (fallback) {
-        goToSession(fallback);
-        return;
-      }
       navigate("/session");
       return;
     }
@@ -1178,6 +1173,7 @@ export default function App() {
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    loadEarlierMessages,
     renameSession,
     respondPermission,
     respondQuestion,
@@ -1186,6 +1182,8 @@ export default function App() {
     setMessages,
     setTodos,
     setPendingPermissions,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
   } = sessionStore;
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
@@ -2769,16 +2767,9 @@ export default function App() {
     if (creatingSession()) return;
     if (selectedSessionId()) return;
 
-    const list = sessions();
-    if (!list.length) return;
-
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    const map = workspaceId ? readSessionByWorkspace() : null;
-    const saved = workspaceId ? map?.[workspaceId] : null;
-    const match = saved ? list.find((session) => session.id === saved) : null;
-    const next = match ?? list[0];
-    void selectSession(next.id);
-    setView("session", next.id);
+    // Keep /session as a draft-ready empty state until the user picks a session
+    // or sends a prompt. Avoid auto-selecting prior sessions on app launch.
+    return;
   });
 
   createEffect(() => {
@@ -3856,15 +3847,6 @@ export default function App() {
 
     setAutoConnectAttempted(true);
     void workspaceStore.onConnectClient();
-  });
-
-  createEffect(() => {
-    // If we lose the client (disconnect / stop engine), don't strand the user
-    // in a session view that can't operate.
-    if (currentView() !== "session") return;
-    if (creatingSession()) return;
-    if (client()) return;
-    setView("dashboard");
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
@@ -5974,6 +5956,9 @@ export default function App() {
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
+    hasEarlierMessages: selectedSessionHasEarlierMessages(),
+    loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
+    loadEarlierMessages,
     searchFiles: searchWorkspaceFiles,
     deleteSession: deleteSessionById,
     onTryNotionPrompt: () => {
@@ -6042,9 +6027,10 @@ export default function App() {
       const id = (sessionSegment ?? "").trim();
 
       if (!id) {
-        const fallback = activeSessionId();
-        if (fallback) {
-          goToSession(fallback, { replace: true });
+        if (selectedSessionId()) {
+          setSelectedSessionId(null);
+          setMessages([]);
+          setTodos([]);
         }
         return;
       }

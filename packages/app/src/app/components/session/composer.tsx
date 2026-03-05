@@ -1066,12 +1066,19 @@ export default function Composer(props: ComposerProps) {
       props.onToast(props.attachmentsDisabledReason ?? "Attachments are unavailable.");
       return;
     }
+    const supportedFiles = files.filter((file) => isSupportedAttachmentType(file.type));
+    const unsupportedFiles = files.filter((file) => !isSupportedAttachmentType(file.type));
+
+    if (unsupportedFiles.length) {
+      await insertUnsupportedFileLinks(unsupportedFiles, []);
+    }
+
+    if (!supportedFiles.length) {
+      return;
+    }
+
     const next: ComposerAttachment[] = [];
-    for (const file of files) {
-      if (!isSupportedAttachmentType(file.type)) {
-        props.onToast(`${file.name} is not a supported attachment type.`);
-        continue;
-      }
+    for (const file of supportedFiles) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
         props.onToast(`${file.name} exceeds the 8MB limit.`);
         continue;
@@ -1189,7 +1196,7 @@ export default function Composer(props: ComposerProps) {
         target: clipboardLinks[index] || createObjectUrl(file),
       }));
 
-    if (props.isSandboxWorkspace && props.onUploadInboxFiles) {
+    if (props.onUploadInboxFiles) {
       const uploaded = await Promise.resolve(props.onUploadInboxFiles(files, { notify: false }));
       if (Array.isArray(uploaded) && uploaded.length) {
         const links = uploaded
@@ -1759,7 +1766,6 @@ export default function Composer(props: ComposerProps) {
                           ref={fileInputRef}
                           type="file"
                           multiple
-                          accept={ACCEPTED_FILE_TYPES.join(",")}
                           class="hidden"
                           disabled={attachmentsDisabled()}
                           onChange={(event: Event) => {
