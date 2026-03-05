@@ -439,7 +439,7 @@ export default function MessageList(props: MessageListProps) {
     return block.messageId === messageId;
   };
 
-  const virtualizationThreshold = () => props.virtualizationThreshold ?? 16;
+  const virtualizationThreshold = () => props.virtualizationThreshold ?? 500;
   const shouldVirtualize = createMemo(
     () => Boolean(props.scrollReady) && messageBlocks().length >= virtualizationThreshold(),
   );
