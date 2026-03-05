@@ -167,6 +167,7 @@ export type DashboardViewProps = {
   refreshSoulData: (options?: { force?: boolean }) => void;
   runSoulPrompt: (prompt: string) => void;
   activeWorkspaceRoot: string;
+  isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
@@ -1214,6 +1215,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 setDashboardTab={props.setTab}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
+                isRemoteWorkspace={props.isRemoteWorkspace}
                 refreshMcpServers={props.refreshMcpServers}
                 mcpServers={props.mcpServers}
                 mcpStatus={props.mcpStatus}

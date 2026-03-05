@@ -444,6 +444,8 @@ export default {
   "mcp.server_command": "Command",
   "mcp.server_command_placeholder": "npx -y @modelcontextprotocol/server-sequential-thinking",
   "mcp.server_command_hint": "The shell command to start the server.",
+  "mcp.oauth_optional_label": "Requires OAuth sign-in",
+  "mcp.remote_workspace_url_hint": "Remote workers connect fastest with URL-based MCP servers.",
   "mcp.add_server_button": "Add server",
   "mcp.name_required": "Enter a server name.",
   "mcp.url_or_command_required": "Enter a URL for remote or a command for local servers.",

@@ -381,6 +381,8 @@ export default {
   "mcp.server_command": "命令",
   "mcp.server_command_placeholder": "npx -y @modelcontextprotocol/server-sequential-thinking",
   "mcp.server_command_hint": "启动服务器的 shell 命令。",
+  "mcp.oauth_optional_label": "需要 OAuth 登录",
+  "mcp.remote_workspace_url_hint": "远程工作区建议优先使用 URL 类型的 MCP 服务器。",
   "mcp.add_server_button": "添加服务器",
   "mcp.name_required": "请输入服务器名称。",
   "mcp.url_or_command_required": "远程服务器需要 URL，本地服务器需要命令。",
