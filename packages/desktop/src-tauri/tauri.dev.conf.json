@@ -1,5 +1,19 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenWork Dev",
-  "identifier": "com.differentai.openwork.dev"
+  "identifier": "com.differentai.openwork.dev",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "OpenWork",
+        "width": 1180,
+        "height": 820,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false
+      }
+    ]
+  }
 }
