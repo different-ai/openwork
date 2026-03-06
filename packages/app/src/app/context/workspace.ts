@@ -1473,9 +1473,6 @@ export function createWorkspaceStore(options: {
     const doctor = await refreshSandboxDoctor();
     setSandboxPreflightBusy(false);
     setSandboxCreatePhase("provisioning");
-    options.setBusy(true);
-    options.setBusyLabel("status.creating_workspace");
-    options.setBusyStartedAt(startedAt);
     setSandboxCreateProgress({
       runId,
       startedAt,
@@ -1519,9 +1516,6 @@ export function createWorkspaceStore(options: {
       setSandboxStep("docker", { status: "error", detail });
       setSandboxError(detail);
       setSandboxStage("Docker not ready");
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
       setSandboxCreatePhase("idle");
       return false;
     }
@@ -1683,9 +1677,6 @@ export function createWorkspaceStore(options: {
     } finally {
       setSandboxPreflightBusy(false);
       setSandboxCreatePhase("idle");
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
     }
   }
 

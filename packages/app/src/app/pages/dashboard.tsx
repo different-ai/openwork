@@ -285,6 +285,7 @@ export type DashboardViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
+  sandboxCreateProgress: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -1362,6 +1363,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   pendingPermissions={props.pendingPermissions}
                   events={props.events}
                   workspaceDebugEvents={props.workspaceDebugEvents}
+                  sandboxCreateProgress={props.sandboxCreateProgress}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeMigration={props.repairOpencodeMigration}

@@ -89,6 +89,38 @@ pub struct OpenworkDockerCleanupResult {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxDebugProbeCleanup {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
+    pub container_removed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remove_result: Option<SandboxDoctorCommandDebug>,
+    pub workspace_removed: bool,
+    pub errors: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SandboxDebugProbeResult {
+    pub started_at: u64,
+    pub finished_at: u64,
+    pub run_id: String,
+    pub workspace_path: String,
+    pub ready: bool,
+    pub doctor: SandboxDoctorResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detached_host: Option<OrchestratorDetachedHost>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_inspect: Option<SandboxDoctorCommandDebug>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker_logs: Option<SandboxDoctorCommandDebug>,
+    pub cleanup: SandboxDebugProbeCleanup,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 fn run_local_command(program: &str, args: &[&str]) -> Result<(i32, String, String), String> {
     let mut command = Command::new(program);
     configure_hidden(&mut command);
@@ -364,6 +396,23 @@ fn truncate_for_debug(input: &str) -> String {
         return trimmed.to_string();
     }
     format!("{}...[truncated]", &trimmed[..MAX_LEN])
+}
+
+fn truncate_for_report(input: &str) -> String {
+    const MAX_LEN: usize = 48_000;
+    let trimmed = input.trim();
+    if trimmed.len() <= MAX_LEN {
+        return trimmed.to_string();
+    }
+    format!("{}...[truncated]", &trimmed[..MAX_LEN])
+}
+
+fn to_command_debug(result: DockerCommandResult) -> SandboxDoctorCommandDebug {
+    SandboxDoctorCommandDebug {
+        status: result.status,
+        stdout: truncate_for_report(&result.stdout),
+        stderr: truncate_for_report(&result.stderr),
+    }
 }
 
 fn derive_orchestrator_container_name(run_id: &str) -> String {
@@ -1148,6 +1197,159 @@ pub fn sandbox_cleanup_openwork_containers() -> Result<OpenworkDockerCleanupResu
         removed,
         errors,
     })
+}
+
+#[tauri::command]
+pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
+    let started_at = now_ms();
+    let run_id = format!("probe-{}", Uuid::new_v4());
+    let workspace_dir = env::temp_dir().join(format!("openwork-sandbox-probe-{}", Uuid::new_v4()));
+    let workspace_path = workspace_dir.to_string_lossy().to_string();
+
+    let mut cleanup_errors: Vec<String> = Vec::new();
+    let mut workspace_removed = false;
+
+    if let Err(err) = std::fs::create_dir_all(&workspace_dir) {
+        return SandboxDebugProbeResult {
+            started_at,
+            finished_at: now_ms(),
+            run_id,
+            workspace_path,
+            ready: false,
+            doctor: sandbox_doctor(),
+            detached_host: None,
+            docker_inspect: None,
+            docker_logs: None,
+            cleanup: SandboxDebugProbeCleanup {
+                container_name: None,
+                container_removed: false,
+                remove_result: None,
+                workspace_removed,
+                errors: vec![format!("Failed to create probe workspace: {err}")],
+            },
+            error: Some(format!("Failed to create sandbox probe workspace: {err}")),
+        };
+    }
+
+    let doctor = sandbox_doctor();
+    let mut detached_host: Option<OrchestratorDetachedHost> = None;
+    let mut docker_inspect: Option<SandboxDoctorCommandDebug> = None;
+    let mut docker_logs: Option<SandboxDoctorCommandDebug> = None;
+    let mut error: Option<String> = None;
+
+    if doctor.ready {
+        match orchestrator_start_detached(
+            app,
+            workspace_path.clone(),
+            Some("docker".to_string()),
+            Some(run_id.clone()),
+            None,
+            None,
+        ) {
+            Ok(host) => {
+                let container_name = host
+                    .sandbox_container_name
+                    .clone()
+                    .unwrap_or_else(|| derive_orchestrator_container_name(&run_id));
+
+                match run_docker_command_detailed(
+                    &["inspect", container_name.as_str()],
+                    Duration::from_secs(6),
+                ) {
+                    Ok(result) => {
+                        docker_inspect = Some(to_command_debug(result));
+                    }
+                    Err(err) => {
+                        cleanup_errors.push(format!("docker inspect failed: {err}"));
+                    }
+                }
+
+                match run_docker_command_detailed(
+                    &[
+                        "logs",
+                        "--timestamps",
+                        "--tail",
+                        "400",
+                        container_name.as_str(),
+                    ],
+                    Duration::from_secs(8),
+                ) {
+                    Ok(result) => {
+                        docker_logs = Some(to_command_debug(result));
+                    }
+                    Err(err) => {
+                        cleanup_errors.push(format!("docker logs failed: {err}"));
+                    }
+                }
+
+                detached_host = Some(host);
+            }
+            Err(err) => {
+                error = Some(format!("Sandbox probe failed to start: {err}"));
+            }
+        }
+    } else {
+        error = Some(
+            doctor
+                .error
+                .as_deref()
+                .unwrap_or("Docker is not ready for sandbox creation")
+                .to_string(),
+        );
+    }
+
+    let container_name = detached_host
+        .as_ref()
+        .and_then(|host| host.sandbox_container_name.clone())
+        .or_else(|| {
+            if doctor.ready {
+                Some(derive_orchestrator_container_name(&run_id))
+            } else {
+                None
+            }
+        });
+
+    let mut container_removed = false;
+    let mut remove_result: Option<SandboxDoctorCommandDebug> = None;
+
+    if let Some(name) = container_name.clone() {
+        match run_docker_command_detailed(&["rm", "-f", name.as_str()], Duration::from_secs(20)) {
+            Ok(result) => {
+                container_removed = result.status == 0;
+                remove_result = Some(to_command_debug(result));
+            }
+            Err(err) => {
+                cleanup_errors.push(format!("docker rm -f {name} failed: {err}"));
+            }
+        }
+    }
+
+    if let Err(err) = std::fs::remove_dir_all(&workspace_dir) {
+        cleanup_errors.push(format!("Failed to remove probe workspace: {err}"));
+    } else {
+        workspace_removed = true;
+    }
+
+    let ready = doctor.ready && error.is_none();
+    SandboxDebugProbeResult {
+        started_at,
+        finished_at: now_ms(),
+        run_id,
+        workspace_path,
+        ready,
+        doctor,
+        detached_host,
+        docker_inspect,
+        docker_logs,
+        cleanup: SandboxDebugProbeCleanup {
+            container_name,
+            container_removed,
+            remove_result,
+            workspace_removed,
+            errors: cleanup_errors,
+        },
+        error,
+    }
 }
 
 #[cfg(test)]

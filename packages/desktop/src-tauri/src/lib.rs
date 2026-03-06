@@ -36,8 +36,8 @@ use commands::openwork_server::{openwork_server_info, openwork_server_restart};
 use commands::opkg::{import_skill, opkg_install};
 use commands::orchestrator::{
     orchestrator_instance_dispose, orchestrator_start_detached, orchestrator_status,
-    orchestrator_workspace_activate, sandbox_cleanup_openwork_containers, sandbox_doctor,
-    sandbox_stop,
+    orchestrator_workspace_activate, sandbox_cleanup_openwork_containers, sandbox_debug_probe,
+    sandbox_doctor, sandbox_stop,
 };
 use commands::scheduler::{scheduler_delete_job, scheduler_list_jobs};
 use commands::skills::{
@@ -104,6 +104,7 @@ pub fn run() {
             orchestrator_instance_dispose,
             orchestrator_start_detached,
             sandbox_doctor,
+            sandbox_debug_probe,
             sandbox_stop,
             sandbox_cleanup_openwork_containers,
             openwork_server_info,

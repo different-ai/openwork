@@ -461,6 +461,42 @@ export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDocker
   return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
 }
 
+export type SandboxDebugProbeResult = {
+  startedAt: number;
+  finishedAt: number;
+  runId: string;
+  workspacePath: string;
+  ready: boolean;
+  doctor: SandboxDoctorResult;
+  detachedHost?: OrchestratorDetachedHost | null;
+  dockerInspect?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  dockerLogs?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  cleanup: {
+    containerName?: string | null;
+    containerRemoved: boolean;
+    removeResult?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+    workspaceRemoved: boolean;
+    errors: string[];
+  };
+  error?: string | null;
+};
+
+export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
+  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
+}
+
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
 }
