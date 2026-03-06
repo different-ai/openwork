@@ -23,7 +23,7 @@ package() {
 
   # Extract the internal data archive directly to the cwd.
   bsdtar -O -xf "${pkgname}-${pkgver}.deb" 'data.tar*' | bsdtar -C "${pkgdir}" -xf -
-    if [ -f /usr/bin/opencode ]; then rm -f "${pkgdir}/usr/bin/opencode"; fi;
+  rm -f "${pkgdir}/usr/bin/opencode"
 }
 
 # .deb Internal Structure Reference:
