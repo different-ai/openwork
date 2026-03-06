@@ -3,6 +3,9 @@ import { Download, RefreshCw, UploadCloud } from "lucide-solid";
 
 import type { OpenworkInboxItem, OpenworkServerClient } from "../../lib/openwork-server";
 import { formatBytes, formatRelativeTime } from "../../utils";
+import { t, currentLocale } from "../../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export type InboxPanelProps = {
   id?: string;
@@ -45,7 +48,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   });
 
   const connected = createMemo(() => Boolean(props.client && (props.workspaceId ?? "").trim()));
-  const helperText = "Share files with your remote worker.";
+  const helperText = tr("context.share_files_hint");
 
   const visibleItems = createMemo(() => (items() ?? []).slice(0, maxPreview()));
   const hiddenCount = createMemo(() => Math.max(0, (items() ?? []).length - visibleItems().length));
@@ -68,7 +71,7 @@ export default function InboxPanel(props: InboxPanelProps) {
       const result = await client.listInbox(workspaceId);
       setItems(result.items ?? []);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load inbox";
+      const message = err instanceof Error ? err.message : tr("context.failed_load_inbox");
       setError(message);
       setItems([]);
     } finally {
@@ -80,7 +83,7 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to upload inbox files.");
+      toast(tr("session.needs_worker"));
       return;
     }
     if (!files.length) return;
@@ -89,14 +92,14 @@ export default function InboxPanel(props: InboxPanelProps) {
     setError(null);
     try {
       const label = files.length === 1 ? files[0]?.name ?? "file" : `${files.length} files`;
-      toast(`Uploading ${label}...`);
+      toast(`${tr("context.uploading")} ${label}`);
       for (const file of files) {
         await client.uploadInbox(workspaceId, file);
       }
-      toast("Uploaded to worker inbox.");
+      toast(tr("context.uploaded_to_inbox"));
       await refresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Inbox upload failed";
+      const message = err instanceof Error ? err.message : tr("context.inbox_upload_failed");
       setError(message);
       toast(message);
     } finally {
@@ -108,9 +111,9 @@ export default function InboxPanel(props: InboxPanelProps) {
     const path = toInboxWorkspacePath(item);
     try {
       await navigator.clipboard.writeText(path);
-      toast(`Copied: ${path}`);
+      toast(`${tr("context.copied")}: ${path}`);
     } catch {
-      toast("Copy failed. Your browser may block clipboard access.");
+      toast(tr("context.copy_failed"));
     }
   };
 
@@ -118,12 +121,12 @@ export default function InboxPanel(props: InboxPanelProps) {
     const client = props.client;
     const workspaceId = (props.workspaceId ?? "").trim();
     if (!client || !workspaceId) {
-      toast("Connect to a worker to download inbox files.");
+      toast(tr("context.connect_to_download"));
       return;
     }
     const id = String(item.id ?? "").trim();
     if (!id) {
-      toast("Missing inbox item id.");
+      toast(tr("context.missing_inbox_id"));
       return;
     }
 
@@ -154,7 +157,7 @@ export default function InboxPanel(props: InboxPanelProps) {
   return (
     <div id={props.id}>
       <div class="flex items-center justify-between px-2 mb-3">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Inbox</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{tr("context.inbox")}</span>
         <div class="flex items-center gap-2">
           <Show when={(items() ?? []).length > 0}>
             <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
@@ -165,8 +168,8 @@ export default function InboxPanel(props: InboxPanelProps) {
             type="button"
             class="rounded-md p-1 text-gray-9 hover:text-gray-11 hover:bg-gray-3 transition-colors"
             onClick={() => void refresh()}
-            title="Refresh inbox"
-            aria-label="Refresh inbox"
+            title={tr("context.refresh_inbox")}
+            aria-label={tr("context.refresh_inbox")}
             disabled={!connected() || loading()}
           >
             <RefreshCw size={14} class={loading() ? "animate-spin" : ""} />
@@ -213,7 +216,7 @@ export default function InboxPanel(props: InboxPanelProps) {
         <div class="flex flex-col items-center justify-center text-center">
           <UploadCloud size={18} class="text-gray-9 mb-2" />
           <span class="text-[13px] font-medium text-gray-11">
-            {uploading() ? "Uploading..." : "Drop files or click to upload"}
+            {uploading() ? tr("context.uploading") : tr("context.drop_files")}
           </span>
           <span class="mt-0.5 text-[11px] text-gray-9">{helperText}</span>
         </div>
@@ -228,8 +231,8 @@ export default function InboxPanel(props: InboxPanelProps) {
           when={visibleItems().length > 0}
           fallback={
             <div class="text-xs text-gray-10 px-1 py-1">
-              <Show when={connected()} fallback={"Connect to see inbox files."}>
-                No inbox files yet.
+              <Show when={connected()} fallback={tr("context.connect_to_see")}>
+                {tr("context.no_inbox_files")}
               </Show>
             </div>
           }

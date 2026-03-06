@@ -14,8 +14,20 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
 import WorkspaceChip from "../components/workspace-chip";
+import { t, currentLocale } from "../../i18n";
 
 type ProtoView = "onboarding" | "dashboard" | "session";
+
+const translate = (key: string) => t(key, currentLocale());
+
+const workspaceLabel = (workspace: WorkspaceInfo) => {
+  const name = workspace.displayName?.trim() || workspace.name;
+  // Translate default "Starter" name
+  if (name === "Starter") {
+    return translate("dashboard.starter_workspace");
+  }
+  return name;
+};
 
 type SessionProto = {
   id: string;
@@ -198,7 +210,7 @@ export default function ProtoWorkspacesView() {
                     {(workspace) => (
                       <div class="flex items-center justify-between gap-3 rounded-xl bg-gray-1/40 border border-gray-6 px-3 py-2">
                         <div class="min-w-0">
-                          <div class="text-xs font-medium text-gray-12 truncate">{workspace.name}</div>
+                          <div class="text-xs font-medium text-gray-12 truncate">{workspaceLabel(workspace)}</div>
                           <div class="text-[11px] text-gray-10 font-mono truncate">{workspace.path}</div>
                         </div>
                         <Button variant="ghost" class="text-xs px-2 py-1">Use</Button>
@@ -305,7 +317,7 @@ export default function ProtoWorkspacesView() {
                         <div class="rounded-2xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
                           <div class="flex items-start justify-between">
                             <div class="space-y-1">
-                              <div class="text-sm font-semibold text-gray-12">{workspace.name}</div>
+                              <div class="text-sm font-semibold text-gray-12">{workspaceLabel(workspace)}</div>
                               <div class="text-xs text-gray-10 font-mono truncate">{workspace.path}</div>
                             </div>
                             <span class="text-[11px] text-gray-9">

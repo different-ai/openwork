@@ -1,5 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { Paperclip } from "lucide-solid";
+import { t, currentLocale } from "../../../i18n";
+
+const tr = (key: string) => t(key, currentLocale());
 
 export type ArtifactsPanelProps = {
   files: string[];
@@ -98,7 +101,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
   return (
     <div id={props.id}>
       <div class="flex items-center justify-between px-2 mb-3">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Artifacts</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{tr("context.artifacts")}</span>
         <Show when={normalizedArtifacts().length > 0}>
           <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
             {normalizedArtifacts().length}
@@ -109,7 +112,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
       <div class="space-y-1">
         <Show
           when={visibleArtifacts().length > 0}
-          fallback={<div class="text-xs text-gray-10 px-2 py-1">No artifacts yet.</div>}
+          fallback={<div class="text-xs text-gray-10 px-2 py-1">{tr("context.no_artifacts")}</div>}
         >
           <For each={visibleArtifacts()}>
             {(artifact) => {

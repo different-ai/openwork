@@ -14,6 +14,7 @@ import type { McpStatusMap, StartupPreference } from "../types";
 import { getOpenCodeRouterStatus } from "../lib/tauri";
 
 import Button from "./button";
+import { t, currentLocale } from "../../i18n";
 
 type StatusBarProps = {
   clientConnected: boolean;
@@ -29,6 +30,8 @@ type StatusBarProps = {
 };
 
 export default function StatusBar(props: StatusBarProps) {
+  const translate = (key: string) => t(key, currentLocale());
+  
   const [opencodeRouterStatus, setOpenCodeRouterStatus] =
     createSignal<OpenCodeRouterStatus | null>(null);
   const [documentVisible, setDocumentVisible] = createSignal(true);
@@ -60,21 +63,21 @@ export default function StatusBar(props: StatusBarProps) {
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
     text: props.clientConnected ? "text-green-11" : "text-gray-10",
-    label: props.clientConnected ? "Connected" : "Not connected",
+    label: props.clientConnected ? translate("status.connected") : translate("status.not_connected"),
   }));
 
   const openworkStatusMeta = createMemo(() => {
     switch (props.openworkServerStatus) {
       case "connected":
-        return { dot: "bg-green-9", text: "text-green-11", label: "Connected" };
+        return { dot: "bg-green-9", text: "text-green-11", label: translate("status.connected") };
       case "limited":
         return {
           dot: "bg-amber-9",
           text: "text-amber-11",
-          label: "Limited access",
+          label: translate("status.limited_access"),
         };
       default:
-        return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
+        return { dot: "bg-gray-6", text: "text-gray-10", label: translate("status.unavailable") };
     }
   });
 
@@ -82,8 +85,8 @@ export default function StatusBar(props: StatusBarProps) {
     const allGreen =
       props.clientConnected && props.openworkServerStatus === "connected";
     return allGreen
-      ? { dot: "bg-green-9", text: "text-green-11", label: "Ready" }
-      : { dot: "bg-red-9", text: "text-red-11", label: "Unavailable" };
+      ? { dot: "bg-green-9", text: "text-green-11", label: translate("status.ready") }
+      : { dot: "bg-red-9", text: "text-red-11", label: translate("status.unavailable") };
   });
 
   const messagingMeta = createMemo(() => {
@@ -92,7 +95,7 @@ export default function StatusBar(props: StatusBarProps) {
       return {
         dot: "bg-gray-6",
         text: "text-gray-10",
-        label: "Messaging bridge unavailable",
+        label: translate("status.messaging_bridge_unavailable"),
       };
     }
     const telegramConfigured = (status.telegram.items?.length ?? 0) > 0;
@@ -258,7 +261,7 @@ export default function StatusBar(props: StatusBarProps) {
   });
 
   return (
-    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md z-[100] relative">
+    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md z-30 relative">
       <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
         <div class="relative">
           <button
@@ -276,7 +279,7 @@ export default function StatusBar(props: StatusBarProps) {
           <Show when={statusDetailOpen()}>
             <div
               ref={statusPopoverRef}
-              class="absolute bottom-full left-0 mb-2 z-[200] w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
+              class="absolute bottom-full left-0 mb-2 z-40 w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
             >
               <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">
                 Service Status
@@ -329,11 +332,11 @@ export default function StatusBar(props: StatusBarProps) {
             variant="ghost"
             class="h-7 px-2.5 py-0 text-xs"
             onClick={props.onOpenSettings}
-            title="Settings"
+            title={translate("dashboard.settings")}
           >
             <Settings class="w-4 h-4" />
             <Show when={props.developerMode}>
-              <span class="text-gray-11 font-medium">Settings</span>
+              <span class="text-gray-11 font-medium">{translate("dashboard.settings")}</span>
             </Show>
           </Button>
         </div>

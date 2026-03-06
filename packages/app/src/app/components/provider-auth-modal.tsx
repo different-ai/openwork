@@ -6,6 +6,7 @@ import { isTauriRuntime } from "../utils";
 
 import Button from "./button";
 import TextInput from "./text-input";
+import { t, currentLocale } from "../../i18n";
 
 type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
 type ProviderAuthEntry = {
@@ -48,6 +49,8 @@ export type ProviderAuthModalProps = {
 };
 
 export default function ProviderAuthModal(props: ProviderAuthModalProps) {
+  const translate = (key: string) => t(key, currentLocale());
+  
   const formatProviderName = (id: string, fallback?: string) => {
     const named = fallback?.trim();
     if (named) return named;
@@ -381,8 +384,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   return (
     <Show when={props.open}>
-      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
-        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-2rem)] flex flex-col">
+      <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-gray-2 border border-gray-6/70 w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden max-h-[calc(100vh-5rem)] flex flex-col">
           <div class="px-6 pt-6 pb-4 border-b border-gray-6/50 flex items-start justify-between gap-4">
             <div>
               <h3 class="text-lg font-semibold text-gray-12">Connect providers</h3>
@@ -685,8 +688,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
               <Show when={props.submitting}>{submittingLabel()}</Show>
             </div>
             <div class="text-xs text-gray-9">
-              OAuth opens in your browser. API keys are stored locally by OpenCode (not in your repo). Use{" "}
-              <span class="font-mono">/models</span> to pick a default.
+              {translate("settings.oauth_stored_locally").replace("{command}", "/models")}
             </div>
             <Button variant="ghost" onClick={handleClose} disabled={actionDisabled()}>
               Close

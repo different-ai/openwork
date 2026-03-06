@@ -5,6 +5,7 @@ import type { OpenworkSoulStatus } from "../../lib/openwork-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import { formatRelativeTime, getWorkspaceTaskLoadErrorDisplay, isWindowsPlatform } from "../../utils";
+import { t, currentLocale } from "../../../i18n";
 
 type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
@@ -30,17 +31,27 @@ type Props = {
   onOpenCreateWorkspace: () => void;
   onOpenCreateRemoteWorkspace: () => void;
   onImportWorkspaceConfig: () => void;
+  onRenameSession?: (sessionId: string, title: string) => Promise<void>;
+  onDeleteSession?: (sessionId: string) => Promise<void>;
 };
 
 const MAX_SESSIONS_PREVIEW = 6;
 const COLLAPSED_SESSIONS_PREVIEW = 1;
 
-const workspaceLabel = (workspace: WorkspaceInfo) =>
-  workspace.displayName?.trim() ||
-  workspace.openworkWorkspaceName?.trim() ||
-  workspace.name?.trim() ||
-  workspace.path?.trim() ||
-  "Worker";
+const tr = (key: string) => t(key, currentLocale());
+
+const workspaceLabel = (workspace: WorkspaceInfo) => {
+  const name = workspace.displayName?.trim() ||
+    workspace.openworkWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.path?.trim() ||
+    "Worker";
+  // Translate default "Starter" name based on locale
+  if (name === "Starter") {
+    return tr("dashboard.starter_workspace");
+  }
+  return name;
+};
 
 const workspaceKindLabel = (workspace: WorkspaceInfo) =>
   workspace.workspaceType === "remote"
@@ -52,13 +63,17 @@ const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     : "Local";
 
 export default function WorkspaceSessionList(props: Props) {
-  const revealLabel = isWindowsPlatform() ? "Reveal in Explorer" : "Reveal in Finder";
+  const revealLabel = () => isWindowsPlatform() ? tr("session.reveal_in_explorer") : tr("session.reveal_in_finder");
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<Set<string>>(new Set());
   const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = createSignal<Record<string, number>>({});
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(null);
+  const [sessionMenuId, setSessionMenuId] = createSignal<string | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
+  const [renamingSessionId, setRenamingSessionId] = createSignal<string | null>(null);
+  const [renameValue, setRenameValue] = createSignal("");
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  const sessionMenuRefs = new Map<string, HTMLDivElement>();
 
   const isWorkspaceExpanded = (workspaceId: string) => expandedWorkspaceIds().has(workspaceId);
 
@@ -95,6 +110,22 @@ export default function WorkspaceSessionList(props: Props) {
     expandWorkspace(props.activeWorkspaceId);
   });
 
+  // Close session menu when clicking outside
+  createEffect(() => {
+    const menuId = sessionMenuId();
+    if (!menuId) return;
+    
+    const handleClickOutside = (event: MouseEvent) => {
+      const menuEl = sessionMenuRefs.get(menuId);
+      if (menuEl && !menuEl.contains(event.target as Node)) {
+        setSessionMenuId(null);
+      }
+    };
+    
+    document.addEventListener("mousedown", handleClickOutside);
+    onCleanup(() => document.removeEventListener("mousedown", handleClickOutside));
+  });
+
   const previewCount = (workspaceId: string) => {
     const base = previewCountByWorkspaceId()[workspaceId] ?? MAX_SESSIONS_PREVIEW;
     return isWorkspaceExpanded(workspaceId)
@@ -118,7 +149,7 @@ export default function WorkspaceSessionList(props: Props) {
   const showMoreLabel = (workspaceId: string, total: number) => {
     const remaining = Math.max(0, total - previewCount(workspaceId));
     const nextCount = Math.min(MAX_SESSIONS_PREVIEW, remaining);
-    return nextCount > 0 ? `Show ${nextCount} more` : "Show more";
+    return nextCount > 0 ? tr("session.show_more").replace("{count}", String(nextCount)) : tr("session.show_more_generic");
   };
 
   createEffect(() => {
@@ -139,6 +170,20 @@ export default function WorkspaceSessionList(props: Props) {
       const target = event.target as Node | null;
       if (addWorkspaceMenuRef && target && addWorkspaceMenuRef.contains(target)) return;
       setAddWorkspaceMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
+  });
+
+  createEffect(() => {
+    const menuId = sessionMenuId();
+    if (!menuId) return;
+    const closeMenu = (event: PointerEvent) => {
+      const menuEl = sessionMenuRefs.get(menuId);
+      if (!menuEl) return;
+      const target = event.target as Node | null;
+      if (target && menuEl.contains(target)) return;
+      setSessionMenuId(null);
     };
     window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
@@ -184,7 +229,7 @@ export default function WorkspaceSessionList(props: Props) {
                     <button
                       type="button"
                       class="mr-2 -ml-1 p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80"
-                      aria-label={isWorkspaceExpanded(workspace().id) ? "Collapse" : "Expand"}
+                      aria-label={isWorkspaceExpanded(workspace().id) ? tr("session.collapse") : tr("session.expand")}
                       onClick={(event) => {
                         event.stopPropagation();
                         toggleWorkspaceExpanded(workspace().id);
@@ -242,7 +287,7 @@ export default function WorkspaceSessionList(props: Props) {
                         props.onCreateTaskInWorkspace(workspace().id);
                       }}
                       disabled={props.newTaskDisabled}
-                      aria-label="New task"
+                      aria-label={tr("session.new_task_aria")}
                     >
                       <Plus size={14} />
                     </button>
@@ -256,7 +301,7 @@ export default function WorkspaceSessionList(props: Props) {
                           current === workspace().id ? null : workspace().id,
                         );
                       }}
-                      aria-label="Worker options"
+                      aria-label={tr("session.worker_options")}
                     >
                       <MoreHorizontal size={14} />
                     </button>
@@ -276,7 +321,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Edit name
+                        {tr("session.edit_name")}
                       </button>
                       <button
                         type="button"
@@ -286,7 +331,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Share...
+                        {tr("session.share")}
                       </button>
                       <button
                         type="button"
@@ -296,7 +341,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {soulEnabled() ? "Soul settings" : "Enable soul"}
+                        {soulEnabled() ? tr("session.soul_settings") : tr("session.enable_soul")}
                       </button>
                       <Show when={workspace().workspaceType === "local"}>
                         <button
@@ -307,7 +352,7 @@ export default function WorkspaceSessionList(props: Props) {
                             setWorkspaceMenuId(null);
                           }}
                         >
-                          {revealLabel}
+                          {revealLabel()}
                         </button>
                       </Show>
                       <Show when={workspace().workspaceType === "remote"}>
@@ -321,7 +366,7 @@ export default function WorkspaceSessionList(props: Props) {
                             }}
                             disabled={isConnectionActionBusy()}
                           >
-                            Recover
+                            {tr("session.recover")}
                           </button>
                         </Show>
                         <button
@@ -333,7 +378,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          Test connection
+                          {tr("session.test_connection")}
                         </button>
                         <button
                           type="button"
@@ -344,7 +389,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          Edit connection
+                          {tr("session.edit_connection")}
                         </button>
                       </Show>
                       <button
@@ -355,7 +400,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Remove workspace
+                        {tr("session.remove_workspace")}
                       </button>
                     </div>
                   </Show>
@@ -427,31 +472,114 @@ export default function WorkspaceSessionList(props: Props) {
                             {(session) => {
                               const isSelected = () => props.selectedSessionId === session.id;
                               const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
+                              const isMenuOpen = () => sessionMenuId() === session.id;
+                              const isRenaming = () => renamingSessionId() === session.id;
                               return (
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  class={`group flex items-center justify-between min-h-9 px-3 rounded-lg cursor-pointer relative overflow-hidden ml-2 w-[calc(100%-0.5rem)] ${
-                                    isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70"
-                                  }`}
-                                  onClick={() => props.onOpenSession(workspace().id, session.id)}
-                                  onKeyDown={(event) => {
-                                    if (event.key !== "Enter" && event.key !== " ") return;
-                                    if (event.isComposing || event.keyCode === 229) return;
-                                    event.preventDefault();
-                                    props.onOpenSession(workspace().id, session.id);
-                                  }}
-                                >
-                                  <div class="flex min-w-0 items-center gap-1.5 mr-2">
-                                    <Show when={isSessionActive()}>
-                                      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                    </Show>
-                                    <span class="text-[13px] text-gray-11 truncate font-medium">{session.title}</span>
+                                <div class="relative ml-2 w-[calc(100%-0.5rem)]">
+                                  <div
+                                    role="button"
+                                    tabIndex={0}
+                                    class={`group flex items-center justify-between min-h-9 px-3 rounded-lg cursor-pointer ${
+                                      isSelected() ? "bg-gray-4/90 text-gray-12" : "hover:bg-gray-3/70"
+                                    }`}
+                                    onClick={() => props.onOpenSession(workspace().id, session.id)}
+                                    onKeyDown={(event) => {
+                                      if (event.key !== "Enter" && event.key !== " ") return;
+                                      if (event.isComposing || event.keyCode === 229) return;
+                                      event.preventDefault();
+                                      props.onOpenSession(workspace().id, session.id);
+                                    }}
+                                  >
+                                    <div class="flex min-w-0 items-center gap-1.5 mr-2 flex-1">
+                                      <Show when={isSessionActive()}>
+                                        <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+                                      </Show>
+                                      <Show
+                                        when={isRenaming()}
+                                        fallback={
+                                          <span class="text-[13px] text-gray-11 truncate font-medium">{session.title}</span>
+                                        }
+                                      >
+                                        <input
+                                          type="text"
+                                          class="text-[13px] bg-transparent border-none outline-none w-full"
+                                          value={renameValue()}
+                                          onInput={(e) => setRenameValue(e.currentTarget.value)}
+                                          onKeyDown={async (e) => {
+                                            if (e.key === "Enter") {
+                                              const newTitle = renameValue().trim();
+                                              if (newTitle && newTitle !== session.title && props.onRenameSession) {
+                                                await props.onRenameSession(session.id, newTitle);
+                                              }
+                                              setRenamingSessionId(null);
+                                            } else if (e.key === "Escape") {
+                                              setRenamingSessionId(null);
+                                            }
+                                          }}
+                                          onBlur={async () => {
+                                            const newTitle = renameValue().trim();
+                                            if (newTitle && newTitle !== session.title && props.onRenameSession) {
+                                              await props.onRenameSession(session.id, newTitle);
+                                            }
+                                            setRenamingSessionId(null);
+                                          }}
+                                          autofocus
+                                        />
+                                      </Show>
+                                    </div>
+                                    <div class="flex items-center gap-1">
+                                      <Show when={session.time?.updated && !isRenaming()}>
+                                        <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
+                                          {formatRelativeTime(session.time?.updated ?? Date.now())}
+                                        </span>
+                                      </Show>
+                                      <Show when={!isRenaming()}>
+                                        <button
+                                          type="button"
+                                          class="p-1 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-4/80 opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={(event) => {
+                                            event.stopPropagation();
+                                            setSessionMenuId((current) =>
+                                              current === session.id ? null : session.id,
+                                            );
+                                          }}
+                                          aria-label={tr("session.session_actions")}
+                                        >
+                                          <MoreHorizontal size={14} />
+                                        </button>
+                                      </Show>
+                                    </div>
                                   </div>
-                                  <Show when={session.time?.updated}>
-                                    <span class="text-[11px] text-gray-9 whitespace-nowrap group-hover:text-gray-10 transition-colors">
-                                      {formatRelativeTime(session.time?.updated ?? Date.now())}
-                                    </span>
+                                  <Show when={isMenuOpen()}>
+                                    <div
+                                      ref={(el) => { if (el) sessionMenuRefs.set(session.id, el); }}
+                                      class="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
+                                      onClick={(event) => event.stopPropagation()}
+                                    >
+                                      <button
+                                        type="button"
+                                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                                        onClick={() => {
+                                          setRenameValue(session.title);
+                                          setRenamingSessionId(session.id);
+                                          setSessionMenuId(null);
+                                        }}
+                                      >
+                                        {tr("session.rename_session")}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
+                                        onClick={async () => {
+                                          setSessionMenuId(null);
+                                          if (props.onDeleteSession) {
+                                            await props.onDeleteSession(session.id);
+                                          }
+                                        }}
+                                      >
+                                        {tr("session.delete_session")}
+                                      </button>
+                                    </div>
                                   </Show>
                                 </div>
                               );
@@ -465,8 +593,8 @@ export default function WorkspaceSessionList(props: Props) {
                               onClick={() => props.onCreateTaskInWorkspace(workspace().id)}
                               disabled={props.newTaskDisabled}
                             >
-                              <span class="group-hover/empty:hidden">No tasks yet.</span>
-                              <span class="hidden group-hover/empty:inline font-medium">+ New task</span>
+                              <span class="group-hover/empty:hidden">{tr("session.no_tasks_yet")}</span>
+                              <span class="hidden group-hover/empty:inline font-medium">{tr("session.add_new_task")}</span>
                             </button>
                           </Show>
 
@@ -483,7 +611,7 @@ export default function WorkspaceSessionList(props: Props) {
                       }
                     >
                       <div class="w-full px-3 py-2 text-xs text-gray-10 ml-2 text-left rounded-lg">
-                        Loading tasks...
+                        {tr("session.loading_tasks")}
                       </div>
                     </Show>
                   </Show>
@@ -501,7 +629,7 @@ export default function WorkspaceSessionList(props: Props) {
           onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
         >
           <Plus size={14} />
-          Add a worker
+          {tr("session.add_worker")}
         </button>
 
         <Show when={addWorkspaceMenuOpen()}>
@@ -515,7 +643,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              New worker
+              {tr("session.new_worker")}
             </button>
             <button
               type="button"
@@ -526,7 +654,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Connect remote
+              {tr("session.connect_remote")}
             </button>
             <button
               type="button"
@@ -538,7 +666,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Import config
+              {tr("session.import_config")}
             </button>
           </div>
         </Show>

@@ -1,4 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal, on, onCleanup, onMount } from "solid-js";
+import { t, currentLocale } from "../../i18n";
+
+const translate = (key: string) => t(key, currentLocale());
 import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
@@ -34,6 +37,7 @@ import {
 import {
   Box,
   Check,
+  ChevronDown,
   Circle,
   Cpu,
   HeartPulse,
@@ -88,8 +92,18 @@ import {
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
 
-import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
-import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
+import browserSetupTemplateEN from "../data/commands/browser-setup.md?raw";
+import browserSetupTemplateTH from "../data/commands/browser-setup.th.md?raw";
+import soulSetupTemplateEN from "../data/commands/give-me-a-soul.md?raw";
+import soulSetupTemplateTH from "../data/commands/give-me-a-soul.th.md?raw";
+
+const getTemplateByLocale = (enTemplate: string, thTemplate: string) => {
+  const locale = currentLocale();
+  return locale === "th" ? thTemplate : enTemplate;
+};
+
+const browserSetupTemplate = () => getTemplateByLocale(browserSetupTemplateEN, browserSetupTemplateTH);
+const soulSetupTemplate = () => getTemplateByLocale(soulSetupTemplateEN, soulSetupTemplateTH);
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -256,29 +270,31 @@ type SkillsSetBundleV1 = {
   };
 };
 
-const BROWSER_SETUP_TEMPLATE = (() => {
-  const parsed = parseTemplateFrontmatter(browserSetupTemplate);
+const getBrowserSetupTemplate = () => {
+  const template = browserSetupTemplate();
+  const parsed = parseTemplateFrontmatter(template);
   const name = parsed?.data?.name?.trim() || "browser-setup";
   const description = parsed?.data?.description?.trim() || "Guide the user through browser automation setup";
-  const body = (parsed?.body ?? browserSetupTemplate).trim();
+  const body = (parsed?.body ?? template).trim();
   return { name, description, body };
-})();
+};
 
-const SOUL_SETUP_TEMPLATE = (() => {
-  const parsed = parseTemplateFrontmatter(soulSetupTemplate);
+const getSoulSetupTemplate = () => {
+  const template = soulSetupTemplate();
+  const parsed = parseTemplateFrontmatter(template);
   const name = parsed?.data?.name?.trim() || "give-me-a-soul";
   const description =
     parsed?.data?.description?.trim() ||
     "Enable optional soul mode with persistent memory and scheduled check-ins";
-  const body = (parsed?.body ?? soulSetupTemplate).trim();
+  const body = (parsed?.body ?? template).trim();
   return { name, description, body };
-})();
+};
 
 const INITIAL_MESSAGE_WINDOW = 140;
 const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
 const MAX_SEARCH_HITS = 2_000;
-const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
+const STREAM_SCROLL_MIN_INTERVAL_MS = 250;
 const STREAM_RENDER_BATCH_MS = 220;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
@@ -294,12 +310,14 @@ const COMMAND_PALETTE_THINKING_OPTIONS = [
 ] as const;
 
 export default function SessionView(props: SessionViewProps) {
+  const tr = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let agentPickerRef: HTMLDivElement | undefined;
   let sessionMenuRef: HTMLDivElement | undefined;
+  let rightSidebarSessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
   let scrollFrame: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
@@ -316,6 +334,7 @@ export default function SessionView(props: SessionViewProps) {
   const [renameBusy, setRenameBusy] = createSignal(false);
 
   const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
+  const [rightSidebarSessionMenuOpen, setRightSidebarSessionMenuOpen] = createSignal(false);
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
   const [deleteSessionBusy, setDeleteSessionBusy] = createSignal(false);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
@@ -323,7 +342,7 @@ export default function SessionView(props: SessionViewProps) {
   const [agentPickerReady, setAgentPickerReady] = createSignal(false);
   const [agentPickerError, setAgentPickerError] = createSignal<string | null>(null);
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
-  const [nearBottom, setNearBottom] = createSignal(true);
+  const [nearBottom, setNearBottom] = createSignal(false);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
@@ -366,12 +385,18 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
-  const workspaceLabel = (workspace: WorkspaceInfo) =>
-    workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
-    workspace.name?.trim() ||
-    workspace.path?.trim() ||
-    "Worker";
+  const workspaceLabel = (workspace: WorkspaceInfo) => {
+    const name = workspace.displayName?.trim() ||
+      workspace.openworkWorkspaceName?.trim() ||
+      workspace.name?.trim() ||
+      workspace.path?.trim() ||
+      "Worker";
+    // Translate default "Starter" name
+    if (name === "Starter") {
+      return translate("dashboard.starter_workspace");
+    }
+    return name;
+  };
   const todoList = createMemo(() => props.todos.filter((todo) => todo.content.trim()));
   const todoCount = createMemo(() => todoList().length);
   const todoCompletedCount = createMemo(() =>
@@ -1473,22 +1498,8 @@ export default function SessionView(props: SessionViewProps) {
 
   const applyInitialBottomAnchor = (sessionId: string) => {
     cancelInitialAnchorFrames();
-    initialAnchorGuardTimer = setTimeout(() => {
-      initialAnchorGuardTimer = undefined;
-      if (props.selectedSessionId !== sessionId) return;
-      setInitialAnchorPending(false);
-    }, 200);
-    pinToLatestNow();
-    initialAnchorRafA = window.requestAnimationFrame(() => {
-      initialAnchorRafA = undefined;
-      pinToLatestNow();
-      initialAnchorRafB = window.requestAnimationFrame(() => {
-        initialAnchorRafB = undefined;
-        pinToLatestNow();
-        if (props.selectedSessionId !== sessionId) return;
-        setInitialAnchorPending(false);
-      });
-    });
+    // Auto-scroll on load disabled - users can scroll manually or use "Jump to latest"
+    setInitialAnchorPending(false);
   };
 
   onCleanup(() => {
@@ -2033,13 +2044,14 @@ export default function SessionView(props: SessionViewProps) {
     onCleanup(() => window.clearInterval(id));
   });
 
-  createEffect(() => {
-    if (!showRunIndicator()) return;
-    runProgressSignature();
-    if (initialAnchorPending()) return;
-    if (!nearBottom()) return;
-    scheduleScrollToLatest("auto");
-  });
+  // Auto-scroll disabled - users can use "Jump to latest" button manually
+  // createEffect(() => {
+  //   if (!showRunIndicator()) return;
+  //   runProgressSignature();
+  //   if (initialAnchorPending()) return;
+  //   if (!nearBottom()) return;
+  //   scheduleScrollToLatest("auto");
+  // });
 
   createEffect(
     on(
@@ -2292,7 +2304,7 @@ export default function SessionView(props: SessionViewProps) {
     const sessionID = props.selectedSessionId;
     const startedAt = perfNow();
     setHistoryActionBusy("compact");
-    setToastMessage("Compacting session context...");
+    setToastMessage(translate("session.compacting_context"));
     try {
       await props.compactSession();
       setToastMessage("Session compacted.");
@@ -2301,7 +2313,7 @@ export default function SessionView(props: SessionViewProps) {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : props.safeStringify(error);
-      setToastMessage(message || "Failed to compact session");
+      setToastMessage(message || translate("session.compact_failed"));
       finishPerf(props.developerMode, "session.compact", "ui-error", startedAt, {
         sessionID,
         error: message,
@@ -2498,6 +2510,17 @@ export default function SessionView(props: SessionViewProps) {
       if (!sessionMenuRef) return;
       if (sessionMenuRef.contains(event.target as Node)) return;
       setSessionMenuOpen(false);
+    };
+    window.addEventListener("mousedown", handler);
+    onCleanup(() => window.removeEventListener("mousedown", handler));
+  });
+
+  createEffect(() => {
+    if (!rightSidebarSessionMenuOpen()) return;
+    const handler = (event: MouseEvent) => {
+      if (!rightSidebarSessionMenuRef) return;
+      if (rightSidebarSessionMenuRef.contains(event.target as Node)) return;
+      setRightSidebarSessionMenuOpen(false);
     };
     window.addEventListener("mousedown", handler);
     onCleanup(() => window.removeEventListener("mousedown", handler));
@@ -2933,7 +2956,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleBrowserAutomationQuickstart = async () => {
-    const name = BROWSER_SETUP_TEMPLATE.name;
+    const template = getBrowserSetupTemplate();
+    const name = template.name;
     try {
       const commands = await props.listCommands();
       const hasCommand = commands.some((cmd) => cmd.name === name);
@@ -2952,7 +2976,7 @@ export default function SessionView(props: SessionViewProps) {
       // Fall back to prompt-based setup below.
     }
 
-    const text = BROWSER_SETUP_TEMPLATE.body || "Help me set up browser automation.";
+    const text = template.body || "Help me set up browser automation.";
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -2963,7 +2987,8 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleSoulQuickstart = async () => {
-    const name = SOUL_SETUP_TEMPLATE.name;
+    const template = getSoulSetupTemplate();
+    const name = template.name;
     const slashCommand = `/${name}`;
     try {
       const commands = await props.listCommands();
@@ -2983,7 +3008,7 @@ export default function SessionView(props: SessionViewProps) {
       // Fall back to prompt-based setup below.
     }
 
-    const text = SOUL_SETUP_TEMPLATE.body || "Give me a soul.";
+    const text = template.body || "Give me a soul.";
     handleSendPrompt({
       mode: "prompt",
       text,
@@ -3071,9 +3096,9 @@ export default function SessionView(props: SessionViewProps) {
     const items: CommandPaletteItem[] = [
       {
         id: "new-session",
-        title: "Create new session",
-        detail: "Start a fresh task in the current worker",
-        meta: "Create",
+        title: translate("session.create_new_session"),
+        detail: translate("session.start_fresh_task"),
+        meta: translate("session.label_create"),
         action: () => {
           closeCommandPalette();
           void Promise.resolve(props.createSessionAndOpen()).catch((error) => {
@@ -3084,9 +3109,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "sessions",
-        title: "Search sessions",
-        detail: `${totalSessionCount().toLocaleString()} available across workers`,
-        meta: "Jump",
+        title: translate("session.search_sessions_cmd"),
+        detail: translate("session.available_across_workers").replace("{count}", totalSessionCount().toLocaleString()),
+        meta: translate("session.label_jump"),
         action: () => {
           setCommandPaletteMode("sessions");
           setCommandPaletteQuery("");
@@ -3096,9 +3121,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "model",
-        title: "Change model",
-        detail: `Current: ${props.selectedSessionModelLabel || "Model"}`,
-        meta: "Open",
+        title: translate("session.change_model"),
+        detail: translate("session.current_model").replace("{model}", props.selectedSessionModelLabel || translate("session.model")),
+        meta: translate("session.label_open"),
         action: () => {
           closeCommandPalette();
           props.openSessionModelPicker();
@@ -3106,9 +3131,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "provider",
-        title: "Connect provider",
-        detail: "Open provider connection flow",
-        meta: "Open",
+        title: translate("session.connect_provider"),
+        detail: translate("session.open_provider_flow"),
+        meta: translate("session.label_open"),
         action: () => {
           closeCommandPalette();
           void props.openProviderAuthModal().catch((error) => {
@@ -3119,9 +3144,9 @@ export default function SessionView(props: SessionViewProps) {
       },
       {
         id: "thinking",
-        title: "Change thinking",
-        detail: `Current: ${props.modelVariantLabel}`,
-        meta: "Adjust",
+        title: translate("session.change_thinking"),
+        detail: translate("session.current_thinking").replace("{mode}", props.modelVariantLabel || translate("session.none")),
+        meta: translate("session.label_adjust"),
         action: () => {
           setCommandPaletteMode("thinking");
           setCommandPaletteQuery("");
@@ -3187,16 +3212,16 @@ export default function SessionView(props: SessionViewProps) {
 
   const commandPaletteTitle = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return "Search sessions";
-    if (mode === "thinking") return "Change thinking";
-    return "Quick actions";
+    if (mode === "sessions") return translate("session.search_sessions");
+    if (mode === "thinking") return translate("session.change_thinking");
+    return translate("session.quick_actions");
   });
 
   const commandPalettePlaceholder = createMemo(() => {
     const mode = commandPaletteMode();
-    if (mode === "sessions") return "Find by session title or worker";
-    if (mode === "thinking") return "Filter thinking options";
-    return "Search actions";
+    if (mode === "sessions") return translate("session.find_session_placeholder");
+    if (mode === "thinking") return translate("session.filter_thinking_placeholder");
+    return translate("session.search_actions_placeholder");
   });
 
   createEffect(
@@ -3211,6 +3236,8 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   const openSettings = (tab: SettingsTab = "general") => {
+    // We don't have props.view or props.settingsTab in SessionView Props.
+    // If the user presses settings, go to the dashboard settings.
     props.setSettingsTab(tab);
     props.setTab("settings");
     props.setView("dashboard");
@@ -3238,13 +3265,13 @@ export default function SessionView(props: SessionViewProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Install update";
+      return props.anyActiveRuns ? translate("dashboard.update_ready") : translate("dashboard.install_update");
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+      return percent == null ? translate("dashboard.downloading") : translate("dashboard.downloading_percent").replace("{percent}", String(percent));
     }
-    return "Update available";
+    return translate("dashboard.update_available");
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -3298,11 +3325,11 @@ export default function SessionView(props: SessionViewProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? `Update ready ${version}. Stop active runs to restart.`
-        : `Restart to apply update ${version}`;
+        ? translate("dashboard.update_ready_title").replace("{version}", version)
+        : translate("dashboard.install_update_title").replace("{version}", version);
     }
-    if (state === "downloading") return `Downloading update ${version}`;
-    return `Update available ${version}`;
+    if (state === "downloading") return translate("dashboard.downloading_update_title").replace("{version}", version);
+    return translate("dashboard.update_available_title").replace("{version}", version);
   });
 
   const handleUpdatePillClick = () => {
@@ -3399,6 +3426,8 @@ export default function SessionView(props: SessionViewProps) {
             onOpenCreateWorkspace={props.openCreateWorkspace}
             onOpenCreateRemoteWorkspace={props.openCreateRemoteWorkspace}
             onImportWorkspaceConfig={props.importWorkspaceConfig}
+            onRenameSession={props.renameSession}
+            onDeleteSession={props.deleteSession}
           />
         </div>
 
@@ -3437,8 +3466,8 @@ export default function SessionView(props: SessionViewProps) {
 
             <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
               {showWorkspaceSetupEmptyState()
-                ? "Create or connect a worker"
-                : (selectedSessionTitle() || "New session")}
+                ? translate("session.create_or_connect_worker")
+                : (selectedSessionTitle() || translate("session.new_session"))}
             </h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
@@ -3465,8 +3494,8 @@ export default function SessionView(props: SessionViewProps) {
                 }
                 window.setTimeout(() => openCommandPalette(), 0);
               }}
-              title="Quick actions (Ctrl/Cmd+K)"
-              aria-label="Quick actions"
+              title={`${translate("session.quick_actions")} (Ctrl/Cmd+K)`}
+              aria-label={translate("session.quick_actions")}
             >
               Cmd+K
             </button>
@@ -3518,8 +3547,8 @@ export default function SessionView(props: SessionViewProps) {
               class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
               onClick={compactSessionHistory}
               disabled={!canCompactSession() || historyActionBusy() !== null}
-              title="Compact session context"
-              aria-label="Compact session context"
+              title={translate("session.compact_context")}
+              aria-label={translate("session.compact_context")}
             >
               <Show when={historyActionBusy() === "compact"} fallback={<Maximize2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
@@ -3530,8 +3559,8 @@ export default function SessionView(props: SessionViewProps) {
                 type="button"
                 class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                 disabled={!props.selectedSessionId}
-                title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
-                aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
+                title={props.selectedSessionId ? translate("session.session_actions") : translate("session.select_session_to_manage")}
+                aria-label={props.selectedSessionId ? translate("session.session_actions") : translate("session.select_session_to_manage")}
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
@@ -3555,21 +3584,21 @@ export default function SessionView(props: SessionViewProps) {
                     }}
                     disabled={!canCompactSession() || historyActionBusy() !== null}
                   >
-                    Compact session context
+                    {translate("session.compact_context")}
                   </button>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
                     onClick={openRenameModal}
                   >
-                    Rename session
+                    {tr("session.rename_session")}
                   </button>
                   <button
                     type="button"
                     class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
                     onClick={openDeleteSessionModal}
                   >
-                    Delete session
+                    {tr("session.delete_session")}
                   </button>
                 </div>
               </Show>
@@ -3638,7 +3667,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class="flex-1 flex overflow-hidden">
           <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-56"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-56"} scroll-smooth bg-gray-1`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
@@ -3653,7 +3682,7 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
                 <h3 class="text-2xl font-semibold text-gray-12">Set up your first worker</h3>
                 <p class="mt-2 text-sm text-gray-10">
-                  OpenWork needs a local or remote worker before you can start a session.
+                  {tr("session.needs_worker")}
                 </p>
                 <div class="mt-6 grid gap-3 sm:grid-cols-2">
                   <button
@@ -3661,14 +3690,14 @@ export default function SessionView(props: SessionViewProps) {
                     class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
                     onClick={props.openCreateWorkspace}
                   >
-                    Create local worker
+                    {tr("session.create_local_worker")}
                   </button>
                   <button
                     type="button"
                     class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
                     onClick={props.openCreateRemoteWorkspace}
                   >
-                    Connect remote worker
+                    {tr("session.connect_remote_worker")}
                   </button>
                 </div>
               </div>
@@ -3679,9 +3708,9 @@ export default function SessionView(props: SessionViewProps) {
                   <Zap class="text-dls-secondary" />
                 </div>
               <div class="space-y-2">
-                <h3 class="text-xl font-medium">What do you want to do?</h3>
+                <h3 class="text-xl font-medium">{tr("session.what_do_you_want")}</h3>
                 <p class="text-dls-secondary text-sm max-w-sm mx-auto">
-                  Pick a starting point or just type below.
+                  {tr("session.pick_starting_point")}
                 </p>
               </div>
               <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
@@ -3692,9 +3721,9 @@ export default function SessionView(props: SessionViewProps) {
                     void handleBrowserAutomationQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">Automate your browser</div>
+                  <div class="text-sm font-semibold text-dls-text">{tr("session.automate_browser")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Set up browser actions and run reliable web tasks from OpenWork.
+                    {tr("session.automate_browser_desc")}
                   </div>
                 </button>
                 <button
@@ -3704,11 +3733,9 @@ export default function SessionView(props: SessionViewProps) {
                     void handleSoulQuickstart();
                   }}
                 >
-                  <div class="text-sm font-semibold text-dls-text">Give me a soul</div>
+                  <div class="text-sm font-semibold text-dls-text">{tr("session.give_me_soul")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    Keep your goals and preferences across sessions with light scheduled check-ins.
-                    Tradeoff: more autonomy can create extra background runs, but revert is one command.
-                    Audit setup and heartbeat evidence from the Soul section.
+                    {tr("session.give_me_soul_desc")}
                   </div>
                 </button>
               </div>
@@ -3726,10 +3753,10 @@ export default function SessionView(props: SessionViewProps) {
                 disabled={props.loadingEarlierMessages}
               >
                 {props.loadingEarlierMessages
-                  ? "Loading earlier messages..."
+                  ? tr("session.loading_earlier")
                   : hiddenMessageCount() > 0
-                    ? `Show ${nextRevealCount().toLocaleString()} earlier message${nextRevealCount() === 1 ? "" : "s"}`
-                    : "Load earlier messages"}
+                    ? tr(nextRevealCount() === 1 ? "session.show_earlier" : "session.show_earlier_plural", { count: nextRevealCount() })
+                    : tr("session.load_earlier")}
               </button>
             </div>
           </Show>
@@ -3937,7 +3964,7 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <History size={18} />
-            Automations
+            {translate("dashboard.automations")}
           </button>
           <button
             type="button"
@@ -3949,7 +3976,7 @@ export default function SessionView(props: SessionViewProps) {
             onClick={() => openSoul()}
           >
             <HeartPulse size={18} class={soulNavIconClass()} />
-            Soul
+            {translate("dashboard.soul")}
           </button>
           <button
             type="button"
@@ -3964,7 +3991,7 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <Zap size={18} />
-            Skills
+            {translate("dashboard.skills")}
           </button>
           <button
             type="button"
@@ -3979,7 +4006,7 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <Box size={18} />
-            Extensions
+            {translate("dashboard.extensions")}
           </button>
           <button
             type="button"
@@ -3994,7 +4021,7 @@ export default function SessionView(props: SessionViewProps) {
             }}
           >
             <MessageCircle size={18} />
-            Messaging
+            {translate("dashboard.messaging")}
           </button>
           <Show when={props.developerMode}>
             <button
@@ -4007,10 +4034,72 @@ export default function SessionView(props: SessionViewProps) {
               onClick={openConfig}
             >
               <SlidersHorizontal size={18} />
-              Advanced
+              {translate("dashboard.advanced")}
             </button>
           </Show>
           </div>
+
+          {/* Session Menu in Right Sidebar */}
+          <Show when={props.selectedSessionId}>
+            <div class="border-t border-gray-6/50 pt-3 mt-2">
+              <div ref={(el) => (rightSidebarSessionMenuRef = el)} class="relative">
+                <button
+                  type="button"
+                  class="w-full h-9 flex items-center justify-between px-3 rounded-lg text-[13px] font-medium text-gray-11 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setRightSidebarSessionMenuOpen((current) => !current);
+                  }}
+                >
+                  <span class="flex items-center gap-2.5">
+                    <MoreHorizontal size={18} />
+                    {translate("session.session_actions")}
+                  </span>
+                  <ChevronDown size={14} class={`transition-transform ${rightSidebarSessionMenuOpen() ? "rotate-180" : ""}`} />
+                </button>
+
+                <Show when={rightSidebarSessionMenuOpen()}>
+                  <div
+                    class="absolute left-0 right-0 top-[calc(100%+4px)] z-20 w-full rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    <button
+                      type="button"
+                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 disabled:opacity-60"
+                      onClick={() => {
+                        setRightSidebarSessionMenuOpen(false);
+                        void compactSessionHistory();
+                      }}
+                      disabled={!canCompactSession() || historyActionBusy() !== null}
+                    >
+                      {translate("session.compact_context")}
+                    </button>
+                    <button
+                      type="button"
+                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                      onClick={() => {
+                        setRightSidebarSessionMenuOpen(false);
+                        openRenameModal();
+                      }}
+                    >
+                      {translate("session.rename_session")}
+                    </button>
+                    <button
+                      type="button"
+                      class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
+                      onClick={() => {
+                        setRightSidebarSessionMenuOpen(false);
+                        openDeleteSessionModal();
+                      }}
+                    >
+                      {translate("session.delete_session")}
+                    </button>
+                  </div>
+                </Show>
+              </div>
+            </div>
+          </Show>
 
           <InboxPanel
             id="sidebar-inbox"
@@ -4064,7 +4153,7 @@ export default function SessionView(props: SessionViewProps) {
                   type="button"
                   class="h-8 w-8 flex items-center justify-center rounded-md text-dls-secondary hover:text-dls-text hover:bg-dls-hover transition-colors"
                   onClick={closeCommandPalette}
-                  aria-label="Close quick actions"
+                  aria-label={translate("session.close_quick_actions")}
                 >
                   <X size={14} />
                 </button>
@@ -4117,8 +4206,8 @@ export default function SessionView(props: SessionViewProps) {
             </div>
 
             <div class="border-t border-dls-border px-3 py-2 text-[11px] text-dls-secondary flex items-center justify-between gap-2">
-              <span>Arrow keys to navigate</span>
-              <span>Enter to run · Esc to close</span>
+              <span>{translate("session.arrow_keys_navigate")}</span>
+              <span>{translate("session.enter_run_esc_close")}</span>
             </div>
           </div>
         </div>
@@ -4150,14 +4239,14 @@ export default function SessionView(props: SessionViewProps) {
 
       <ConfirmModal
         open={deleteSessionOpen()}
-        title="Delete session?"
+        title={tr("session.delete_session_title")}
         message={
           selectedSessionTitle().trim()
-            ? `This will permanently delete \"${selectedSessionTitle().trim()}\" and its messages.`
-            : "This will permanently delete the selected session and its messages."
+            ? tr("session.delete_session_message", { name: selectedSessionTitle().trim() })
+            : tr("session.delete_session_message_no_name")
         }
-        confirmLabel={deleteSessionBusy() ? "Deleting..." : "Delete"}
-        cancelLabel="Cancel"
+        confirmLabel={deleteSessionBusy() ? tr("session.deleting") : tr("session.delete")}
+        cancelLabel={tr("session.cancel")}
         variant="danger"
         onConfirm={confirmDeleteSession}
         onCancel={closeDeleteSessionModal}

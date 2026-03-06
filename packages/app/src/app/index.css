@@ -179,3 +179,184 @@ select:disabled {
     filter: none;
   }
 }
+
+/* ─── macOS-style Custom Title Bar ──────────────────────────────────────── */
+
+.title-bar {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 0 0 12px;
+
+  /* Full-width drag region */
+  -webkit-app-region: drag;
+  app-region: drag;
+  /* Visually transparent — blends into whatever is behind */
+  background: var(--dls-surface);
+  border-bottom: 1px solid var(--dls-border);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 40;
+  user-select: none;
+}
+
+/* Traffic light group */
+.title-bar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Controls must be click-able, not draggable */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  flex-shrink: 0;
+  /* Push to right side and flush with edge */
+  margin-left: auto;
+  margin-right: -20px;
+}
+
+/* Individual traffic light button */
+.traffic-btn {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter 0.15s ease, transform 0.1s ease;
+  flex-shrink: 0;
+}
+
+.traffic-btn:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.7);
+  outline-offset: 2px;
+}
+
+.traffic-btn:active {
+  transform: scale(0.88);
+}
+
+/* Close — red */
+.traffic-close {
+  background: #ff5f57;
+  box-shadow: 0 0 0 0.5px rgba(0,0,0,0.18) inset;
+}
+.traffic-close:hover {
+  background: #ff4745;
+  filter: brightness(1.08);
+}
+
+/* Minimize — yellow */
+.traffic-minimize {
+  background: #ffbd2e;
+  box-shadow: 0 0 0 0.5px rgba(0,0,0,0.18) inset;
+}
+.traffic-minimize:hover {
+  background: #ffac00;
+  filter: brightness(1.08);
+}
+
+/* Maximize — green */
+.traffic-maximize {
+  background: #28c840;
+  box-shadow: 0 0 0 0.5px rgba(0,0,0,0.18) inset;
+}
+.traffic-maximize:hover {
+  background: #1db830;
+  filter: brightness(1.08);
+}
+
+/* Icon shown on hover */
+.traffic-icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  color: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* Centered window title */
+.title-bar-title {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  order: 2;
+}
+
+.title-bar-title span {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--dls-text-secondary);
+  white-space: nowrap;
+}
+
+/* Left spacer mirrors controls width so title stays centered */
+.title-bar-spacer {
+  /* same width as controls (3 × 12px + 2 × 8px gap = 52px) */
+  width: 52px;
+  flex-shrink: 0;
+  order: 1;
+}
+
+/* In dark mode the title fades slightly */
+[data-theme="dark"] .title-bar-title span {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+/* Inactive window — dim the dots (best-effort on Windows) */
+@media not all and (prefers-color-scheme: dark) {
+  .title-bar:not(:focus-within) .traffic-close { background: #d6d6d6; }
+  .title-bar:not(:focus-within) .traffic-minimize { background: #d6d6d6; }
+  .title-bar:not(:focus-within) .traffic-maximize { background: #d6d6d6; }
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.toast-animate-in {
+  animation: toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ─── Custom Scrollbar ──────────────────────────────────────── */
+
+/* Thin scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--dls-border);
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dls-text-secondary);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--dls-border) transparent;
+}

@@ -911,3 +911,28 @@ export async function opencodeRouterRestart(options: {
 export async function setWindowDecorations(decorations: boolean): Promise<void> {
   return invoke<void>("set_window_decorations", { decorations });
 }
+
+/** Minimize the window */
+export async function windowMinimize(): Promise<void> {
+  return invoke<void>("window_minimize");
+}
+
+/** Close the window */
+export async function windowClose(): Promise<void> {
+  return invoke<void>("window_close");
+}
+
+/** Toggle maximize/restore the window. Returns true if now maximized. */
+export async function windowToggleMaximize(): Promise<boolean> {
+  return invoke<boolean>("window_toggle_maximize");
+}
+
+/** Check if the window is currently maximized */
+export async function windowIsMaximized(): Promise<boolean> {
+  return invoke<boolean>("window_is_maximized");
+}
+
+/** Start dragging the window (for custom title bar drag regions) */
+export async function windowStartDragging(): Promise<void> {
+  return invoke<void>("window_start_dragging");
+}

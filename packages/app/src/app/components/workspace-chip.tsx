@@ -29,6 +29,15 @@ export default function WorkspaceChip(props: {
       Boolean(props.workspace.sandboxContainerName?.trim()));
   const translate = (key: string) => t(key, currentLocale());
 
+  const workspaceName = () => {
+    const name = props.workspace.displayName?.trim() || props.workspace.name;
+    // Translate default "Starter" name
+    if (name === "Starter") {
+      return translate("dashboard.starter_workspace");
+    }
+    return name;
+  };
+
   return (
     <button
       onClick={props.onClick}
@@ -46,7 +55,7 @@ export default function WorkspaceChip(props: {
       <div class="flex flex-col items-start mr-2 min-w-0">
         <div class="flex items-center gap-2">
           <span class="text-xs font-medium text-gray-12 leading-none truncate max-w-[9.5rem]">
-            {props.workspace.name}
+            {workspaceName()}
           </span>
           {props.workspace.workspaceType === "remote" ? (
             <span class="text-[9px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-gray-4 text-gray-11">

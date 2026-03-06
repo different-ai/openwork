@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
 
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { ProviderListItem } from "./types";
+import { toast } from "./state/toast";
 
 import { check } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -398,12 +399,18 @@ export function createSystemState(options: {
       }
 
       if (result.removed.length) {
-        setCacheRepairResult("OpenCode cache repaired. Restart the engine if it was running.");
+        const msg = "OpenCode cache repaired. Restart the engine if it was running.";
+        setCacheRepairResult(msg);
+        toast.success(msg);
       } else {
-        setCacheRepairResult("No OpenCode cache found. Nothing to repair.");
+        const msg = "No OpenCode cache found. Nothing to repair.";
+        setCacheRepairResult(msg);
+        toast.info(msg);
       }
     } catch (e) {
-      setCacheRepairResult(e instanceof Error ? e.message : safeStringify(e));
+      const msg = e instanceof Error ? e.message : safeStringify(e);
+      setCacheRepairResult(msg);
+      toast.error(msg);
     } finally {
       setCacheRepairBusy(false);
     }
@@ -431,15 +438,19 @@ export function createSystemState(options: {
       const removedCount = result.removed.length;
       if (result.errors.length) {
         const first = result.errors[0];
-        setDockerCleanupResult(
-          `Removed ${removedCount}/${result.candidates.length} containers. ${first}`,
-        );
+        const msg = `Removed ${removedCount}/${result.candidates.length} containers. ${first}`;
+        setDockerCleanupResult(msg);
+        toast.warning(msg);
         return;
       }
 
-      setDockerCleanupResult(`Removed ${removedCount} OpenWork Docker container(s).`);
+      const msg = `Removed ${removedCount} OpenWork Docker container(s).`;
+      setDockerCleanupResult(msg);
+      toast.success(msg);
     } catch (e) {
-      setDockerCleanupResult(e instanceof Error ? e.message : safeStringify(e));
+      const msg = e instanceof Error ? e.message : safeStringify(e);
+      setDockerCleanupResult(msg);
+      toast.error(msg);
     } finally {
       setDockerCleanupBusy(false);
     }

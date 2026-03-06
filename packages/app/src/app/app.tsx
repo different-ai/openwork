@@ -29,11 +29,16 @@ import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
 import ResetModal from "./components/reset-modal";
+import { toast } from "./state/toast";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
+import LanguageChangeToast from "./components/language-change-toast";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
+import ModelVariantModal from "./components/model-variant-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import TitleBar from "./components/title-bar";
+import ToastContainer from "./components/toast-container";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -804,6 +809,7 @@ export default function App() {
         applyFontZoom(document.documentElement.style, next);
       }
 
+      toast.info(`Font zoom: ${Math.round(next * 100)}%`, 1500);
       return next;
     };
 
@@ -1783,6 +1789,7 @@ export default function App() {
     }
     
     await renameSession(sessionID, trimmed);
+    toast.success(`Session renamed to "${trimmed}"`);
     await refreshSidebarWorkspaceSessions(workspaceStore.activeWorkspaceId()).catch(() => undefined);
   }
 
@@ -1807,6 +1814,7 @@ export default function App() {
       ...prev,
       [activeWsId]: (prev[activeWsId] ?? []).filter((s) => s.id !== trimmed),
     }));
+    toast.success("Session deleted");
 
     // If we're currently routed to the deleted session, navigate away immediately.
     // (Otherwise the route effect can try to re-select a session that no longer exists.)
@@ -1972,6 +1980,7 @@ export default function App() {
       assertNoClientError(result);
       const updated = unwrap(await c.provider.list());
       globalSync.set("provider", updated);
+      toast.success(`Succesfully connected to ${resolved}`);
       return `Connected ${resolved}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to complete OAuth");
@@ -1999,6 +2008,7 @@ export default function App() {
       });
       const updated = unwrap(await c.provider.list());
       globalSync.set("provider", updated);
+      toast.success(`API key for ${providerId} saved`);
       return `Connected ${providerId}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to save API key");
@@ -2286,7 +2296,10 @@ export default function App() {
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
   const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+  const [modelVariantModalOpen, setModelVariantModalOpen] = createSignal(false);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
+  const [showLanguageChangeToast, setShowLanguageChangeToast] = createSignal(false);
+  const [languageChangeBusy, setLanguageChangeBusy] = createSignal(false);
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", label: "None" },
@@ -2318,17 +2331,7 @@ export default function App() {
   };
 
   const handleEditModelVariant = () => {
-    const next = window.prompt(
-      "Model variant (none, low, medium, high, xhigh)",
-      normalizeModelVariant(modelVariant()) ?? "none"
-    );
-    if (next == null) return;
-    const normalized = normalizeModelVariant(next);
-    if (!normalized) {
-      window.alert("Variant must be one of: none, low, medium, high, xhigh.");
-      return;
-    }
-    setModelVariant(normalized);
+    setModelVariantModalOpen(true);
   };
 
   const workspaceStore = createWorkspaceStore({
@@ -3308,7 +3311,18 @@ export default function App() {
       setOpenworkServerStatus(result.status);
       setOpenworkServerCapabilities(result.capabilities);
       setOpenworkServerCheckedAt(Date.now());
-      return result.status === "connected" || result.status === "limited";
+      
+      const ok = result.status === "connected" || result.status === "limited";
+      if (ok) {
+        toast.success(`Reconnected to OpenWork server: ${url}`);
+      } else {
+        toast.error(`Failed to connect to ${url} (Status: ${result.status})`);
+      }
+      return ok;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : safeStringify(e);
+      toast.error(`Connection error: ${msg}`);
+      return false;
     } finally {
       setOpenworkReconnectBusy(false);
     }
@@ -3326,7 +3340,13 @@ export default function App() {
       return false;
     }
 
-    return workspaceStore.startHost({ workspacePath, navigate: false });
+    const ok = await workspaceStore.startHost({ workspacePath, navigate: false });
+    if (ok) {
+      toast.success("Local server restarted successfully.");
+    } else {
+      toast.error("Failed to restart local server.");
+    }
+    return ok;
   };
 
   const openWorkspaceConnectionSettings = (workspaceId: string) => {
@@ -3596,9 +3616,6 @@ export default function App() {
 
     if (!isTauriRuntime()) {
       throw new Error("Scheduled tasks require the desktop app.");
-    }
-    if (isWindowsPlatform()) {
-      throw new Error("Scheduler is not supported on Windows yet.");
     }
     const root = workspaceStore.activeWorkspaceRoot().trim();
     const job = await schedulerDeleteJob(name, root || undefined);
@@ -4433,6 +4450,7 @@ export default function App() {
         setMcpAuthModalOpen(true);
       } else {
         setMcpStatus(t("mcp.connected", currentLocale()));
+        toast.success(`MCP server "${entry.name}" connected`);
       }
 
       await refreshMcpServers();
@@ -4443,6 +4461,7 @@ export default function App() {
       });
     } catch (e) {
       setMcpStatus(e instanceof Error ? e.message : t("mcp.connect_failed", currentLocale()));
+      toast.error(`Failed to connect MCP "${entry.name}": ${e instanceof Error ? e.message : "Unknown error"}`);
       finishPerf(developerMode(), "mcp.connect", "error", startedAt, {
         name: entry.name,
         type: entryType,
@@ -4581,8 +4600,11 @@ export default function App() {
         setSelectedMcp(null);
       }
       setMcpStatus(null);
+      toast.success(`MCP server "${name}" removed`);
     } catch (e) {
-      setMcpStatus(e instanceof Error ? e.message : t("mcp.remove_failed", currentLocale()));
+      const msg = e instanceof Error ? e.message : t("mcp.remove_failed", currentLocale());
+      setMcpStatus(msg);
+      toast.error(msg);
     }
   }
 
@@ -5740,15 +5762,39 @@ export default function App() {
       defaultModelRef: formatModelRef(defaultModel()),
       openDefaultModelPicker,
       showThinking: showThinking(),
-      toggleShowThinking: () => setShowThinking((v) => !v),
+      toggleShowThinking: () => {
+        setShowThinking((v) => {
+          const next = !v;
+          toast.info(`Reasoning thinking ${next ? "enabled" : "disabled"}`, 2000);
+          return next;
+        });
+      },
       autoCompactContext: autoCompactContext(),
-      toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+      toggleAutoCompactContext: () => {
+        setAutoCompactContext((v) => {
+          const next = !v;
+          toast.info(`Auto-compact context ${next ? "enabled" : "disabled"}`, 2000);
+          return next;
+        });
+      },
       hideTitlebar: hideTitlebar(),
-      toggleHideTitlebar: () => setHideTitlebar((v) => !v),
+      toggleHideTitlebar: () => {
+        setHideTitlebar((v) => {
+          const next = !v;
+          toast.info(`Title bar ${next ? "hidden" : "visible"}`, 2000);
+          return next;
+        });
+      },
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
       editModelVariant: handleEditModelVariant,
       updateAutoCheck: updateAutoCheck(),
-      toggleUpdateAutoCheck: () => setUpdateAutoCheck((v) => !v),
+      toggleUpdateAutoCheck: () => {
+        setUpdateAutoCheck((v) => {
+          const next = !v;
+          toast.info(`Automatic update checks ${next ? "enabled" : "disabled"}`, 2000);
+          return next;
+        });
+      },
       updateAutoDownload: updateAutoDownload(),
       toggleUpdateAutoDownload: () =>
         setUpdateAutoDownload((v) => {
@@ -5772,7 +5818,13 @@ export default function App() {
       engineRuntime: engineRuntime(),
       setEngineRuntime,
       isWindows: isWindowsPlatform(),
-      toggleDeveloperMode: () => setDeveloperMode((v) => !v),
+      toggleDeveloperMode: () => {
+        setDeveloperMode((v) => {
+          const next = !v;
+          toast.warning(`Developer mode ${next ? "enabled" : "disabled"}`, 3000);
+          return next;
+        });
+      },
       developerMode: developerMode(),
       stopHost,
       restartLocalServer,
@@ -5822,7 +5874,13 @@ export default function App() {
       mcpReloadBlocked: anyActiveRuns(),
       reloadMcpEngine: () => reloadWorkspaceEngineAndResume(),
       language: currentLocale(),
-      setLanguage: setLocale,
+      setLanguage: (lang: Language) => {
+        const current = currentLocale();
+        if (lang !== current) {
+          setLocale(lang);
+          setShowLanguageChangeToast(true);
+        }
+      },
     };
   };
 
@@ -6084,8 +6142,25 @@ export default function App() {
     navigate("/session", { replace: true });
   });
 
+  const handleLanguageRestart = async () => {
+    if (languageChangeBusy()) return;
+    setLanguageChangeBusy(true);
+    try {
+      if (isTauriRuntime()) {
+        await relaunch();
+      } else {
+        window.location.reload();
+      }
+    } catch (e) {
+      console.error("Failed to restart app:", e);
+      setLanguageChangeBusy(false);
+    }
+  };
+
   return (
-    <>
+    <div class="flex flex-col h-screen overflow-hidden">
+      <TitleBar title={t("app.title", currentLocale())} />
+      <div class="flex-1 overflow-hidden flex flex-col">
       <Switch>
         <Match when={currentView() === "proto"}>
           <Switch>
@@ -6308,6 +6383,27 @@ export default function App() {
         subtitle={t("dashboard.edit_remote_workspace_subtitle", currentLocale())}
         confirmLabel={t("dashboard.edit_remote_workspace_confirm", currentLocale())}
       />
-    </>
+
+      <LanguageChangeToast
+        open={showLanguageChangeToast()}
+        currentLanguage={currentLocale()}
+        busy={languageChangeBusy()}
+        onRestart={handleLanguageRestart}
+        onDismiss={() => setShowLanguageChangeToast(false)}
+      />
+      
+      <ModelVariantModal
+        open={modelVariantModalOpen()}
+        onClose={() => setModelVariantModalOpen(false)}
+        value={modelVariant()}
+        onSelect={(value) => {
+          setModelVariant(value);
+          toast.success(`${t("settings.model_variant_label")} updated to ${value}`);
+        }}
+      />
+      
+      <ToastContainer />
+      </div>
+    </div>
   );
 }

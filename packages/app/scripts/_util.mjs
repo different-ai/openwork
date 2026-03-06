@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import net from "node:net";
 import { realpathSync, statSync } from "node:fs";
@@ -50,6 +50,7 @@ export async function spawnOpencodeServe({
   const child = spawn("opencode", args, {
     cwd,
     stdio: ["ignore", "ignore", "pipe"],
+    shell: process.platform === "win32",
     env: {
       ...process.env,
       // Make it explicit we're a non-TUI client.
@@ -83,7 +84,11 @@ export async function spawnOpencodeServe({
       }
 
       try {
-        child.kill("SIGTERM");
+        if (process.platform === "win32") {
+          spawnSync("taskkill", ["/pid", child.pid, "/t", "/f"]);
+        } else {
+          child.kill("SIGTERM");
+        }
       } catch {
         // ignore
       }
@@ -95,7 +100,11 @@ export async function spawnOpencodeServe({
 
       // Force kill.
       try {
-        child.kill("SIGKILL");
+        if (process.platform === "win32") {
+          spawnSync("taskkill", ["/pid", child.pid, "/t", "/f"]);
+        } else {
+          child.kill("SIGKILL");
+        }
       } catch {
         // ignore
       }

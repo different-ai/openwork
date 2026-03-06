@@ -3,9 +3,10 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import type { HubSkillCard, SkillCard } from "../types";
 
 import Button from "../components/button";
-import { Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
+import { ChevronRight, Cpu, Edit2, ExternalLink, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import { toast } from "../state/toast";
 
 type InstallResult = { ok: boolean; message: string };
 
@@ -52,7 +53,7 @@ export type SkillsViewProps = {
 
 export default function SkillsView(props: SkillsViewProps) {
   // Translation helper that uses current language from i18n
-  const translate = (key: string) => t(key, currentLocale());
+  const translate = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
 
   const skillCreatorInstalled = createMemo(() =>
     props.skills.some((skill) => skill.name === "skill-creator")
@@ -80,7 +81,6 @@ export default function SkillsView(props: SkillsViewProps) {
   const [selectedDirty, setSelectedDirty] = createSignal(false);
   const [selectedError, setSelectedError] = createSignal<string | null>(null);
 
-  const [toast, setToast] = createSignal<string | null>(null);
   const [installingSkillCreator, setInstallingSkillCreator] = createSignal(false);
   const [installingHubSkill, setInstallingHubSkill] = createSignal<string | null>(null);
 
@@ -88,14 +88,9 @@ export default function SkillsView(props: SkillsViewProps) {
     props.refreshHubSkills();
   });
 
-  createEffect(() => {
-    const message = toast();
-    if (!message) return;
-    const id = window.setTimeout(() => setToast(null), 2400);
-    onCleanup(() => window.clearTimeout(id));
-  });
 
-  const maskError = (value: unknown) => (value instanceof Error ? value.message : "Something went wrong");
+
+  const maskError = (value: unknown) => (value instanceof Error ? value.message : translate("skills.error_generic"));
 
   const stripFrontmatter = (content: string) => {
     const raw = String(content ?? "");
@@ -151,16 +146,16 @@ export default function SkillsView(props: SkillsViewProps) {
   const installSkillCreator = async () => {
     if (props.busy || installingSkillCreator()) return;
     if (!props.canInstallSkillCreator) {
-      setToast(props.accessHint ?? translate("skills.host_only_error"));
+      toast.warning(props.accessHint ?? translate("skills.host_only_error"));
       return;
     }
     setInstallingSkillCreator(true);
-    setToast(translate("skills.installing_skill_creator"));
+    toast.info(translate("skills.installing_skill_creator"));
     try {
       const result = await props.installSkillCreator();
-      setToast(result.message);
+      toast.success(result.message);
     } catch (e) {
-      setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
+      toast.error(e instanceof Error ? e.message : translate("skills.install_failed"));
     } finally {
       setInstallingSkillCreator(false);
     }
@@ -169,12 +164,12 @@ export default function SkillsView(props: SkillsViewProps) {
   const installFromHub = async (skill: HubSkillCard) => {
     if (props.busy || installingHubSkill()) return;
     setInstallingHubSkill(skill.name);
-    setToast(`Installing ${skill.name}…`);
+    toast.info(translate("skills.installing_name", { name: skill.name }));
     try {
       const result = await props.installHubSkill(skill.name);
-      setToast(result.message);
+      toast.success(result.message);
     } catch (e) {
-      setToast(e instanceof Error ? e.message : translate("skills.install_failed"));
+      toast.error(e instanceof Error ? e.message : translate("skills.install_failed"));
     } finally {
       setInstallingHubSkill(null);
     }
@@ -277,7 +272,7 @@ export default function SkillsView(props: SkillsViewProps) {
       setShareUrl(result.url);
       try {
         await navigator.clipboard.writeText(result.url);
-        setToast("Link copied");
+        toast.success(translate("skills.link_copied"));
       } catch {
         // ignore
       }
@@ -307,7 +302,7 @@ export default function SkillsView(props: SkillsViewProps) {
   const previewInstallLink = async () => {
     const raw = installLinkUrl().trim();
     if (!raw) {
-      setInstallLinkError("Paste a link to preview");
+      setInstallLinkError(translate("skills.paste_link_hint"));
       return;
     }
     if (installLinkBusy()) return;
@@ -328,7 +323,7 @@ export default function SkillsView(props: SkillsViewProps) {
         if (!response.ok) {
           const text = (await response.text()).trim();
           const suffix = text ? `: ${text}` : "";
-          throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
+          throw new Error(translate("skills.fetch_bundle_error", { status: response.status, suffix }));
         }
         const json = (await response.json()) as Record<string, unknown>;
         const schemaVersion = typeof json.schemaVersion === "number" ? json.schemaVersion : null;
@@ -336,10 +331,10 @@ export default function SkillsView(props: SkillsViewProps) {
         const name = typeof json.name === "string" ? json.name.trim() : "";
         const content = typeof json.content === "string" ? json.content : "";
         if (schemaVersion !== 1 || type !== "skill") {
-          throw new Error("This link is not an OpenWork skill bundle");
+          throw new Error(translate("skills.invalid_bundle_error"));
         }
-        if (!name) throw new Error("Bundle is missing a skill name");
-        if (!content) throw new Error("Bundle is missing skill content");
+        if (!name) throw new Error(translate("skills.missing_name_error"));
+        if (!content) throw new Error(translate("skills.missing_content_error"));
         setInstallLinkBundle({
           schemaVersion: 1,
           type: "skill",
@@ -381,7 +376,7 @@ export default function SkillsView(props: SkillsViewProps) {
         }),
       );
       props.refreshSkills({ force: true });
-      setToast(`Installed ${finalName}`);
+      toast.success(translate("skills.installed_name", { name: finalName }));
       closeInstallFromLink();
     } catch (e) {
       setInstallLinkError(maskError(e));
@@ -417,12 +412,12 @@ export default function SkillsView(props: SkillsViewProps) {
     try {
       const result = await props.readSkill(skill.name);
       if (!result) {
-        setSelectedError("Failed to load skill.");
+        setSelectedError(translate("skills.load_failed"));
         return;
       }
       setSelectedContent(result.content);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to load skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.load_failed"));
     } finally {
       setSelectedLoading(false);
     }
@@ -451,7 +446,7 @@ export default function SkillsView(props: SkillsViewProps) {
       );
       setSelectedDirty(false);
     } catch (e) {
-      setSelectedError(e instanceof Error ? e.message : "Failed to save skill.");
+      setSelectedError(e instanceof Error ? e.message : translate("skills.save_failed"));
     }
   };
 
@@ -461,7 +456,7 @@ export default function SkillsView(props: SkillsViewProps) {
       (!props.canInstallSkillCreator && !props.canUseDesktopTools)
   );
 
-  const workspaceLabel = createMemo(() => props.workspaceName.trim() || "Worker");
+  const workspaceLabel = createMemo(() => props.workspaceName.trim() || translate("dashboard.worker"));
 
   const canCreateInChat = createMemo(
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
@@ -477,116 +472,146 @@ export default function SkillsView(props: SkillsViewProps) {
 
   return (
     <section class="space-y-8">
-      <Show when={toast()}>
-        <div class="fixed bottom-6 right-6 z-50 max-w-sm rounded-xl border border-dls-border bg-dls-surface px-4 py-3 text-xs text-dls-text shadow-2xl">
-          {toast()}
-        </div>
-      </Show>
-
       <div class="space-y-2">
-        <h2 class="text-3xl font-bold text-dls-text">{translate("skills.title")}</h2>
+        <h1 class="text-3xl font-bold text-dls-text">{translate("skills.title")}</h1>
         <p class="text-sm text-dls-secondary">{translate("skills.subtitle")}</p>
       </div>
 
       <div class="rounded-2xl border border-dls-border bg-dls-surface px-5 py-5 shadow-[0_8px_26px_rgba(17,24,39,0.05)]">
-        <div class="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-          <div class="min-w-0 space-y-1">
-            <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">Worker profile</div>
-            <div class="text-xl font-semibold text-dls-text truncate">{workspaceLabel()}</div>
-            <p class="text-sm text-dls-secondary">
-              Skills are the core abilities of this worker. Add from Hub or create new ones directly in chat.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={handleNewSkill}
-            disabled={!canCreateInChat()}
-            class={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
-              canCreateInChat()
-                ? "bg-dls-text text-dls-surface hover:opacity-90"
-                : "bg-dls-active text-dls-secondary"
-            }`}
-          >
-            <Sparkles size={14} />
-            Create skill in chat
-          </button>
-        </div>
+        <div class="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+          <div class="min-w-0 flex-1 space-y-4">
+            <div>
+              <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary mb-1">
+                {translate("skills.worker_profile")}
+              </div>
+              <div class="text-xl font-semibold text-dls-text truncate mb-1">{workspaceLabel()}</div>
+              <p class="text-sm text-dls-secondary leading-relaxed">
+                {translate("skills.worker_profile_hint")}
+              </p>
+            </div>
 
-        <div class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">Installed</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">{props.skills.length}</div>
-          </div>
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">Hub available</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">{availableHubSkills().length}</div>
-          </div>
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">Skill creator</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">
-              {skillCreatorInstalled() ? "Installed" : "Not installed"}
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleNewSkill}
+                disabled={!canCreateInChat()}
+                class={`inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-xs font-semibold transition-all ${
+                  canCreateInChat()
+                    ? "bg-dls-text text-dls-surface hover:opacity-90 shadow-sm"
+                    : "bg-dls-active text-dls-secondary"
+                }`}
+              >
+                <Sparkles size={14} />
+                {translate("skills.create_in_chat")}
+              </button>
+
+              <div class="flex items-center gap-3 px-3 py-2 rounded-xl bg-dls-hover border border-dls-border/50">
+                <div class="w-1.5 h-1.5 rounded-full bg-green-5 shadow-[0_0_8px_rgba(34,197,94,0.4)]" />
+                <span class="text-[11px] font-medium text-dls-secondary">{translate("skills.installed_count")}</span>
+                <span class="text-[11px] font-bold text-dls-text">{props.skills.length}</span>
+              </div>
+
+              <div class="flex items-center gap-3 px-3 py-2 rounded-xl bg-dls-hover border border-dls-border/50">
+                <div class="w-1.5 h-1.5 rounded-full bg-blue-5 shadow-[0_0_8px_rgba(59,130,246,0.4)]" />
+                <span class="text-[11px] font-medium text-dls-secondary">{translate("skills.hub_available")}</span>
+                <span class="text-[11px] font-bold text-dls-text">{availableHubSkills().length}</span>
+              </div>
             </div>
           </div>
-          <div class="rounded-lg border border-dls-border bg-dls-hover px-3 py-2.5">
-            <div class="text-[11px] text-dls-secondary">Mode</div>
-            <div class="mt-1 text-base font-semibold text-dls-text">
-              {props.canUseDesktopTools ? "Local" : "Server"}
-            </div>
+
+          <div class="lg:w-64 space-y-3">
+             <div class="flex items-center justify-between px-3.5 py-3 rounded-xl bg-dls-hover border border-dls-border/50">
+                <div class="flex items-center gap-2.5">
+                  <Cpu size={14} class="text-dls-secondary" />
+                  <span class="text-[11px] font-semibold text-dls-secondary uppercase tracking-wider">{translate("skills.skill_creator")}</span>
+                </div>
+                <div class={`text-[9px] font-bold uppercase tracking-tight px-1.5 py-0.5 rounded ${
+                  skillCreatorInstalled() ? "text-green-11 bg-green-2/50 border border-green-7/20" : "text-amber-11 bg-amber-2/50 border border-amber-7/20"
+                }`}>
+                  {skillCreatorInstalled() ? translate("skills.installed") : translate("skills.not_installed")}
+                </div>
+             </div>
+
+             <div class="p-1 px-1.5 rounded-xl bg-dls-hover border border-dls-border/50">
+                <div class="text-[9px] uppercase font-bold tracking-[0.2em] text-dls-secondary/50 px-2 py-1">
+                  {translate("skills.mode")}
+                </div>
+                <div class="grid grid-cols-2 gap-1">
+                  <button class={`px-2 py-1.5 text-[10px] font-bold rounded-lg border transition-all ${
+                    props.canUseDesktopTools 
+                      ? "bg-dls-surface text-dls-text shadow-sm border-dls-border" 
+                      : "border-transparent text-dls-secondary hover:text-dls-text"
+                  }`}>
+                    {translate("skills.mode_local")}
+                  </button>
+                  <button class={`px-2 py-1.5 text-[10px] font-bold rounded-lg border transition-all ${
+                    !props.canUseDesktopTools 
+                      ? "bg-dls-surface text-dls-text shadow-sm border-dls-border" 
+                      : "border-transparent text-dls-secondary hover:text-dls-text"
+                  }`}>
+                    {translate("skills.mode_server")}
+                  </button>
+                </div>
+             </div>
           </div>
         </div>
       </div>
 
-      <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-4">
-        <button
-          type="button"
-          onClick={() => props.refreshSkills({ force: true })}
-          disabled={props.busy}
-          class={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
-            props.busy
-              ? "text-dls-secondary"
-              : "text-dls-secondary hover:text-dls-text"
-          }`}
-        >
-          <RefreshCw size={14} />
-          {translate("skills.refresh")}
-        </button>
-        <div class="relative">
-          <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2 text-dls-secondary" />
+      <div class="flex flex-wrap items-center gap-3 border-b border-dls-border pb-6">
+        <div class="relative flex-1 min-w-[240px]">
+          <Search size={14} class="absolute left-3.5 top-1/2 -translate-y-1/2 text-dls-secondary" />
           <input
             type="text"
             value={searchQuery()}
             onInput={(event) => setSearchQuery(event.currentTarget.value)}
-            placeholder="Search installed or hub skills"
-            class="bg-dls-hover border border-dls-border rounded-lg py-1.5 pl-9 pr-4 text-xs w-56 focus:w-72 focus:outline-none transition-all"
+            placeholder={translate("skills.search_placeholder")}
+            class="w-full bg-dls-surface border border-dls-border rounded-xl py-2.5 pl-10 pr-4 text-xs focus:outline-none focus:ring-2 focus:ring-[rgba(var(--dls-accent-rgb)/0.25)] transition-all shadow-sm"
           />
         </div>
-        <button
-          type="button"
-          onClick={handleNewSkill}
-          disabled={newSkillDisabled()}
-          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-            newSkillDisabled()
-              ? "bg-dls-active text-dls-secondary"
-              : "bg-dls-text text-dls-surface hover:opacity-90"
-          }`}
-        >
-          <Plus size={14} />
-          New skill
-        </button>
-        <button
-          type="button"
-          onClick={openInstallFromLink}
-          disabled={props.busy}
-          class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
-            props.busy
-              ? "border-dls-border bg-dls-hover text-dls-secondary"
-              : "border-dls-border bg-dls-surface text-dls-text hover:bg-dls-active"
-          }`}
-          title="Install a skill from a link"
-        >
-          <Link2 size={14} />
-          Install from link
-        </button>
+
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => props.refreshSkills({ force: true })}
+            disabled={props.busy}
+            class={`inline-flex items-center gap-2 px-3.5 py-2.5 text-xs font-medium rounded-xl border border-dls-border bg-dls-surface transition-all ${
+              props.busy
+                ? "text-dls-secondary opacity-50"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+          >
+            <RefreshCw size={14} class={props.busy ? "animate-spin" : ""} />
+            {translate("skills.refresh")}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleNewSkill}
+            disabled={newSkillDisabled()}
+            class={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl transition-all ${
+              newSkillDisabled()
+                ? "bg-dls-active text-dls-secondary border border-transparent"
+                : "bg-dls-text text-dls-surface hover:opacity-90 shadow-sm border border-transparent"
+            }`}
+          >
+            <Plus size={14} />
+            {translate("skills.new_skill")}
+          </button>
+
+          <button
+            type="button"
+            onClick={openInstallFromLink}
+            disabled={props.busy}
+            class={`inline-flex items-center gap-2 px-4 py-2.5 text-xs font-semibold rounded-xl border border-dls-border bg-dls-surface transition-all ${
+              props.busy
+                ? "text-dls-secondary opacity-50"
+                : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
+            }`}
+          >
+            <Link2 size={14} />
+            {translate("skills.install_link")}
+          </button>
+        </div>
       </div>
 
       <Show when={props.accessHint}>
@@ -663,7 +688,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         openShareLink(skill);
                       }}
                       disabled={props.busy}
-                      title="Share link"
+                      title={translate("skills.share_title")}
                     >
                       <Link2 size={14} />
                     </button>
@@ -676,7 +701,7 @@ export default function SkillsView(props: SkillsViewProps) {
                         void openSkill(skill);
                       }}
                       disabled={props.busy}
-                      title="Edit"
+                      title={translate("common.edit")}
                     >
                       <Edit2 size={14} />
                     </button>
@@ -708,7 +733,7 @@ export default function SkillsView(props: SkillsViewProps) {
 
       <div class="space-y-4">
         <div class="flex items-center justify-between gap-3">
-          <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">Install skills</h3>
+          <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">{translate("skills.install_hub_title")}</h3>
           <button
             type="button"
             onClick={() => props.refreshHubSkills({ force: true })}
@@ -718,10 +743,10 @@ export default function SkillsView(props: SkillsViewProps) {
                 ? "text-dls-secondary"
                 : "text-dls-secondary hover:text-dls-text"
             }`}
-            title="Refresh hub catalog"
+            title={translate("skills.refresh_hub_hint")}
           >
             <RefreshCw size={14} />
-            Refresh hub
+            {translate("skills.refresh_hub")}
           </button>
         </div>
 
@@ -735,7 +760,7 @@ export default function SkillsView(props: SkillsViewProps) {
           when={filteredHubSkills().length}
           fallback={
             <div class="rounded-xl border border-dls-border bg-dls-surface px-5 py-6 text-sm text-dls-secondary">
-              No hub skills available.
+              {translate("skills.no_hub_skills")}
             </div>
           }
         >
@@ -751,7 +776,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       <div class="flex items-center gap-2 mb-0.5">
                         <h4 class="text-sm font-semibold text-dls-text truncate">{skill.name}</h4>
                       </div>
-                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">From openwork-hub</p>}>
+                      <Show when={skill.description} fallback={<p class="text-xs text-dls-secondary">{translate("skills.hub_fallback_desc")}</p>}>
                         <p class="text-xs text-dls-secondary line-clamp-2">{skill.description}</p>
                       </Show>
                       <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-dls-secondary">
@@ -761,9 +786,9 @@ export default function SkillsView(props: SkillsViewProps) {
                         <Show when={skill.trigger}>
                           <span
                             class="inline-block max-w-full rounded-md border border-dls-border bg-dls-hover px-2 py-1 truncate"
-                            title={`Trigger: ${skill.trigger}`}
+                            title={`${translate("skills.trigger_label")}${skill.trigger}`}
                           >
-                            Trigger: {skill.trigger}
+                            {translate("skills.trigger_label")}{skill.trigger}
                           </span>
                         </Show>
                       </div>
@@ -782,15 +807,15 @@ export default function SkillsView(props: SkillsViewProps) {
                       void installFromHub(skill);
                     }}
                     disabled={props.busy || installingHubSkill() === skill.name}
-                    title={`Install ${skill.name}`}
+                    title={translate("skills.install_name", { name: skill.name })}
                   >
                     <Show
                       when={installingHubSkill() === skill.name}
-                      fallback={<Plus size={14} />}
+                      fallback={<Loader2 size={14} class="animate-spin" />}
                     >
-                      <Loader2 size={14} class="animate-spin" />
+                      <Plus size={14} />
                     </Show>
-                    {installingHubSkill() === skill.name ? "Installing" : "Add"}
+                    {installingHubSkill() === skill.name ? translate("skills.installing") : translate("skills.add_action")}
                   </button>
                 </div>
               )}
@@ -800,7 +825,7 @@ export default function SkillsView(props: SkillsViewProps) {
       </div>
 
       <div class="space-y-4">
-        <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">Capability setup</h3>
+        <h3 class="text-[11px] font-bold text-dls-secondary uppercase tracking-widest">{translate("skills.capability_setup")}</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <For each={recommendedSkills()}>
             {(item) => (
@@ -813,7 +838,7 @@ export default function SkillsView(props: SkillsViewProps) {
                 onClick={() => {
                   if (item.disabled) {
                     const reason = recommendedDisabledReason(item.id);
-                    if (reason) setToast(reason);
+                    if (reason) toast.info(reason);
                     return;
                   }
                   void item.onClick();
@@ -824,7 +849,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   e.preventDefault();
                   if (item.disabled) {
                     const reason = recommendedDisabledReason(item.id);
-                    if (reason) setToast(reason);
+                    if (reason) toast.info(reason);
                     return;
                   }
                   void item.onClick();
@@ -859,8 +884,8 @@ export default function SkillsView(props: SkillsViewProps) {
                     e.stopPropagation();
                     if (item.disabled) {
                       const reason = recommendedDisabledReason(item.id);
-                      if (reason) setToast(reason);
-                      return;
+                    if (reason) toast.info(reason);
+                    return;
                     }
                     void item.onClick();
                   }}
@@ -899,14 +924,14 @@ export default function SkillsView(props: SkillsViewProps) {
                   disabled={!selectedDirty() || props.busy}
                   onClick={() => void saveSelectedSkill()}
                 >
-                  Save
+                  {translate("common.save")}
                 </button>
                 <button
                   type="button"
                   class="px-3 py-1.5 text-xs font-medium rounded-lg bg-dls-hover text-dls-text hover:bg-dls-active transition-colors"
                   onClick={closeSkill}
                 >
-                  Close
+                  {translate("common.close")}
                 </button>
               </div>
             </div>
@@ -919,7 +944,7 @@ export default function SkillsView(props: SkillsViewProps) {
               </Show>
               <Show
                 when={!selectedLoading()}
-                fallback={<div class="text-xs text-dls-secondary">Loading…</div>}
+                fallback={<div class="text-xs text-dls-secondary">{translate("skills.loading")}</div>}
               >
                 <textarea
                   value={selectedContent()}
@@ -980,15 +1005,15 @@ export default function SkillsView(props: SkillsViewProps) {
           <div class="bg-dls-surface border border-dls-border w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6 space-y-4">
               <div>
-                <h3 class="text-lg font-semibold text-dls-text">Share link</h3>
+                <h3 class="text-lg font-semibold text-dls-text">{translate("skills.share_title")}</h3>
                 <p class="text-sm text-dls-secondary mt-1">
-                  Publish a public link. Anyone with the URL can install this skill.
+                  {translate("skills.share_subtitle")}
                 </p>
               </div>
 
               <div class="rounded-xl border border-dls-border bg-dls-hover px-4 py-3 text-xs text-dls-secondary">
                 <div class="font-semibold text-dls-text">{shareTarget()?.name}</div>
-                <div class="mt-1 font-mono break-all">Publisher: {DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
+                <div class="mt-1 font-mono break-all">{translate("skills.publisher_label")}{DEFAULT_OPENWORK_PUBLISHER_BASE_URL}</div>
               </div>
 
               <Show when={shareError()}>
@@ -1005,7 +1030,7 @@ export default function SkillsView(props: SkillsViewProps) {
                       {translate("common.cancel")}
                     </Button>
                     <Button variant="secondary" onClick={() => void publishShareLink()} disabled={shareBusy()}>
-                      {shareBusy() ? "Publishing…" : "Create link"}
+                      {shareBusy() ? translate("skills.publishing") : translate("skills.create_link")}
                     </Button>
                   </div>
                 }
@@ -1016,13 +1041,16 @@ export default function SkillsView(props: SkillsViewProps) {
                 <div class="flex justify-end gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => void navigator.clipboard.writeText(shareUrl() ?? "")}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(shareUrl() ?? "");
+                      toast.success(translate("skills.link_copied"));
+                    }}
                     disabled={!shareUrl()}
                   >
-                    Copy link
+                    {translate("skills.copy_link")}
                   </Button>
                   <Button variant="secondary" onClick={closeShareLink}>
-                    Done
+                    {translate("common.done")}
                   </Button>
                 </div>
               </Show>
@@ -1036,12 +1064,12 @@ export default function SkillsView(props: SkillsViewProps) {
           <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6 space-y-4">
               <div>
-                <h3 class="text-lg font-semibold text-dls-text">Install from link</h3>
-                <p class="text-sm text-dls-secondary mt-1">Paste a skill bundle URL, preview it, then install.</p>
+                <h3 class="text-lg font-semibold text-dls-text">{translate("skills.install_modal_title")}</h3>
+                <p class="text-sm text-dls-secondary mt-1">{translate("skills.install_modal_subtitle")}</p>
               </div>
 
               <div class="space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Link</div>
+                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">{translate("skills.link_label")}</div>
                 <input
                   type="url"
                   value={installLinkUrl()}
@@ -1064,15 +1092,15 @@ export default function SkillsView(props: SkillsViewProps) {
                   const conflict = taken.has(bundle().name.trim());
                   return (
                     <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                      <div class="text-xs font-semibold text-dls-text">Preview</div>
+                      <div class="text-xs font-semibold text-dls-text">{translate("skills.preview_label")}</div>
                       <div class="text-xs text-dls-secondary">
-                        Skill: <span class="font-mono">{bundle().name}</span>
+                        {translate("skills.skill_label")}<span class="font-mono">{bundle().name}</span>
                       </div>
                       <Show when={bundle().description}>
                         <div class="text-xs text-dls-secondary">{bundle().description}</div>
                       </Show>
                       <Show when={conflict}>
-                        <div class="text-xs text-amber-11">A skill with this name is already installed.</div>
+                        <div class="text-xs text-amber-11">{translate("skills.conflict_warning")}</div>
                       </Show>
                     </div>
                   );
@@ -1088,7 +1116,7 @@ export default function SkillsView(props: SkillsViewProps) {
                   onClick={() => void previewInstallLink()}
                   disabled={installLinkBusy() || !installLinkUrl().trim()}
                 >
-                  {installLinkBusy() && !installLinkBundle() ? "Loading…" : "Preview"}
+                  {installLinkBusy() && !installLinkBundle() ? translate("skills.loading") : translate("skills.preview_action")}
                 </Button>
                 <Show when={installLinkBundle()} keyed>
                   {(bundle) => {
@@ -1102,7 +1130,7 @@ export default function SkillsView(props: SkillsViewProps) {
                             onClick={() => void installFromPreview("overwrite")}
                             disabled={installLinkBusy()}
                           >
-                            {installLinkBusy() ? "Installing…" : "Install"}
+                            {installLinkBusy() ? translate("skills.installing") : translate("skills.install_action")}
                           </Button>
                         }
                       >
@@ -1112,14 +1140,14 @@ export default function SkillsView(props: SkillsViewProps) {
                             onClick={() => void installFromPreview("keep-both")}
                             disabled={installLinkBusy()}
                           >
-                            {installLinkBusy() ? "Installing…" : "Keep both"}
+                            {installLinkBusy() ? translate("skills.installing") : translate("skills.keep_both")}
                           </Button>
                           <Button
                             variant="secondary"
                             onClick={() => void installFromPreview("overwrite")}
                             disabled={installLinkBusy()}
                           >
-                            {installLinkBusy() ? "Installing…" : "Overwrite"}
+                            {installLinkBusy() ? translate("skills.installing") : translate("skills.overwrite")}
                           </Button>
                         </div>
                       </Show>

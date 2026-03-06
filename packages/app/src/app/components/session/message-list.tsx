@@ -8,6 +8,7 @@ import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types"
 import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
+import { toast } from "../../state/toast";
 
 export type MessageListProps = {
   messages: MessageWithParts[];
@@ -261,8 +262,9 @@ export default function MessageList(props: MessageListProps) {
         setCopyingId(null);
         copyTimeout = undefined;
       }, 2000);
+      toast.success("Copied to clipboard", 1500);
     } catch {
-      // ignore
+      toast.error("Failed to copy to clipboard");
     }
   };
 

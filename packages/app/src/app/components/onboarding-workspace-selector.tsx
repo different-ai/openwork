@@ -3,6 +3,7 @@ import { For, Show, createEffect, createSignal } from "solid-js";
 import { CheckCircle2, FolderPlus, Loader2 } from "lucide-solid";
 
 import Button from "./button";
+import { t, currentLocale } from "../../i18n";
 
 export default function OnboardingWorkspaceSelector(props: {
   defaultPath: string;
@@ -13,16 +14,18 @@ export default function OnboardingWorkspaceSelector(props: {
   const [selectedFolder, setSelectedFolder] = createSignal(props.defaultPath);
   const [pickingFolder, setPickingFolder] = createSignal(false);
 
+  const tr = (key: string) => t(key, currentLocale());
+
   const options = () => [
     {
       id: "starter" as const,
-      name: "Starter worker",
-      desc: "Preconfigured to show you how to use plugins, commands, and skills.",
+      name: tr("dashboard.starter_workspace"),
+      desc: tr("dashboard.starter_workspace_desc"),
     },
     {
       id: "minimal" as const,
-      name: "Empty worker",
-      desc: "Start with a blank folder and add what you need.",
+      name: tr("dashboard.empty_workspace"),
+      desc: tr("dashboard.empty_workspace_desc"),
     },
   ];
 
