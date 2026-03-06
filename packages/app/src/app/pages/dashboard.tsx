@@ -298,6 +298,7 @@ export type DashboardViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
+  resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
   notionError: string | null;
@@ -1309,6 +1310,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
+                  activeWorkspaceRoot={props.activeWorkspaceRoot}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
@@ -1373,6 +1375,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
                   dockerCleanupBusy={props.dockerCleanupBusy}
                   dockerCleanupResult={props.dockerCleanupResult}
+                  resetAppConfigDefaults={props.resetAppConfigDefaults}
                   notionStatus={props.notionStatus}
                   notionStatusDetail={props.notionStatusDetail}
                   notionError={props.notionError}

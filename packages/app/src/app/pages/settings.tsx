@@ -1,9 +1,9 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMount } from "solid-js";
 
-import { formatBytes, formatRelativeTime, isTauriRuntime } from "../utils";
+import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   OpenworkAuditEntry,
@@ -49,6 +49,7 @@ export type SettingsViewProps = {
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   openworkServerDiagnostics: OpenworkServerDiagnostics | null;
   openworkServerWorkspaceId: string | null;
+  activeWorkspaceRoot: string;
   openworkAuditEntries: OpenworkAuditEntry[];
   openworkAuditStatus: "idle" | "loading" | "error";
   openworkAuditError: string | null;
@@ -121,6 +122,7 @@ export type SettingsViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
+  resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
   notionError: string | null;
@@ -711,6 +713,143 @@ export default function SettingsView(props: SettingsViewProps) {
     return formatRelativeTime(Date.now() - uptimeMs);
   };
 
+  const [debugReportStatus, setDebugReportStatus] = createSignal<string | null>(null);
+  const [configActionStatus, setConfigActionStatus] = createSignal<string | null>(null);
+  const [revealConfigBusy, setRevealConfigBusy] = createSignal(false);
+  const [resetConfigBusy, setResetConfigBusy] = createSignal(false);
+
+  const workspaceConfigPath = createMemo(() => {
+    const root = props.activeWorkspaceRoot.trim();
+    if (!root) return "";
+    const normalized = root.replace(/[\\/]+$/, "");
+    const separator = props.isWindows ? "\\" : "/";
+    return `${normalized}${separator}.opencode${separator}openwork.json`;
+  });
+
+  const runtimeDebugReport = createMemo(() => ({
+    generatedAt: new Date().toISOString(),
+    app: {
+      version: appVersionLabel(),
+      commit: appCommitLabel(),
+      startupPreference: props.startupPreference ?? "unset",
+      workspaceRoot: props.activeWorkspaceRoot.trim() || null,
+      workspaceConfigPath: workspaceConfigPath() || null,
+    },
+    versions: {
+      orchestrator: orchestratorVersionLabel(),
+      opencode: opencodeVersionLabel(),
+      openworkServer: openworkServerVersionLabel(),
+      opencodeRouter: opencodeRouterVersionLabel(),
+    },
+    services: {
+      engine: {
+        status: engineStatusLabel(),
+        baseUrl: props.engineInfo?.baseUrl ?? null,
+        pid: props.engineInfo?.pid ?? null,
+        stdout: engineStdout(),
+        stderr: engineStderr(),
+      },
+      orchestrator: {
+        status: orchestratorStatusLabel(),
+        dataDir: props.orchestratorStatus?.dataDir ?? null,
+        activeWorkspace: props.orchestratorStatus?.activeId ?? null,
+        sidecar: orchestratorSidecarSummary(),
+      },
+      openworkServer: {
+        status: openworkStatusLabel(),
+        baseUrl: (props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) || null,
+        pid: props.openworkServerHostInfo?.pid ?? null,
+        stdout: openworkStdout(),
+        stderr: openworkStderr(),
+      },
+      opencodeRouter: {
+        status: opencodeRouterStatusLabel(),
+        healthPort: props.opencodeRouterInfo?.healthPort ?? null,
+        pid: props.opencodeRouterInfo?.pid ?? null,
+        stdout: opencodeRouterStdout(),
+        stderr: opencodeRouterStderr(),
+      },
+    },
+    diagnostics: props.openworkServerDiagnostics,
+    capabilities: props.openworkServerCapabilities,
+    pendingPermissions: props.pendingPermissions,
+    recentEvents: props.events,
+    workspaceDebugEvents: props.workspaceDebugEvents,
+  }));
+
+  const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
+
+  const copyRuntimeDebugReport = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setDebugReportStatus("Clipboard is unavailable in this environment.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(runtimeDebugReportJson());
+      setDebugReportStatus("Copied runtime report JSON.");
+    } catch (error) {
+      setDebugReportStatus(error instanceof Error ? error.message : "Failed to copy runtime report.");
+    }
+  };
+
+  const exportRuntimeDebugReport = () => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      setDebugReportStatus("Export is unavailable in this environment.");
+      return;
+    }
+    try {
+      const stamp = new Date().toISOString().replace(/[:]/g, "-").replace(/\..+$/, "");
+      const blob = new Blob([runtimeDebugReportJson()], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `openwork-debug-report-${stamp}.json`;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setDebugReportStatus("Exported runtime report JSON.");
+    } catch (error) {
+      setDebugReportStatus(error instanceof Error ? error.message : "Failed to export runtime report.");
+    }
+  };
+
+  const revealWorkspaceConfig = async () => {
+    if (!isTauriRuntime() || revealConfigBusy()) return;
+    const path = workspaceConfigPath();
+    if (!path) {
+      setConfigActionStatus("Select a local workspace before revealing config.");
+      return;
+    }
+    setRevealConfigBusy(true);
+    setConfigActionStatus(null);
+    try {
+      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      if (isWindowsPlatform()) {
+        await openPath(path);
+      } else {
+        await revealItemInDir(path);
+      }
+      setConfigActionStatus("Revealed workspace config.");
+    } catch (error) {
+      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reveal workspace config.");
+    } finally {
+      setRevealConfigBusy(false);
+    }
+  };
+
+  const resetAppConfigDefaults = async () => {
+    if (resetConfigBusy()) return;
+    setResetConfigBusy(true);
+    setConfigActionStatus(null);
+    try {
+      const result = await props.resetAppConfigDefaults();
+      setConfigActionStatus(result.message);
+    } catch (error) {
+      setConfigActionStatus(error instanceof Error ? error.message : "Failed to reset app config.");
+    } finally {
+      setResetConfigBusy(false);
+    }
+  };
+
   const compactOutlineActionClass =
     "inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60";
   const compactDangerActionClass =
@@ -1241,6 +1380,69 @@ export default function SettingsView(props: SettingsViewProps) {
               <h3 class="text-sm font-medium text-gray-11 uppercase tracking-wider mb-4">Developer</h3>
 
               <div class="space-y-4">
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="flex items-start justify-between gap-3">
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">Runtime debug report</div>
+                      <div class="text-xs text-gray-10">Readable diagnostics snapshot with one-click export.</div>
+                    </div>
+                    <div class="flex items-center gap-2 shrink-0">
+                      <Button variant="outline" class="text-xs h-8 py-0 px-3" onClick={copyRuntimeDebugReport}>
+                        <Copy size={13} class="mr-1.5" />
+                        Copy JSON
+                      </Button>
+                      <Button variant="secondary" class="text-xs h-8 py-0 px-3" onClick={exportRuntimeDebugReport}>
+                        <Download size={13} class="mr-1.5" />
+                        Export
+                      </Button>
+                    </div>
+                  </div>
+                  <div class="grid gap-2 md:grid-cols-2 text-xs text-gray-11">
+                    <div>Desktop app: {appVersionLabel()}</div>
+                    <div>Commit: {appCommitLabel()}</div>
+                    <div>Orchestrator: {orchestratorVersionLabel()}</div>
+                    <div>OpenCode: {opencodeVersionLabel()}</div>
+                    <div>OpenWork server: {openworkServerVersionLabel()}</div>
+                    <div>OpenCodeRouter: {opencodeRouterVersionLabel()}</div>
+                  </div>
+                  <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1 border border-gray-6 rounded-lg p-3">
+                    {runtimeDebugReportJson()}
+                  </pre>
+                  <Show when={debugReportStatus()}>
+                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
+                  </Show>
+                </div>
+
+                <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
+                  <div class="text-sm font-medium text-gray-12">Workspace config</div>
+                  <div class="text-xs text-gray-10">Reveal or reset `.opencode/openwork.json` defaults for this app workspace.</div>
+                  <div class="text-[11px] text-gray-7 font-mono break-all">{workspaceConfigPath() || "No active local workspace."}</div>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={revealWorkspaceConfig}
+                      disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
+                      title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                    >
+                      <FolderOpen size={13} class="mr-1.5" />
+                      {revealConfigBusy() ? "Opening..." : "Reveal config"}
+                    </Button>
+                    <Button
+                      variant="danger"
+                      class="text-xs h-8 py-0 px-3"
+                      onClick={resetAppConfigDefaults}
+                      disabled={resetConfigBusy() || props.anyActiveRuns}
+                      title={props.anyActiveRuns ? "Stop active runs before resetting config" : ""}
+                    >
+                      {resetConfigBusy() ? "Resetting..." : "Reset config defaults"}
+                    </Button>
+                  </div>
+                  <Show when={configActionStatus()}>
+                    {(status) => <div class="text-xs text-gray-10">{status()}</div>}
+                  </Show>
+                </div>
+
                 <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   <div class="min-w-0">
                     <div class="text-sm text-gray-12">OpenCode cache</div>

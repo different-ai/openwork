@@ -3420,6 +3420,63 @@ export default function App() {
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
 
+  const resetAppConfigDefaults = async () => {
+    try {
+      if (typeof window !== "undefined") {
+        try {
+          const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
+          const keysToRemove: string[] = [];
+          for (let index = 0; index < window.localStorage.length; index += 1) {
+            const key = window.localStorage.key(index);
+            if (!key) continue;
+            if (key.startsWith(sessionOverridePrefix)) {
+              keysToRemove.push(key);
+            }
+          }
+          for (const key of keysToRemove) {
+            window.localStorage.removeItem(key);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setThemeMode("system");
+      setEngineSource(isTauriRuntime() ? "sidecar" : "path");
+      setEngineCustomBinPath("");
+      setEngineRuntime("openwork-orchestrator");
+      setDefaultModel(DEFAULT_MODEL);
+      setLegacyDefaultModel(DEFAULT_MODEL);
+      setDefaultModelExplicit(false);
+      setShowThinking(false);
+      setHideTitlebar(false);
+      setAutoCompactContext(false);
+      setModelVariant(null);
+      setUpdateAutoCheck(true);
+      setUpdateAutoDownload(false);
+      setUpdateStatus({ state: "idle", lastCheckedAt: null });
+      setDeveloperMode(false);
+
+      clearStartupPreference();
+      setStartupPreference(null);
+      setRememberStartupChoice(false);
+
+      clearOpenworkServerSettings();
+      setOpenworkServerSettings(readOpenworkServerSettings());
+
+      setNotionStatus("disconnected");
+      setNotionStatusDetail(null);
+      setNotionError(null);
+      setNotionSkillInstalled(false);
+      setTryNotionPromptVisible(false);
+
+      return { ok: true, message: "Reset app config defaults. Restart OpenWork if any stale settings remain." };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      return { ok: false, message };
+    }
+  };
+
   const getUpdateLastCheckedAt = (state: ReturnType<typeof updateStatus>) => {
     if (state.state === "checking") return null;
     return state.lastCheckedAt ?? null;
@@ -5801,6 +5858,7 @@ export default function App() {
       cleanupOpenworkDockerContainers,
       dockerCleanupBusy: dockerCleanupBusy(),
       dockerCleanupResult: dockerCleanupResult(),
+      resetAppConfigDefaults,
       notionStatus: notionStatus(),
       notionStatusDetail: notionStatusDetail(),
       notionError: notionError(),
