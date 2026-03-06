@@ -725,7 +725,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <button
                 class={`px-3 py-2 rounded-xl text-xs font-medium border transition-colors ${
                   activeTab() === tab
-                    ? "bg-gray-12/10 text-gray-12 border-gray-6/30"
+                    ? "bg-gray-12/10 text-white border-gray-6/30"
                     : "text-gray-10 border-gray-6/50 hover:text-gray-12 hover:bg-gray-2/40"
                 }`}
                 onClick={() => props.setSettingsTab(tab)}
