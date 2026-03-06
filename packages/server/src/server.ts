@@ -2447,10 +2447,21 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
 
   addRoute(routes, "POST", "/workspace/:id/engine/reload", "client", async (ctx) => {
     const workspace = await resolveWorkspace(config, ctx.params.id);
-    throw new ApiError(410, "engine_reload_deprecated", "OpenWork-managed engine reload is disabled", {
+    requireClientScope(ctx, "collaborator");
+
+    await reloadOpencodeEngine(workspace);
+
+    await recordAudit(workspace.path, {
+      id: shortId(),
       workspaceId: workspace.id,
-      guidance: "Use OpenCode hot reload instead",
+      actor: ctx.actor ?? { type: "remote" },
+      action: "engine.reload",
+      target: workspace.baseUrl ?? "opencode",
+      summary: "Reloaded workspace engine",
+      timestamp: Date.now(),
     });
+
+    return jsonResponse({ ok: true, reloadedAt: Date.now() });
   });
 
   addRoute(routes, "GET", "/workspace/:id/inbox", "client", async (ctx) => {

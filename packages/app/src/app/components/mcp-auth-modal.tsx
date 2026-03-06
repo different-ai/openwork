@@ -341,6 +341,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
   const handleReloadAndRetry = async () => {
     if (!props.onReloadEngine) return;
+    if (props.isRemoteWorkspace && typeof window !== "undefined") {
+      const proceed = window.confirm(translate("mcp.auth.reload_remote_confirm"));
+      if (!proceed) return;
+    }
     await props.onReloadEngine();
     startAuth(true);
   };

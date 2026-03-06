@@ -3350,13 +3350,38 @@ export default function App() {
   const canReloadLocalEngine = () =>
     isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
 
-  const canReloadWorkspace = createMemo(() => canReloadLocalEngine());
+  const canReloadWorkspace = createMemo(() => {
+    if (canReloadLocalEngine()) return true;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") return false;
+    return openworkServerStatus() === "connected" && Boolean(openworkServerClient() && openworkServerWorkspaceId());
+  });
 
   const reloadWorkspaceEngineFromUi = async () => {
-    if (!canReloadLocalEngine()) {
+    if (canReloadLocalEngine()) {
+      return workspaceStore.reloadWorkspaceEngine();
+    }
+
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") {
       return false;
     }
-    return workspaceStore.reloadWorkspaceEngine();
+
+    const client = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    if (!client || !workspaceId || openworkServerStatus() !== "connected") {
+      setError("Connect to this worker before applying runtime changes.");
+      return false;
+    }
+
+    try {
+      await client.reloadEngine(workspaceId);
+      await workspaceStore.activateWorkspace(workspaceStore.activeWorkspaceId());
+      await refreshMcpServers();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to apply runtime changes.";
+      setError(message);
+      return false;
+    }
   };
 
   const systemState = createSystemState({
