@@ -50,6 +50,7 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { shouldUpdateSidebarSessions } from "./lib/sidebar-sessions-guard";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
@@ -2682,7 +2683,7 @@ export default function App() {
       // its session database yet. Preserving existing sessions prevents the sidebar from
       // flickering empty during the reconnection window.
       const currentSidebarSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
-      if (currentSidebarSessions.length > 0 && sorted.length === 0) {
+      if (!shouldUpdateSidebarSessions(currentSidebarSessions, sorted)) {
         return;
       }
 

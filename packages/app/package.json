@@ -20,6 +20,7 @@
     "test:session-switch": "node scripts/session-switch.mjs",
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
+    "test:sidebar-sessions-guard": "node scripts/sidebar-sessions-guard.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
     "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:patch": "node scripts/bump-version.mjs patch",
