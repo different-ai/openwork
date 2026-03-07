@@ -538,7 +538,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const canCreateAutomation = createMemo(() => !!createPromptValue());
 
   const openSchedulerDocs = () => {
-    platform.openLink("https://github.com/anomalyco/opencode-scheduler");
+    platform.openLink("https://github.com/different-ai/opencode-scheduler");
   };
 
   const handleInstallScheduler = async () => {
