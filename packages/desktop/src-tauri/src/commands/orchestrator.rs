@@ -139,6 +139,24 @@ fn run_local_command(program: &str, args: &[&str]) -> Result<(i32, String, Strin
 /// This bounds the join operation to prevent indefinite blocking.
 const READER_JOIN_TIMEOUT_MS: u64 = 2000;
 
+fn recv_pipe_bytes(label: &str, rx: &mpsc::Receiver<Vec<u8>>, deadline: Instant) -> Vec<u8> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    match rx.recv_timeout(remaining) {
+        Ok(bytes) => bytes,
+        Err(RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "[timeout-helper] {label} reader timed out after {}ms",
+                remaining.as_millis()
+            );
+            Vec::new()
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            eprintln!("[timeout-helper] {label} reader disconnected");
+            Vec::new()
+        }
+    }
+}
+
 fn run_local_command_with_timeout(
     program: &str,
     args: &[&str],
@@ -206,9 +224,9 @@ fn run_local_command_with_timeout(
                 eprintln!("[timeout-helper] Error waiting for {program}: {err}");
                 let _ = child.kill();
                 let _ = child.wait();
-                // Try to get output with bounded timeout
-                let stdout_bytes = stdout_rx.recv_timeout(join_timeout).unwrap_or_default();
-                let stderr_bytes = stderr_rx.recv_timeout(join_timeout).unwrap_or_default();
+                let join_deadline = Instant::now() + join_timeout;
+                let stdout_bytes = recv_pipe_bytes("stdout", &stdout_rx, join_deadline);
+                let stderr_bytes = recv_pipe_bytes("stderr", &stderr_rx, join_deadline);
                 let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
                 let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
                 return Err(format!(
@@ -222,38 +240,9 @@ fn run_local_command_with_timeout(
 
     // Wait for reader threads with bounded timeout.
     // This prevents indefinite blocking in edge cases where pipe readers stall.
-    eprintln!(
-        "[timeout-helper] Waiting for pipe readers (max {}ms)",
-        join_timeout.as_millis()
-    );
-    let stdout_bytes = match stdout_rx.recv_timeout(join_timeout) {
-        Ok(bytes) => bytes,
-        Err(RecvTimeoutError::Timeout) => {
-            eprintln!(
-                "[timeout-helper] stdout reader timed out after {}ms",
-                join_timeout.as_millis()
-            );
-            Vec::new()
-        }
-        Err(RecvTimeoutError::Disconnected) => {
-            eprintln!("[timeout-helper] stdout reader disconnected");
-            Vec::new()
-        }
-    };
-    let stderr_bytes = match stderr_rx.recv_timeout(join_timeout) {
-        Ok(bytes) => bytes,
-        Err(RecvTimeoutError::Timeout) => {
-            eprintln!(
-                "[timeout-helper] stderr reader timed out after {}ms",
-                join_timeout.as_millis()
-            );
-            Vec::new()
-        }
-        Err(RecvTimeoutError::Disconnected) => {
-            eprintln!("[timeout-helper] stderr reader disconnected");
-            Vec::new()
-        }
-    };
+    let join_deadline = Instant::now() + join_timeout;
+    let stdout_bytes = recv_pipe_bytes("stdout", &stdout_rx, join_deadline);
+    let stderr_bytes = recv_pipe_bytes("stderr", &stderr_rx, join_deadline);
 
     // Detach the thread handles (they will finish or be leaked, but won't block us)
     drop(stdout_handle);
@@ -1502,6 +1491,45 @@ exit 0
         assert_eq!(status, 0);
         assert!(stdout.contains("Docker version 0.0.0"));
 
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_command_timeout_returns_when_descendant_keeps_pipe_open() {
+        let tmp =
+            std::env::temp_dir().join(format!("openwork-timeout-pipe-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).expect("create tmp dir");
+
+        let pid_file = tmp.join("descendant.pid");
+        let sticky = tmp.join("sticky-command");
+        write_executable(
+            &sticky,
+            &format!(
+                "#!/bin/sh\nsleep 20 &\necho $! > \"{}\"\nexec /bin/sleep 20\n",
+                pid_file.display()
+            ),
+        );
+
+        let start = Instant::now();
+        let result = run_local_command_with_timeout(
+            sticky.to_str().expect("sticky-command path"),
+            &["--version"],
+            Duration::from_millis(300),
+        );
+        let elapsed = start.elapsed();
+
+        assert!(result.is_err());
+        assert!(
+            elapsed < Duration::from_millis(3_500),
+            "expected bounded timeout, got {elapsed:?}"
+        );
+
+        if let Ok(pid) = fs::read_to_string(&pid_file) {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", pid.trim()])
+                .status();
+        }
         let _ = fs::remove_dir_all(&tmp);
     }
 
