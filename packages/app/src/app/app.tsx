@@ -2676,6 +2676,16 @@ export default function App() {
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
+
+      // Don't clear existing sidebar sessions if the session store is empty for this workspace.
+      // This can happen during worker restart/reconnect when the server hasn't fully loaded
+      // its session database yet. Preserving existing sessions prevents the sidebar from
+      // flickering empty during the reconnection window.
+      const currentSidebarSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
+      if (currentSidebarSessions.length > 0 && sorted.length === 0) {
+        return;
+      }
+
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: sorted.map((s) => ({
