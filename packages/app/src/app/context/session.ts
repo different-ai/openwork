@@ -128,6 +128,7 @@ export function createSessionStore(options: {
   setSseConnected: (connected: boolean) => void;
   markReloadRequired?: (reason: ReloadReason, trigger?: ReloadTrigger) => void;
   onHotReloadApplied?: () => void;
+  abortSession?: (sessionID: string) => Promise<void>;
 }) {
 
   const sessionDebugEnabled = () => options.developerMode();
@@ -177,6 +178,7 @@ export function createSessionStore(options: {
   const invalidToolDetectionSet = new Set<string>();
   const syntheticContinueEventTimesBySession = new Map<string, number[]>();
   const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
+  const syntheticContinueAutoAbortedSessions = new Set<string>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -432,6 +434,14 @@ export function createSessionStore(options: {
       threshold: COMPACTION_LOOP_WARN_THRESHOLD,
       windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
     });
+
+    // Abort the session to break the infinite loop (issue #777).
+    // Only abort once per session to avoid abort spam.
+    if (!syntheticContinueAutoAbortedSessions.has(sessionID) && options.abortSession) {
+      syntheticContinueAutoAbortedSessions.add(sessionID);
+      sessionWarn("compaction:synthetic-continue-loop:aborting", { sessionID });
+      void options.abortSession(sessionID);
+    }
   };
 
   const addError = (error: unknown, fallback = "Unknown error") => {

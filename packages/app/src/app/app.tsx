@@ -1154,6 +1154,11 @@ export default function App() {
       void refreshPlugins(pluginScope());
       void refreshMcpServers();
     },
+    abortSession: async (sessionID: string) => {
+      const c = client();
+      if (!c) return;
+      await abortSessionTyped(c, sessionID);
+    },
   });
 
   const {
