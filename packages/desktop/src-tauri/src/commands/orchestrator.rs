@@ -7,6 +7,7 @@ use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::time::{Duration, Instant};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
@@ -134,6 +135,10 @@ fn run_local_command(program: &str, args: &[&str]) -> Result<(i32, String, Strin
     Ok((status, stdout, stderr))
 }
 
+/// Maximum time to wait for pipe reader threads to complete after child termination.
+/// This bounds the join operation to prevent indefinite blocking.
+const READER_JOIN_TIMEOUT_MS: u64 = 2000;
+
 fn run_local_command_with_timeout(
     program: &str,
     args: &[&str],
@@ -151,12 +156,17 @@ fn run_local_command_with_timeout(
     let mut stdout_pipe = child.stdout.take();
     let mut stderr_pipe = child.stderr.take();
 
+    // Use channels to collect output with bounded wait on join.
+    // This prevents indefinite blocking if pipe readers don't complete.
+    let (stdout_tx, stdout_rx) = mpsc::channel();
+    let (stderr_tx, stderr_rx) = mpsc::channel();
+
     let stdout_handle = std::thread::spawn(move || {
         let mut buf = Vec::new();
         if let Some(mut reader) = stdout_pipe.take() {
             let _ = reader.read_to_end(&mut buf);
         }
-        buf
+        let _ = stdout_tx.send(buf);
     });
 
     let stderr_handle = std::thread::spawn(move || {
@@ -164,13 +174,14 @@ fn run_local_command_with_timeout(
         if let Some(mut reader) = stderr_pipe.take() {
             let _ = reader.read_to_end(&mut buf);
         }
-        buf
+        let _ = stderr_tx.send(buf);
     });
 
     let poll = Duration::from_millis(25);
     let start = Instant::now();
     let mut timed_out = false;
     let mut exit_status: Option<std::process::ExitStatus> = None;
+    let join_timeout = Duration::from_millis(READER_JOIN_TIMEOUT_MS);
 
     loop {
         match child.try_wait() {
@@ -181,6 +192,10 @@ fn run_local_command_with_timeout(
             Ok(None) => {
                 if start.elapsed() >= timeout {
                     timed_out = true;
+                    eprintln!(
+                        "[timeout-helper] Killing {program} after {}ms timeout",
+                        timeout.as_millis()
+                    );
                     let _ = child.kill();
                     let _ = child.wait();
                     break;
@@ -188,10 +203,12 @@ fn run_local_command_with_timeout(
                 std::thread::sleep(poll);
             }
             Err(err) => {
+                eprintln!("[timeout-helper] Error waiting for {program}: {err}");
                 let _ = child.kill();
                 let _ = child.wait();
-                let stdout_bytes = stdout_handle.join().unwrap_or_default();
-                let stderr_bytes = stderr_handle.join().unwrap_or_default();
+                // Try to get output with bounded timeout
+                let stdout_bytes = stdout_rx.recv_timeout(join_timeout).unwrap_or_default();
+                let stderr_bytes = stderr_rx.recv_timeout(join_timeout).unwrap_or_default();
                 let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
                 let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
                 return Err(format!(
@@ -203,13 +220,55 @@ fn run_local_command_with_timeout(
         }
     }
 
-    let stdout_bytes = stdout_handle.join().unwrap_or_default();
-    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    // Wait for reader threads with bounded timeout.
+    // This prevents indefinite blocking in edge cases where pipe readers stall.
+    eprintln!(
+        "[timeout-helper] Waiting for pipe readers (max {}ms)",
+        join_timeout.as_millis()
+    );
+    let stdout_bytes = match stdout_rx.recv_timeout(join_timeout) {
+        Ok(bytes) => bytes,
+        Err(RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "[timeout-helper] stdout reader timed out after {}ms",
+                join_timeout.as_millis()
+            );
+            Vec::new()
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            eprintln!("[timeout-helper] stdout reader disconnected");
+            Vec::new()
+        }
+    };
+    let stderr_bytes = match stderr_rx.recv_timeout(join_timeout) {
+        Ok(bytes) => bytes,
+        Err(RecvTimeoutError::Timeout) => {
+            eprintln!(
+                "[timeout-helper] stderr reader timed out after {}ms",
+                join_timeout.as_millis()
+            );
+            Vec::new()
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            eprintln!("[timeout-helper] stderr reader disconnected");
+            Vec::new()
+        }
+    };
+
+    // Detach the thread handles (they will finish or be leaked, but won't block us)
+    drop(stdout_handle);
+    drop(stderr_handle);
+
     let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
     let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
 
     if timed_out {
         let arg_list = args.join(" ");
+        eprintln!(
+            "[timeout-helper] Command timed out: {program} {arg_list} (stdout: {} bytes, stderr: {} bytes)",
+            stdout.len(),
+            stderr.len()
+        );
         return Err(format!(
             "Timed out after {}ms running {program} {arg_list}",
             timeout.as_millis()
