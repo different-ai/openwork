@@ -139,5 +139,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: TypeCheck
+        run: pnpm typecheck
+
       - name: Run e2e tests
-        run: pnpm --filter @different-ai/openwork-ui test:e2e
+        run: pnpm test:e2e

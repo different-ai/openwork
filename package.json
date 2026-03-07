@@ -11,6 +11,8 @@
     "build:ui": "pnpm --filter @different-ai/openwork-ui build",
     "build:web": "pnpm --filter @different-ai/openwork-ui build",
     "preview": "pnpm --filter @different-ai/openwork-ui preview",
+    "preflight": "node scripts/preflight.mjs",
+    "verify": "pnpm preflight && pnpm typecheck && pnpm test:e2e",
     "typecheck": "pnpm --filter @different-ai/openwork-ui typecheck",
     "test:health": "pnpm --filter @different-ai/openwork-ui test:health",
     "test:sessions": "pnpm --filter @different-ai/openwork-ui test:sessions",

@@ -91,6 +91,17 @@ If you cannot complete steps 4-8 (Docker, Chrome MCP, missing credentials, or en
 
 ## Pull Request Expectations (Fast Merge)
 
+Before opening a PR, run `pnpm verify` to ensure your changes pass all checks:
+
+```bash
+pnpm verify
+```
+
+This runs:
+1. **Preflight**: Validates your development environment (Node.js, pnpm, Bun, etc.)
+2. **TypeCheck**: TypeScript type checking
+3. **E2E Tests**: End-to-end test suite
+
 If you open a PR, you must run tests and report what you ran (commands + result).
 
 To maximize merge speed, include evidence of the end-to-end flow:
