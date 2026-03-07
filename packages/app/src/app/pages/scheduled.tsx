@@ -798,7 +798,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
       <Show when={deleteTarget()}>
         <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-white border border-gray-6 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+          <div class="bg-gray-1 border border-gray-6 w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
             <div class="p-6 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
@@ -824,7 +824,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
 
       <Show when={createModalOpen()}>
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/20 backdrop-blur-[2px] p-4">
-          <div class="w-full max-w-2xl rounded-3xl bg-white shadow-2xl overflow-hidden border border-gray-6">
+          <div class="w-full max-w-2xl rounded-3xl bg-gray-1 shadow-2xl overflow-hidden border border-gray-6">
             <div class="p-8 space-y-6">
               <div class="flex items-start justify-between gap-4">
                 <div>
