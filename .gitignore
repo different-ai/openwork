@@ -41,3 +41,6 @@ vendor/opencode/
 .opencode/openwork/
 .vercel
 .env*.local
+
+# Auto-generated files
+packages/server/src/generated-builtin-skills.ts
