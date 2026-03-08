@@ -708,6 +708,37 @@ pub fn orchestrator_instance_dispose(
     Ok(result.disposed)
 }
 
+fn format_sandbox_start_timeout_error(
+    elapsed_ms: u64,
+    openwork_url: &str,
+    last_error: Option<&str>,
+    container_state: Option<&str>,
+    container_probe_error: Option<&str>,
+) -> String {
+    let mut details = vec![
+        format!("stage=openwork.healthcheck"),
+        format!("elapsed_ms={elapsed_ms}"),
+        format!("url={openwork_url}"),
+        format!(
+            "last_error={}",
+            last_error.unwrap_or("none")
+        ),
+        format!(
+            "container_state={}",
+            container_state.unwrap_or("unknown")
+        ),
+    ];
+
+    if let Some(probe_error) = container_probe_error {
+        details.push(format!("container_probe_error={probe_error}"));
+    }
+
+    format!(
+        "Timed out waiting for OpenWork server ({})",
+        details.join(", ")
+    )
+}
+
 #[tauri::command]
 pub fn orchestrator_start_detached(
     app: AppHandle,
@@ -954,8 +985,14 @@ pub fn orchestrator_start_detached(
     }
 
     if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
-        let message =
-            last_error.unwrap_or_else(|| "Timed out waiting for OpenWork server".to_string());
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let message = format_sandbox_start_timeout_error(
+            elapsed_ms,
+            &openwork_url,
+            last_error.as_deref(),
+            last_container_state.as_deref(),
+            last_container_probe_error.as_deref(),
+        );
         emit_sandbox_progress(
             &app,
             &sandbox_run_id,
@@ -963,7 +1000,7 @@ pub fn orchestrator_start_detached(
             "Sandbox failed to start.",
             json!({
                 "error": message,
-                "elapsedMs": start.elapsed().as_millis() as u64,
+                "elapsedMs": elapsed_ms,
                 "openworkUrl": openwork_url,
                 "containerState": last_container_state,
                 "containerProbeError": last_container_probe_error,
@@ -973,7 +1010,7 @@ pub fn orchestrator_start_detached(
             "[sandbox-create][at={}][runId={}][stage=timeout] health wait timed out after {}ms error={}",
             now_ms(),
             sandbox_run_id,
-            start.elapsed().as_millis(),
+            elapsed_ms,
             message
         );
         return Err(message);
@@ -1531,6 +1568,24 @@ exit 0
                 .status();
         }
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sandbox_start_timeout_error_includes_stage_diagnostics() {
+        let message = format_sandbox_start_timeout_error(
+            90_000,
+            "http://127.0.0.1:43210",
+            Some("Connection refused (os error 61)"),
+            Some("created"),
+            Some("No such container"),
+        );
+
+        assert!(message.contains("stage=openwork.healthcheck"));
+        assert!(message.contains("elapsed_ms=90000"));
+        assert!(message.contains("url=http://127.0.0.1:43210"));
+        assert!(message.contains("last_error=Connection refused (os error 61)"));
+        assert!(message.contains("container_state=created"));
+        assert!(message.contains("container_probe_error=No such container"));
     }
 
     #[test]
