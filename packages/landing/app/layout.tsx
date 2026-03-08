@@ -1,10 +1,10 @@
 import "./globals.css";
-import { JetBrains_Mono, Sora } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import Script from "next/script";
 
-const sora = Sora({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-sora",
+  variable: "--font-sans",
   display: "swap"
 });
 
@@ -29,7 +29,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${sora.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
       <head>
         <Script
           id="posthog"
@@ -44,7 +44,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className="antialiased text-ink">
+      <body className="antialiased">
         {children}
       </body>
     </html>
