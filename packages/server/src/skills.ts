@@ -1,13 +1,17 @@
 import { readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
+import { fileURLToPath } from "node:url";
 import type { SkillItem } from "./types.js";
 import { parseFrontmatter, buildFrontmatter } from "./frontmatter.js";
 import { exists } from "./utils.js";
 import { validateDescription, validateSkillName } from "./validators.js";
 import { ApiError } from "./errors.js";
 import { projectSkillsDir } from "./workspace-files.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const BUILTIN_SKILLS_DIR = join(__dirname, "builtin-skills");
 
 async function findWorkspaceRoots(workspaceRoot: string): Promise<string[]> {
   const roots: string[] = [];
@@ -137,12 +141,52 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
     items.push(...(await listSkillsInDir(globalAgentLegacy, "global")));
   }
 
+  // Add builtin skills
+  items.push(...(await listBuiltinSkills()));
+
   const seen = new Set<string>();
   return items.filter((item) => {
     if (seen.has(item.name)) return false;
     seen.add(item.name);
     return true;
   });
+}
+
+async function listBuiltinSkills(): Promise<SkillItem[]> {
+  // Try filesystem first (works with tsc build + copy script)
+  if (await exists(BUILTIN_SKILLS_DIR)) {
+    const items = await listSkillsInDir(BUILTIN_SKILLS_DIR, "global");
+    if (items.length > 0) {
+      return items;
+    }
+  }
+
+  // Fallback to generated module (for build:bin single-file executable)
+  // The generated module contains embedded skill content
+  try {
+    const generated = await import("./generated-builtin-skills.js");
+    return generated.listBuiltinSkills();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Read skill content from filesystem or generated module.
+ * Handles both regular skills and builtin skills with embedded content.
+ */
+export async function getSkillContent(skill: SkillItem): Promise<string> {
+  // Check if this is a builtin skill with embedded content
+  if (skill.path.startsWith("builtin://")) {
+    try {
+      const generated = await import("./generated-builtin-skills.js");
+      const content = generated.getBuiltinSkillContent(skill.name);
+      if (content) return content;
+    } catch {
+      // Fall through to file system read
+    }
+  }
+  return readFile(skill.path, "utf8");
 }
 
 export async function upsertSkill(

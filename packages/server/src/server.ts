@@ -6,7 +6,7 @@ import type { ApprovalRequest, Capabilities, ServerConfig, WorkspaceInfo, Actor,
 import { ApprovalService } from "./approvals.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { addMcp, listMcp, removeMcp } from "./mcp.js";
-import { deleteSkill, listSkills, upsertSkill } from "./skills.js";
+import { deleteSkill, getSkillContent, listSkills, upsertSkill } from "./skills.js";
 import { installHubSkill, listHubSkills } from "./skill-hub.js";
 import { deleteCommand, listCommands, upsertCommand } from "./commands.js";
 import { deleteScheduledJob, listScheduledJobs, resolveScheduledJob } from "./scheduler.js";
@@ -3188,7 +3188,7 @@ function createRoutes(config: ServerConfig, approvals: ApprovalService, tokens: 
     if (!item) {
       throw new ApiError(404, "skill_not_found", `Skill not found: ${name}`);
     }
-    const content = await readFile(item.path, "utf8");
+    const content = await getSkillContent(item);
     return jsonResponse({ item, content });
   });
 
@@ -5116,7 +5116,7 @@ async function exportWorkspace(workspace: WorkspaceInfo) {
     skills.map(async (skill) => ({
       name: skill.name,
       description: skill.description,
-      content: await readFile(skill.path, "utf8"),
+      content: await getSkillContent(skill),
     })),
   );
   const commandContents = await Promise.all(
