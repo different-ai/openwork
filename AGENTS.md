@@ -126,6 +126,8 @@ Design principles for hot reload:
 ## Repository Guidance
 
 * Use `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, `ARCHITECTURE.md`, and `INFRASTRUCTURE.md` to understand the "why" and requirements so you can guide your decisions.
+* Use `DESIGN-LANGUAGE.md` as the default visual reference for OpenWork app and landing work.
+* For OpenWork session-surface details, also reference `packages/docs/orbita-layout-style.mdx`.
 
 ## Dev Debugging
 

@@ -15,7 +15,11 @@ export default async function Download() {
 
   return (
     <div className="min-h-screen">
-      <SiteNav stars={github.stars} active="download" />
+      <SiteNav
+        stars={github.stars}
+        downloadHref={github.downloads.macos}
+        active="download"
+      />
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
