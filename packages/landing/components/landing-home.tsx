@@ -253,7 +253,11 @@ export function LandingHome(props: Props) {
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-16 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <section className="max-w-3xl">
             <h1 className="mb-5 text-4xl font-medium leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-              The open source alt to
+              The open source{" "}
+              <span className="font-pixel mx-1 inline-block align-middle text-[1.05em] font-normal">
+                alt
+              </span>{" "}
+              to
               <br />
               Claude Cowork
             </h1>
