@@ -9,6 +9,8 @@ type Props = {
   stars: string;
   callUrl?: string;
   downloadHref?: string;
+  mobilePrimaryHref?: string;
+  mobilePrimaryLabel?: string;
   active?: "home" | "download" | "enterprise" | "den";
 };
 
@@ -16,8 +18,11 @@ export function SiteNav(props: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const callHref = props.callUrl || "/enterprise#book";
   const downloadHref = props.downloadHref || "/download";
+  const mobilePrimaryHref = props.mobilePrimaryHref || downloadHref;
+  const mobilePrimaryLabel = props.mobilePrimaryLabel || "Download for free";
   const callExternal = /^https?:\/\//.test(callHref);
   const downloadExternal = /^https?:\/\//.test(downloadHref);
+  const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems = [
     { href: "/docs", label: "Docs", key: "docs" },
     { href: "/download", label: "Download", key: "download" },
@@ -60,7 +65,7 @@ export function SiteNav(props: Props) {
           <div className="flex items-center gap-4">
             <a
               href={downloadHref}
-              className="doc-button hidden px-6 text-sm md:inline-flex"
+              className="doc-button !hidden px-6 text-sm md:!inline-flex"
               rel={downloadExternal ? "noreferrer" : undefined}
               target={downloadExternal ? "_blank" : undefined}
             >
@@ -116,12 +121,12 @@ export function SiteNav(props: Props) {
 
             <div className="mt-4 flex flex-col gap-3">
               <a
-                href={downloadHref}
+                href={mobilePrimaryHref}
                 className="doc-button text-sm"
-                rel={downloadExternal ? "noreferrer" : undefined}
-                target={downloadExternal ? "_blank" : undefined}
+                rel={mobilePrimaryExternal ? "noreferrer" : undefined}
+                target={mobilePrimaryExternal ? "_blank" : undefined}
               >
-                Download for free
+                {mobilePrimaryLabel}
               </a>
               <a
                 href={callHref}

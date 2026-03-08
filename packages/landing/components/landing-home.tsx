@@ -8,6 +8,7 @@ import { LandingBackground } from "./landing-background";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 import { ResponsiveGrain } from "./responsive-grain";
+import { WaitlistForm } from "./waitlist-form";
 
 type ChatMessage =
   | {
@@ -203,6 +204,7 @@ type Props = {
   stars: string;
   downloadHref: string;
   callHref: string;
+  isMobileVisitor: boolean;
 };
 
 const externalLinkProps = (href: string) =>
@@ -226,6 +228,11 @@ export function LandingHome(props: Props) {
 
   const downloadLinkProps = externalLinkProps(props.downloadHref);
   const callLinkProps = externalLinkProps(props.callHref);
+  const primaryCtaHref = props.isMobileVisitor ? "#mobile-signup" : props.downloadHref;
+  const primaryCtaLabel = props.isMobileVisitor
+    ? "Sign up for desktop access"
+    : "Download for free";
+  const primaryCtaLinkProps = props.isMobileVisitor ? {} : downloadLinkProps;
 
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -237,6 +244,8 @@ export function LandingHome(props: Props) {
             stars={props.stars}
             downloadHref={props.downloadHref}
             callUrl={props.callHref}
+            mobilePrimaryHref="#mobile-signup"
+            mobilePrimaryLabel="Sign up"
             active="home"
           />
         </div>
@@ -256,11 +265,11 @@ export function LandingHome(props: Props) {
             <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
                 <a
-                  href={props.downloadHref}
+                  href={primaryCtaHref}
                   className="doc-button"
-                  {...downloadLinkProps}
+                  {...primaryCtaLinkProps}
                 >
-                  Download for free
+                  {primaryCtaLabel}
                 </a>
                 <a
                   href={props.callHref}
@@ -286,6 +295,28 @@ export function LandingHome(props: Props) {
               </div>
             </div>
           </section>
+
+          {props.isMobileVisitor ? (
+            <section
+              id="mobile-signup"
+              className="landing-shell-soft -mt-6 rounded-[2rem] p-6 md:hidden"
+            >
+              <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-gray-400">
+                Mobile signup
+              </div>
+              <h2 className="mb-3 text-2xl font-medium leading-tight text-[#011627]">
+                Start on mobile. Continue on desktop.
+              </h2>
+              <p className="mb-5 text-[15px] leading-7 text-gray-600">
+                OpenWork is a desktop app. Sign up here from your phone and keep the
+                desktop install flow handy for when you switch to your computer.
+              </p>
+              <WaitlistForm />
+              <p className="mt-4 text-[13px] leading-6 text-gray-500">
+                Best path on mobile: landing, signup, then download on desktop.
+              </p>
+            </section>
+          ) : null}
 
           <section className="relative flex flex-col gap-6 overflow-hidden md:gap-8">
             <div className="landing-shell relative flex flex-col overflow-hidden rounded-2xl">
@@ -488,11 +519,12 @@ export function LandingHome(props: Props) {
               <div>
                 <h2 className="mb-3 text-2xl font-medium">OpenWork Desktop</h2>
                 <p className="mb-6 text-lg leading-relaxed text-gray-600">
-                  Start free on desktop with no signup, then automate email,
-                  Slack, and the work you do every day.
+                  {props.isMobileVisitor
+                    ? "Sign up from your phone now, then download OpenWork on desktop when you are back at your computer."
+                    : "Start free on desktop with no signup, then automate email, Slack, and the work you do every day."}
                 </p>
-                <a href={props.downloadHref} className="doc-button" {...downloadLinkProps}>
-                  Download for free
+                <a href={primaryCtaHref} className="doc-button" {...primaryCtaLinkProps}>
+                  {primaryCtaLabel}
                 </a>
               </div>
 

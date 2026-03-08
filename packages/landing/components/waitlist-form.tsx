@@ -104,7 +104,7 @@ export function WaitlistForm() {
   return (
     <form
       onSubmit={handleSubmit}
-      className="flex flex-wrap items-center gap-3"
+      className="flex flex-wrap items-stretch gap-3"
     >
       <input
         ref={inputRef}
@@ -119,7 +119,7 @@ export function WaitlistForm() {
       <button
         type="submit"
         disabled={state === "loading"}
-        className="doc-button disabled:opacity-60"
+        className="doc-button w-full sm:w-auto disabled:opacity-60"
       >
         {state === "loading" ? "Please wait..." : "Keep me in the loop"}
         {state !== "loading" && (
