@@ -11,6 +11,7 @@ import { RefreshCcw } from "lucide-solid";
 import { buildOpenworkWorkspaceBaseUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenworkServerInfo } from "../lib/tauri";
+import { currentLocale, t } from "../../i18n";
 
 export type ConfigViewProps = {
   busy: boolean;
@@ -42,6 +43,8 @@ export type ConfigViewProps = {
 };
 
 export default function ConfigView(props: ConfigViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
+
   const [openworkUrl, setOpenworkUrl] = createSignal("");
   const [openworkToken, setOpenworkToken] = createSignal("");
   const [openworkTokenVisible, setOpenworkTokenVisible] = createSignal(false);
@@ -67,11 +70,11 @@ export default function ConfigView(props: ConfigViewProps) {
   const openworkStatusLabel = createMemo(() => {
     switch (props.openworkServerStatus) {
       case "connected":
-        return "Connected";
+        return translate("dashboard.connected");
       case "limited":
-        return "Limited";
+        return translate("config.status_limited");
       default:
-        return "Not connected";
+        return translate("dashboard.not_connected");
     }
   });
 
@@ -87,14 +90,14 @@ export default function ConfigView(props: ConfigViewProps) {
   });
 
   const reloadAvailabilityReason = createMemo(() => {
-    if (!props.clientConnected) return "Connect to this worker to reload.";
+    if (!props.clientConnected) return translate("config.connect_to_reload");
     if (!props.canReloadWorkspace) {
-      return "Reloading is only available for local workers or connected OpenWork servers.";
+      return translate("config.reload_limited_hint");
     }
     return null;
   });
 
-  const reloadButtonLabel = createMemo(() => (props.reloadBusy ? "Reloading..." : "Reload engine"));
+  const reloadButtonLabel = createMemo(() => (props.reloadBusy ? translate("config.reloading_button") : translate("config.reload_button")));
   const reloadButtonTone = createMemo(() => (props.anyActiveRuns ? "danger" : "secondary"));
   const reloadButtonDisabled = createMemo(() => props.reloadBusy || Boolean(reloadAvailabilityReason()));
 
@@ -124,8 +127,8 @@ export default function ConfigView(props: ConfigViewProps) {
 
   const hostInfo = createMemo(() => props.openworkServerHostInfo);
   const hostStatusLabel = createMemo(() => {
-    if (!hostInfo()?.running) return "Offline";
-    return "Available";
+    if (!hostInfo()?.running) return translate("config.status_offline");
+    return translate("config.status_available");
   });
   const hostStatusStyle = createMemo(() => {
     if (!hostInfo()?.running) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -215,29 +218,29 @@ export default function ConfigView(props: ConfigViewProps) {
   return (
     <section class="space-y-6">
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-        <div class="text-sm font-medium text-gray-12">Workspace config</div>
+        <div class="text-sm font-medium text-gray-12">{translate("config.title")}</div>
         <div class="text-xs text-gray-10">
-          These settings affect the active workspace (sharing, reload, bots). Global app behavior lives in Settings.
+          {translate("config.subtitle")}
         </div>
         <Show when={props.openworkServerWorkspaceId}>
           <div class="text-[11px] text-gray-7 font-mono truncate">
-            Workspace: {props.openworkServerWorkspaceId}
+            {translate("config.workspace_id_prefix")}{props.openworkServerWorkspaceId}
           </div>
         </Show>
       </div>
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div>
-          <div class="text-sm font-medium text-gray-12">Engine reload</div>
-          <div class="text-xs text-gray-10">Restart the OpenCode server for this workspace.</div>
+          <div class="text-sm font-medium text-gray-12">{translate("config.engine_reload_title")}</div>
+          <div class="text-xs text-gray-10">{translate("config.engine_reload_subtitle")}</div>
         </div>
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Reload now</div>
-            <div class="text-xs text-gray-7">Applies config updates and reconnects your session.</div>
+            <div class="text-sm text-gray-12">{translate("config.reload_now_label")}</div>
+            <div class="text-xs text-gray-7">{translate("config.reload_now_hint")}</div>
             <Show when={props.anyActiveRuns}>
-              <div class="text-[11px] text-amber-11">Reloading will stop active tasks.</div>
+              <div class="text-[11px] text-amber-11">{translate("config.reload_active_tasks_warning")}</div>
             </Show>
             <Show when={props.reloadError}>
               <div class="text-[11px] text-red-11">{props.reloadError}</div>
@@ -259,10 +262,10 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Auto reload (local)</div>
-            <div class="text-xs text-gray-7">Reload automatically after agents/skills/commands/config change (only when idle).</div>
+            <div class="text-sm text-gray-12">{translate("config.auto_reload_label")}</div>
+            <div class="text-xs text-gray-7">{translate("config.auto_reload_hint")}</div>
             <Show when={!props.workspaceAutoReloadAvailable}>
-              <div class="text-[11px] text-gray-9">Available for local workspaces in the desktop app.</div>
+              <div class="text-[11px] text-gray-9">{translate("config.auto_reload_desktop_only")}</div>
             </Show>
           </div>
           <Button
@@ -271,15 +274,15 @@ export default function ConfigView(props: ConfigViewProps) {
             onClick={() => props.setWorkspaceAutoReloadEnabled(!props.workspaceAutoReloadEnabled)}
             disabled={props.busy || !props.workspaceAutoReloadAvailable}
           >
-            {props.workspaceAutoReloadEnabled ? "On" : "Off"}
+            {props.workspaceAutoReloadEnabled ? translate("common.on") : translate("common.off")}
           </Button>
         </div>
 
         <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
           <div class="min-w-0 space-y-1">
-            <div class="text-sm text-gray-12">Resume sessions after auto reload</div>
+            <div class="text-sm text-gray-12">{translate("config.resume_sessions_label")}</div>
             <div class="text-xs text-gray-7">
-              If a reload was queued while tasks were running, send a resume message afterward.
+              {translate("config.resume_sessions_hint")}
             </div>
           </div>
           <Button
@@ -291,9 +294,9 @@ export default function ConfigView(props: ConfigViewProps) {
               !props.workspaceAutoReloadAvailable ||
               !props.workspaceAutoReloadEnabled
             }
-            title={props.workspaceAutoReloadEnabled ? "" : "Enable auto reload first"}
+            title={props.workspaceAutoReloadEnabled ? "" : translate("config.auto_reload_required_hint")}
           >
-            {props.workspaceAutoReloadResumeEnabled ? "On" : "Off"}
+            {props.workspaceAutoReloadResumeEnabled ? translate("common.on") : translate("common.off")}
           </Button>
         </div>
       </div>
@@ -302,8 +305,8 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">Diagnostics bundle</div>
-              <div class="text-xs text-gray-10">Copy sanitized runtime state for debugging.</div>
+              <div class="text-sm font-medium text-gray-12">{translate("config.diagnostics_title")}</div>
+              <div class="text-xs text-gray-10">{translate("config.diagnostics_hint")}</div>
             </div>
             <Button
               variant="secondary"
@@ -311,7 +314,7 @@ export default function ConfigView(props: ConfigViewProps) {
               onClick={() => void handleCopy(diagnosticsBundleJson(), "debug-bundle")}
               disabled={props.busy}
             >
-              {copyingField() === "debug-bundle" ? "Copied" : "Copy"}
+              {copyingField() === "debug-bundle" ? translate("common.copied") : translate("common.copy")}
             </Button>
           </div>
           <pre class="text-xs text-gray-12 whitespace-pre-wrap break-words max-h-64 overflow-auto bg-gray-1/20 border border-gray-6 rounded-xl p-3">
@@ -324,9 +327,9 @@ export default function ConfigView(props: ConfigViewProps) {
         <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
           <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div>
-              <div class="text-sm font-medium text-gray-12">OpenWork server sharing</div>
+              <div class="text-sm font-medium text-gray-12">{translate("config.sharing_title")}</div>
               <div class="text-xs text-gray-10">
-                Share these details with a trusted device. Keep the server on the same network for the fastest setup.
+                {translate("config.sharing_subtitle")}
               </div>
             </div>
             <div class={`text-xs px-2 py-1 rounded-full border ${hostStatusStyle()}`}>
@@ -337,13 +340,13 @@ export default function ConfigView(props: ConfigViewProps) {
           <div class="grid gap-3">
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">OpenWork Server URL</div>
+                <div class="text-xs font-medium text-gray-11">{translate("config.server_url_label")}</div>
                 <div class="text-xs text-gray-7 font-mono truncate">{hostConnectUrl() || "Starting server…"}</div>
                 <Show when={hostConnectUrl()}>
                   <div class="text-[11px] text-gray-8 mt-1">
                     {hostConnectUrlUsesMdns()
-                      ? ".local names are easier to remember but may not resolve on all networks."
-                      : "Use your local IP on the same Wi-Fi for the fastest connection."}
+                      ? translate("config.server_url_mdns_hint")
+                      : translate("config.server_url_ip_hint")}
                   </div>
                 </Show>
               </div>
@@ -353,13 +356,13 @@ export default function ConfigView(props: ConfigViewProps) {
                 onClick={() => handleCopy(hostConnectUrl(), "host-url")}
                 disabled={!hostConnectUrl()}
               >
-                {copyingField() === "host-url" ? "Copied" : "Copy"}
+                {copyingField() === "host-url" ? translate("common.copied") : translate("common.copy")}
               </Button>
             </div>
 
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Access token</div>
+                <div class="text-xs font-medium text-gray-11">{translate("config.access_token_label")}</div>
                 <div class="text-xs text-gray-7 font-mono truncate">
                   {clientTokenVisible()
                     ? hostInfo()?.clientToken || "—"
@@ -367,7 +370,7 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Use on phones or laptops connecting to this server.</div>
+                <div class="text-[11px] text-gray-8 mt-1">{translate("config.access_token_hint")}</div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -376,7 +379,7 @@ export default function ConfigView(props: ConfigViewProps) {
                   onClick={() => setClientTokenVisible((prev) => !prev)}
                   disabled={!hostInfo()?.clientToken}
                 >
-                  {clientTokenVisible() ? "Hide" : "Show"}
+                  {clientTokenVisible() ? translate("common.hide") : translate("common.show")}
                 </Button>
                 <Button
                   variant="outline"
@@ -384,14 +387,14 @@ export default function ConfigView(props: ConfigViewProps) {
                   onClick={() => handleCopy(hostInfo()?.clientToken ?? "", "client-token")}
                   disabled={!hostInfo()?.clientToken}
                 >
-                  {copyingField() === "client-token" ? "Copied" : "Copy"}
+                  {copyingField() === "client-token" ? translate("common.copied") : translate("common.copy")}
                 </Button>
               </div>
             </div>
 
             <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
               <div class="min-w-0">
-                <div class="text-xs font-medium text-gray-11">Server token</div>
+                <div class="text-xs font-medium text-gray-11">{translate("config.server_token_label")}</div>
                 <div class="text-xs text-gray-7 font-mono truncate">
                   {hostTokenVisible()
                     ? hostInfo()?.hostToken || "—"
@@ -399,7 +402,7 @@ export default function ConfigView(props: ConfigViewProps) {
                       ? "••••••••••••"
                       : "—"}
                 </div>
-                <div class="text-[11px] text-gray-8 mt-1">Keep private. Required for approval actions.</div>
+                <div class="text-[11px] text-gray-8 mt-1">{translate("config.server_token_hint")}</div>
               </div>
               <div class="flex items-center gap-2 shrink-0">
                 <Button
@@ -408,7 +411,7 @@ export default function ConfigView(props: ConfigViewProps) {
                   onClick={() => setHostTokenVisible((prev) => !prev)}
                   disabled={!hostInfo()?.hostToken}
                 >
-                  {hostTokenVisible() ? "Hide" : "Show"}
+                  {hostTokenVisible() ? translate("common.hide") : translate("common.show")}
                 </Button>
                 <Button
                   variant="outline"
@@ -416,14 +419,14 @@ export default function ConfigView(props: ConfigViewProps) {
                   onClick={() => handleCopy(hostInfo()?.hostToken ?? "", "host-token")}
                   disabled={!hostInfo()?.hostToken}
                 >
-                  {copyingField() === "host-token" ? "Copied" : "Copy"}
+                  {copyingField() === "host-token" ? translate("common.copied") : translate("common.copy")}
                 </Button>
               </div>
             </div>
           </div>
 
           <div class="text-xs text-gray-9">
-            For per-workspace sharing links, use <span class="font-medium">Share...</span> in the workspace menu.
+            {translate("config.sharing_menu_hint")}
           </div>
         </div>
       </Show>
@@ -431,9 +434,9 @@ export default function ConfigView(props: ConfigViewProps) {
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
         <div class="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
           <div>
-            <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+            <div class="text-sm font-medium text-gray-12">{translate("config.server_title")}</div>
             <div class="text-xs text-gray-10">
-              Connect to an OpenWork server. Use the URL and access token from your server admin.
+              {translate("config.server_subtitle")}
             </div>
           </div>
           <div class={`text-xs px-2 py-1 rounded-full border ${openworkStatusStyle()}`}>{openworkStatusLabel()}</div>
@@ -441,16 +444,16 @@ export default function ConfigView(props: ConfigViewProps) {
 
         <div class="grid gap-3">
           <TextInput
-            label="OpenWork server URL"
+            label={translate("config.server_url_input_label")}
             value={openworkUrl()}
             onInput={(event) => setOpenworkUrl(event.currentTarget.value)}
             placeholder="http://127.0.0.1:8787"
-            hint="Use the URL shared by your OpenWork server."
+            hint={translate("config.server_url_input_hint")}
             disabled={props.busy}
           />
 
           <label class="block">
-            <div class="mb-1 text-xs font-medium text-gray-11">Access token</div>
+            <div class="mb-1 text-xs font-medium text-gray-11">{translate("config.access_token_label")}</div>
             <div class="flex items-center gap-2">
               <input
                 type={openworkTokenVisible() ? "text" : "password"}
@@ -466,16 +469,16 @@ export default function ConfigView(props: ConfigViewProps) {
                 onClick={() => setOpenworkTokenVisible((prev) => !prev)}
                 disabled={props.busy}
               >
-                {openworkTokenVisible() ? "Hide" : "Show"}
+                {openworkTokenVisible() ? translate("common.hide") : translate("common.show")}
               </Button>
             </div>
-            <div class="mt-1 text-xs text-gray-10">Optional. Paste the access token to authenticate.</div>
+            <div class="mt-1 text-xs text-gray-10">{translate("config.access_token_input_hint")}</div>
           </label>
         </div>
 
         <div class="space-y-1">
-          <div class="text-[11px] text-gray-7 font-mono truncate">Resolved worker URL: {resolvedWorkspaceUrl() || "Not set"}</div>
-          <div class="text-[11px] text-gray-8 font-mono truncate">Worker ID: {resolvedWorkspaceId() || "Unavailable"}</div>
+          <div class="text-[11px] text-gray-7 font-mono truncate">{translate("config.resolved_url_prefix")}{resolvedWorkspaceUrl() || "Not set"}</div>
+          <div class="text-[11px] text-gray-8 font-mono truncate">{translate("config.worker_id_prefix")}{resolvedWorkspaceId() || "Unavailable"}</div>
         </div>
 
         <div class="flex flex-wrap gap-2">
@@ -491,27 +494,27 @@ export default function ConfigView(props: ConfigViewProps) {
                 const ok = await props.testOpenworkServerConnection(next);
                 setOpenworkTestState(ok ? "success" : "error");
                 setOpenworkTestMessage(
-                  ok ? "Connection successful." : "Connection failed. Check the host URL and token.",
+                  ok ? translate("config.connection_success") : translate("config.connection_failed"),
                 );
               } catch (error) {
-                const message = error instanceof Error ? error.message : "Connection failed.";
+                const message = error instanceof Error ? error.message : translate("config.connection_failed");
                 setOpenworkTestState("error");
                 setOpenworkTestMessage(message);
               }
             }}
             disabled={props.busy || openworkTestState() === "testing"}
           >
-            {openworkTestState() === "testing" ? "Testing..." : "Test connection"}
+            {openworkTestState() === "testing" ? translate("config.testing_connection") : translate("config.test_connection")}
           </Button>
           <Button
             variant="outline"
             onClick={() => props.updateOpenworkServerSettings(buildOpenworkSettings())}
             disabled={props.busy || !hasOpenworkChanges()}
           >
-            Save
+            {translate("common.save")}
           </Button>
           <Button variant="ghost" onClick={props.resetOpenworkServerSettings} disabled={props.busy}>
-            Reset
+            {translate("common.reset")}
           </Button>
         </div>
 
@@ -527,25 +530,25 @@ export default function ConfigView(props: ConfigViewProps) {
             role="status"
             aria-live="polite"
           >
-            {openworkTestState() === "testing" ? "Testing connection..." : openworkTestMessage() ?? "Connection status updated."}
+            {openworkTestState() === "testing" ? translate("config.testing_connection") : openworkTestMessage() ?? translate("config.connection_status_updated")}
           </div>
         </Show>
 
-        <Show when={openworkStatusLabel() !== "Connected"}>
-          <div class="text-xs text-gray-9">OpenWork server connection needed to sync skills, plugins, and commands.</div>
+        <Show when={openworkStatusLabel() !== translate("dashboard.connected")}>
+          <div class="text-xs text-gray-9">{translate("config.sync_requirement_hint")}</div>
         </Show>
       </div>
 
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-2">
-        <div class="text-sm font-medium text-gray-12">Messaging identities</div>
+        <div class="text-sm font-medium text-gray-12">{translate("config.identities_title")}</div>
         <div class="text-xs text-gray-10">
-          Manage Telegram/Slack identities and routing in the <span class="font-medium text-gray-12">Identities</span> tab.
+          {translate("config.identities_hint")}
         </div>
       </div>
 
       <Show when={!isTauriRuntime()}>
         <div class="text-xs text-gray-9">
-          Some config features (local server sharing + messaging bridge) require the desktop app.
+          {translate("config.desktop_app_required_hint")}
         </div>
       </Show>
     </section>

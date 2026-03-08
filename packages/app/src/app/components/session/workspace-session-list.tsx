@@ -1,8 +1,11 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { ChevronDown, ChevronRight, HeartPulse, Loader2, MoreHorizontal, Plus } from "lucide-solid";
 
+import { currentLocale, t } from "../../../i18n";
 import type { OpenworkSoulStatus } from "../../lib/openwork-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
+
+const tr = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
 import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import { formatRelativeTime, getWorkspaceTaskLoadErrorDisplay, isWindowsPlatform } from "../../utils";
 
@@ -35,21 +38,30 @@ type Props = {
 const MAX_SESSIONS_PREVIEW = 6;
 const COLLAPSED_SESSIONS_PREVIEW = 1;
 
-const workspaceLabel = (workspace: WorkspaceInfo) =>
-  workspace.displayName?.trim() ||
-  workspace.openworkWorkspaceName?.trim() ||
-  workspace.name?.trim() ||
-  workspace.path?.trim() ||
-  "Worker";
+const workspaceLabel = (workspace: WorkspaceInfo) => {
+  const name =
+    workspace.displayName?.trim() ||
+    workspace.openworkWorkspaceName?.trim() ||
+    workspace.name?.trim() ||
+    workspace.path?.trim() ||
+    t("dashboard.worker", currentLocale());
+  // Translate default "Starter" name
+  if (name === "Starter") {
+    return t("dashboard.starter_workspace", currentLocale());
+  }
+  return name;
+};
 
-const workspaceKindLabel = (workspace: WorkspaceInfo) =>
-  workspace.workspaceType === "remote"
+const workspaceKindLabel = (workspace: WorkspaceInfo) => {
+  const tr = (key: string) => t(key, currentLocale());
+  return workspace.workspaceType === "remote"
     ? workspace.sandboxBackend === "docker" ||
       Boolean(workspace.sandboxRunId?.trim()) ||
       Boolean(workspace.sandboxContainerName?.trim())
-      ? "Sandbox"
-      : "Remote"
-    : "Local";
+      ? tr("sidebar.sandbox")
+      : tr("sidebar.remote")
+    : tr("sidebar.local");
+};
 
 export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform() ? "Reveal in Explorer" : "Reveal in Finder";
@@ -276,7 +288,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Edit name
+                        {tr("workspace.edit_name")}
                       </button>
                       <button
                         type="button"
@@ -286,7 +298,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Share...
+                        {tr("session.share")}
                       </button>
                       <button
                         type="button"
@@ -296,7 +308,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        {soulEnabled() ? "Soul settings" : "Enable soul"}
+                        {soulEnabled() ? tr("session.soul_settings") : tr("session.enable_soul")}
                       </button>
                       <Show when={workspace().workspaceType === "local"}>
                         <button
@@ -307,7 +319,7 @@ export default function WorkspaceSessionList(props: Props) {
                             setWorkspaceMenuId(null);
                           }}
                         >
-                          {revealLabel}
+                          {isWindowsPlatform() ? tr("session.reveal_in_explorer") : tr("session.reveal_in_finder")}
                         </button>
                       </Show>
                       <Show when={workspace().workspaceType === "remote"}>
@@ -321,7 +333,7 @@ export default function WorkspaceSessionList(props: Props) {
                             }}
                             disabled={isConnectionActionBusy()}
                           >
-                            Recover
+                            {tr("session.recover")}
                           </button>
                         </Show>
                         <button
@@ -333,7 +345,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          Test connection
+                          {tr("session.test_connection")}
                         </button>
                         <button
                           type="button"
@@ -344,7 +356,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }}
                           disabled={isConnectionActionBusy()}
                         >
-                          Edit connection
+                          {tr("session.edit_connection")}
                         </button>
                       </Show>
                       <button
@@ -355,7 +367,7 @@ export default function WorkspaceSessionList(props: Props) {
                           setWorkspaceMenuId(null);
                         }}
                       >
-                        Remove workspace
+                        {tr("session.remove_workspace")}
                       </button>
                     </div>
                   </Show>
@@ -501,7 +513,7 @@ export default function WorkspaceSessionList(props: Props) {
           onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
         >
           <Plus size={14} />
-          Add a worker
+          {tr("session.add_worker")}
         </button>
 
         <Show when={addWorkspaceMenuOpen()}>
@@ -515,7 +527,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              New worker
+              {tr("sidebar.new_worker")}
             </button>
             <button
               type="button"
@@ -526,7 +538,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Connect remote
+              {tr("sidebar.connect_remote")}
             </button>
             <button
               type="button"
@@ -538,7 +550,7 @@ export default function WorkspaceSessionList(props: Props) {
               }}
             >
               <Plus size={12} />
-              Import config
+              {tr("sidebar.import_config")}
             </button>
           </div>
         </Show>

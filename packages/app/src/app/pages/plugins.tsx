@@ -1,5 +1,7 @@
 import { For, Show } from "solid-js";
 
+import { currentLocale, t } from "../../i18n";
+
 import type { PluginScope } from "../types";
 
 import Button from "../components/button";
@@ -44,6 +46,9 @@ export type PluginsViewProps = {
 };
 
 export default function PluginsView(props: PluginsViewProps) {
+  const tr = (key: string, params?: Record<string, string | number>) =>
+    t(key, currentLocale(), params);
+
   return (
     <section class="space-y-6">
       <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
@@ -220,7 +225,7 @@ export default function PluginsView(props: PluginsViewProps) {
             <div class="flex-1">
               <TextInput
                 label="Add plugin"
-                placeholder="opencode-wakatime"
+                placeholder={tr("plugins.placeholder")}
                 value={props.pluginInput}
                 onInput={(e) => props.setPluginInput(e.currentTarget.value)}
                 hint="Add npm package names, e.g. opencode-wakatime"

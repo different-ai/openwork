@@ -1,6 +1,9 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
 import { Boxes, Check, Copy, Download, Eye, EyeOff, FolderCode, Key, Link as LinkIcon, X } from "lucide-solid";
+import { currentLocale, t } from "../../i18n";
+
+const translate = (key: string) => t(key, currentLocale());
 
 type ShareField = {
   label: string;
@@ -37,7 +40,7 @@ export default function ShareWorkspaceModal(props: {
   const [revealedByIndex, setRevealedByIndex] = createSignal<Record<number, boolean>>({});
   const [copiedKey, setCopiedKey] = createSignal<string | null>(null);
 
-  const title = createMemo(() => props.title ?? "Share worker");
+  const title = createMemo(() => props.title ?? translate("share.title"));
   const detail = createMemo(() => props.workspaceDetail?.trim() ?? "");
   const note = createMemo(() => props.note?.trim() ?? "");
 
@@ -120,7 +123,7 @@ export default function ShareWorkspaceModal(props: {
                 }`}
               >
                 <Key size={14} stroke-width={activeTab() === "access" ? 2.5 : 2} />
-                Live Access
+                {translate("share.live_access")}
               </button>
               <button
                 onClick={() => setActiveTab("links")}
@@ -131,7 +134,7 @@ export default function ShareWorkspaceModal(props: {
                 }`}
               >
                 <LinkIcon size={14} stroke-width={activeTab() === "links" ? 2.5 : 2} />
-                Public Links
+                {translate("share.public_links")}
               </button>
             </div>
           </div>
@@ -144,7 +147,7 @@ export default function ShareWorkspaceModal(props: {
                 <div class="bg-amber-2 border border-amber-6 p-3 rounded-xl">
                   <p class="text-[13px] text-amber-11 leading-relaxed flex items-start gap-2">
                     <span class="mt-0.5">⚠️</span>
-                    <span>Share with trusted people only. These credentials grant direct access to your local environment.</span>
+                    <span>{translate("share.trusted_warning")}</span>
                   </p>
                 </div>
 
@@ -216,10 +219,10 @@ export default function ShareWorkspaceModal(props: {
             <Show when={activeTab() === "links"}>
               <div class="space-y-4 pt-2 animate-in fade-in slide-in-from-bottom-3 duration-300">
                 <div class="mb-4">
-                  <p class="text-[14px] text-gray-11 font-medium">Publish snapshot configurations</p>
-                  <p class="text-[12px] text-gray-9 mt-0.5">Static links for sharing your setup with the community.</p>
+                  <p class="text-[14px] text-gray-11 font-medium">{translate("share.publish_snapshot")}</p>
+                  <p class="text-[12px] text-gray-9 mt-0.5">{translate("share.static_links_desc")}</p>
                   <Show when={props.publisherBaseUrl?.trim()}>
-                    <p class="text-[11px] text-gray-9 mt-1 font-mono">Publisher: {props.publisherBaseUrl}</p>
+                    <p class="text-[11px] text-gray-9 mt-1 font-mono">{translate("share.publisher")}: {props.publisherBaseUrl}</p>
                   </Show>
                 </div>
 
@@ -230,8 +233,8 @@ export default function ShareWorkspaceModal(props: {
                       <FolderCode size={18} />
                     </div>
                     <div class="flex-1">
-                      <h3 class="text-[14px] font-bold text-gray-12">Workspace profile</h3>
-                      <p class="text-[12px] text-gray-9 leading-tight">Config, MCP, and skill bundles.</p>
+                      <h3 class="text-[14px] font-bold text-gray-12">{translate("share.workspace_profile")}</h3>
+                      <p class="text-[12px] text-gray-9 leading-tight">{translate("share.workspace_profile_desc")}</p>
                     </div>
                   </div>
                   
@@ -252,7 +255,7 @@ export default function ShareWorkspaceModal(props: {
                         disabled={Boolean(props.shareWorkspaceProfileDisabledReason) || !props.onShareWorkspaceProfile || props.shareWorkspaceProfileBusy}
                         class="w-full py-2.5 bg-gray-12 hover:bg-gray-11 text-gray-1 text-[13px] font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50"
                       >
-                        {props.shareWorkspaceProfileBusy ? "Publishing..." : "Create Public Link"}
+                        {props.shareWorkspaceProfileBusy ? translate("share.publishing") : translate("share.create_public_link")}
                       </button>
                     }
                   >
@@ -277,7 +280,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={props.shareWorkspaceProfileBusy}
                       class="mt-3 w-full py-2 bg-gray-2 hover:bg-gray-3 text-gray-11 hover:text-gray-12 text-[12px] font-bold rounded-lg transition-all"
                     >
-                      {props.shareWorkspaceProfileBusy ? "Publishing..." : "Regenerate Link"}
+                      {props.shareWorkspaceProfileBusy ? translate("share.publishing") : translate("share.regenerate_link")}
                     </button>
                   </Show>
                 </div>
@@ -289,8 +292,8 @@ export default function ShareWorkspaceModal(props: {
                       <Boxes size={18} />
                     </div>
                     <div class="flex-1">
-                      <h3 class="text-[14px] font-bold text-gray-12">Skills set</h3>
-                      <p class="text-[12px] text-gray-9 leading-tight">Publish all installed skills as one bundle.</p>
+                      <h3 class="text-[14px] font-bold text-gray-12">{translate("share.skills_set")}</h3>
+                      <p class="text-[12px] text-gray-9 leading-tight">{translate("share.skills_set_desc")}</p>
                     </div>
                   </div>
                   
@@ -311,7 +314,7 @@ export default function ShareWorkspaceModal(props: {
                         disabled={Boolean(props.shareSkillsSetDisabledReason) || !props.onShareSkillsSet || props.shareSkillsSetBusy}
                         class="w-full py-2.5 bg-gray-2 hover:bg-gray-3 text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
                       >
-                        {props.shareSkillsSetBusy ? "Publishing..." : "Create Skill Link"}
+                        {props.shareSkillsSetBusy ? translate("share.publishing") : translate("share.create_skill_link")}
                       </button>
                     }
                   >
@@ -336,7 +339,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={props.shareSkillsSetBusy}
                       class="mt-3 w-full py-2 bg-gray-2 hover:bg-gray-3 text-gray-11 hover:text-gray-12 text-[12px] font-bold rounded-lg transition-all"
                     >
-                      {props.shareSkillsSetBusy ? "Publishing..." : "Regenerate Link"}
+                      {props.shareSkillsSetBusy ? translate("share.publishing") : translate("share.regenerate_link")}
                     </button>
                   </Show>
                 </div>
@@ -349,8 +352,8 @@ export default function ShareWorkspaceModal(props: {
                         <Download size={18} />
                       </div>
                       <div>
-                        <h4 class="text-[13px] font-bold text-gray-12">Config bundle</h4>
-                        <p class="text-[12px] text-gray-10">{props.exportDisabledReason?.trim() || "Export .opencode local files"}</p>
+                        <h4 class="text-[13px] font-bold text-gray-12">{translate("share.config_bundle")}</h4>
+                        <p class="text-[12px] text-gray-10">{props.exportDisabledReason?.trim() || translate("share.config_bundle_desc")}</p>
                       </div>
                     </div>
                     <button
@@ -358,7 +361,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={!props.onExportConfig || Boolean(props.exportDisabledReason)}
                       class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
                     >
-                      Export
+                      {translate("share.export")}
                     </button>
                   </div>
                 </div>
@@ -373,10 +376,10 @@ export default function ShareWorkspaceModal(props: {
                       </div>
                       <div>
                         <div class="flex items-center gap-2">
-                          <h4 class="text-[13px] font-bold text-gray-12">Bots</h4>
+                          <h4 class="text-[13px] font-bold text-gray-12">{translate("share.bots")}</h4>
                           <span class="text-[9px] px-1.5 py-0.5 uppercase tracking-wider font-bold rounded-full border border-gray-6 text-gray-10 bg-gray-1">alpha</span>
                         </div>
-                        <p class="text-[12px] text-gray-10">Configure messaging surfaces</p>
+                        <p class="text-[12px] text-gray-10">{translate("share.bots_desc")}</p>
                       </div>
                     </div>
                     <button
@@ -384,7 +387,7 @@ export default function ShareWorkspaceModal(props: {
                       disabled={!props.onOpenBots}
                       class="px-4 py-2 bg-gray-1 border border-gray-7 hover:border-gray-8 hover:text-gray-12 rounded-xl text-[12px] font-bold text-gray-11 transition-all shadow-sm disabled:opacity-50 disabled:hover:border-gray-7 disabled:hover:text-gray-11"
                     >
-                      Open setup
+                      {translate("share.open_setup")}
                     </button>
                   </div>
                 </div>
