@@ -839,7 +839,8 @@ async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 300
 
   let response: Response;
   try {
-    response = await fetch(`/api/den${path}`, {
+    const endpoint = path.startsWith("/api/") ? path : `/api/den${path}`;
+    response = await fetch(endpoint, {
       ...init,
       headers,
       credentials: "include",
