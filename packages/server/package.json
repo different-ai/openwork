@@ -9,9 +9,9 @@
   "scripts": {
     "dev": "bun src/cli.ts",
     "test": "bun test",
-    "build": "tsc -p tsconfig.json",
-    "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
-    "build:bin:all": "bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
+    "build": "tsc -p tsconfig.json && bun script/copy-builtin-skills.ts",
+    "build:bin": "bun script/generate-builtin-skills.ts && bun build --compile src/cli.ts --outfile dist/bin/openwork-server",
+    "build:bin:all": "bun script/generate-builtin-skills.ts && bun ./script/build.ts --outdir dist/bin --target bun-darwin-arm64 --target bun-darwin-x64 --target bun-linux-x64 --target bun-linux-arm64 --target bun-windows-x64",
     "start": "bun dist/cli.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "prepublishOnly": "pnpm build:bin"
