@@ -83,6 +83,7 @@ describe("builtin skills", () => {
     expect(pastConversations).toBeDefined();
     expect(pastConversations?.scope).toBe("global");
     expect(pastConversations?.description).toContain("past conversations");
+    expect(pastConversations?.builtin).toBe(true);
   });
 
   test("past-conversations has trigger phrases in description", async () => {

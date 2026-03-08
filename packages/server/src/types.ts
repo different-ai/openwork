@@ -144,6 +144,8 @@ export interface SkillItem {
   description: string;
   scope: "project" | "global";
   trigger?: string;
+  /** Whether this is a builtin skill that cannot be modified */
+  builtin?: boolean;
 }
 
 export interface HubSkillItem {

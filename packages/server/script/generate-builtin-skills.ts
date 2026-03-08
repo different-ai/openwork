@@ -97,6 +97,7 @@ export async function listBuiltinSkills(): Promise<SkillItem[]> {
       path: \`builtin://\${name}\`,
       scope: "global",
       trigger: trigger.trim() || undefined,
+      builtin: true,
     });
   }
 

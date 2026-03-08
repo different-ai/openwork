@@ -157,7 +157,12 @@ async function listBuiltinSkills(): Promise<SkillItem[]> {
   if (await exists(BUILTIN_SKILLS_DIR)) {
     const items = await listSkillsInDir(BUILTIN_SKILLS_DIR, "global");
     if (items.length > 0) {
-      return items;
+      // Mark as builtin and use consistent path format
+      return items.map((item) => ({
+        ...item,
+        builtin: true,
+        path: `builtin://${item.name}`,
+      }));
     }
   }
 
@@ -177,14 +182,27 @@ async function listBuiltinSkills(): Promise<SkillItem[]> {
  */
 export async function getSkillContent(skill: SkillItem): Promise<string> {
   // Check if this is a builtin skill with embedded content
-  if (skill.path.startsWith("builtin://")) {
+  if (skill.builtin || skill.path.startsWith("builtin://")) {
+    // First try generated module (works for single-file executable)
     try {
       const generated = await import("./generated-builtin-skills.js");
       const content = generated.getBuiltinSkillContent(skill.name);
       if (content) return content;
     } catch {
-      // Fall through to file system read
+      // Generated module not available
     }
+
+    // Try filesystem (works for normal build with copy script)
+    const fsPath = join(BUILTIN_SKILLS_DIR, skill.name, "SKILL.md");
+    if (await exists(fsPath)) {
+      return readFile(fsPath, "utf8");
+    }
+
+    throw new ApiError(
+      404,
+      "builtin_skill_not_found",
+      `Builtin skill content not found: ${skill.name}`,
+    );
   }
   return readFile(skill.path, "utf8");
 }
