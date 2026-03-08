@@ -251,6 +251,18 @@ export async function upsertSkill(
 export async function deleteSkill(workspaceRoot: string, name: string): Promise<{ path: string }> {
   const trimmed = name.trim();
   validateSkillName(trimmed);
+
+  // Check if trying to delete a builtin skill
+  const builtinSkills = await listBuiltinSkills();
+  const isBuiltin = builtinSkills.some((s) => s.name === trimmed);
+  if (isBuiltin) {
+    throw new ApiError(
+      400,
+      "cannot_delete_builtin_skill",
+      `Cannot delete builtin skill: ${trimmed}. Builtin skills are read-only.`,
+    );
+  }
+
   const baseDir = projectSkillsDir(workspaceRoot);
   const skillDir = join(baseDir, trimmed);
   const skillPath = join(skillDir, "SKILL.md");

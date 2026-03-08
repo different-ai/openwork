@@ -1,7 +1,8 @@
 import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { listSkills, getSkillContent } from "./skills.js";
+import { listSkills, getSkillContent, deleteSkill } from "./skills.js";
+import { ApiError } from "./errors.js";
 import type { SkillItem } from "./types.js";
 
 describe("listSkills", () => {
@@ -122,5 +123,51 @@ describe("builtin skills", () => {
     expect(content).toContain("past-conversations");
     expect(content).toContain("OpenCode database");
     expect(content).toContain("sqlite3");
+  });
+
+  test("cannot delete builtin skill", async () => {
+    try {
+      await deleteSkill("/tmp", "past-conversations");
+      expect.unreachable("Should have thrown an error");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ApiError);
+      const apiError = error as ApiError;
+      expect(apiError.code).toBe("cannot_delete_builtin_skill");
+      expect(apiError.message).toContain("Cannot delete builtin skill");
+    }
+  });
+
+  test("project skill can override builtin skill", async () => {
+    const testDir = join(import.meta.dir, "test-override-fixture");
+    const projectSkillsDir = join(testDir, ".opencode", "skills");
+    await mkdir(projectSkillsDir, { recursive: true });
+
+    try {
+      // Create a project skill with the same name as builtin
+      const skillDir = join(projectSkillsDir, "past-conversations");
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(
+        join(skillDir, "SKILL.md"),
+        `---
+name: past-conversations
+description: Custom override
+---
+Custom content
+`,
+      );
+
+      const skills = await listSkills(testDir, false);
+      const pastConversations = skills.find(
+        (s) => s.name === "past-conversations",
+      );
+
+      // Project skill takes precedence
+      expect(pastConversations).toBeDefined();
+      expect(pastConversations?.scope).toBe("project");
+      expect(pastConversations?.description).toBe("Custom override");
+      expect(pastConversations?.builtin).toBeUndefined();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
   });
 });
