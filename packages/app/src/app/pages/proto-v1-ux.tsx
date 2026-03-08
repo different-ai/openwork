@@ -29,6 +29,11 @@ import {
   Zap,
   Clock,
 } from "lucide-solid";
+import { currentLocale, t } from "../../i18n";
+
+// Translation helper
+const tr = (key: string, params?: Record<string, string | number>) =>
+  t(key, currentLocale(), params);
 
 type TabKey = "new-thread" | "automations" | "skills";
 
@@ -56,39 +61,39 @@ const automationTemplates = [
   { icon: Brain, description: "Suggest the next skills to install for this worker.", color: "text-pink-9" },
 ];
 
-const skillInstalled = [
+const getSkillInstalled = () => [
   {
     icon: Sparkles,
-    title: "Remotion Best Practices",
+    title: tr("proto.remotion_best_practices"),
     description: "Best practices for Remotion - Video creation in React",
     badge: "zerofinance",
   },
   {
     icon: Pencil,
-    title: "Skill Creator",
+    title: tr("proto.skill_creator"),
     description: "Create or update a skill",
   },
   {
     icon: Layout,
-    title: "Skill Installer",
+    title: tr("proto.skill_installer"),
     description: "Install curated skills from openai/skills or other repos",
   },
 ];
 
-const skillRecommended = [
+const getSkillRecommended = () => [
   {
     icon: ExternalLink,
-    title: "Atlas",
+    title: tr("proto.atlas"),
     description: "Manage tabs in ChatGPT Atlas and access your...",
   },
   {
     icon: Gamepad2,
-    title: "Develop Web Game",
+    title: tr("proto.develop_web_game"),
     description: "Web game dev + Playwright test loop",
   },
   {
     icon: FileCode,
-    title: "Doc",
+    title: tr("proto.doc"),
     description: "Edit and review docx files",
   },
 ];
@@ -312,7 +317,7 @@ const CreateAutomationModal = (props: { open: boolean; onClose: () => void }) =>
               <input
                 id="automation-project"
                 type="text"
-                placeholder="Choose a folder"
+                placeholder={tr("proto.choose_folder_placeholder")}
                 class="mt-2 w-full rounded-2xl border border-gray-6 bg-gray-2/60 px-3 py-2 text-sm text-gray-12 focus:outline-none focus:ring-1 focus:ring-blue-7"
               />
             </div>
@@ -471,7 +476,7 @@ export default function ProtoV1UxView() {
                       <input
                         type="text"
                         aria-label="Search skills"
-                        placeholder="Search skills"
+                        placeholder={tr("proto.search_skills_placeholder")}
                         class="w-44 rounded-lg border border-gray-6 bg-gray-2/60 py-2 pl-9 pr-4 text-xs text-gray-11 transition-all focus:w-56 focus:outline-none focus:ring-1 focus:ring-blue-7"
                       />
                     </div>
@@ -495,7 +500,7 @@ export default function ProtoV1UxView() {
                   <div class="mb-10">
                     <h3 class="mb-4 text-[11px] font-bold uppercase tracking-widest text-gray-8">Installed</h3>
                     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-                      <For each={skillInstalled}>
+                      <For each={getSkillInstalled()}>
                         {(skill) => (
                           <SkillCard
                             icon={skill.icon}
@@ -511,7 +516,7 @@ export default function ProtoV1UxView() {
                   <div>
                     <h3 class="mb-4 text-[11px] font-bold uppercase tracking-widest text-gray-8">Recommended</h3>
                     <div class="grid grid-cols-1 gap-4 pb-12 md:grid-cols-2">
-                      <For each={skillRecommended}>
+                      <For each={getSkillRecommended()}>
                         {(skill) => (
                           <SkillCard
                             icon={skill.icon}
@@ -624,7 +629,7 @@ export default function ProtoV1UxView() {
                     <div class="rounded-2xl border border-gray-6 bg-gray-1 px-3 py-2 shadow-lg">
                       <textarea
                         rows={1}
-                        placeholder="Ask Codex anything..."
+                        placeholder={tr("proto.ask_codex_placeholder")}
                         value={inputValue()}
                         onInput={(event) => setInputValue(event.currentTarget.value)}
                         class="min-h-[44px] w-full resize-none bg-transparent p-3 text-sm text-gray-12 focus:outline-none"
