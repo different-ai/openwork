@@ -7,8 +7,10 @@ import "./app/index.css";
 import AppEntry from "./app/entry";
 import { PlatformProvider, type Platform } from "./app/context/platform";
 import { isTauriRuntime } from "./app/utils";
+import { initLocale } from "./i18n";
 
 bootstrapTheme();
+initLocale();
 
 const root = document.getElementById("root");
 

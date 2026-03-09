@@ -1,15 +1,26 @@
 # OpenWork Share Service (Publisher)
 
-This is a tiny publisher service for OpenWork "share link" bundles.
+This is a Next.js publisher app for OpenWork "share link" bundles.
 
-It is designed to be deployed on Vercel and backed by Vercel Blob.
+It keeps the existing bundle APIs, but the public share surface now runs as a simple Next.js site backed by Vercel Blob.
 
 ## Endpoints
+
+- `GET /`
+  - Human-friendly packaging page for OpenWork worker files.
+  - Supports drag/drop of skills, agents, commands, `opencode.json[c]`, and `openwork.json`.
+  - Previews the inferred bundle and publishes a share link.
 
 - `POST /v1/bundles`
   - Accepts JSON bundle payloads.
   - Stores bytes in Vercel Blob.
   - Returns `{ "url": "https://share.openwork.software/b/<id>" }`.
+
+- `POST /v1/package`
+  - Accepts `{ files: [{ path, name?, content }], preview?: boolean }`.
+  - Parses supported OpenWork files into the smallest useful bundle shape.
+  - Returns preview metadata when `preview` is `true`.
+  - Publishes the generated bundle and returns the share URL otherwise.
 
 - `GET /b/:id`
   - Returns an HTML share page by default for browser requests.
@@ -30,7 +41,17 @@ It is designed to be deployed on Vercel and backed by Vercel Blob.
 - `skills-set`
   - A full skills pack (multiple skills) exported from a worker.
 - `workspace-profile`
-  - Full workspace profile payload (config, MCP/OpenCode settings, commands, and skills).
+  - Full workspace profile payload (config, MCP/OpenCode settings, commands, skills, and agent config).
+
+## Packager input support
+
+- Skill markdown from `.opencode/skills/<name>/SKILL.md`
+- Agent markdown from `.opencode/agents/*.md`
+- Command markdown from `.opencode/commands/*.md`
+- `opencode.json` / `opencode.jsonc` (only `mcp` and `agent` sections are exported)
+- `openwork.json`
+
+The packager rejects files that appear to contain secrets in shareable config.
 
 ## Required Environment Variables
 
@@ -53,13 +74,28 @@ It is designed to be deployed on Vercel and backed by Vercel Blob.
 
 ## Local development
 
-This repo is intended for Vercel deployment.
 For local testing you can use:
 
 ```bash
-cd services/openwork-share
 pnpm install
-vercel dev
+pnpm --dir services/openwork-share dev
+```
+
+Open `http://localhost:3000`.
+
+## Deploy
+
+Recommended project settings:
+
+- Root directory: `services/openwork-share`
+- Framework preset: Next.js
+- Build command: `pnpm --dir services/openwork-share build`
+- Output directory: `.next`
+
+## Tests
+
+```bash
+pnpm --dir services/openwork-share test
 ```
 
 ## Quick checks

@@ -1,6 +1,6 @@
 {
   "name": "openwork-orchestrator",
-  "version": "0.11.123",
+  "version": "0.11.135",
   "opencodeVersion": "1.2.6",
   "description": "OpenWork host orchestrator for opencode + OpenWork server + opencode-router",
   "private": true,
@@ -14,6 +14,7 @@
     "build:sidecars": "node scripts/build-sidecars.mjs",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test:router": "pnpm build && node scripts/router.mjs",
+    "test:files": "pnpm build && node scripts/files-session.mjs",
     "prepublishOnly": "node -e \"console.error('openwork-orchestrator is published via packages/orchestrator/scripts/publish-npm.mjs (meta + platform packages)'); process.exit(1);\""
   },
   "files": [
@@ -47,8 +48,8 @@
     "@opencode-ai/sdk": "^1.1.31",
     "@opentui/core": "0.1.77",
     "@opentui/solid": "0.1.77",
-    "opencode-router": "0.11.123",
-    "openwork-server": "0.11.123",
+    "opencode-router": "0.11.135",
+    "openwork-server": "0.11.135",
     "solid-js": "1.9.9"
   },
   "devDependencies": {

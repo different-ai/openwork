@@ -24,6 +24,7 @@ import type {
 
 import { getVersion } from "@tauri-apps/api/app";
 import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
@@ -49,7 +50,9 @@ import {
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
+import { shouldUpdateSidebarSessions } from "./lib/sidebar-sessions-guard";
 import {
+  AUTO_COMPACT_CONTEXT_PREF_KEY,
   DEFAULT_MODEL,
   HIDE_TITLEBAR_PREF_KEY,
   MCP_QUICK_CONNECT,
@@ -99,8 +102,10 @@ import {
   formatModelRef,
   formatRelativeTime,
   groupMessageParts,
+  isVisibleTextPart,
   isTauriRuntime,
   modelEquals,
+  normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
 } from "./utils";
 import { currentLocale, setLocale, t, type Language } from "../i18n";
@@ -141,6 +146,15 @@ import {
   type OpenworkServerInfo,
   type OpenCodeRouterInfo,
 } from "./lib/tauri";
+import {
+  FONT_ZOOM_STEP,
+  applyWebviewZoom,
+  applyFontZoom,
+  normalizeFontZoom,
+  parseFontZoomShortcut,
+  persistFontZoom,
+  readStoredFontZoom,
+} from "./lib/font-zoom";
 import {
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkBundleInviteFromSearch,
@@ -626,11 +640,6 @@ export default function App() {
         goToSession(sessionId);
         return;
       }
-      const fallback = activeSessionId();
-      if (fallback) {
-        goToSession(fallback);
-        return;
-      }
       navigate("/session");
       return;
     }
@@ -773,6 +782,52 @@ export default function App() {
     update();
     document.addEventListener("visibilitychange", update);
     onCleanup(() => document.removeEventListener("visibilitychange", update));
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!isTauriRuntime()) return;
+
+    const applyAndPersistFontZoom = (value: number) => {
+      const next = normalizeFontZoom(value);
+      persistFontZoom(window.localStorage, next);
+
+      try {
+        const webview = getCurrentWebview();
+        void applyWebviewZoom(webview, next)
+          .then(() => {
+            document.documentElement.style.removeProperty("--openwork-font-size");
+          })
+          .catch(() => {
+            applyFontZoom(document.documentElement.style, next);
+          });
+      } catch {
+        applyFontZoom(document.documentElement.style, next);
+      }
+
+      return next;
+    };
+
+    let fontZoom = applyAndPersistFontZoom(readStoredFontZoom(window.localStorage) ?? 1);
+
+    const handleZoomShortcut = (event: KeyboardEvent) => {
+      const action = parseFontZoomShortcut(event);
+      if (!action) return;
+
+      if (action === "in") {
+        fontZoom = applyAndPersistFontZoom(fontZoom + FONT_ZOOM_STEP);
+      } else if (action === "out") {
+        fontZoom = applyAndPersistFontZoom(fontZoom - FONT_ZOOM_STEP);
+      } else {
+        fontZoom = applyAndPersistFontZoom(1);
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    window.addEventListener("keydown", handleZoomShortcut, true);
+    onCleanup(() => window.removeEventListener("keydown", handleZoomShortcut, true));
   });
 
   createEffect(() => {
@@ -1119,6 +1174,7 @@ export default function App() {
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    loadEarlierMessages,
     renameSession,
     respondPermission,
     respondQuestion,
@@ -1127,6 +1183,8 @@ export default function App() {
     setMessages,
     setTodos,
     setPendingPermissions,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
   } = sessionStore;
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
@@ -1407,6 +1465,7 @@ export default function App() {
       const parts = buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
+      const requestVariant = reasoningEffort ? undefined : selectedVariant;
       const promptOverrides = reasoningEffort
         ? ({ reasoning_effort: reasoningEffort } as const)
         : undefined;
@@ -1441,7 +1500,7 @@ export default function App() {
             arguments: command.arguments,
             agent: agent ?? undefined,
             model: modelString,
-            variant: selectedVariant,
+            variant: requestVariant,
             ...(promptOverrides ?? {}),
             parts: files.length ? files : undefined,
           }),
@@ -1452,7 +1511,7 @@ export default function App() {
           sessionID,
           model,
           agent: agent ?? undefined,
-          variant: selectedVariant,
+          variant: requestVariant,
           ...(promptOverrides ?? {}),
           parts,
         });
@@ -1560,6 +1619,34 @@ export default function App() {
     }
   }
 
+  const triggerAutoCompaction = async (sessionID: string) => {
+    if (!autoCompactContext()) return;
+    if (autoCompactingSessionId() === sessionID) return;
+
+    setAutoCompactingSessionId(sessionID);
+    try {
+      await compactCurrentSession(sessionID);
+    } catch {
+      // ignore auto-compaction failures; manual compact remains available
+    } finally {
+      setAutoCompactingSessionId((current) => (current === sessionID ? null : current));
+    }
+  };
+
+  const [lastSessionStatus, setLastSessionStatus] = createSignal<string | null>(null);
+  createEffect(() => {
+    const sessionID = selectedSessionId();
+    const status = sessionID ? sessionStatusById()[sessionID] ?? null : null;
+    const previous = lastSessionStatus();
+    setLastSessionStatus(status);
+
+    if (!sessionID) return;
+    if (!autoCompactContext()) return;
+    if (status !== "idle") return;
+    if (!previous || previous === "idle") return;
+    void triggerAutoCompaction(sessionID);
+  });
+
   const messageIdFromInfo = (message: MessageWithParts) => {
     const id = (message.info as { id?: string | number }).id;
     if (typeof id === "string") return id;
@@ -1597,7 +1684,7 @@ export default function App() {
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
     const text = message.parts
-      .filter((part) => part.type === "text")
+      .filter(isVisibleTextPart)
       .map((part) => String((part as { text?: string }).text ?? ""))
       .join("");
     setPrompt(text);
@@ -2076,6 +2163,7 @@ export default function App() {
     refreshHubSkills,
     refreshPlugins,
     addPlugin,
+    removePlugin,
     importLocalSkill,
     installSkillCreator,
     installHubSkill,
@@ -2197,7 +2285,9 @@ export default function App() {
 
   const [showThinking, setShowThinking] = createSignal(false);
   const [hideTitlebar, setHideTitlebar] = createSignal(false);
+  const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
+  const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", label: "None" },
@@ -2423,7 +2513,7 @@ export default function App() {
       if (!directory) {
         try {
           const pathInfo = unwrap(await c.path.get());
-          const discovered = normalizeDirectoryPath(pathInfo.directory ?? "");
+          const discovered = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
           if (discovered) {
             directory = discovered;
             c = createClient(config.baseUrl, directory, config.auth);
@@ -2433,13 +2523,7 @@ export default function App() {
         }
       }
 
-      const queryDirectory = (() => {
-        const trimmed = (directory ?? "").trim();
-        if (!trimmed) return undefined;
-        const unified = trimmed.replace(/\\/g, "/");
-        const withoutTrailing = unified.replace(/\/+$/, "");
-        return withoutTrailing || "/";
-      })();
+      const queryDirectory = normalizeDirectoryQueryPath(directory) || undefined;
 
       // Fetch sessions scoped to the workspace directory to avoid loading the
       // full global session list for every workspace.
@@ -2593,6 +2677,16 @@ export default function App() {
         ? allSessions.filter((session) => normalizeDirectoryPath(session.directory) === activeWorkspaceRoot)
         : allSessions;
       const sorted = sortSessionsByActivity(scopedSessions);
+
+      // Don't clear existing sidebar sessions if the session store is empty for this workspace.
+      // This can happen during worker restart/reconnect when the server hasn't fully loaded
+      // its session database yet. Preserving existing sessions prevents the sidebar from
+      // flickering empty during the reconnection window.
+      const currentSidebarSessions = sidebarSessionsByWorkspaceId()[wsId] || [];
+      if (!shouldUpdateSidebarSessions(currentSidebarSessions, sorted)) {
+        return;
+      }
+
       setSidebarSessionsByWorkspaceId((prev) => ({
         ...prev,
         [wsId]: sorted.map((s) => ({
@@ -2608,10 +2702,50 @@ export default function App() {
 
   const sidebarWorkspaceGroups = createMemo<WorkspaceSessionGroup[]>(() => {
     const workspaces = workspaceStore.workspaces();
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const connectingWorkspaceId = workspaceStore.connectingWorkspaceId()?.trim() ?? "";
     const sessionsById = sidebarSessionsByWorkspaceId();
     const statusById = sidebarSessionStatusByWorkspaceId();
     const errorById = sidebarSessionErrorByWorkspaceId();
-    return workspaces.map((workspace) => {
+    const dedupedWorkspaces: typeof workspaces = [];
+    const dedupeKeyToIndex = new Map<string, number>();
+    for (const workspace of workspaces) {
+      if (workspace.workspaceType !== "remote") {
+        dedupedWorkspaces.push(workspace);
+        continue;
+      }
+      const hostKey =
+        normalizeOpenworkServerUrl(workspace.openworkHostUrl?.trim() ?? "") ??
+        normalizeOpenworkServerUrl(workspace.baseUrl?.trim() ?? "") ??
+        "";
+      const workspaceIdKey =
+        workspace.openworkWorkspaceId?.trim() ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
+        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+        "";
+      const directoryKey = normalizeDirectoryPath(workspace.directory?.trim() ?? workspace.path?.trim() ?? "");
+      const identityKey = workspaceIdKey ? `id:${workspaceIdKey}` : (directoryKey ? `dir:${directoryKey}` : "");
+      if (!hostKey || !identityKey) {
+        dedupedWorkspaces.push(workspace);
+        continue;
+      }
+      const dedupeKey = `${workspace.remoteType ?? ""}|${hostKey}|${identityKey}`;
+      const existingIndex = dedupeKeyToIndex.get(dedupeKey);
+      if (existingIndex === undefined) {
+        dedupeKeyToIndex.set(dedupeKey, dedupedWorkspaces.length);
+        dedupedWorkspaces.push(workspace);
+        continue;
+      }
+      const existingWorkspace = dedupedWorkspaces[existingIndex];
+      const existingIsPriority =
+        existingWorkspace.id === activeWorkspaceId || existingWorkspace.id === connectingWorkspaceId;
+      const currentIsPriority =
+        workspace.id === activeWorkspaceId || workspace.id === connectingWorkspaceId;
+      if (currentIsPriority && !existingIsPriority) {
+        dedupedWorkspaces[existingIndex] = workspace;
+      }
+    }
+    return dedupedWorkspaces.map((workspace) => {
       const groupSessions = sessionsById[workspace.id] ?? [];
       return {
         workspace,
@@ -2644,16 +2778,9 @@ export default function App() {
     if (creatingSession()) return;
     if (selectedSessionId()) return;
 
-    const list = sessions();
-    if (!list.length) return;
-
-    const workspaceId = workspaceStore.activeWorkspaceId();
-    const map = workspaceId ? readSessionByWorkspace() : null;
-    const saved = workspaceId ? map?.[workspaceId] : null;
-    const match = saved ? list.find((session) => session.id === saved) : null;
-    const next = match ?? list[0];
-    void selectSession(next.id);
-    setView("session", next.id);
+    // Keep /session as a draft-ready empty state until the user picks a session
+    // or sends a prompt. Avoid auto-selecting prior sessions on app launch.
+    return;
   });
 
   createEffect(() => {
@@ -3234,13 +3361,38 @@ export default function App() {
   const canReloadLocalEngine = () =>
     isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
 
-  const canReloadWorkspace = createMemo(() => canReloadLocalEngine());
+  const canReloadWorkspace = createMemo(() => {
+    if (canReloadLocalEngine()) return true;
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") return false;
+    return openworkServerStatus() === "connected" && Boolean(openworkServerClient() && openworkServerWorkspaceId());
+  });
 
   const reloadWorkspaceEngineFromUi = async () => {
-    if (!canReloadLocalEngine()) {
+    if (canReloadLocalEngine()) {
+      return workspaceStore.reloadWorkspaceEngine();
+    }
+
+    if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "remote") {
       return false;
     }
-    return workspaceStore.reloadWorkspaceEngine();
+
+    const client = openworkServerClient();
+    const workspaceId = openworkServerWorkspaceId();
+    if (!client || !workspaceId || openworkServerStatus() !== "connected") {
+      setError("Connect to this worker before applying runtime changes.");
+      return false;
+    }
+
+    try {
+      await client.reloadEngine(workspaceId);
+      await workspaceStore.activateWorkspace(workspaceStore.activeWorkspaceId());
+      await refreshMcpServers();
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to apply runtime changes.";
+      setError(message);
+      return false;
+    }
   };
 
   const systemState = createSystemState({
@@ -3303,6 +3455,63 @@ export default function App() {
 
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
+
+  const resetAppConfigDefaults = async () => {
+    try {
+      if (typeof window !== "undefined") {
+        try {
+          const sessionOverridePrefix = `${SESSION_MODEL_PREF_KEY}.`;
+          const keysToRemove: string[] = [];
+          for (let index = 0; index < window.localStorage.length; index += 1) {
+            const key = window.localStorage.key(index);
+            if (!key) continue;
+            if (key.startsWith(sessionOverridePrefix)) {
+              keysToRemove.push(key);
+            }
+          }
+          for (const key of keysToRemove) {
+            window.localStorage.removeItem(key);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      setThemeMode("system");
+      setEngineSource(isTauriRuntime() ? "sidecar" : "path");
+      setEngineCustomBinPath("");
+      setEngineRuntime("openwork-orchestrator");
+      setDefaultModel(DEFAULT_MODEL);
+      setLegacyDefaultModel(DEFAULT_MODEL);
+      setDefaultModelExplicit(false);
+      setShowThinking(false);
+      setHideTitlebar(false);
+      setAutoCompactContext(false);
+      setModelVariant(null);
+      setUpdateAutoCheck(true);
+      setUpdateAutoDownload(false);
+      setUpdateStatus({ state: "idle", lastCheckedAt: null });
+      setDeveloperMode(false);
+
+      clearStartupPreference();
+      setStartupPreference(null);
+      setRememberStartupChoice(false);
+
+      clearOpenworkServerSettings();
+      setOpenworkServerSettings(readOpenworkServerSettings());
+
+      setNotionStatus("disconnected");
+      setNotionStatusDetail(null);
+      setNotionError(null);
+      setNotionSkillInstalled(false);
+      setTryNotionPromptVisible(false);
+
+      return { ok: true, message: "Reset app config defaults. Restart OpenWork if any stale settings remain." };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to reset app config defaults.";
+      return { ok: false, message };
+    }
+  };
 
   const getUpdateLastCheckedAt = (state: ReturnType<typeof updateStatus>) => {
     if (state.state === "checking") return null;
@@ -3731,15 +3940,6 @@ export default function App() {
 
     setAutoConnectAttempted(true);
     void workspaceStore.onConnectClient();
-  });
-
-  createEffect(() => {
-    // If we lose the client (disconnect / stop engine), don't strand the user
-    // in a session view that can't operate.
-    if (currentView() !== "session") return;
-    if (creatingSession()) return;
-    if (client()) return;
-    setView("dashboard");
   });
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
@@ -4212,7 +4412,7 @@ export default function App() {
     if (!resolvedProjectDir) {
       try {
         const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryPath(pathInfo.directory ?? "");
+        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
         const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
         if (discovered) {
           resolvedProjectDir = discovered;
@@ -4402,7 +4602,7 @@ export default function App() {
     if (!resolvedProjectDir) {
       try {
         const pathInfo = unwrap(await activeClient.path.get());
-        const discoveredRaw = normalizeDirectoryPath(pathInfo.directory ?? "");
+        const discoveredRaw = normalizeDirectoryQueryPath(pathInfo.directory ?? "");
         const discovered = discoveredRaw.replace(/^\/private\/tmp(?=\/|$)/, "/tmp");
         if (discovered) {
           resolvedProjectDir = discovered;
@@ -4676,9 +4876,15 @@ export default function App() {
 
     if (typeof window !== "undefined") {
       try {
-        const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
-        if (storedBaseUrl) {
-          setBaseUrl(storedBaseUrl);
+        // In Tauri/desktop mode, do NOT restore the cached baseUrl from localStorage.
+        // OpenCode is assigned a random port on every restart, so the stored URL is
+        // always stale after a relaunch. The correct baseUrl is provided by engine_info().
+        // Web mode still needs the cached value since it connects to a fixed server URL.
+        if (!isTauriRuntime()) {
+          const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
+          if (storedBaseUrl) {
+            setBaseUrl(storedBaseUrl);
+          }
         }
 
         const storedClientDir = window.localStorage.getItem(
@@ -4752,6 +4958,18 @@ export default function App() {
             const parsed = JSON.parse(storedHideTitlebar);
             if (typeof parsed === "boolean") {
               setHideTitlebar(parsed);
+            }
+          } catch {
+            // ignore
+          }
+        }
+
+        const storedAutoCompactContext = window.localStorage.getItem(AUTO_COMPACT_CONTEXT_PREF_KEY);
+        if (storedAutoCompactContext != null) {
+          try {
+            const parsed = JSON.parse(storedAutoCompactContext);
+            if (typeof parsed === "boolean") {
+              setAutoCompactContext(parsed);
             }
           } catch {
             // ignore
@@ -5196,6 +5414,15 @@ export default function App() {
   createEffect(() => {
     if (typeof window === "undefined") return;
     try {
+      window.localStorage.setItem(AUTO_COMPACT_CONTEXT_PREF_KEY, JSON.stringify(autoCompactContext()));
+    } catch {
+      // ignore
+    }
+  });
+
+  createEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
       const value = modelVariant();
       if (value) {
         window.localStorage.setItem(VARIANT_PREF_KEY, value);
@@ -5526,8 +5753,10 @@ export default function App() {
       workspaces: workspaceStore.workspaces(),
       activeWorkspaceId: workspaceStore.activeWorkspaceId(),
       connectingWorkspaceId: workspaceStore.connectingWorkspaceId(),
+      workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
       activateWorkspace: workspaceStore.activateWorkspace,
       testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
+      recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
       importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
@@ -5563,6 +5792,7 @@ export default function App() {
       refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
       runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
+      isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
       refreshHubSkills: (options?: { force?: boolean }) => refreshHubSkills(options).catch(() => undefined),
       refreshPlugins: (scopeOverride?: PluginScope) =>
@@ -5596,6 +5826,7 @@ export default function App() {
       isPluginInstalled: isPluginInstalledByName,
       suggestedPlugins: SUGGESTED_PLUGINS,
       addPlugin,
+      removePlugin,
       createSessionAndOpen,
       setPrompt,
       selectSession: selectSession,
@@ -5604,6 +5835,8 @@ export default function App() {
       openDefaultModelPicker,
       showThinking: showThinking(),
       toggleShowThinking: () => setShowThinking((v) => !v),
+      autoCompactContext: autoCompactContext(),
+      toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
       hideTitlebar: hideTitlebar(),
       toggleHideTitlebar: () => setHideTitlebar((v) => !v),
       modelVariantLabel: formatModelVariantLabel(modelVariant()),
@@ -5649,6 +5882,7 @@ export default function App() {
       pendingPermissions: pendingPermissions(),
       events: events(),
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
+      sandboxCreateProgress: workspaceStore.sandboxCreateProgress(),
       clearWorkspaceDebugEvents: workspaceStore.clearWorkspaceDebugEvents,
       safeStringify,
       repairOpencodeMigration: workspaceStore.repairOpencodeMigration,
@@ -5662,6 +5896,7 @@ export default function App() {
       cleanupOpenworkDockerContainers,
       dockerCleanupBusy: dockerCleanupBusy(),
       dockerCleanupResult: dockerCleanupResult(),
+      resetAppConfigDefaults,
       notionStatus: notionStatus(),
       notionStatusDetail: notionStatusDetail(),
       notionError: notionError(),
@@ -5722,6 +5957,7 @@ export default function App() {
     workspaceConnectionStateById: workspaceStore.workspaceConnectionStateById(),
     activateWorkspace: workspaceStore.activateWorkspace,
     testWorkspaceConnection: workspaceStore.testWorkspaceConnection,
+    recoverWorkspace: workspaceStore.recoverWorkspace,
     editWorkspaceConnection: openWorkspaceConnectionSettings,
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
@@ -5732,6 +5968,7 @@ export default function App() {
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
     openworkServerStatus: openworkServerStatus(),
+    startupPreference: startupPreference(),
     openworkServerClient: openworkServerClient(),
     openworkServerSettings: openworkServerSettings(),
     openworkServerHostInfo: openworkServerHostInfo(),
@@ -5775,6 +6012,8 @@ export default function App() {
     busyLabel: busyLabel(),
     developerMode: developerMode(),
     showThinking: showThinking(),
+    autoCompactContext: autoCompactContext(),
+    toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
@@ -5813,6 +6052,9 @@ export default function App() {
     setSessionAgent: setSessionAgent,
     saveSession: saveSessionExport,
     sessionStatusById: activeSessionStatusById(),
+    hasEarlierMessages: selectedSessionHasEarlierMessages(),
+    loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
+    loadEarlierMessages,
     searchFiles: searchWorkspaceFiles,
     deleteSession: deleteSessionById,
     onTryNotionPrompt: () => {
@@ -5881,9 +6123,10 @@ export default function App() {
       const id = (sessionSegment ?? "").trim();
 
       if (!id) {
-        const fallback = activeSessionId();
-        if (fallback) {
-          goToSession(fallback, { replace: true });
+        if (selectedSessionId()) {
+          setSelectedSessionId(null);
+          setMessages([]);
+          setTodos([]);
         }
         return;
       }

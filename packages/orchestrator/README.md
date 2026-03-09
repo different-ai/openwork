@@ -161,6 +161,46 @@ openwork status \
   --opencode-url http://<host>:4096
 ```
 
+## File sessions (JIT catalog + batch read/write)
+
+Create a short-lived workspace file session and sync files in batches:
+
+```bash
+# Create writable session
+openwork files session create \
+  --openwork-url http://<host>:8787 \
+  --token <client-token> \
+  --workspace-id <workspace-id> \
+  --write \
+  --json
+
+# Fetch catalog snapshot
+openwork files catalog <session-id> \
+  --openwork-url http://<host>:8787 \
+  --token <client-token> \
+  --limit 200 \
+  --json
+
+# Read one or more files
+openwork files read <session-id> \
+  --openwork-url http://<host>:8787 \
+  --token <client-token> \
+  --paths "README.md,notes/todo.md" \
+  --json
+
+# Write a file (inline content or --file)
+openwork files write <session-id> \
+  --openwork-url http://<host>:8787 \
+  --token <client-token> \
+  --path notes/todo.md \
+  --content "hello from openwork" \
+  --json
+
+# Watch change events and close session
+openwork files events <session-id> --openwork-url http://<host>:8787 --token <client-token> --since 0 --json
+openwork files session close <session-id> --openwork-url http://<host>:8787 --token <client-token> --json
+```
+
 ## Smoke checks
 
 ```bash

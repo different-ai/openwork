@@ -361,6 +361,10 @@ export async function engineStop(): Promise<EngineInfo> {
   return invoke<EngineInfo>("engine_stop");
 }
 
+export async function engineRestart(): Promise<EngineInfo> {
+  return invoke<EngineInfo>("engine_restart");
+}
+
 export async function orchestratorStatus(): Promise<OrchestratorStatus> {
   return invoke<OrchestratorStatus>("orchestrator_status");
 }
@@ -403,11 +407,15 @@ export async function orchestratorStartDetached(input: {
   workspacePath: string;
   sandboxBackend?: "none" | "docker" | null;
   runId?: string | null;
+  openworkToken?: string | null;
+  openworkHostToken?: string | null;
 }): Promise<OrchestratorDetachedHost> {
   return invoke<OrchestratorDetachedHost>("orchestrator_start_detached", {
     workspacePath: input.workspacePath,
     sandboxBackend: input.sandboxBackend ?? null,
     runId: input.runId ?? null,
+    openworkToken: input.openworkToken ?? null,
+    openworkHostToken: input.openworkHostToken ?? null,
   });
 }
 
@@ -453,8 +461,48 @@ export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDocker
   return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
 }
 
+export type SandboxDebugProbeResult = {
+  startedAt: number;
+  finishedAt: number;
+  runId: string;
+  workspacePath: string;
+  ready: boolean;
+  doctor: SandboxDoctorResult;
+  detachedHost?: OrchestratorDetachedHost | null;
+  dockerInspect?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  dockerLogs?: {
+    status: number;
+    stdout: string;
+    stderr: string;
+  } | null;
+  cleanup: {
+    containerName?: string | null;
+    containerRemoved: boolean;
+    removeResult?: {
+      status: number;
+      stdout: string;
+      stderr: string;
+    } | null;
+    workspaceRemoved: boolean;
+    errors: string[];
+  };
+  error?: string | null;
+};
+
+export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
+  return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
+}
+
 export async function openworkServerInfo(): Promise<OpenworkServerInfo> {
   return invoke<OpenworkServerInfo>("openwork_server_info");
+}
+
+export async function openworkServerRestart(): Promise<OpenworkServerInfo> {
+  return invoke<OpenworkServerInfo>("openwork_server_restart");
 }
 
 export async function engineInfo(): Promise<EngineInfo> {
@@ -667,6 +715,63 @@ export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
 }
 
+export async function obsidianIsAvailable(): Promise<boolean> {
+  return invoke<boolean>("obsidian_is_available");
+}
+
+export async function openInObsidian(filePath: string): Promise<void> {
+  const safePath = filePath.trim();
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<void>("open_in_obsidian", { filePath: safePath });
+}
+
+export async function writeObsidianMirrorFile(
+  workspaceId: string,
+  filePath: string,
+  content: string,
+): Promise<string> {
+  const safeWorkspaceId = workspaceId.trim();
+  const safePath = filePath.trim();
+  if (!safeWorkspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<string>("write_obsidian_mirror_file", {
+    workspaceId: safeWorkspaceId,
+    filePath: safePath,
+    content,
+  });
+}
+
+export type ObsidianMirrorFileContent = {
+  exists: boolean;
+  path: string;
+  content: string | null;
+  updatedAtMs: number | null;
+};
+
+export async function readObsidianMirrorFile(
+  workspaceId: string,
+  filePath: string,
+): Promise<ObsidianMirrorFileContent> {
+  const safeWorkspaceId = workspaceId.trim();
+  const safePath = filePath.trim();
+  if (!safeWorkspaceId) {
+    throw new Error("workspaceId is required");
+  }
+  if (!safePath) {
+    throw new Error("filePath is required");
+  }
+  return invoke<ObsidianMirrorFileContent>("read_obsidian_mirror_file", {
+    workspaceId: safeWorkspaceId,
+    filePath: safePath,
+  });
+}
+
 export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJob[]> {
   return invoke<ScheduledJob[]>("scheduler_list_jobs", { scopeRoot });
 }
@@ -704,6 +809,7 @@ export type OpenCodeRouterInfo = {
   version: string | null;
   workspacePath: string | null;
   opencodeUrl: string | null;
+  healthPort: number | null;
   pid: number | null;
   lastStdout: string | null;
   lastStderr: string | null;

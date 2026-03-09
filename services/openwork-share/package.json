@@ -4,10 +4,19 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "node -e \"console.log('openwork-share: no build step')\""
+    "dev": "next dev --hostname 0.0.0.0",
+    "build": "next build",
+    "start": "next start --hostname 0.0.0.0",
+    "test": "node --test server/b/render-bundle-page.test.js server/_lib/package-openwork-files.test.js"
   },
   "dependencies": {
+    "@paper-design/shaders-react": "0.0.71",
     "@vercel/blob": "^0.27.0",
-    "ulid": "^2.3.0"
+    "jsonc-parser": "^3.3.1",
+    "next": "16.1.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "ulid": "^2.3.0",
+    "yaml": "^2.8.1"
   }
 }

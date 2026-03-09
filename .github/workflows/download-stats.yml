@@ -28,7 +28,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
           POSTHOG_HOST: https://us.i.posthog.com
-          POSTHOG_EVENT: download
+          POSTHOG_LEGACY_EVENT: download
+          POSTHOG_V2_EVENT: release_asset_snapshot
           POSTHOG_DISTINCT_ID: openwork-download
           GITHUB_REPO: different-ai/openwork
         run: node scripts/stats.mjs
@@ -37,6 +38,6 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
-          git add STATS.md
+          git add STATS.md STATS_V2.md
           git diff --staged --quiet || git commit -m "ignore: update download stats $(date -I)"
           git push

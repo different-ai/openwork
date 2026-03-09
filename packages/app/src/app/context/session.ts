@@ -18,6 +18,7 @@ import type {
 } from "../types";
 import {
   addOpencodeCacheHint,
+  normalizeDirectoryQueryPath,
   modelFromUserMessage,
   normalizeDirectoryPath,
   normalizeEvent,
@@ -59,6 +60,14 @@ const sortSessionsByActivity = (list: Session[]) =>
       if (delta !== 0) return delta;
       return a.id.localeCompare(b.id);
     });
+
+const SYNTHETIC_CONTINUE_CONTROL_PATTERN =
+  /^\s*continue if you have next steps,\s*or stop and ask for clarification if you are unsure how to proceed\.?\s*$/i;
+const COMPACTION_DIAGNOSTIC_WINDOW_MS = 60_000;
+const COMPACTION_LOOP_WARN_THRESHOLD = 3;
+const COMPACTION_LOOP_WARN_MIN_INTERVAL_MS = 10_000;
+const INITIAL_SESSION_MESSAGE_LIMIT = 140;
+const SESSION_MESSAGE_LOAD_CHUNK = 120;
 
 const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   id: part.messageID,
@@ -135,6 +144,19 @@ export function createSessionStore(options: {
       // ignore
     }
   };
+
+  const sessionWarn = (label: string, payload?: unknown) => {
+    if (!sessionDebugEnabled()) return;
+    try {
+      if (payload === undefined) {
+        console.warn(`[WSWARN] ${label}`);
+      } else {
+        console.warn(`[WSWARN] ${label}`, payload);
+      }
+    } catch {
+      // ignore
+    }
+  };
   const MAX_RELOAD_DETECTION_KEYS = 5000;
 
   const [store, setStore] = createStore<StoreState>({
@@ -148,8 +170,13 @@ export function createSessionStore(options: {
     events: [],
   });
   const [permissionReplyBusy, setPermissionReplyBusy] = createSignal(false);
+  const [messageLimitBySession, setMessageLimitBySession] = createSignal<Record<string, number>>({});
+  const [messageCompleteBySession, setMessageCompleteBySession] = createSignal<Record<string, boolean>>({});
+  const [messageLoadBusyBySession, setMessageLoadBusyBySession] = createSignal<Record<string, boolean>>({});
   const reloadDetectionSet = new Set<string>();
   const invalidToolDetectionSet = new Set<string>();
+  const syntheticContinueEventTimesBySession = new Map<string, number[]>();
+  const syntheticContinueLoopLastWarnAtBySession = new Map<string, number>();
 
   const skillPathPattern = /[\\/]\.opencode[\\/](skill|skills)[\\/]/i;
   const skillNamePattern = /[\\/]\.opencode[\\/](?:skill|skills)[\\/]+([^\\/]+)/i;
@@ -361,6 +388,52 @@ export function createSessionStore(options: {
     options.setError(`Invalid tool call: ${tool}.\n\n${hint}`);
   };
 
+  const isSyntheticContinueControlPart = (part: Part) => {
+    if (part.type !== "text") return false;
+    const record = part as Part & { text?: unknown; synthetic?: unknown; ignored?: unknown };
+    if (record.synthetic !== true) return false;
+    if (record.ignored === true) return false;
+    const text = typeof record.text === "string" ? record.text.trim() : "";
+    if (!text) return false;
+    return SYNTHETIC_CONTINUE_CONTROL_PATTERN.test(text);
+  };
+
+  const recordSyntheticContinueDiagnostic = (part: Part) => {
+    if (!isSyntheticContinueControlPart(part)) return;
+    const sessionID = part.sessionID;
+    const now = Date.now();
+    const windowStart = now - COMPACTION_DIAGNOSTIC_WINDOW_MS;
+    const previous = syntheticContinueEventTimesBySession.get(sessionID) ?? [];
+    const next = previous.filter((timestamp) => timestamp >= windowStart);
+    next.push(now);
+    syntheticContinueEventTimesBySession.set(sessionID, next);
+
+    const countInWindow = next.length;
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue", {
+      sessionID,
+      messageID: part.messageID,
+      partID: part.id,
+      countPerMinute: countInWindow,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+
+    if (countInWindow < COMPACTION_LOOP_WARN_THRESHOLD) return;
+
+    const lastWarnAt = syntheticContinueLoopLastWarnAtBySession.get(sessionID) ?? 0;
+    if (now - lastWarnAt < COMPACTION_LOOP_WARN_MIN_INTERVAL_MS) return;
+    syntheticContinueLoopLastWarnAtBySession.set(sessionID, now);
+    sessionWarn("compaction:synthetic-continue-loop", {
+      sessionID,
+      countPerMinute: countInWindow,
+    });
+    recordPerfLog(sessionDebugEnabled(), "session.compaction", "synthetic-continue-loop-suspected", {
+      sessionID,
+      countPerMinute: countInWindow,
+      threshold: COMPACTION_LOOP_WARN_THRESHOLD,
+      windowMs: COMPACTION_DIAGNOSTIC_WINDOW_MS,
+    });
+  };
+
   const addError = (error: unknown, fallback = "Unknown error") => {
     const message = error instanceof Error ? error.message : fallback;
     if (!message) return;
@@ -515,6 +588,18 @@ export function createSessionStore(options: {
     return store.todos[id] ?? [];
   });
 
+  const selectedSessionHasEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return !messageCompleteBySession()[id];
+  });
+
+  const selectedSessionLoadingEarlierMessages = createMemo(() => {
+    const id = options.selectedSessionId();
+    if (!id) return false;
+    return Boolean(messageLoadBusyBySession()[id]);
+  });
+
   async function loadSessions(scopeRoot?: string) {
     const c = options.client();
     if (!c) return;
@@ -525,13 +610,7 @@ export function createSessionStore(options: {
     // Note: We intentionally normalize slashes + trailing separators but do NOT
     // lowercase on Windows for the query value because the server does strict
     // string equality against the stored session.directory.
-    const queryDirectory = (() => {
-      const trimmed = (scopeRoot ?? "").trim();
-      if (!trimmed) return undefined;
-      const unified = trimmed.replace(/\\/g, "/");
-      const withoutTrailing = unified.replace(/\/+$/, "");
-      return withoutTrailing || "/";
-    })();
+    const queryDirectory = normalizeDirectoryQueryPath(scopeRoot) || undefined;
 
     const start = Date.now();
     sessionDebug("sessions:load:start", { scopeRoot: scopeRoot ?? null, queryDirectory: queryDirectory ?? null });
@@ -644,11 +723,19 @@ export function createSessionStore(options: {
       }
       if (abortIfStale("selection changed after health")) return;
 
-      mark("calling session.messages");
-      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID }), 12000, "session.messages"));
-      mark("session.messages done");
+      const existingLimit = messageLimitBySession()[sessionID] ?? 0;
+      const requestLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, existingLimit);
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+      mark("calling session.messages", { limit: requestLimit });
+      const msgs = unwrap(
+        await withTimeout(c.session.messages({ sessionID, limit: requestLimit }), 12000, "session.messages"),
+      );
+      mark("session.messages done", { limit: requestLimit, count: msgs.length });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       if (abortIfStale("selection changed before messages applied")) return;
       setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: requestLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < requestLimit }));
 
       const model = options.lastUserModelFromMessages(msgs);
       if (model) {
@@ -698,15 +785,40 @@ export function createSessionStore(options: {
         messageCount: msgs.length,
         todoCount: (store.todos[sessionID] ?? []).length,
       });
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
     })();
 
     selectInFlightBySession.set(sessionID, run);
     try {
       await run;
     } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
       if (selectInFlightBySession.get(sessionID) === run) {
         selectInFlightBySession.delete(sessionID);
       }
+    }
+  }
+
+  async function loadEarlierMessages(sessionID: string, chunk = SESSION_MESSAGE_LOAD_CHUNK) {
+    const c = options.client();
+    if (!c) return;
+    if (!sessionID) return;
+    if (messageLoadBusyBySession()[sessionID]) return;
+    if (messageCompleteBySession()[sessionID]) return;
+
+    const currentLimit = Math.max(INITIAL_SESSION_MESSAGE_LIMIT, messageLimitBySession()[sessionID] ?? 0);
+    const nextLimit = currentLimit + Math.max(1, chunk);
+
+    setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: true }));
+    try {
+      const msgs = unwrap(await withTimeout(c.session.messages({ sessionID, limit: nextLimit }), 12000, "session.messages"));
+      setMessagesForSession(sessionID, msgs);
+      setMessageLimitBySession((prev) => ({ ...prev, [sessionID]: nextLimit }));
+      setMessageCompleteBySession((prev) => ({ ...prev, [sessionID]: msgs.length < nextLimit }));
+    } catch (error) {
+      addError(error);
+    } finally {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [sessionID]: false }));
     }
   }
 
@@ -792,7 +904,8 @@ export function createSessionStore(options: {
   const activePermission = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
-      return store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
+      const scoped = store.pendingPermissions.find((perm) => perm.sessionID === id) ?? null;
+      if (scoped) return scoped;
     }
     return store.pendingPermissions[0] ?? null;
   });
@@ -800,7 +913,8 @@ export function createSessionStore(options: {
   const activeQuestion = createMemo(() => {
     const id = options.selectedSessionId();
     if (id) {
-      return store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
+      const scoped = store.pendingQuestions.find((q) => q.sessionID === id) ?? null;
+      if (scoped) return scoped;
     }
     return store.pendingQuestions[0] ?? null;
   });
@@ -893,6 +1007,8 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         const info = record.info as Session | undefined;
         if (info?.id) {
+          syntheticContinueEventTimesBySession.delete(info.id);
+          syntheticContinueLoopLastWarnAtBySession.delete(info.id);
           setStore("sessions", (current) => removeSession(current, info.id));
         }
       }
@@ -1022,6 +1138,10 @@ export function createSessionStore(options: {
               draft.parts[part.messageID] = upsertPartInfo(parts, part);
             }),
           );
+          const resolvedPart =
+            store.parts[part.messageID]?.find((item) => item.id === part.id) ??
+            part;
+          recordSyntheticContinueDiagnostic(resolvedPart);
           const partUpdatedMs = Math.round((perfNow() - partUpdatedStartedAt) * 100) / 100;
           if (sessionDebugEnabled() && (partUpdatedMs >= 8 || (delta?.length ?? 0) >= 120)) {
             const textLength =
@@ -1307,6 +1427,7 @@ export function createSessionStore(options: {
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
+    loadEarlierMessages,
     renameSession,
     respondPermission,
     respondQuestion,
@@ -1317,5 +1438,7 @@ export function createSessionStore(options: {
     setTodos,
     setPendingPermissions,
     setPendingQuestions,
+    selectedSessionHasEarlierMessages,
+    selectedSessionLoadingEarlierMessages,
   };
 }

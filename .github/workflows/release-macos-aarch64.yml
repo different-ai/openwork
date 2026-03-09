@@ -239,7 +239,7 @@ jobs:
       MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
 
     strategy:
       fail-fast: false
@@ -352,7 +352,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
         run: |
           node <<'NODE' >> "$GITHUB_OUTPUT"
           const fs = require('fs');

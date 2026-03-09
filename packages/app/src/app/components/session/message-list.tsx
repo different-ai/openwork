@@ -1,10 +1,11 @@
-import { For, Show, createMemo, createSignal, onCleanup } from "solid-js";
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 
 import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types";
-import { groupMessageParts, summarizeStep } from "../../utils";
+import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
@@ -20,6 +21,8 @@ export type MessageListProps = {
   activeSearchMessageId?: string | null;
   searchHighlightQuery?: string;
   workspaceRoot?: string;
+  scrollElement?: () => HTMLElement | undefined;
+  setScrollToMessageById?: (handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null) => void;
   footer?: JSX.Element;
 };
 
@@ -49,6 +52,8 @@ type MessageBlock = {
 type MessageBlockItem = MessageBlock | StepClusterBlock;
 
 const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
+const VIRTUALIZATION_THRESHOLD = 500;
+const VIRTUAL_OVERSCAN = 4;
 
 type ExplorationSummary = {
   files: number;
@@ -299,6 +304,10 @@ export default function MessageList(props: MessageListProps) {
 
   const renderablePartsForMessage = (message: MessageWithParts) =>
     message.parts.filter((part) => {
+      if (!props.developerMode && !isUserVisiblePart(part)) {
+        return false;
+      }
+
       if (part.type === "reasoning") {
         return props.showThinking;
       }
@@ -412,7 +421,68 @@ export default function MessageList(props: MessageListProps) {
     return "";
   });
 
-  const shouldUseContentVisibility = createMemo(() => messageBlocks().length > 80);
+  const blockIndexByMessageId = createMemo(() => {
+    const next = new Map<string, number>();
+    messageBlocks().forEach((block, index) => {
+      if (block.kind === "steps-cluster") {
+        block.messageIds.forEach((id) => {
+          if (id) next.set(id, index);
+        });
+        return;
+      }
+      if (block.messageId) {
+        next.set(block.messageId, index);
+      }
+    });
+    return next;
+  });
+
+  const shouldVirtualize = createMemo(
+    () => Boolean(props.scrollElement?.()) && messageBlocks().length >= VIRTUALIZATION_THRESHOLD,
+  );
+
+  const virtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
+    get count() {
+      return messageBlocks().length;
+    },
+    getScrollElement: () => props.scrollElement?.() ?? null,
+    estimateSize: () => 220,
+    overscan: VIRTUAL_OVERSCAN,
+    getItemKey: (index) => {
+      const block = messageBlocks()[index];
+      if (!block) return `block-${index}`;
+      if (block.kind === "steps-cluster") {
+        return `steps-${block.messageIds.join(",")}`;
+      }
+      return `message-${block.messageId}`;
+    },
+  });
+
+  let cachedVirtualRows: ReturnType<typeof virtualizer.getVirtualItems> = [];
+  const virtualRows = createMemo(() => {
+    if (!shouldVirtualize()) {
+      cachedVirtualRows = [];
+      return [];
+    }
+    const rows = virtualizer.getVirtualItems();
+    if (rows.length > 0) {
+      cachedVirtualRows = rows;
+      return rows;
+    }
+    return cachedVirtualRows;
+  });
+
+  const virtualRowByIndex = createMemo(() => {
+    const map = new Map<number, ReturnType<typeof virtualizer.getVirtualItems>[number]>();
+    virtualRows().forEach((row) => {
+      map.set(row.index, row);
+    });
+    return map;
+  });
+
+  const virtualRowIndices = createMemo(() => virtualRows().map((row) => row.index));
+
+  const shouldUseContentVisibility = createMemo(() => !shouldVirtualize() && messageBlocks().length > 500);
   const blockPerfStyle = (index: number): JSX.CSSProperties | undefined => {
     if (!shouldUseContentVisibility()) return undefined;
     const total = messageBlocks().length;
@@ -422,6 +492,42 @@ export default function MessageList(props: MessageListProps) {
       "contain-intrinsic-size": "220px",
     };
   };
+
+  createEffect(() => {
+    const setScrollToMessageById = props.setScrollToMessageById;
+    if (!setScrollToMessageById) return;
+    const indexById = blockIndexByMessageId();
+    const useVirtualization = shouldVirtualize();
+
+    setScrollToMessageById((messageId, behavior = "smooth") => {
+      const index = indexById.get(messageId);
+      if (index === undefined) return false;
+
+      if (useVirtualization) {
+        virtualizer.scrollToIndex(index, { align: "center" });
+        return true;
+      }
+
+      const container = props.scrollElement?.();
+      if (!container) return false;
+      const escapedId = messageId.replace(/"/g, '\\"');
+      const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
+      if (!target) return false;
+      target.scrollIntoView({ behavior, block: "center" });
+      return true;
+    });
+  });
+
+  createEffect(() => {
+    if (!shouldVirtualize()) return;
+    queueMicrotask(() => {
+      virtualizer.measure();
+    });
+  });
+
+  onCleanup(() => {
+    props.setScrollToMessageById?.(null);
+  });
 
   /** Compact single-line step row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
@@ -452,7 +558,7 @@ export default function MessageList(props: MessageListProps) {
     }
 
     return (
-      <div class="flex items-center gap-2.5 py-1.5 min-h-[28px] group/step">
+      <div class="flex items-center gap-2 py-1 min-h-[24px] leading-5 group/step">
         {/* Status dot */}
         <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
         {/* Tool icon */}
@@ -464,29 +570,29 @@ export default function MessageList(props: MessageListProps) {
           <ToolIcon category={category()} size={13} />
         </div>
         {/* Title */}
-        <span class="text-[13px] text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
+        <span class="text-[13px] leading-4 text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
           {summary().title}
         </span>
         {/* Skill badge */}
         <Show when={summary().isSkill}>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
+          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
             skill
           </span>
         </Show>
         <Show when={task().isTask}>
-          <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
+          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
             subagent
           </span>
         </Show>
         {/* Detail - truncated to single line */}
         <Show when={summary().detail}>
-          <span class="text-[12px] text-gray-9 truncate min-w-0">
+          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
             {summary().detail}
           </span>
         </Show>
         <Show when={task().agentType && !summary().detail}>
           {(agentType) => (
-            <span class="text-[12px] text-gray-9 truncate min-w-0">
+            <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
               {agentType()} agent
             </span>
           )}
@@ -701,6 +807,7 @@ export default function MessageList(props: MessageListProps) {
         const state = (part as any).state ?? {};
         return state.status === "running" || state.status === "pending";
       });
+    const useInnerTimelineScroll = () => !(Boolean(props.isStreaming) && hasRunning());
 
     const collapsedLabel = () => {
       if (explorationOnly()) {
@@ -736,7 +843,7 @@ export default function MessageList(props: MessageListProps) {
       <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
         {/* Toggle button - clean, compact */}
         <button
-          class={`flex items-center gap-2 py-1.5 text-[13px] transition-colors ${
+          class={`flex items-center gap-2 py-1 leading-5 text-[13px] transition-colors ${
             containerProps.isUser
               ? "text-gray-10 hover:text-gray-11"
               : "text-gray-10 hover:text-gray-12"
@@ -747,27 +854,27 @@ export default function MessageList(props: MessageListProps) {
             size={14}
             class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
           />
-          <span class="font-medium inline-flex items-center gap-1.5 text-xs sm:text-[13px] text-gray-11">
+          <span class="font-medium inline-flex items-center gap-1.5 leading-4 text-xs sm:text-[13px] text-gray-11">
             <Show when={hasRunning()}>
               <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
             </Show>
             <span class="truncate max-w-[58ch]">{collapsedLabel()}</span>
           </span>
           <Show when={explorationOnly()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
           </Show>
           <Show when={!explorationOnly() && !expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
           </Show>
           <Show when={!explorationOnly() && expanded()}>
-            <span class="text-[11px] text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
+            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
           </Show>
         </button>
 
         {/* Expanded content */}
         <Show when={expanded()}>
           <div
-            class={`mt-1 ml-1 pl-3 border-l-2 max-h-[480px] overflow-y-auto ${
+            class={`mt-1 ml-1 pl-3 border-l-2 ${useInnerTimelineScroll() ? "max-h-[480px] overflow-y-auto" : ""} ${
               containerProps.isUser
                 ? "border-gray-6"
                 : "border-gray-6/60"
@@ -804,10 +911,7 @@ export default function MessageList(props: MessageListProps) {
     );
   };
 
-  return (
-    <div class="space-y-6 pb-32" style={{ contain: "layout paint style" }}>
-      <For each={messageBlocks()}>
-        {(block, blockIndex) => {
+  const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
           const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
           const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
           const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
@@ -823,13 +927,13 @@ export default function MessageList(props: MessageListProps) {
                 class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
                 data-message-role={block.isUser ? "user" : "assistant"}
                 data-message-id={block.messageIds[0] ?? ""}
-                style={blockPerfStyle(blockIndex())}
+                style={blockPerfStyle(blockIndex)}
               >
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                      : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
+                      : "max-w-[650px] text-[15px] leading-6 text-gray-12 group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -849,13 +953,13 @@ export default function MessageList(props: MessageListProps) {
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
-              style={blockPerfStyle(blockIndex())}
+              style={blockPerfStyle(blockIndex)}
             >
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-2xl px-6 py-4 rounded-[24px] bg-gray-3 text-gray-12 text-[15px] leading-relaxed"
-                    : "max-w-[68ch] text-[15px] leading-7 text-gray-12 group pl-2"
+                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
+                    : "max-w-[650px] text-[15px] leading-[1.65] text-gray-12 antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
@@ -946,8 +1050,56 @@ export default function MessageList(props: MessageListProps) {
               </div>
             </div>
           );
-        }}
-      </For>
+        };
+
+  return (
+    <div class="pb-24" style={{ contain: "layout paint style" }}>
+      <Show
+        when={shouldVirtualize()}
+        fallback={(
+          <div class="space-y-4">
+            <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+          </div>
+        )}
+      >
+        <Show
+          when={virtualRows().length > 0}
+          fallback={(
+            <div class="space-y-4">
+              <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+            </div>
+          )}
+        >
+          <div
+            class="relative"
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              width: "100%",
+            }}
+          >
+            <For each={virtualRowIndices()}>
+              {(rowIndex) => {
+                const virtualRow = virtualRowByIndex().get(rowIndex);
+                if (!virtualRow) return null;
+                const block = messageBlocks()[rowIndex];
+                if (!block) return null;
+                return (
+                  <div
+                    data-index={rowIndex}
+                    ref={(el) => virtualizer.measureElement(el)}
+                    class="absolute left-0 top-0 w-full pb-4"
+                    style={{
+                      transform: `translateY(${virtualRow.start}px)`,
+                    }}
+                  >
+                    {renderBlock(block, rowIndex)}
+                  </div>
+                );
+              }}
+            </For>
+          </div>
+        </Show>
+      </Show>
       <Show when={props.footer}>{props.footer}</Show>
     </div>
   );

@@ -22,10 +22,11 @@ export const metadata: Metadata = {
     "Launch OpenWork cloud workers, handle Polar paywall flows, and operate Den from app.openwork.software."
 };
 
+const defaultPosthogKey = "phc_4YnPTlDVYPjgwKvLuNxhbHjV5kadgvd7XLzVHWnCXAI";
 const posthogKey =
   process.env.NEXT_PUBLIC_POSTHOG_KEY?.trim() ||
   process.env.NEXT_PUBLIC_POSTHOG_API_KEY?.trim() ||
-  "";
+  defaultPosthogKey;
 const posthogHost = (process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://us.i.posthog.com").trim();
 
 const posthogBootstrap = posthogKey

@@ -1054,7 +1054,7 @@ export default function IdentitiesView(props: IdentitiesViewProps) {
                       {(code) => (
                         <div class="rounded-xl border border-sky-7/25 bg-sky-1/40 px-3.5 py-3 space-y-2">
                           <div class="text-[12px] font-semibold text-sky-11">Private pairing code</div>
-                          <div class="rounded-md border border-sky-7/20 bg-white/80 px-3 py-2 font-mono text-[13px] tracking-[0.08em] text-sky-12">
+                          <div class="rounded-md border border-sky-7/20 bg-sky-2/80 px-3 py-2 font-mono text-[13px] tracking-[0.08em] text-sky-12">
                             {code()}
                           </div>
                           <div class="text-[11px] text-sky-11/90 leading-relaxed">

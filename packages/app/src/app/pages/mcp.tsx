@@ -33,6 +33,7 @@ import { currentLocale, t, type Language } from "../../i18n";
 export type McpViewProps = {
   busy: boolean;
   activeWorkspaceRoot: string;
+  isRemoteWorkspace: boolean;
   showHeader?: boolean;
   mcpServers: McpServerEntry[];
   mcpStatus: string | null;
@@ -686,6 +687,7 @@ export default function McpView(props: McpViewProps) {
         onClose={() => setAddMcpModalOpen(false)}
         onAdd={(entry) => props.connectMcp(entry)}
         busy={props.busy}
+        isRemoteWorkspace={props.isRemoteWorkspace}
         language={locale()}
       />
     </section>

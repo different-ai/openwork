@@ -313,10 +313,17 @@ export default function SessionSidebar(props: SidebarProps) {
                       Boolean(group.workspace.sandboxRunId?.trim()) ||
                       Boolean(group.workspace.sandboxContainerName?.trim()));
                   const sessions = () => group.sessions;
-                  const allowActions = () => !props.connectingWorkspaceId || isConnecting();
                   const connectionState = () => props.workspaceConnectionStateById[group.workspace.id];
                   const connectionStatus = () => connectionState()?.status ?? "idle";
                   const connectionMessage = () => connectionState()?.message?.trim() ?? "";
+                  const isActivelyConnecting = () => isConnecting() && connectionStatus() === "connecting";
+                  const hasPendingSwitch = () => {
+                    const pendingId = props.connectingWorkspaceId;
+                    if (!pendingId || pendingId === props.activeWorkspaceId) return false;
+                    const pendingStatus = props.workspaceConnectionStateById[pendingId]?.status ?? "idle";
+                    return pendingStatus === "connecting";
+                  };
+                  const allowActions = () => !hasPendingSwitch() || isConnecting() || isActive();
                   const connectionDotClass = () => {
                     if (connectionStatus() === "connected") return "bg-green-9";
                     if (connectionStatus() === "connecting") return "bg-amber-9 animate-pulse";
@@ -350,11 +357,12 @@ export default function SessionSidebar(props: SidebarProps) {
                               : "text-gray-11 hover:text-gray-12 hover:bg-gray-2"
                           }`}
                           onClick={() => {
-                            if (isActive() || isConnecting()) return;
+                            if (isActivelyConnecting()) return;
+                            if (isActive()) return;
                             if (!allowActions()) return;
                             props.onSelectWorkspace(group.workspace.id);
                           }}
-                          disabled={isActive() || isConnecting() || !allowActions()}
+                          disabled={isActivelyConnecting() || (!isActive() && !allowActions())}
                         >
                           <div class="flex items-start justify-between gap-2">
                             <div class="min-w-0 space-y-0.5">
@@ -430,7 +438,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 type="button"
                                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onEditWorkspace(group.workspace.id)}
-                                disabled={isConnecting()}
+                                disabled={isActivelyConnecting()}
                               >
                                 <Settings size={12} />
                                 Edit connection
@@ -439,7 +447,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 type="button"
                                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onTestWorkspaceConnection(group.workspace.id)}
-                                disabled={isConnecting()}
+                                disabled={isActivelyConnecting()}
                               >
                                 <RefreshCcw size={12} class={connectionStatus() === "connecting" ? "animate-spin" : ""} />
                                 Test connection
@@ -450,7 +458,7 @@ export default function SessionSidebar(props: SidebarProps) {
                                 type="button"
                                 class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                                 onClick={() => props.onStopSandbox?.(group.workspace.id)}
-                                disabled={isConnecting()}
+                                disabled={isActivelyConnecting()}
                               >
                                 <Square size={12} />
                                 Stop sandbox
@@ -460,7 +468,7 @@ export default function SessionSidebar(props: SidebarProps) {
                               type="button"
                               class="inline-flex items-center gap-1.5 rounded-md border border-gray-6 px-2 py-1 text-[10px] text-gray-10 hover:text-gray-12 hover:border-gray-7 hover:bg-gray-2 transition-colors"
                               onClick={() => props.onForgetWorkspace(group.workspace.id)}
-                              disabled={isConnecting()}
+                              disabled={isActivelyConnecting()}
                             >
                               <Trash2 size={12} />
                               Remove

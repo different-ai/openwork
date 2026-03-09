@@ -20,18 +20,16 @@
           {
             "group": "Foundations",
             "pages": [
-              "index",
+              "introduction",
               "openwork",
+              "orbita-layout-style",
               "opencode-router",
               "cli"
             ]
           },
           {
             "group": "Agent Playbooks",
-            "pages": [
-              "quickstart",
-              "create-openwork-instance"
-            ]
+            "pages": ["quickstart", "create-openwork-instance"]
           },
           {
             "group": "Tutorials",
@@ -44,9 +42,7 @@
           },
           {
             "group": "Contributing",
-            "pages": [
-              "development"
-            ]
+            "pages": ["development"]
           }
         ]
       }

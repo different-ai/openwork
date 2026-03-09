@@ -18,6 +18,7 @@ What it does:
 - Auto-generates and shares auth tokens between services
 - Web waits for headless health check before starting
 - Builds Linux binaries inside the container (no host binary conflicts)
+- Auto-mounts host OpenCode config/auth into the stack when present, with safe empty-dir fallback
 
 Useful commands:
 - Logs: `docker compose -p <project> -f packaging/docker/docker-compose.dev.yml logs`
@@ -30,6 +31,8 @@ Optional env vars (via `.env` or `export`):
 - `OPENWORK_WORKSPACE` — host path to mount as workspace
 - `OPENWORK_PORT` — host port to map to container :8787
 - `WEB_PORT` — host port to map to container :5173
+- `OPENWORK_OPENCODE_CONFIG_DIR` — override host OpenCode config dir mount source
+- `OPENWORK_OPENCODE_DATA_DIR` — override host OpenCode data dir mount source
 
 ---
 

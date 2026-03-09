@@ -84,7 +84,7 @@ jobs:
       RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
       MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
 
     strategy:
       fail-fast: false

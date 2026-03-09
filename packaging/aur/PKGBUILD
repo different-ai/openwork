@@ -1,5 +1,5 @@
 pkgname=openwork
-pkgver=0.11.123
+pkgver=0.11.135
 pkgrel=1 # pkgrel should change when PKGBUILD does. Standard is to change back to 1 next time. Any interger is valid.
 pkgdesc="An Open source alternative to Claude Cowork"
 arch=('x86_64' 'aarch64')
@@ -9,10 +9,10 @@ depends=('gtk3' 'glib2' 'libayatana-appindicator' 'libsoup3' 'webkit2gtk-4.1' 'o
 
 # Architecture-specific sources and checksums
 source_x86_64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-amd64.deb")
-sha256sums_x86_64=('5ac487309a998b239a07933320f81db30f63f20332b260ced604ac098a0c2f12')
+sha256sums_x86_64=('4aec2ff6c324fe070eedd2688aaaf6df32410658e548e6e2a2002ef312fe6410')
 
 source_aarch64=("${pkgname}-${pkgver}.deb::${url}/releases/download/v${pkgver}/openwork-desktop-linux-arm64.deb")
-sha256sums_aarch64=('109170474fc7dcd7504d0a2214924b1fd730e67d453bd6e0122e7b3198d9128b')
+sha256sums_aarch64=('a6a2cd9dbf41c14b5113e4ded011fec19babc30f15e0ae5109a8da85f4eaafc2')
 
 # Makes sure makepkg doesn't extract the .deb since it will break
 noextract=("${pkgname}-${pkgver}.deb")
@@ -23,6 +23,7 @@ package() {
 
   # Extract the internal data archive directly to the cwd.
   bsdtar -O -xf "${pkgname}-${pkgver}.deb" 'data.tar*' | bsdtar -C "${pkgdir}" -xf -
+  rm -f "${pkgdir}/usr/bin/opencode"
 }
 
 # .deb Internal Structure Reference:

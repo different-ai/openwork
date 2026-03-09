@@ -1473,9 +1473,6 @@ export function createWorkspaceStore(options: {
     const doctor = await refreshSandboxDoctor();
     setSandboxPreflightBusy(false);
     setSandboxCreatePhase("provisioning");
-    options.setBusy(true);
-    options.setBusyLabel("status.creating_workspace");
-    options.setBusyStartedAt(startedAt);
     setSandboxCreateProgress({
       runId,
       startedAt,
@@ -1519,9 +1516,6 @@ export function createWorkspaceStore(options: {
       setSandboxStep("docker", { status: "error", detail });
       setSandboxError(detail);
       setSandboxStage("Docker not ready");
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
       setSandboxCreatePhase("idle");
       return false;
     }
@@ -1683,9 +1677,6 @@ export function createWorkspaceStore(options: {
     } finally {
       setSandboxPreflightBusy(false);
       setSandboxCreatePhase("idle");
-      options.setBusy(false);
-      options.setBusyLabel(null);
-      options.setBusyStartedAt(null);
     }
   }
 
@@ -2086,6 +2077,119 @@ export function createWorkspaceStore(options: {
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+    }
+  }
+
+  async function recoverWorkspace(workspaceId: string) {
+    const id = workspaceId.trim();
+    if (!id) return false;
+    if (connectingWorkspaceId() === id) return false;
+
+    const workspace = workspaces().find((item) => item.id === id) ?? null;
+    if (!workspace) return false;
+
+    const reconnect = async () => {
+      if (activeWorkspaceId() === id) {
+        return await activateWorkspace(id);
+      }
+      return await testWorkspaceConnection(id);
+    };
+
+    setConnectingWorkspaceId(id);
+    options.setError(null);
+
+    try {
+      updateWorkspaceConnectionState(id, { status: "connecting", message: null });
+
+      if (workspace.workspaceType !== "remote") {
+        return Boolean(await reconnect());
+      }
+
+      const isSandboxWorkspace =
+        workspace.sandboxBackend === "docker" || Boolean(workspace.sandboxContainerName?.trim());
+
+      if (!isSandboxWorkspace) {
+        return Boolean(await reconnect());
+      }
+
+      if (!isTauriRuntime()) {
+        options.setError(t("app.error.tauri_required", currentLocale()));
+        updateWorkspaceConnectionState(id, {
+          status: "error",
+          message: t("app.error.tauri_required", currentLocale()),
+        });
+        return false;
+      }
+
+      const workspacePath = workspace.directory?.trim() || workspace.path?.trim() || "";
+      if (!workspacePath) {
+        const message = "Worker folder is missing. Open Edit connection and try again.";
+        options.setError(message);
+        updateWorkspaceConnectionState(id, { status: "error", message });
+        return false;
+      }
+
+      const doctor = await refreshSandboxDoctor();
+      if (!doctor?.ready) {
+        const detail =
+          doctor?.error?.trim() ||
+          "Docker needs to be running before we can get this worker back online.";
+        throw new Error(detail);
+      }
+
+      const host = await orchestratorStartDetached({
+        workspacePath,
+        sandboxBackend: "docker",
+        runId: workspace.sandboxRunId?.trim() || null,
+        openworkToken:
+          workspace.openworkToken?.trim() || options.openworkServerSettings().token?.trim() || null,
+      });
+
+      const resolved = await resolveOpenworkHost({
+        hostUrl: host.openworkUrl,
+        token: host.token,
+        directoryHint: workspacePath,
+      });
+
+      if (resolved.kind !== "openwork") {
+        throw new Error("Worker is still warming up. Try again in a few seconds.");
+      }
+
+      const updated = await workspaceUpdateRemote({
+        workspaceId: id,
+        remoteType: "openwork",
+        baseUrl: resolved.opencodeBaseUrl,
+        directory: resolved.directory || workspacePath,
+        openworkHostUrl: resolved.hostUrl,
+        openworkToken: host.token,
+        openworkWorkspaceId: resolved.workspace.id,
+        openworkWorkspaceName: resolved.workspace.name ?? workspace.openworkWorkspaceName ?? null,
+        sandboxBackend: host.sandboxBackend ?? "docker",
+        sandboxRunId: host.sandboxRunId ?? workspace.sandboxRunId ?? null,
+        sandboxContainerName: host.sandboxContainerName ?? workspace.sandboxContainerName ?? null,
+      });
+
+      setWorkspaces(updated.workspaces);
+      syncActiveWorkspaceId(updated.activeId);
+
+      const ok = await reconnect();
+      if (!ok) {
+        const message = "Worker restarted, but reconnect failed. Try again in a few seconds.";
+        updateWorkspaceConnectionState(id, { status: "error", message });
+        options.setError(message);
+        return false;
+      }
+
+      updateWorkspaceConnectionState(id, { status: "connected", message: null });
+      return true;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : safeStringify(e);
+      const hint = addOpencodeCacheHint(message);
+      options.setError(hint);
+      updateWorkspaceConnectionState(id, { status: "error", message: hint });
+      return false;
+    } finally {
+      setConnectingWorkspaceId((current) => (current === id ? null : current));
     }
   }
 
@@ -3049,6 +3153,7 @@ export function createWorkspaceStore(options: {
     updateRemoteWorkspaceFlow,
     updateWorkspaceDisplayName,
     forgetWorkspace,
+    recoverWorkspace,
     stopSandbox,
     pickWorkspaceFolder,
     exportWorkspaceConfig,

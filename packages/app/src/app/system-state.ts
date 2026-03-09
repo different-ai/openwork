@@ -24,6 +24,31 @@ import {
 } from "./lib/tauri";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
+function throttle<T extends (...args: any[]) => any>(
+  fn: T,
+  delayMs: number
+): (...args: Parameters<T>) => void {
+  let lastCall = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastArgs: Parameters<T> | null = null;
+
+  return (...args: Parameters<T>) => {
+    const now = Date.now();
+    lastArgs = args;
+
+    if (now - lastCall >= delayMs) {
+      lastCall = now;
+      fn(...args);
+    } else if (!timeoutId){
+      timeoutId = setTimeout(() => {
+        lastCall = Date.now();
+        timeoutId = null;
+        if (lastArgs) fn(...lastArgs);
+      }, delayMs - (now - lastCall));
+    }
+  }
+}
+
 export type NotionState = {
   status: Accessor<"disconnected" | "connecting" | "connected" | "error">;
   setStatus: (value: "disconnected" | "connecting" | "connected" | "error") => void;
@@ -491,52 +516,44 @@ export function createSystemState(options: {
       downloadedBytes: 0,
       notes: pending.notes,
     });
+    
+    let accumulatedBytes = 0;
+    let totalBytes: number | null = null;
+
+    const throttledUpdateProgress = throttle(() => {
+      setUpdateStatus((current) => {
+        if (current.state !== "downloading") return current;
+        return {
+          ...current,
+          totalBytes,
+          downloadedBytes: accumulatedBytes,
+        };
+      });
+    }, 100);
 
     try {
-      let totalBytes: number | null = null;
-      let downloadedBytes = 0;
-      let lastPublishedBytes = 0;
-      let lastPublishedAt = 0;
-
-      const publishProgress = (force = false) => {
-        const now = Date.now();
-        const elapsed = now - lastPublishedAt;
-        const movedBytes = downloadedBytes - lastPublishedBytes;
-        if (!force && elapsed < 180 && movedBytes < 256 * 1024) {
-          return;
-        }
-        lastPublishedAt = now;
-        lastPublishedBytes = downloadedBytes;
-        setUpdateStatus((current) => {
-          if (current.state !== "downloading") return current;
-          return {
-            ...current,
-            totalBytes,
-            downloadedBytes,
-          };
-        });
-      };
-
       await pending.update.download((event: any) => {
         if (!event || typeof event !== "object") return;
         const record = event as Record<string, any>;
 
         if (record.event === "Started") {
-          totalBytes =
-            record.data && typeof record.data.contentLength === "number" ? record.data.contentLength : null;
-          publishProgress(true);
-          return;
+          const newTotal =
+            record.data && typeof record.data.contentLength === "number"
+              ? record.data.contentLength
+              : null;
+          totalBytes = newTotal;
+          throttledUpdateProgress();
         }
 
         if (record.event === "Progress") {
-          const chunk = record.data && typeof record.data.chunkLength === "number" ? record.data.chunkLength : 0;
-          downloadedBytes += chunk;
-          publishProgress(false);
-          return;
+          const chunk =
+            record.data && typeof record.data.chunkLength === "number"
+              ? record.data.chunkLength
+              : 0;
+          accumulatedBytes += chunk;
+          throttledUpdateProgress();
         }
       });
-
-      publishProgress(true);
 
       setUpdateStatus({
         state: "ready",

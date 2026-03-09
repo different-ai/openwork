@@ -189,6 +189,7 @@ pub struct OpenCodeRouterInfo {
     pub version: Option<String>,
     pub workspace_path: Option<String>,
     pub opencode_url: Option<String>,
+    pub health_port: Option<u16>,
     pub pid: Option<u32>,
     pub last_stdout: Option<String>,
     pub last_stderr: Option<String>,

@@ -5,6 +5,7 @@
   "windows": ["*"],
   "permissions": [
     "core:default",
+    "core:webview:allow-set-webview-zoom",
     "deep-link:default",
     "dialog:allow-open",
     "dialog:allow-save",

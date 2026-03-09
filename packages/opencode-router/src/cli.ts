@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import fs from "node:fs";
+import { readFile as readFileAsync } from "node:fs/promises";
 import path from "node:path";
 
 import { Command } from "commander";
-import { Bot } from "grammy";
+import { Bot, InputFile } from "grammy";
 import { WebClient } from "@slack/web-api";
 
 import { startBridge, type BridgeReporter } from "./bridge.js";
@@ -513,12 +514,25 @@ bindings
 
 program
   .command("send")
-  .description("Send a test message")
+  .description("Send a test message and/or media")
   .requiredOption("--channel <channel>", "telegram or slack")
   .requiredOption("--identity <id>", "Identity id")
   .requiredOption("--to <recipient>", "Recipient ID (chat ID or peerId)")
-  .requiredOption("--message <text>", "Message text to send")
-  .action(async (opts: { channel: string; identity: string; to: string; message: string }) => {
+  .option("--message <text>", "Message text to send")
+  .option("--image <path>", "Image file path")
+  .option("--audio <path>", "Audio file path")
+  .option("--file <path>", "File path")
+  .option("--caption <text>", "Caption for media upload")
+  .action(async (opts: {
+    channel: string;
+    identity: string;
+    to: string;
+    message?: string;
+    image?: string;
+    audio?: string;
+    file?: string;
+    caption?: string;
+  }) => {
     const useJson = program.opts().json;
     const channelRaw = opts.channel.trim().toLowerCase();
     if (channelRaw !== "telegram" && channelRaw !== "slack") {
@@ -528,28 +542,78 @@ program
     const config = loadConfig(process.env, { requireOpencode: false });
     const identityId = normalizeIdentityId(opts.identity);
     const to = opts.to.trim();
-    const message = opts.message;
+    const message = typeof opts.message === "string" ? opts.message : "";
+    const media = [
+      ...(opts.image?.trim() ? [{ type: "image" as const, filePath: path.resolve(opts.image.trim()) }] : []),
+      ...(opts.audio?.trim() ? [{ type: "audio" as const, filePath: path.resolve(opts.audio.trim()) }] : []),
+      ...(opts.file?.trim() ? [{ type: "file" as const, filePath: path.resolve(opts.file.trim()) }] : []),
+    ];
+    const caption = typeof opts.caption === "string" ? opts.caption.trim() : "";
+
+    if (!message.trim() && media.length === 0) {
+      outputError("Provide at least one of --message, --image, --audio, or --file.");
+    }
 
     try {
       if (channelRaw === "telegram") {
         const bot = config.telegramBots.find((b) => b.id === identityId);
         if (!bot) throw new Error(`Telegram identity not found: ${identityId}`);
         const tg = new Bot(bot.token);
-        await tg.api.sendMessage(Number(to), message);
+        const chatId = Number(to);
+        if (!Number.isFinite(chatId)) {
+          throw new Error("Telegram recipient must be numeric chat_id.");
+        }
+        if (message.trim()) {
+          await tg.api.sendMessage(chatId, message);
+        }
+        for (const item of media) {
+          if (item.type === "image") {
+            await tg.api.sendPhoto(chatId, new InputFile(item.filePath), {
+              ...(caption ? { caption } : {}),
+            });
+          } else if (item.type === "audio") {
+            await tg.api.sendAudio(chatId, new InputFile(item.filePath), {
+              ...(caption ? { caption } : {}),
+            });
+          } else {
+            await tg.api.sendDocument(chatId, new InputFile(item.filePath), {
+              ...(caption ? { caption } : {}),
+            });
+          }
+        }
       } else {
         const app = config.slackApps.find((a) => a.id === identityId);
         if (!app) throw new Error(`Slack identity not found: ${identityId}`);
         const web = new WebClient(app.botToken);
         const peer = parseSlackPeerId(to);
         if (!peer.channelId) throw new Error("Invalid recipient for Slack.");
-        await web.chat.postMessage({
-          channel: peer.channelId,
-          text: message,
-          ...(peer.threadTs ? { thread_ts: peer.threadTs } : {}),
-        } as any);
+        if (message.trim()) {
+          await web.chat.postMessage({
+            channel: peer.channelId,
+            text: message,
+            ...(peer.threadTs ? { thread_ts: peer.threadTs } : {}),
+          } as any);
+        }
+        for (const item of media) {
+          const fileData = await readFileAsync(item.filePath);
+          await (web as any).files.uploadV2({
+            channel_id: peer.channelId,
+            file: fileData,
+            filename: path.basename(item.filePath),
+            ...(peer.threadTs ? { thread_ts: peer.threadTs } : {}),
+            ...(caption ? { initial_comment: caption } : {}),
+          });
+        }
       }
 
-      if (useJson) outputJson({ success: true });
+      if (useJson)
+        outputJson({
+          success: true,
+          sent: {
+            text: Boolean(message.trim()),
+            media: media.map((item) => ({ type: item.type, filePath: item.filePath })),
+          },
+        });
       else console.log("Message sent.");
       process.exit(0);
     } catch (error) {

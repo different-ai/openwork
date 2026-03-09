@@ -1,5 +1,7 @@
 #![allow(non_snake_case)]
 
+use std::time::{Duration, Instant};
+
 use tauri::{AppHandle, State};
 use tauri_plugin_shell::process::CommandEvent;
 
@@ -21,6 +23,101 @@ fn check_health_endpoint(port: u16) -> Option<serde_json::Value> {
         response.into_json().ok()
     } else {
         None
+    }
+}
+
+const OPENCODE_ROUTER_STARTUP_WAIT_MS: u64 = 5_000;
+const OPENCODE_ROUTER_MAX_START_ATTEMPTS: usize = 5;
+
+fn append_output(slot: &mut Option<String>, line: &str) {
+    let existing = slot.as_deref().unwrap_or_default();
+    let next = format!("{existing}{line}");
+    *slot = Some(truncate_output(&next, 8000));
+}
+
+fn is_port_in_use_error(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    lower.contains("port is in use")
+        || lower.contains("eaddrinuse")
+        || lower.contains("address already in use")
+}
+
+fn format_startup_failure(
+    code: Option<i32>,
+    startup_stdout: &Option<String>,
+    startup_stderr: &Option<String>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(stdout) = startup_stdout {
+        if !stdout.trim().is_empty() {
+            parts.push(format!("stdout:\n{}", stdout.trim()));
+        }
+    }
+    if let Some(stderr) = startup_stderr {
+        if !stderr.trim().is_empty() {
+            parts.push(format!("stderr:\n{}", stderr.trim()));
+        }
+    }
+
+    let suffix = if parts.is_empty() {
+        String::new()
+    } else {
+        format!("\n\n{}", parts.join("\n\n"))
+    };
+
+    format!(
+        "OpenCodeRouter exited during startup (code {}).{}",
+        code.unwrap_or(-1),
+        suffix
+    )
+}
+
+fn await_router_startup(
+    rx: &mut tauri::async_runtime::Receiver<CommandEvent>,
+    health_port: u16,
+    startup_stdout: &mut Option<String>,
+    startup_stderr: &mut Option<String>,
+) -> Result<(), String> {
+    if check_health_endpoint(health_port).is_some() {
+        return Ok(());
+    }
+
+    let deadline = Instant::now() + Duration::from_millis(OPENCODE_ROUTER_STARTUP_WAIT_MS);
+    loop {
+        while let Ok(event) = rx.try_recv() {
+            match event {
+                CommandEvent::Stdout(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    append_output(startup_stdout, &line);
+                }
+                CommandEvent::Stderr(line_bytes) => {
+                    let line = String::from_utf8_lossy(&line_bytes).to_string();
+                    append_output(startup_stderr, &line);
+                }
+                CommandEvent::Terminated(payload) => {
+                    return Err(format_startup_failure(
+                        payload.code,
+                        startup_stdout,
+                        startup_stderr,
+                    ));
+                }
+                CommandEvent::Error(message) => {
+                    append_output(startup_stderr, &message);
+                    return Err(format!("OpenCodeRouter failed during startup: {message}"));
+                }
+                _ => {}
+            }
+        }
+
+        if check_health_endpoint(health_port).is_some() {
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            return Ok(());
+        }
+
+        std::thread::sleep(Duration::from_millis(80));
     }
 }
 
@@ -107,71 +204,133 @@ pub fn opencodeRouter_start(
         .map_err(|_| "opencodeRouter mutex poisoned".to_string())?;
     OpenCodeRouterManager::stop_locked(&mut state);
 
-    let resolved_health_port = match health_port {
-        Some(port) => port,
-        None => resolve_opencode_router_health_port()?,
+    let max_attempts = if health_port.is_some() {
+        1
+    } else {
+        OPENCODE_ROUTER_MAX_START_ATTEMPTS
     };
-    let (mut rx, child) = spawn_opencode_router(
-        &app,
-        &workspace_path,
-        opencode_url.as_deref(),
-        opencode_username.as_deref(),
-        opencode_password.as_deref(),
-        resolved_health_port,
-    )?;
 
-    state.child = Some(child);
-    state.child_exited = false;
-    state.workspace_path = Some(workspace_path);
-    state.opencode_url = opencode_url;
-    state.health_port = Some(resolved_health_port);
-    state.last_stdout = None;
-    state.last_stderr = None;
+    let mut last_error: Option<String> = None;
 
-    let state_handle = manager.inner.clone();
+    for attempt in 0..max_attempts {
+        let resolved_health_port = if attempt == 0 {
+            match health_port {
+                Some(port) => port,
+                None => resolve_opencode_router_health_port()?,
+            }
+        } else {
+            resolve_opencode_router_health_port()?
+        };
 
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                CommandEvent::Stdout(line_bytes) => {
-                    let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        let next =
-                            state.last_stdout.as_deref().unwrap_or_default().to_string() + &line;
-                        state.last_stdout = Some(truncate_output(&next, 8000));
-                    }
-                }
-                CommandEvent::Stderr(line_bytes) => {
-                    let line = String::from_utf8_lossy(&line_bytes).to_string();
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        let next =
-                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &line;
-                        state.last_stderr = Some(truncate_output(&next, 8000));
-                    }
-                }
-                CommandEvent::Terminated(payload) => {
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        state.child_exited = true;
-                        if let Some(code) = payload.code {
-                            let next = format!("OpenCodeRouter exited (code {code}).");
-                            state.last_stderr = Some(truncate_output(&next, 8000));
+        let (mut rx, child) = match spawn_opencode_router(
+            &app,
+            &workspace_path,
+            opencode_url.as_deref(),
+            opencode_username.as_deref(),
+            opencode_password.as_deref(),
+            resolved_health_port,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_error = Some(error);
+                continue;
+            }
+        };
+
+        let mut startup_stdout: Option<String> = None;
+        let mut startup_stderr: Option<String> = None;
+
+        match await_router_startup(
+            &mut rx,
+            resolved_health_port,
+            &mut startup_stdout,
+            &mut startup_stderr,
+        ) {
+            Ok(()) => {
+                state.child = Some(child);
+                state.child_exited = false;
+                state.workspace_path = Some(workspace_path.clone());
+                state.opencode_url = opencode_url.clone();
+                state.health_port = Some(resolved_health_port);
+                state.last_stdout = startup_stdout;
+                state.last_stderr = startup_stderr;
+
+                let state_handle = manager.inner.clone();
+
+                tauri::async_runtime::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(line_bytes) => {
+                                let line = String::from_utf8_lossy(&line_bytes).to_string();
+                                if let Ok(mut state) = state_handle.try_lock() {
+                                    let next = state
+                                        .last_stdout
+                                        .as_deref()
+                                        .unwrap_or_default()
+                                        .to_string()
+                                        + &line;
+                                    state.last_stdout = Some(truncate_output(&next, 8000));
+                                }
+                            }
+                            CommandEvent::Stderr(line_bytes) => {
+                                let line = String::from_utf8_lossy(&line_bytes).to_string();
+                                if let Ok(mut state) = state_handle.try_lock() {
+                                    let next = state
+                                        .last_stderr
+                                        .as_deref()
+                                        .unwrap_or_default()
+                                        .to_string()
+                                        + &line;
+                                    state.last_stderr = Some(truncate_output(&next, 8000));
+                                }
+                            }
+                            CommandEvent::Terminated(payload) => {
+                                if let Ok(mut state) = state_handle.try_lock() {
+                                    state.child_exited = true;
+                                    if let Some(code) = payload.code {
+                                        let next = format!("OpenCodeRouter exited (code {code}).");
+                                        state.last_stderr = Some(truncate_output(&next, 8000));
+                                    }
+                                }
+                            }
+                            CommandEvent::Error(message) => {
+                                if let Ok(mut state) = state_handle.try_lock() {
+                                    state.child_exited = true;
+                                    let next = state
+                                        .last_stderr
+                                        .as_deref()
+                                        .unwrap_or_default()
+                                        .to_string()
+                                        + &message;
+                                    state.last_stderr = Some(truncate_output(&next, 8000));
+                                }
+                            }
+                            _ => {}
                         }
                     }
+                });
+
+                return Ok(OpenCodeRouterManager::snapshot_locked(&mut state));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let retryable = health_port.is_none() && is_port_in_use_error(&error);
+                last_error = Some(error);
+                if !retryable {
+                    break;
                 }
-                CommandEvent::Error(message) => {
-                    if let Ok(mut state) = state_handle.try_lock() {
-                        state.child_exited = true;
-                        let next =
-                            state.last_stderr.as_deref().unwrap_or_default().to_string() + &message;
-                        state.last_stderr = Some(truncate_output(&next, 8000));
-                    }
-                }
-                _ => {}
             }
         }
-    });
+    }
 
-    Ok(OpenCodeRouterManager::snapshot_locked(&mut state))
+    let message = match last_error {
+        Some(error) if max_attempts > 1 => {
+            format!("Failed to start OpenCodeRouter after {max_attempts} attempts: {error}")
+        }
+        Some(error) => error,
+        None => "Failed to start OpenCodeRouter".to_string(),
+    };
+    Err(message)
 }
 
 #[tauri::command]

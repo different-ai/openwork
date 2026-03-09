@@ -59,6 +59,10 @@ export const setLocale = (newLocale: Language) => {
 
   setLocaleSignal(newLocale);
 
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("lang", newLocale);
+  }
+
   // Persist to localStorage
   if (typeof window !== "undefined") {
     try {
@@ -107,10 +111,17 @@ export const initLocale = (): Language => {
     const stored = window.localStorage.getItem(LANGUAGE_PREF_KEY);
     if (isLanguage(stored)) {
       setLocaleSignal(stored);
+      if (typeof document !== "undefined") {
+        document.documentElement.setAttribute("lang", stored);
+      }
       return stored;
     }
   } catch (e) {
     console.warn("Failed to read language preference:", e);
+  }
+
+  if (typeof document !== "undefined") {
+    document.documentElement.setAttribute("lang", "en");
   }
 
   return "en";

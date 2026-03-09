@@ -40,6 +40,7 @@ export type PluginsViewProps = {
   }>;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
   addPlugin: (pluginNameOverride?: string) => void;
+  removePlugin: (pluginName: string) => void;
 };
 
 export default function PluginsView(props: PluginsViewProps) {
@@ -197,7 +198,17 @@ export default function PluginsView(props: PluginsViewProps) {
               {(pluginName) => (
                 <div class="flex items-center justify-between rounded-xl border border-gray-6/60 bg-gray-1/40 px-4 py-2.5">
                   <div class="text-sm text-gray-12 font-mono">{pluginName}</div>
-                  <div class="text-[10px] uppercase tracking-wide text-gray-10">Enabled</div>
+                  <div class="flex items-center gap-2">
+                    <div class="text-[10px] uppercase tracking-wide text-gray-10">Enabled</div>
+                    <Button
+                      variant="ghost"
+                      class="h-7 px-2 text-[11px] text-red-11 hover:text-red-12"
+                      onClick={() => props.removePlugin(pluginName)}
+                      disabled={props.busy || !props.canEditPlugins}
+                    >
+                      Remove
+                    </Button>
+                  </div>
                 </div>
               )}
             </For>

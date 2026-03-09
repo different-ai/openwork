@@ -86,6 +86,7 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_BETTER_AUTH_URL: ${{ vars.DEN_BETTER_AUTH_URL }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
           DEN_CORS_ORIGINS: ${{ vars.DEN_CORS_ORIGINS }}
@@ -134,6 +135,7 @@ jobs:
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
+          better_auth_url = os.environ.get("DEN_BETTER_AUTH_URL") or "https://app.openwork.software"
 
           if bool(github_client_id) != bool(github_client_secret):
               raise RuntimeError(
@@ -147,6 +149,7 @@ jobs:
 
           validate_redirect_url("DEN_POLAR_SUCCESS_URL", polar_success_url)
           validate_redirect_url("DEN_POLAR_RETURN_URL", polar_return_url)
+          validate_redirect_url("DEN_BETTER_AUTH_URL", better_auth_url)
 
           if paywall_enabled and (not polar_access_token or not polar_product_id or not polar_benefit_id):
               raise RuntimeError(
@@ -216,7 +219,7 @@ jobs:
           env_vars = [
               {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
               {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
-              {"key": "BETTER_AUTH_URL", "value": service_url},
+              {"key": "BETTER_AUTH_URL", "value": better_auth_url},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
               {"key": "CORS_ORIGINS", "value": cors_origins},

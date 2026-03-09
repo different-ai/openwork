@@ -146,6 +146,40 @@ pub fn engine_stop(
 }
 
 #[tauri::command]
+pub fn engine_restart(
+    app: AppHandle,
+    manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+) -> Result<EngineInfo, String> {
+    let (project_dir, runtime) = {
+        let state = manager.inner.lock().expect("engine mutex poisoned");
+        (
+            state
+                .project_dir
+                .clone()
+                .ok_or_else(|| "OpenCode is not configured for a local workspace".to_string())?,
+            state.runtime.clone(),
+        )
+    };
+
+    let workspace_paths = vec![project_dir.clone()];
+    engine_start(
+        app,
+        manager,
+        orchestrator_manager,
+        openwork_manager,
+        opencode_router_manager,
+        project_dir,
+        None,
+        None,
+        Some(runtime),
+        Some(workspace_paths),
+    )
+}
+
+#[tauri::command]
 pub fn engine_doctor(
     app: AppHandle,
     prefer_sidecar: Option<bool>,

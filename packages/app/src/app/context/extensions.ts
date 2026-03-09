@@ -634,6 +634,85 @@ export function createExtensionsStore(options: {
     }
   }
 
+  async function removePlugin(pluginName: string) {
+    const name = pluginName.trim();
+    if (!name) return;
+    const triggerName = stripPluginVersion(name);
+
+    const isRemoteWorkspace = options.workspaceType() === "remote";
+    const isLocalWorkspace = options.workspaceType() === "local";
+    const openworkClient = options.openworkServerClient();
+    const openworkWorkspaceId = options.openworkServerWorkspaceId();
+    const openworkCapabilities = options.openworkServerCapabilities();
+    const canUseOpenworkServer =
+      options.openworkServerStatus() === "connected" &&
+      openworkClient &&
+      openworkWorkspaceId &&
+      openworkCapabilities?.plugins?.write;
+
+    if (pluginScope() !== "project" && !isLocalWorkspace) {
+      setPluginStatus("Global plugins are only available for local workers.");
+      return;
+    }
+
+    if (pluginScope() === "project" && canUseOpenworkServer) {
+      try {
+        setPluginStatus(null);
+        await openworkClient.removePlugin(openworkWorkspaceId, name);
+        await refreshPlugins("project");
+      } catch (e) {
+        setPluginStatus(e instanceof Error ? e.message : "Failed to remove plugin.");
+      }
+      return;
+    }
+
+    if (!isTauriRuntime()) {
+      setPluginStatus(translate("skills.plugin_management_host_only"));
+      return;
+    }
+
+    if (!isLocalWorkspace && !canUseOpenworkServer) {
+      setPluginStatus("OpenWork server unavailable. Connect to manage plugins.");
+      return;
+    }
+
+    const scope = pluginScope();
+    const targetDir = options.projectDir().trim();
+
+    if (scope === "project" && !targetDir) {
+      setPluginStatus(translate("skills.pick_project_for_plugins"));
+      return;
+    }
+
+    try {
+      setPluginStatus(null);
+      const config = await readOpencodeConfig(scope, targetDir);
+      const raw = config.content ?? "";
+      if (!raw.trim()) {
+        setPluginStatus("No plugins configured yet.");
+        return;
+      }
+
+      const plugins = parsePluginListFromContent(raw);
+      const desired = stripPluginVersion(name).toLowerCase();
+      const next = plugins.filter((entry) => stripPluginVersion(entry).toLowerCase() !== desired);
+      if (next.length === plugins.length) {
+        setPluginStatus("Plugin not found.");
+        return;
+      }
+
+      const edits = modify(raw, ["plugin"], next, {
+        formattingOptions: { insertSpaces: true, tabSize: 2 },
+      });
+      const updated = applyEdits(raw, edits);
+      await writeOpencodeConfig(scope, targetDir, updated);
+      options.markReloadRequired?.("plugins", { type: "plugin", name: triggerName, action: "removed" });
+      await refreshPlugins(scope);
+    } catch (e) {
+      setPluginStatus(e instanceof Error ? e.message : translate("skills.failed_update_opencode"));
+    }
+  }
+
   async function importLocalSkill() {
     const isLocalWorkspace = options.workspaceType() === "local";
 
@@ -1045,6 +1124,7 @@ export function createExtensionsStore(options: {
     refreshHubSkills,
     refreshPlugins,
     addPlugin,
+    removePlugin,
     importLocalSkill,
     installSkillCreator,
     installHubSkill,
