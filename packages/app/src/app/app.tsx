@@ -1149,6 +1149,17 @@ export default function App() {
         retention: DEBUG_DEFAULT_RETENTION,
       });
       setDebugSession(result.manifest);
+      const correlationId = createDebugCorrelationId();
+      setActiveCorrelationId(correlationId);
+      const base = buildDebugEventBase({
+        kind: "lifecycle",
+        debugSessionId: result.manifest.id,
+        correlationId,
+        surface: "app.support",
+        action: "debug.start",
+        payload: { startedAt: result.manifest.startedAt },
+      });
+      void appendDebugEvent({ ...base, kind: "lifecycle", phase: "start" });
       return result.manifest;
     } catch (error) {
       setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
@@ -1164,6 +1175,20 @@ export default function App() {
       return;
     }
     try {
+      const session = debugSession();
+      if (session) {
+        const correlationId = createDebugCorrelationId();
+        setActiveCorrelationId(correlationId);
+        const base = buildDebugEventBase({
+          kind: "lifecycle",
+          debugSessionId: session.id,
+          correlationId,
+          surface: "app.support",
+          action: "debug.stop",
+          payload: { stoppedAt: new Date().toISOString() },
+        });
+        void appendDebugEvent({ ...base, kind: "lifecycle", phase: "stop" });
+      }
       await debugSessionStop();
       setDebugSession(null);
     } catch (error) {
@@ -2070,6 +2095,14 @@ export default function App() {
 
   async function startProviderAuth(providerId?: string): Promise<ProviderOAuthStartResult> {
     setProviderAuthError(null);
+    if (providerId?.trim()) {
+      emitUiEvent({
+        surface: "app.settings",
+        action: "provider.oauth.start",
+        interaction: "click",
+        payload: { providerId: providerId.trim() },
+      });
+    }
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -2154,6 +2187,12 @@ export default function App() {
 
   async function completeProviderAuthOAuth(providerId: string, methodIndex: number, code?: string) {
     setProviderAuthError(null);
+    emitUiEvent({
+      surface: "app.settings",
+      action: "provider.oauth.complete",
+      interaction: "submit",
+      payload: { providerId, methodIndex, hasCode: Boolean(code?.trim()) },
+    });
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -2227,6 +2266,12 @@ export default function App() {
 
   async function submitProviderApiKey(providerId: string, apiKey: string) {
     setProviderAuthError(null);
+    emitUiEvent({
+      surface: "app.settings",
+      action: "provider.apiKey.submit",
+      interaction: "submit",
+      payload: { providerId, hasKey: Boolean(apiKey?.trim()) },
+    });
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -2253,6 +2298,12 @@ export default function App() {
 
   async function disconnectProvider(providerId: string) {
     setProviderAuthError(null);
+    emitUiEvent({
+      surface: "app.settings",
+      action: "provider.disconnect",
+      interaction: "click",
+      payload: { providerId },
+    });
     const c = client();
     if (!c) {
       throw new Error("Not connected to a server");
@@ -3431,11 +3482,28 @@ export default function App() {
   const resolvedDevtoolsWorkspaceId = createMemo(() => devtoolsWorkspaceId() ?? openworkServerWorkspaceId());
 
   function updateOpenworkServerSettings(next: OpenworkServerSettings) {
+    const prev = openworkServerSettings();
+    emitUiEvent({
+      surface: "app.settings",
+      action: "openwork.settings.update",
+      interaction: "change",
+      payload: {
+        urlOverrideChanged: (prev.urlOverride ?? "") !== (next.urlOverride ?? ""),
+        portOverrideChanged: (prev.portOverride ?? null) !== (next.portOverride ?? null),
+        tokenChanged: (prev.token ?? "") !== (next.token ?? ""),
+        hasToken: Boolean((next.token ?? "").trim()),
+      },
+    });
     const stored = writeOpenworkServerSettings(next);
     setOpenworkServerSettings(stored);
   }
 
   const resetOpenworkServerSettings = () => {
+    emitUiEvent({
+      surface: "app.settings",
+      action: "openwork.settings.reset",
+      interaction: "click",
+    });
     clearOpenworkServerSettings();
     setOpenworkServerSettings({});
   };
@@ -3840,6 +3908,12 @@ export default function App() {
 
   const setWorkspaceAutoReloadEnabled = async (next: boolean) => {
     if (!workspaceAutoReloadAvailable()) return;
+    emitUiEvent({
+      surface: "app.settings",
+      action: "workspace.autoReload.toggle",
+      interaction: "toggle",
+      payload: { enabled: next },
+    });
     const cfg = workspaceStore.workspaceConfig();
     const resume = Boolean(cfg?.reload?.resume);
     await workspaceStore.persistReloadSettings({ auto: next, resume: next ? resume : false });
@@ -3847,6 +3921,12 @@ export default function App() {
 
   const setWorkspaceAutoReloadResumeEnabled = async (next: boolean) => {
     if (!workspaceAutoReloadAvailable()) return;
+    emitUiEvent({
+      surface: "app.settings",
+      action: "workspace.autoReload.resume.toggle",
+      interaction: "toggle",
+      payload: { enabled: next },
+    });
     const cfg = workspaceStore.workspaceConfig();
     const auto = Boolean(cfg?.reload?.auto);
     await workspaceStore.persistReloadSettings({ auto, resume: auto ? next : false });
@@ -4379,6 +4459,17 @@ export default function App() {
   }
 
   function applyModelSelection(next: ModelRef) {
+    const target = modelPickerTarget() === "default" ? "default" : "session";
+    emitUiEvent({
+      surface: "app.settings",
+      action: "model.select",
+      interaction: "select",
+      payload: {
+        target,
+        providerId: next.providerID,
+        modelId: next.modelID,
+      },
+    });
     if (modelPickerTarget() === "default") {
       setDefaultModelExplicit(true);
       setDefaultModel(next);
@@ -5920,6 +6011,37 @@ export default function App() {
     setView("dashboard");
   };
 
+  const setThemeModeLogged = (next: ThemeMode) => {
+    emitUiEvent({
+      surface: "app.settings",
+      action: "theme.change",
+      interaction: "select",
+      payload: { mode: next },
+    });
+    setThemeMode(next);
+  };
+
+  const setModelVariantLogged = (value: string) => {
+    emitUiEvent({
+      surface: "session.composer",
+      action: "model.variant.change",
+      interaction: "select",
+      payload: { value },
+    });
+    setModelVariant(value);
+  };
+
+  const toggleAutoCompactContextLogged = () => {
+    const next = !autoCompactContext();
+    emitUiEvent({
+      surface: "session.settings",
+      action: "session.autoCompact.toggle",
+      interaction: "toggle",
+      payload: { enabled: next },
+    });
+    setAutoCompactContext(next);
+  };
+
   const onboardingProps = () => ({
     startupPreference: startupPreference(),
     onboardingStep: onboardingStep(),
@@ -5968,7 +6090,7 @@ export default function App() {
     onRepairMigration: workspaceStore.onRepairOpencodeMigration,
     onCreateWorkspace: workspaceStore.createWorkspaceFlow,
     onPickWorkspaceFolder: workspaceStore.pickWorkspaceFolder,
-    onImportWorkspaceConfig: workspaceStore.importWorkspaceConfig,
+    onImportWorkspaceConfig: importWorkspaceConfigLogged,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
     onAttachHost: workspaceStore.onAttachHost,
     onConnectClient: workspaceStore.onConnectClient,
@@ -5990,7 +6112,7 @@ export default function App() {
     },
     onOpenSettings: openSettingsFromUi,
     themeMode: themeMode(),
-    setThemeMode,
+    setThemeMode: setThemeModeLogged,
   });
 
   const dashboardProps = () => {
@@ -6093,9 +6215,9 @@ export default function App() {
       recoverWorkspace: workspaceStore.recoverWorkspace,
       openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
       openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
-      importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
+      importWorkspaceConfig: importWorkspaceConfigLogged,
       importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
-      exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
+      exportWorkspaceConfig: exportWorkspaceConfigLogged,
       exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
       createWorkspaceOpen: workspaceStore.createWorkspaceOpen(),
       setCreateWorkspaceOpen: workspaceStore.setCreateWorkspaceOpen,
@@ -6212,7 +6334,7 @@ export default function App() {
         setRememberStartupChoice(false);
       },
       themeMode: themeMode(),
-      setThemeMode,
+      setThemeMode: setThemeModeLogged,
       pendingPermissions: pendingPermissions(),
       events: events(),
       workspaceDebugEvents: workspaceStore.workspaceDebugEvents(),
@@ -6277,6 +6399,38 @@ export default function App() {
     }
   };
 
+  const importWorkspaceConfigLogged = () => {
+    emitUiEvent({
+      surface: "app.settings",
+      action: "workspace.import",
+      interaction: "click",
+      payload: { workspaceId: workspaceStore.activeWorkspaceId() },
+    });
+    return workspaceStore.importWorkspaceConfig();
+  };
+
+  const exportWorkspaceConfigLogged = (workspaceId?: string) => {
+    const id = workspaceId ?? workspaceStore.activeWorkspaceId();
+    emitUiEvent({
+      surface: "app.settings",
+      action: "workspace.export",
+      interaction: "click",
+      payload: { workspaceId: id },
+    });
+    return workspaceStore.exportWorkspaceConfig(id);
+  };
+
+  const saveSessionExportLogged = (sessionId?: string) => {
+    const id = sessionId ?? selectedSessionId() ?? null;
+    emitUiEvent({
+      surface: "session.export",
+      action: "session.export",
+      interaction: "click",
+      payload: { sessionId: id },
+    });
+    return saveSessionExport(sessionId);
+  };
+
   const sessionProps = () => ({
     selectedSessionId: activeSessionId(),
     setView,
@@ -6296,9 +6450,9 @@ export default function App() {
     forgetWorkspace: workspaceStore.forgetWorkspace,
     openCreateWorkspace: () => workspaceStore.setCreateWorkspaceOpen(true),
     openCreateRemoteWorkspace: () => workspaceStore.setCreateRemoteWorkspaceOpen(true),
-    importWorkspaceConfig: workspaceStore.importWorkspaceConfig,
+    importWorkspaceConfig: importWorkspaceConfigLogged,
     importingWorkspaceConfig: workspaceStore.importingWorkspaceConfig(),
-    exportWorkspaceConfig: workspaceStore.exportWorkspaceConfig,
+    exportWorkspaceConfig: exportWorkspaceConfigLogged,
     exportWorkspaceBusy: workspaceStore.exportingWorkspaceConfig(),
     clientConnected: Boolean(client()),
     openworkServerStatus: openworkServerStatus(),
@@ -6318,7 +6472,7 @@ export default function App() {
     openSessionModelPicker: openSessionModelPicker,
     modelVariantLabel: formatModelVariantLabel(modelVariant()),
     modelVariant: modelVariant(),
-    setModelVariant: (value: string) => setModelVariant(value),
+    setModelVariant: setModelVariantLogged,
     activePlugins: sidebarPluginList(),
     activePluginStatus: sidebarPluginStatus(),
     mcpServers: mcpServers(),
@@ -6346,7 +6500,7 @@ export default function App() {
     developerMode: developerMode(),
     showThinking: showThinking(),
     autoCompactContext: autoCompactContext(),
-    toggleAutoCompactContext: () => setAutoCompactContext((v) => !v),
+    toggleAutoCompactContext: toggleAutoCompactContextLogged,
     groupMessageParts,
     summarizeStep,
     expandedStepIds: expandedStepIds(),
@@ -6384,7 +6538,7 @@ export default function App() {
     listCommands: listCommands,
     selectedSessionAgent: selectedSessionAgent(),
     setSessionAgent: setSessionAgent,
-    saveSession: saveSessionExport,
+    saveSession: saveSessionExportLogged,
     sessionStatusById: activeSessionStatusById(),
     hasEarlierMessages: selectedSessionHasEarlierMessages(),
     loadingEarlierMessages: selectedSessionLoadingEarlierMessages(),
