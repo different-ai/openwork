@@ -6,7 +6,7 @@ export const DEFAULT_PUBLIC_BASE_URL = "https://share.openwork.software";
 export const DEFAULT_OPENWORK_APP_URL = "https://app.openwork.software";
 export const SHARE_EASE = "cubic-bezier(0.31, 0.325, 0, 0.92)";
 
-function maybeString(value) {
+export function maybeString(value) {
   return typeof value === "string" ? value : "";
 }
 
@@ -14,7 +14,7 @@ export function maybeObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 
-function maybeArray(value) {
+export function maybeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
@@ -276,9 +276,11 @@ export function getBundleCounts(bundle) {
   const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter(Boolean);
   const opencode = maybeObject(bundle.workspace?.opencode);
   const openwork = maybeObject(bundle.workspace?.openwork);
+  const genericConfig = maybeObject(bundle.workspace?.config);
   const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter(Boolean);
   const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
   const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
+  const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
 
   return {
     skillCount:
@@ -292,7 +294,8 @@ export function getBundleCounts(bundle) {
     commandCount: commands.length,
     agentCount: agentEntries.length,
     mcpCount: mcpEntries.length,
-    hasConfig: Boolean(opencode || openwork),
+    configCount: (openwork ? 1 : 0) + (opencodeConfigKeys.length ? 1 : 0) + Object.keys(genericConfig ?? {}).length,
+    hasConfig: Boolean(openwork || opencodeConfigKeys.length || genericConfig),
   };
 }
 
@@ -370,6 +373,34 @@ export function collectBundleItems(bundle, limit = 8) {
         tone: "command",
       });
     }
+
+    const opencodeConfigKeys = Object.keys(maybeObject(opencode) ?? {}).filter((key) => !["agent", "mcp"].includes(key));
+    if (opencodeConfigKeys.length) {
+      items.push({
+        name: "opencode.json",
+        kind: "Config",
+        meta: "OpenCode config",
+        tone: "config",
+      });
+    }
+
+    if (maybeObject(bundle.workspace?.openwork)) {
+      items.push({
+        name: "openwork.json",
+        kind: "Config",
+        meta: "OpenWork config",
+        tone: "config",
+      });
+    }
+
+    for (const [name] of Object.entries(maybeObject(bundle.workspace?.config) ?? {})) {
+      items.push({
+        name,
+        kind: "Config",
+        meta: "Config file",
+        tone: "config",
+      });
+    }
   }
 
   return items.slice(0, limit);
@@ -397,6 +428,7 @@ export function buildBundleNarrative(bundle) {
   if (counts.agentCount) parts.push(`${counts.agentCount} agent${counts.agentCount === 1 ? "" : "s"}`);
   if (counts.mcpCount) parts.push(`${counts.mcpCount} MCP${counts.mcpCount === 1 ? "" : "s"}`);
   if (counts.commandCount) parts.push(`${counts.commandCount} command${counts.commandCount === 1 ? "" : "s"}`);
+  if (counts.configCount) parts.push(`${counts.configCount} config${counts.configCount === 1 ? "" : "s"}`);
   return parts.length
     ? `${parts.join(", ")} bundled into a worker package that imports through OpenWork with one step.`
     : "Worker configuration bundle prepared for OpenWork import.";

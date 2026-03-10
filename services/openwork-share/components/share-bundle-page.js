@@ -8,6 +8,7 @@ function toneClass(item) {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
   if (item?.tone === "command") return "dot-command";
+  if (item?.tone === "config") return "dot-config";
   return "dot-skill";
 }
 

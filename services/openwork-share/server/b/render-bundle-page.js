@@ -18,6 +18,7 @@ import {
 export { buildBundleUrls, wantsDownload, wantsJsonResponse } from "../_lib/share-utils.js";
 
 function toneInitial(kind) {
+  if (kind === "Config") return "config";
   if (kind === "MCP") return "mcp";
   if (kind === "Command") return "command";
   if (kind === "Agent") return "agent";
@@ -63,7 +64,7 @@ export function renderBundlePage({ id, rawJson, req }) {
     counts.agentCount ? ["Agents", String(counts.agentCount)] : null,
     counts.mcpCount ? ["MCPs", String(counts.mcpCount)] : null,
     counts.commandCount ? ["Commands", String(counts.commandCount)] : null,
-    counts.hasConfig ? ["Config", "yes"] : null,
+    counts.configCount ? ["Configs", String(counts.configCount)] : null,
   ]
     .filter(Boolean)
     .map(
@@ -378,6 +379,7 @@ export function renderBundlePage({ id, rawJson, req }) {
     .dot-skill { background: #2463eb; }
     .dot-mcp { background: #0f9f7f; }
     .dot-command { background: #8b5cf6; }
+    .dot-config { background: #475569; }
 
     .item-title { font-size: 14px; font-weight: 500; color: var(--ow-ink); }
     .item-meta { font-size: 12px; color: var(--ow-muted); }

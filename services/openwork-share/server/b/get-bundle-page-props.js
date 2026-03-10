@@ -19,7 +19,7 @@ function buildMetadataRows(id, bundle, counts, schemaVersion) {
     ...(counts.agentCount ? [{ label: "Agents", value: String(counts.agentCount) }] : []),
     ...(counts.mcpCount ? [{ label: "MCPs", value: String(counts.mcpCount) }] : []),
     ...(counts.commandCount ? [{ label: "Commands", value: String(counts.commandCount) }] : []),
-    ...(counts.hasConfig ? [{ label: "Config", value: "yes" }] : [])
+    ...(counts.configCount ? [{ label: "Configs", value: String(counts.configCount) }] : [])
   ];
 }
 

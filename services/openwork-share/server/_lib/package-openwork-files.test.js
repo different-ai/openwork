@@ -47,16 +47,12 @@ You qualify leads and route follow-up.`,
       {
         path: "opencode.jsonc",
         content: `{
-          // Only the mcp section should be exported
+          // Project config should survive alongside typed entries
+          "model": "openai/gpt-5.4",
           "mcp": {
             "crm-sync": {
               "type": "remote",
               "url": "https://crm.example.com/mcp"
-            }
-          },
-          "provider": {
-            "openai": {
-              "apiKey": "should-not-leak"
             }
           }
         }`,
@@ -68,9 +64,10 @@ You qualify leads and route follow-up.`,
   assert.equal(result.bundle.type, "workspace-profile");
   assert.equal(result.summary.agents, 1);
   assert.equal(result.summary.mcpServers, 1);
+  assert.equal(result.summary.configs, 1);
   assert.deepEqual(Object.keys(result.bundle.workspace.opencode.agent), ["sales-inbound"]);
   assert.deepEqual(Object.keys(result.bundle.workspace.opencode.mcp), ["crm-sync"]);
-  assert.equal(result.bundle.workspace.opencode.provider, undefined);
+  assert.equal(result.bundle.workspace.opencode.model, "openai/gpt-5.4");
 });
 
 test("packageOpenworkFiles rejects secret-looking MCP config values", () => {
@@ -95,4 +92,87 @@ test("packageOpenworkFiles rejects secret-looking MCP config values", () => {
       }),
     /Potential secrets found/,
   );
+});
+
+test("packageOpenworkFiles infers AGENTS.md as agent markdown", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: "AGENTS.md",
+        content: `# Revenue Agent
+
+## Agent overview
+
+This agent handles inbound revenue operations.
+The agent coordinates follow-up and handoff.`,
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "workspace-profile");
+  assert.equal(result.summary.agents, 1);
+  assert.equal(result.items[0]?.kind, "Agent");
+});
+
+test("packageOpenworkFiles accepts mcp_config.json by filename as MCP config", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: "mcp_config.json",
+        content: JSON.stringify({
+          type: "remote",
+          url: "https://mcp.example.com",
+        }),
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "workspace-profile");
+  assert.equal(result.summary.mcpServers, 1);
+  assert.equal(result.items[0]?.kind, "MCP");
+});
+
+test("packageOpenworkFiles accepts opencode-shaped jsonc from a generic filename", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: "workspace-config.jsonc",
+        content: `{
+          "$schema": "https://opencode.ai/config.json",
+          "model": "anthropic/claude-sonnet-4-5",
+          "autoupdate": true,
+          "server": {
+            "port": 4096
+          }
+        }`,
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "workspace-profile");
+  assert.equal(result.summary.configs, 1);
+  assert.equal(result.bundle.workspace.opencode.model, "anthropic/claude-sonnet-4-5");
+  assert.equal(result.items[0]?.kind, "Config");
+  assert.equal(result.items[0]?.meta, "OpenCode config");
+});
+
+test("packageOpenworkFiles falls back to generic config for unknown json objects", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: "settings.json",
+        content: JSON.stringify({
+          featureFlags: {
+            experimentalShare: true,
+          },
+        }),
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "workspace-profile");
+  assert.equal(result.summary.configs, 1);
+  assert.equal(result.bundle.workspace.config.settings.featureFlags.experimentalShare, true);
+  assert.equal(result.items[0]?.kind, "Config");
+  assert.equal(result.items[0]?.meta, "Config file");
 });

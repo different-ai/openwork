@@ -1,11 +1,12 @@
 import { parse as parseJsonc } from "jsonc-parser";
 
-import { humanizeType, parseFrontmatter } from "./share-utils.js";
+import { humanizeType, maybeArray, maybeString, parseFrontmatter } from "./share-utils.js";
 
 const MAX_FILES = 200;
 const SECRET_KEY_RE = /(token|secret|password|api[-_]?key|authorization|bearer|private[-_]?key|client[-_]?secret)/i;
 const SAFE_SECRET_VALUE_RE = /^(\$\{|\{env:|env\.|process\.env\.|<|YOUR_|REPLACE_ME|example|changeme)/i;
 const AGENT_FRONTMATTER_KEYS = new Set(["mode", "model", "tools", "permission", "temperature", "color", "prompt"]);
+const OPENCODE_CONFIG_KEYS = new Set(["model", "autoupdate", "server", "provider", "plugin", "mcp", "agent", "permission"]);
 
 function normalizePath(input) {
   return String(input ?? "")
@@ -58,7 +59,7 @@ function isJsonFile(file) {
 
 function isSkillFile(file) {
   const lowerPath = file.path.toLowerCase();
-  return basename(lowerPath) === "skill.md" || /(^|\/)\.opencode\/skills\//.test(lowerPath) || /(^|\/)skills\//.test(lowerPath);
+  return /^(skills?|skill)\.md$/i.test(basename(lowerPath)) || /(^|\/)\.opencode\/skills\//.test(lowerPath) || /(^|\/)skills\//.test(lowerPath);
 }
 
 function isCommandFile(file) {
@@ -67,14 +68,14 @@ function isCommandFile(file) {
 
 function isAgentFile(file, frontmatterData) {
   const lowerPath = file.path.toLowerCase();
-  if (/(^|\/)\.opencode\/agents\//.test(lowerPath) || /(^|\/)agents\//.test(lowerPath)) {
+  if (/(^|\/)\.opencode\/agents\//.test(lowerPath) || /(^|\/)agents\//.test(lowerPath) || /(^|\/)agents?\.md$/i.test(lowerPath)) {
     return true;
   }
   return Object.keys(frontmatterData).some((key) => AGENT_FRONTMATTER_KEYS.has(key));
 }
 
 function isOpenworkConfigFile(file) {
-  return /(^|\/)openwork\.json$/i.test(file.path);
+  return /(^|\/)(?:\.opencode\/)?openwork\.jsonc?$/i.test(file.path);
 }
 
 function isOpencodeConfigFile(file) {
@@ -82,7 +83,7 @@ function isOpencodeConfigFile(file) {
 }
 
 function looksLikeNamedMcpFile(file) {
-  return /(^|\/)mcp\//i.test(file.path) || /\.mcp\.jsonc?$/i.test(file.name);
+  return /(^|\/)mcp\//i.test(file.path) || /\.mcp\.jsonc?$/i.test(file.name) || /(^|[._-])mcp(?:[_-]?config)?\.jsonc?$/i.test(file.name);
 }
 
 function looksLikeNamedAgentJsonFile(file) {
@@ -101,8 +102,45 @@ function buildPreviewItem(name, kind, meta, tone) {
   return { name, kind, meta, tone };
 }
 
-function buildSkillRecord(file, warnings) {
-  const { data } = parseFrontmatter(file.content);
+function countMatches(text, token) {
+  if (!text) return 0;
+  return (text.match(new RegExp(`\\b${token}\\b`, "gi")) || []).length;
+}
+
+function collectHeadings(content) {
+  return Array.from(content.matchAll(/^#{1,3}\s+(.+)$/gm))
+    .map((match) => match[1])
+    .join("\n");
+}
+
+function inferMarkdownKind(file, frontmatterData) {
+  const lowerPath = file.path.toLowerCase();
+  const lowerContent = file.content.toLowerCase();
+  const headings = collectHeadings(file.content).toLowerCase();
+  let agentScore = 0;
+  let skillScore = 0;
+
+  if (/^agents?\.md$/i.test(basename(lowerPath))) {
+    agentScore += 4;
+  }
+  if (/^skills?\.md$/i.test(basename(lowerPath))) {
+    skillScore += 4;
+  }
+
+  agentScore += countMatches(lowerContent, "agent");
+  skillScore += countMatches(lowerContent, "skill");
+  agentScore += countMatches(headings, "agent") * 2;
+  skillScore += countMatches(headings, "skill") * 2;
+
+  if ("trigger" in frontmatterData) {
+    skillScore += 3;
+  }
+
+  return agentScore > skillScore ? "agent" : "skill";
+}
+
+function buildSkillRecord(file, warnings, frontmatter) {
+  const { data } = frontmatter;
   const parentName = basename(dirname(file.path));
   const name = resolveName(data.name, parentName || stem(file.path));
   const description = typeof data.description === "string" ? data.description.trim() : "";
@@ -121,8 +159,8 @@ function buildSkillRecord(file, warnings) {
   };
 }
 
-function buildAgentRecord(file, warnings) {
-  const { data, body } = parseFrontmatter(file.content);
+function buildAgentRecord(file, warnings, frontmatter) {
+  const { data, body } = frontmatter;
   const name = resolveName(data.name, stem(file.path));
   if (!name) {
     warnings.push(`Ignored agent without a valid name: ${file.path}`);
@@ -146,8 +184,8 @@ function buildAgentRecord(file, warnings) {
   };
 }
 
-function buildCommandRecord(file, warnings) {
-  const { data, body } = parseFrontmatter(file.content);
+function buildCommandRecord(file, warnings, frontmatter) {
+  const { data, body } = frontmatter;
   const name = resolveName(data.name, stem(file.path));
   const template = body.trim();
   if (!name || !template) {
@@ -182,6 +220,85 @@ function cloneRecord(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function mergeConfigSections(target, source) {
+  if (!source) return target;
+  const output = isRecord(target) ? cloneRecord(target) : {};
+
+  for (const [key, value] of Object.entries(source)) {
+    if (isRecord(value) && isRecord(output[key])) {
+      output[key] = mergeConfigSections(output[key], value);
+      continue;
+    }
+
+    output[key] = cloneRecord(value);
+  }
+
+  return output;
+}
+
+function buildConfigPreview(file, meta) {
+  return buildPreviewItem(basename(file.path) || stem(file.path), "Config", meta, "config");
+}
+
+function collectOpencodePreviewItems(parsed) {
+  const preview = [];
+
+  if (isRecord(parsed?.mcp) && Object.keys(parsed.mcp).length) {
+    for (const [name, entry] of Object.entries(parsed.mcp)) {
+      const meta = isRecord(entry) && typeof entry.type === "string" ? `${humanizeType(entry.type)} MCP` : "MCP config";
+      preview.push(buildPreviewItem(name, "MCP", meta, "mcp"));
+    }
+  }
+
+  if (isRecord(parsed?.agent) && Object.keys(parsed.agent).length) {
+    for (const [name, entry] of Object.entries(parsed.agent)) {
+      const meta = isRecord(entry) && typeof entry.model === "string" ? entry.model : "Agent config";
+      preview.push(buildPreviewItem(name, "Agent", meta, "agent"));
+    }
+  }
+
+  return preview;
+}
+
+function looksLikeMcpShape(parsed) {
+  if (!isRecord(parsed)) return false;
+
+  const schema = maybeString(parsed.$schema).toLowerCase();
+  if (schema.includes("modelcontextprotocol") || schema.includes("mcp")) {
+    return true;
+  }
+
+  if (maybeArray(parsed.packages).length || maybeArray(parsed.remotes).length) {
+    return true;
+  }
+
+  const hasTransport = typeof parsed.type === "string" && (typeof parsed.url === "string" || typeof parsed.command === "string");
+  const hasCommandRuntime = typeof parsed.command === "string" || maybeArray(parsed.args).length > 0;
+  return hasTransport || hasCommandRuntime;
+}
+
+function looksLikeOpencodeShape(parsed) {
+  if (!isRecord(parsed)) return false;
+
+  const schema = maybeString(parsed.$schema).toLowerCase();
+  if (schema.includes("opencode") && schema.includes("config")) {
+    return true;
+  }
+
+  let matchedKeys = 0;
+  for (const key of Object.keys(parsed)) {
+    if (OPENCODE_CONFIG_KEYS.has(key)) matchedKeys += 1;
+  }
+  return matchedKeys >= 2;
+}
+
+function looksLikeOpenworkShape(parsed) {
+  if (!isRecord(parsed)) return false;
+
+  const schema = maybeString(parsed.$schema).toLowerCase();
+  return schema.includes("openwork") && schema.includes("config");
+}
+
 function collectSecretPaths(value, prefix = []) {
   const hits = [];
   if (!value || typeof value !== "object") return hits;
@@ -205,61 +322,73 @@ function readConfigSection(file, warnings) {
     throw new Error(`Expected ${file.path} to contain an object`);
   }
 
-  const opencode = {};
+  let opencode = null;
   let openwork = null;
+  const config = {};
   const preview = [];
+  let configCount = 0;
 
   if (isOpenworkConfigFile(file)) {
     openwork = cloneRecord(parsed);
+    preview.push(buildConfigPreview(file, "OpenWork config"));
+    configCount += 1;
   }
 
   if (isOpencodeConfigFile(file)) {
-    if (isRecord(parsed.mcp) && Object.keys(parsed.mcp).length) {
-      opencode.mcp = cloneRecord(parsed.mcp);
-      for (const [name, entry] of Object.entries(parsed.mcp)) {
-        const meta = isRecord(entry) && typeof entry.type === "string" ? `${humanizeType(entry.type)} MCP` : "MCP config";
-        preview.push(buildPreviewItem(name, "MCP", meta, "mcp"));
-      }
-    }
-    if (isRecord(parsed.agent) && Object.keys(parsed.agent).length) {
-      opencode.agent = cloneRecord(parsed.agent);
-      for (const [name, entry] of Object.entries(parsed.agent)) {
-        const meta = isRecord(entry) && typeof entry.model === "string" ? entry.model : "Agent config";
-        preview.push(buildPreviewItem(name, "Agent", meta, "agent"));
-      }
-    }
+    opencode = cloneRecord(parsed);
+    preview.push(buildConfigPreview(file, "OpenCode config"));
+    preview.push(...collectOpencodePreviewItems(parsed));
+    configCount += 1;
   }
 
-  if (!Object.keys(opencode).length && !openwork) {
+  if (!opencode && !openwork) {
     if (looksLikeNamedMcpFile(file)) {
       const name = resolveName("", stem(file.path));
-      opencode.mcp = { [name]: cloneRecord(parsed) };
+      opencode = { mcp: { [name]: cloneRecord(parsed) } };
       const meta = typeof parsed.type === "string" ? `${humanizeType(parsed.type)} MCP` : "MCP config";
       preview.push(buildPreviewItem(name, "MCP", meta, "mcp"));
+    } else if (looksLikeOpencodeShape(parsed)) {
+      opencode = cloneRecord(parsed);
+      preview.push(buildConfigPreview(file, "OpenCode config"));
+      preview.push(...collectOpencodePreviewItems(parsed));
+      configCount += 1;
+    } else if (looksLikeOpenworkShape(parsed)) {
+      openwork = cloneRecord(parsed);
+      preview.push(buildConfigPreview(file, "OpenWork config"));
+      configCount += 1;
+    } else if (looksLikeMcpShape(parsed)) {
+      const name = resolveName(parsed.name, stem(file.path));
+      opencode = { mcp: { [name]: cloneRecord(parsed) } };
+      preview.push(buildPreviewItem(maybeString(parsed.title).trim() || name, "MCP", "MCP config", "mcp"));
     } else if (looksLikeNamedAgentJsonFile(file)) {
       const name = resolveName(parsed.name, stem(file.path));
-      opencode.agent = { [name]: cloneRecord(parsed) };
+      opencode = { agent: { [name]: cloneRecord(parsed) } };
       const meta = typeof parsed.model === "string" ? parsed.model : "Agent config";
       preview.push(buildPreviewItem(name, "Agent", meta, "agent"));
+    } else {
+      const name = resolveName("", stem(file.path));
+      config[name] = cloneRecord(parsed);
+      preview.push(buildPreviewItem(basename(file.path) || name, "Config", "Config file", "config"));
+      configCount += 1;
     }
   }
 
   const secretHits = [
-    ...collectSecretPaths(opencode.mcp ?? {}, ["opencode", "mcp"]),
-    ...collectSecretPaths(opencode.agent ?? {}, ["opencode", "agent"]),
+    ...collectSecretPaths(opencode ?? {}, ["opencode"]),
     ...collectSecretPaths(openwork ?? {}, ["openwork"]),
+    ...collectSecretPaths(config, ["config"]),
   ];
 
   if (secretHits.length) {
     throw new Error(`Potential secrets found in ${file.path}: ${secretHits.slice(0, 5).join(", ")}`);
   }
 
-  if (!Object.keys(opencode).length && !openwork) {
+  if (!opencode && !openwork && !Object.keys(config).length) {
     warnings.push(`Ignored unsupported config file: ${file.path}`);
     return null;
   }
 
-  return { opencode, openwork, preview };
+  return { opencode, openwork, config, preview, configCount };
 }
 
 function mergeNamedObjects(target, source) {
@@ -268,34 +397,36 @@ function mergeNamedObjects(target, source) {
   }
 }
 
-function buildSummary(skills, agents, mcp, commands, warnings) {
+function buildSummary(skills, agents, mcp, commands, warnings, configCount) {
   return {
     skills: skills.length,
     agents: Object.keys(agents).length,
     mcpServers: Object.keys(mcp).length,
     commands: commands.length,
+    configs: configCount,
     warnings: warnings.length,
   };
 }
 
-function buildBundleName(inputName, skills, agentCount, mcpCount, commandCount) {
+function buildBundleName(inputName, skills, agentCount, mcpCount, commandCount, configCount) {
   const explicit = String(inputName ?? "").trim();
   if (explicit) return explicit;
-  if (skills.length === 1 && !agentCount && !mcpCount && !commandCount) return skills[0].name;
-  if (skills.length > 1 && !agentCount && !mcpCount && !commandCount) return "Shared skills set";
+  if (skills.length === 1 && !agentCount && !mcpCount && !commandCount && !configCount) return skills[0].name;
+  if (skills.length > 1 && !agentCount && !mcpCount && !commandCount && !configCount) return "Shared skills set";
   if (skills.length === 1) return `${skills[0].name} worker package`;
   return "Packaged worker";
 }
 
 function buildBundleDescription(bundleType, summary) {
-  if (bundleType === "skill") return "Single skill bundle generated from dropped OpenWork files.";
+  if (bundleType === "skill") return "Single skill bundle generated from dropped markdown.";
   if (bundleType === "skills-set") return `${summary.skills} skills packaged together.`;
   const parts = [];
   if (summary.skills) parts.push(`${summary.skills} skill${summary.skills === 1 ? "" : "s"}`);
   if (summary.agents) parts.push(`${summary.agents} agent${summary.agents === 1 ? "" : "s"}`);
   if (summary.mcpServers) parts.push(`${summary.mcpServers} MCP${summary.mcpServers === 1 ? "" : "s"}`);
   if (summary.commands) parts.push(`${summary.commands} command${summary.commands === 1 ? "" : "s"}`);
-  return parts.length ? `${parts.join(", ")} bundled into a worker package.` : "Worker package generated from OpenWork files.";
+  if (summary.configs) parts.push(`${summary.configs} config${summary.configs === 1 ? "" : "s"}`);
+  return parts.length ? `${parts.join(", ")} bundled into a worker package.` : "Worker package generated from shareable files.";
 }
 
 export function packageOpenworkFiles(input) {
@@ -313,7 +444,10 @@ export function packageOpenworkFiles(input) {
   const previewItems = [];
   const opencodeAgent = {};
   const opencodeMcp = {};
+  let opencodeConfig = null;
+  const genericConfig = {};
   let openwork = null;
+  let configCount = 0;
 
   for (let index = 0; index < rawFiles.length; index += 1) {
     const file = normalizeFile(rawFiles[index], index);
@@ -323,8 +457,17 @@ export function packageOpenworkFiles(input) {
     }
 
     if (isMarkdownFile(file)) {
-      if (isSkillFile(file)) {
-        const record = buildSkillRecord(file, warnings);
+      const frontmatter = parseFrontmatter(file.content);
+      const markdownKind = isCommandFile(file)
+        ? "command"
+        : isSkillFile(file)
+          ? "skill"
+          : isAgentFile(file, frontmatter.data)
+            ? "agent"
+            : inferMarkdownKind(file, frontmatter.data);
+
+      if (markdownKind === "skill") {
+        const record = buildSkillRecord(file, warnings, frontmatter);
         if (record) {
           skills.push(record);
           previewItems.push(record.preview);
@@ -332,9 +475,8 @@ export function packageOpenworkFiles(input) {
         continue;
       }
 
-      const frontmatter = parseFrontmatter(file.content);
-      if (isAgentFile(file, frontmatter.data)) {
-        const record = buildAgentRecord(file, warnings);
+      if (markdownKind === "agent") {
+        const record = buildAgentRecord(file, warnings, frontmatter);
         if (record) {
           opencodeAgent[record.name] = record.config;
           previewItems.push(record.preview);
@@ -342,8 +484,8 @@ export function packageOpenworkFiles(input) {
         continue;
       }
 
-      if (isCommandFile(file)) {
-        const record = buildCommandRecord(file, warnings);
+      if (markdownKind === "command") {
+        const record = buildCommandRecord(file, warnings, frontmatter);
         if (record) {
           commands.push(record);
           previewItems.push(record.preview);
@@ -358,9 +500,14 @@ export function packageOpenworkFiles(input) {
     if (isJsonFile(file)) {
       const record = readConfigSection(file, warnings);
       if (!record) continue;
+      if (record.opencode) {
+        opencodeConfig = mergeConfigSections(opencodeConfig, record.opencode);
+      }
       mergeNamedObjects(opencodeAgent, record.opencode?.agent ?? {});
       mergeNamedObjects(opencodeMcp, record.opencode?.mcp ?? {});
       if (record.openwork) openwork = record.openwork;
+      mergeNamedObjects(genericConfig, record.config ?? {});
+      configCount += record.configCount ?? 0;
       previewItems.push(...record.preview);
       continue;
     }
@@ -371,13 +518,19 @@ export function packageOpenworkFiles(input) {
   const cleanSkills = skills.map(({ preview, ...skill }) => skill);
   const cleanCommands = commands.map(({ preview, ...command }) => command);
 
-  const summary = buildSummary(cleanSkills, opencodeAgent, opencodeMcp, cleanCommands, warnings);
-  if (!summary.skills && !summary.agents && !summary.mcpServers && !summary.commands && !openwork) {
-    throw new Error("No supported OpenWork files found. Drop skill markdown, agent markdown, command markdown, or OpenCode/OpenWork config files.");
+  const summary = buildSummary(cleanSkills, opencodeAgent, opencodeMcp, cleanCommands, warnings, configCount);
+  if (!summary.skills && !summary.agents && !summary.mcpServers && !summary.commands && !summary.configs && !openwork) {
+    throw new Error("No shareable files found. Drop markdown or JSON/JSONC config files to package them.");
   }
 
-  const hasWorkspaceConfig = Boolean(openwork) || Object.keys(opencodeAgent).length || Object.keys(opencodeMcp).length || cleanCommands.length;
-  const name = buildBundleName(input?.bundleName, cleanSkills, summary.agents, summary.mcpServers, summary.commands);
+  const hasWorkspaceConfig =
+    Boolean(openwork) ||
+    Boolean(opencodeConfig) ||
+    Object.keys(opencodeAgent).length ||
+    Object.keys(opencodeMcp).length ||
+    Object.keys(genericConfig).length ||
+    cleanCommands.length;
+  const name = buildBundleName(input?.bundleName, cleanSkills, summary.agents, summary.mcpServers, summary.commands, summary.configs);
 
   let bundleType = "workspace-profile";
   let bundle;
@@ -407,13 +560,14 @@ export function packageOpenworkFiles(input) {
       exportedAt: Date.now(),
       ...(cleanSkills.length ? { skills: cleanSkills } : null),
       ...(cleanCommands.length ? { commands: cleanCommands } : null),
+      ...(Object.keys(genericConfig).length ? { config: genericConfig } : null),
       ...(openwork ? { openwork } : null),
-      ...((Object.keys(opencodeAgent).length || Object.keys(opencodeMcp).length)
+      ...((opencodeConfig || Object.keys(opencodeAgent).length || Object.keys(opencodeMcp).length)
         ? {
-            opencode: {
+            opencode: mergeConfigSections(opencodeConfig, {
               ...(Object.keys(opencodeAgent).length ? { agent: opencodeAgent } : null),
               ...(Object.keys(opencodeMcp).length ? { mcp: opencodeMcp } : null),
-            },
+            }),
           }
         : null),
     };
