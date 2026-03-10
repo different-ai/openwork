@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
+import type { DebugSessionManifest, DebugSessionRetention } from "./debug-log";
 
 export type EngineInfo = {
   running: boolean;
@@ -524,6 +525,18 @@ export async function engineDoctor(options?: {
   });
 }
 
+export async function debugSessionStart(input: DebugSessionStartInput): Promise<DebugSessionStartResult> {
+  return invoke<DebugSessionStartResult>("debug_session_start", { input });
+}
+
+export async function debugSessionStop(): Promise<void> {
+  return invoke<void>("debug_session_stop");
+}
+
+export async function debugSessionClearActive(): Promise<void> {
+  return invoke<void>("debug_session_clear_active");
+}
+
 export async function pickDirectory(options?: {
   title?: string;
   defaultPath?: string;
@@ -572,6 +585,19 @@ export type ExecResult = {
   status: number;
   stdout: string;
   stderr: string;
+};
+
+export type DebugSessionStartInput = {
+  sessionId: string;
+  startedAt: string;
+  startedTs: number;
+  appVersion?: string | null;
+  environment?: string | null;
+  retention: DebugSessionRetention;
+};
+
+export type DebugSessionStartResult = {
+  manifest: DebugSessionManifest;
 };
 
 export type ScheduledJobRun = {

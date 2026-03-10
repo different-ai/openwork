@@ -134,6 +134,9 @@ import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
 import {
   updaterEnvironment,
+  debugSessionClearActive,
+  debugSessionStart,
+  debugSessionStop,
   readOpencodeConfig,
   writeOpencodeConfig,
   schedulerDeleteJob,
@@ -155,6 +158,12 @@ import {
   persistFontZoom,
   readStoredFontZoom,
 } from "./lib/font-zoom";
+import {
+  createDebugSessionId,
+  DEBUG_DEFAULT_RETENTION,
+  setDebugGate,
+  type DebugSessionManifest,
+} from "./lib/debug-log";
 import {
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkBundleInviteFromSearch,
@@ -1081,11 +1090,60 @@ export default function App() {
   const [lastKnownConfigSnapshot, setLastKnownConfigSnapshot] = createSignal("");
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
+  const [debugSession, setDebugSession] = createSignal<DebugSessionManifest | null>(null);
+  const [debugSessionError, setDebugSessionError] = createSignal<string | null>(null);
+  const debugLoggingEnabled = createMemo(() => Boolean(debugSession()));
+
+  setDebugGate({ enabled: () => debugLoggingEnabled() });
+  onCleanup(() => setDebugGate(null));
 
   createEffect(() => {
     if (developerMode()) return;
     clearPerfLogs();
   });
+
+  const startDebugSession = async () => {
+    if (debugSession()) return debugSession();
+    if (!isTauriRuntime()) {
+      setDebugSessionError("Debug logging is only available in the desktop app.");
+      return null;
+    }
+    setDebugSessionError(null);
+
+    const now = new Date();
+    const envMode = typeof import.meta !== "undefined" ? (import.meta as any).env?.MODE : undefined;
+
+    try {
+      const result = await debugSessionStart({
+        sessionId: createDebugSessionId(),
+        startedAt: now.toISOString(),
+        startedTs: now.getTime(),
+        appVersion: appVersion() ?? undefined,
+        environment: typeof envMode === "string" ? envMode : undefined,
+        retention: DEBUG_DEFAULT_RETENTION,
+      });
+      setDebugSession(result.manifest);
+      return result.manifest;
+    } catch (error) {
+      setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
+      return null;
+    }
+  };
+
+  const stopDebugSession = async () => {
+    if (!debugSession()) return;
+    setDebugSessionError(null);
+    if (!isTauriRuntime()) {
+      setDebugSession(null);
+      return;
+    }
+    try {
+      await debugSessionStop();
+      setDebugSession(null);
+    } catch (error) {
+      setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
+    }
+  };
 
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
@@ -5149,6 +5207,12 @@ export default function App() {
     }
 
     if (isTauriRuntime()) {
+      try {
+        await debugSessionClearActive();
+      } catch {
+        // ignore
+      }
+
       try {
         setAppVersion(await getVersion());
       } catch {
