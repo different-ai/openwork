@@ -204,8 +204,13 @@ export type SessionViewProps = {
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
+  completeProviderAuthOAuth: (
+    providerId: string,
+    methodIndex: number,
+    code?: string
+  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  refreshProviders: () => Promise<unknown>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
@@ -2519,15 +2524,19 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
-    if (providerAuthActionBusy()) return;
+    if (providerAuthActionBusy()) return { connected: false, pending: true };
     setProviderAuthActionBusy(true);
     try {
-      const message = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      setToastMessage(message || "Provider connected");
-      props.closeProviderAuthModal();
+      const result = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
+      if (result.connected) {
+        setToastMessage(result.message || "Provider connected");
+        props.closeProviderAuthModal();
+      }
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "OAuth failed";
       setToastMessage(message);
+      return { connected: false };
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -4139,6 +4148,7 @@ export default function SessionView(props: SessionViewProps) {
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
+        onRefreshProviders={props.refreshProviders}
         onClose={props.closeProviderAuthModal}
       />
 

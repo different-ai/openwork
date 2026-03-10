@@ -87,8 +87,13 @@ export type DashboardViewProps = {
   disconnectProvider: (providerId: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
+  completeProviderAuthOAuth: (
+    providerId: string,
+    methodIndex: number,
+    code?: string
+  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  refreshProviders: () => Promise<unknown>;
   view: View;
   setView: (view: View, sessionId?: string) => void;
   startupPreference: StartupPreference | null;
@@ -420,13 +425,17 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
-    if (providerAuthActionBusy()) return;
+    if (providerAuthActionBusy()) return { connected: false, pending: true };
     setProviderAuthActionBusy(true);
     try {
-      await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      props.closeProviderAuthModal();
+      const result = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
+      if (result.connected) {
+        props.closeProviderAuthModal();
+      }
+      return result;
     } catch {
       // Errors are surfaced in the modal.
+      return { connected: false };
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -1437,6 +1446,7 @@ export default function DashboardView(props: DashboardViewProps) {
           onSelect={handleProviderAuthSelect}
           onSubmitApiKey={handleProviderAuthApiKey}
           onSubmitOAuth={handleProviderAuthOAuth}
+          onRefreshProviders={props.refreshProviders}
           onClose={props.closeProviderAuthModal}
         />
 

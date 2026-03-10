@@ -1,7 +1,7 @@
 import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { isTauriRuntime } from "../utils";
 
 import Button from "./button";
@@ -43,7 +43,12 @@ export type ProviderAuthModalProps = {
   authMethods: Record<string, ProviderAuthMethod[]>;
   onSelect: (providerId: string) => Promise<ProviderOAuthStartResult>;
   onSubmitApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
-  onSubmitOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
+  onSubmitOAuth: (
+    providerId: string,
+    methodIndex: number,
+    code?: string
+  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
+  onRefreshProviders?: () => Promise<unknown>;
   onClose: () => void;
 };
 
@@ -109,7 +114,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [activeEntryIndex, setActiveEntryIndex] = createSignal(0);
   const [localError, setLocalError] = createSignal<string | null>(null);
+  const [pollingBusy, setPollingBusy] = createSignal(false);
+  const [oauthAutoBusy, setOauthAutoBusy] = createSignal(false);
   let searchInputEl: HTMLInputElement | undefined;
+  let providerPoll: number | null = null;
+  let oauthAutoPoll: number | null = null;
 
   const selectedEntry = createMemo(() =>
     entries().find((entry) => entry.id === selectedProviderId()) ?? null,
@@ -178,9 +187,89 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     !!entry?.methods?.some((method) => method.type === type);
 
   const handleClose = () => {
+    void props.onRefreshProviders?.();
+    if (oauthAutoPoll !== null) {
+      window.clearInterval(oauthAutoPoll);
+      oauthAutoPoll = null;
+    }
+    if (providerPoll !== null) {
+      window.clearInterval(providerPoll);
+      providerPoll = null;
+    }
     resetState();
     props.onClose();
   };
+
+  onCleanup(() => {
+    if (oauthAutoPoll !== null) {
+      window.clearInterval(oauthAutoPoll);
+      oauthAutoPoll = null;
+    }
+    if (providerPoll !== null) {
+      window.clearInterval(providerPoll);
+      providerPoll = null;
+    }
+  });
+
+  const isOauthView = () => resolvedView() === "oauth-code" || resolvedView() === "oauth-auto";
+  const activeProviderId = () => oauthSession()?.providerId ?? selectedProviderId();
+
+  const isActiveProviderConnected = () => {
+    const id = activeProviderId();
+    if (!id) return false;
+    return (props.connectedProviderIds ?? []).includes(id);
+  };
+
+  const pollProviders = async () => {
+    const id = activeProviderId();
+    if (!id) return;
+    if (pollingBusy()) return;
+    setPollingBusy(true);
+    try {
+      await props.onRefreshProviders?.();
+    } finally {
+      setPollingBusy(false);
+    }
+    if (isActiveProviderConnected()) {
+      handleClose();
+    }
+  };
+
+  const startProviderPolling = () => {
+    if (typeof window === "undefined") return;
+    if (providerPoll !== null) return;
+    void pollProviders();
+    providerPoll = window.setInterval(() => {
+      void pollProviders();
+    }, 2000);
+  };
+
+  const stopProviderPolling = () => {
+    if (providerPoll !== null) {
+      window.clearInterval(providerPoll);
+      providerPoll = null;
+    }
+  };
+
+  createEffect(() => {
+    if (!props.open || !isOauthView()) {
+      stopProviderPolling();
+      return;
+    }
+    if (isActiveProviderConnected()) {
+      handleClose();
+      return;
+    }
+    startProviderPolling();
+  });
+
+  createEffect(() => {
+    if (!props.open || resolvedView() !== "oauth-auto" || !oauthSession()) {
+      stopOauthAutoPolling();
+      return;
+    }
+    startOauthAutoPolling();
+  });
 
   const openOauthUrl = async (url: string) => {
     if (!url) return;
@@ -196,12 +285,42 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     const trimmedCode = code?.trim();
     setLocalError(null);
     try {
-      await props.onSubmitOAuth(providerId, methodIndex, trimmedCode || undefined);
+      return await props.onSubmitOAuth(providerId, methodIndex, trimmedCode || undefined);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to complete OAuth";
       setLocalError(message);
       throw error instanceof Error ? error : new Error(message);
     }
+  };
+
+  const stopOauthAutoPolling = () => {
+    if (oauthAutoPoll !== null) {
+      window.clearInterval(oauthAutoPoll);
+      oauthAutoPoll = null;
+    }
+  };
+
+  const attemptOauthAutoCompletion = async () => {
+    const session = oauthSession();
+    if (!session || oauthAutoBusy()) return;
+    setOauthAutoBusy(true);
+    try {
+      const result = await submitOauth(session.providerId, session.methodIndex);
+      if (result?.connected) {
+        stopOauthAutoPolling();
+      }
+    } finally {
+      setOauthAutoBusy(false);
+    }
+  };
+
+  const startOauthAutoPolling = () => {
+    if (typeof window === "undefined") return;
+    if (oauthAutoPoll !== null) return;
+    void attemptOauthAutoCompletion();
+    oauthAutoPoll = window.setInterval(() => {
+      void attemptOauthAutoCompletion();
+    }, 2000);
   };
 
   const startOauth = async (entry: ProviderAuthEntry) => {
@@ -225,7 +344,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
       }
 
       setView("oauth-auto");
-      await submitOauth(entry.id, started.methodIndex);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to start OAuth";
       setLocalError(message);
@@ -302,13 +420,6 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
 
     await submitOauth(entry.id, session.methodIndex, trimmed);
-  };
-
-  const handleOauthAutoRetry = async () => {
-    const entry = selectedEntry();
-    const session = oauthSession();
-    if (!entry || !session || actionDisabled()) return;
-    await submitOauth(entry.id, session.methodIndex);
   };
 
   const handleBack = () => {
@@ -656,8 +767,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       <TextInput label="Confirmation code" value={oauthDisplayCode()} readOnly class="font-mono" />
                     </Show>
                     <div class="flex items-center gap-2 text-xs text-gray-9">
-                      <Loader2 size={14} class={props.submitting ? "animate-spin" : ""} />
-                      <span>{props.submitting ? "Waiting for confirmation..." : "Ready to retry completion."}</span>
+                      <Loader2 size={14} class={props.submitting || pollingBusy() || oauthAutoBusy() ? "animate-spin" : ""} />
+                      <span>Checking connection status automatically...</span>
                     </div>
                     <div class="flex items-center justify-between gap-3">
                       <Button
@@ -670,9 +781,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       >
                         Open browser again
                       </Button>
-                      <Button variant="secondary" onClick={() => void handleOauthAutoRetry()} disabled={actionDisabled()}>
-                        {props.submitting ? "Waiting..." : "Retry completion"}
-                      </Button>
+                      <div class="text-[11px] text-gray-9 text-right">This window will close once the provider is connected.</div>
                     </div>
                   </div>
                 </Show>

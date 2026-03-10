@@ -62,6 +62,7 @@ import {
   VARIANT_PREF_KEY,
 } from "./constants";
 import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
+import { mapConfigProvidersToList } from "./utils/providers";
 import type {
   Client,
   DashboardTab,
@@ -1946,6 +1947,47 @@ export default function App() {
     }
   }
 
+  async function refreshProviders(options?: { dispose?: boolean }) {
+    const c = client();
+    if (!c) return null;
+
+    if (options?.dispose) {
+      try {
+        unwrap(await c.instance.dispose());
+      } catch {
+        // ignore dispose failures and try reading current state anyway
+      }
+
+      try {
+        await waitForHealthy(client() ?? c, { timeoutMs: 8_000, pollMs: 250 });
+      } catch {
+        // ignore health wait failures and still attempt provider reads
+      }
+    }
+
+    const activeClient = client() ?? c;
+    try {
+      const updated = unwrap(await activeClient.provider.list());
+      globalSync.set("provider", updated);
+      return updated;
+    } catch {
+      try {
+        const fallback = unwrap(await activeClient.config.providers());
+        const mapped = mapConfigProvidersToList(fallback.providers);
+        const previousConnected = providerConnectedIds();
+        const next = {
+          all: mapped,
+          connected: previousConnected.filter((id) => mapped.some((provider) => provider.id === id)),
+          default: fallback.default,
+        };
+        globalSync.set("provider", next);
+        return next;
+      } catch {
+        return null;
+      }
+    }
+  }
+
   async function completeProviderAuthOAuth(providerId: string, methodIndex: number, code?: string) {
     setProviderAuthError(null);
     const c = client();
@@ -1962,13 +2004,12 @@ export default function App() {
       throw new Error("OAuth method is required");
     }
 
-    const waitForProviderConnection = async (timeoutMs = 15_000, pollMs = 1_000) => {
+    const waitForProviderConnection = async (timeoutMs = 15_000, pollMs = 2_000) => {
       const startedAt = Date.now();
       while (Date.now() - startedAt < timeoutMs) {
         try {
-          const updated = unwrap(await c.provider.list()) as { connected?: string[] };
-          if (Array.isArray(updated.connected) && updated.connected.includes(resolved)) {
-            globalSync.set("provider", updated);
+          const updated = await refreshProviders({ dispose: true });
+          if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
             return true;
           }
         } catch {
@@ -1979,6 +2020,11 @@ export default function App() {
       return false;
     };
 
+    const isPendingOauthError = (error: unknown) => {
+      const text = error instanceof Error ? error.message : String(error ?? "");
+      return /request timed out/i.test(text) || /ProviderAuthOauthMissing/i.test(text);
+    };
+
     try {
       const trimmedCode = code?.trim();
       const result = await c.provider.oauth.callback({
@@ -1987,16 +2033,27 @@ export default function App() {
         code: trimmedCode || undefined,
       });
       assertNoClientError(result);
-      const updated = unwrap(await c.provider.list());
-      globalSync.set("provider", updated);
-      return `Connected ${resolved}`;
+      const updated = await refreshProviders({ dispose: true });
+      const connectedNow = Array.isArray(updated?.connected) && updated.connected.includes(resolved);
+      if (connectedNow) {
+        return { connected: true, message: `Connected ${resolved}` };
+      }
+      const connected = await waitForProviderConnection();
+      if (connected) {
+        return { connected: true, message: `Connected ${resolved}` };
+      }
+      return { connected: false, pending: true };
     } catch (error) {
-      const messageText = error instanceof Error ? error.message : String(error ?? "");
-      if (/request timed out/i.test(messageText)) {
+      if (isPendingOauthError(error)) {
+        const updated = await refreshProviders({ dispose: true });
+        if (Array.isArray(updated?.connected) && updated.connected.includes(resolved)) {
+          return { connected: true, message: `Connected ${resolved}` };
+        }
         const connected = await waitForProviderConnection();
         if (connected) {
-          return `Connected ${resolved}`;
+          return { connected: true, message: `Connected ${resolved}` };
         }
+        return { connected: false, pending: true };
       }
       const message = describeProviderError(error, "Failed to complete OAuth");
       setProviderAuthError(message);
@@ -2021,8 +2078,7 @@ export default function App() {
         providerID: providerId,
         auth: { type: "api", key: trimmed },
       });
-      const updated = unwrap(await c.provider.list());
-      globalSync.set("provider", updated);
+      await refreshProviders({ dispose: true });
       return `Connected ${providerId}`;
     } catch (error) {
       const message = describeProviderError(error, "Failed to save API key");
@@ -5760,6 +5816,7 @@ export default function App() {
       closeProviderAuthModal,
       startProviderAuth,
       completeProviderAuthOAuth,
+      refreshProviders,
       submitProviderApiKey,
       view: currentView(),
       setView,
@@ -6089,6 +6146,7 @@ export default function App() {
     showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
     startProviderAuth: startProviderAuth,
     completeProviderAuthOAuth: completeProviderAuthOAuth,
+    refreshProviders: refreshProviders,
     submitProviderApiKey: submitProviderApiKey,
     openProviderAuthModal: openProviderAuthModal,
     closeProviderAuthModal: closeProviderAuthModal,
