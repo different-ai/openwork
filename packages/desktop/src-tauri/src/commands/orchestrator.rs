@@ -16,6 +16,7 @@ use tauri::State;
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
+use crate::commands::debug::{record_system_event, DebugSystemEventInput};
 use crate::orchestrator::manager::OrchestratorManager;
 use crate::orchestrator::{resolve_orchestrator_data_dir, resolve_orchestrator_status};
 use crate::platform::configure_hidden;
@@ -830,10 +831,51 @@ pub fn orchestrator_start_detached(
             str_args.push(arg.as_str());
         }
 
-        command
-            .args(str_args)
-            .spawn()
-            .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
+        let spawn_started = now_ms();
+        let spawn_result = command.args(str_args).spawn();
+        match spawn_result {
+            Ok(_) => {
+                let _ = record_system_event(
+                    &app,
+                    DebugSystemEventInput {
+                        surface: "desktop.orchestrator".to_string(),
+                        action: "orchestrator.spawn".to_string(),
+                        command: "openwork start".to_string(),
+                        status: "ok".to_string(),
+                        exit_code: None,
+                        duration_ms: Some(now_ms().saturating_sub(spawn_started)),
+                        stdout_excerpt: None,
+                        stderr_excerpt: None,
+                        payload: Some(json!({
+                            "workspacePath": workspace_path.clone(),
+                            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+                            "runId": sandbox_run_id.clone(),
+                        })),
+                    },
+                );
+            }
+            Err(err) => {
+                let _ = record_system_event(
+                    &app,
+                    DebugSystemEventInput {
+                        surface: "desktop.orchestrator".to_string(),
+                        action: "orchestrator.spawn".to_string(),
+                        command: "openwork start".to_string(),
+                        status: "error".to_string(),
+                        exit_code: None,
+                        duration_ms: Some(now_ms().saturating_sub(spawn_started)),
+                        stdout_excerpt: None,
+                        stderr_excerpt: Some(err.to_string()),
+                        payload: Some(json!({
+                            "workspacePath": workspace_path.clone(),
+                            "sandboxBackend": if wants_docker_sandbox { "docker" } else { "none" },
+                            "runId": sandbox_run_id.clone(),
+                        })),
+                    },
+                );
+                return Err(format!("Failed to start openwork orchestrator: {err}"));
+            }
+        }
         eprintln!(
             "[sandbox-create][at={}][runId={}][stage=spawn] launched openwork sidecar for detached sandbox host",
             now_ms(),
@@ -1300,18 +1342,52 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
                     .clone()
                     .unwrap_or_else(|| derive_orchestrator_container_name(&run_id));
 
+                let inspect_started = now_ms();
                 match run_docker_command_detailed(
                     &["inspect", container_name.as_str()],
                     Duration::from_secs(6),
                 ) {
                     Ok(result) => {
                         docker_inspect = Some(to_command_debug(result));
+                        let _ = record_system_event(
+                            &app,
+                            DebugSystemEventInput {
+                                surface: "desktop.sandbox".to_string(),
+                                action: "docker.inspect".to_string(),
+                                command: "docker inspect".to_string(),
+                                status: "ok".to_string(),
+                                exit_code: Some(result.status),
+                                duration_ms: Some(now_ms().saturating_sub(inspect_started)),
+                                stdout_excerpt: Some(result.stdout.clone()),
+                                stderr_excerpt: Some(result.stderr.clone()),
+                                payload: Some(
+                                    json!({ "args": ["inspect", container_name.as_str()] }),
+                                ),
+                            },
+                        );
                     }
                     Err(err) => {
                         cleanup_errors.push(format!("docker inspect failed: {err}"));
+                        let _ = record_system_event(
+                            &app,
+                            DebugSystemEventInput {
+                                surface: "desktop.sandbox".to_string(),
+                                action: "docker.inspect".to_string(),
+                                command: "docker inspect".to_string(),
+                                status: "error".to_string(),
+                                exit_code: None,
+                                duration_ms: Some(now_ms().saturating_sub(inspect_started)),
+                                stdout_excerpt: None,
+                                stderr_excerpt: Some(err.clone()),
+                                payload: Some(
+                                    json!({ "args": ["inspect", container_name.as_str()] }),
+                                ),
+                            },
+                        );
                     }
                 }
 
+                let logs_started = now_ms();
                 match run_docker_command_detailed(
                     &[
                         "logs",
@@ -1324,9 +1400,53 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
                 ) {
                     Ok(result) => {
                         docker_logs = Some(to_command_debug(result));
+                        let _ = record_system_event(
+                            &app,
+                            DebugSystemEventInput {
+                                surface: "desktop.sandbox".to_string(),
+                                action: "docker.logs".to_string(),
+                                command: "docker logs".to_string(),
+                                status: "ok".to_string(),
+                                exit_code: Some(result.status),
+                                duration_ms: Some(now_ms().saturating_sub(logs_started)),
+                                stdout_excerpt: Some(result.stdout.clone()),
+                                stderr_excerpt: Some(result.stderr.clone()),
+                                payload: Some(json!({
+                                    "args": [
+                                        "logs",
+                                        "--timestamps",
+                                        "--tail",
+                                        "400",
+                                        container_name.as_str(),
+                                    ]
+                                })),
+                            },
+                        );
                     }
                     Err(err) => {
                         cleanup_errors.push(format!("docker logs failed: {err}"));
+                        let _ = record_system_event(
+                            &app,
+                            DebugSystemEventInput {
+                                surface: "desktop.sandbox".to_string(),
+                                action: "docker.logs".to_string(),
+                                command: "docker logs".to_string(),
+                                status: "error".to_string(),
+                                exit_code: None,
+                                duration_ms: Some(now_ms().saturating_sub(logs_started)),
+                                stdout_excerpt: None,
+                                stderr_excerpt: Some(err.clone()),
+                                payload: Some(json!({
+                                    "args": [
+                                        "logs",
+                                        "--timestamps",
+                                        "--tail",
+                                        "400",
+                                        container_name.as_str(),
+                                    ]
+                                })),
+                            },
+                        );
                     }
                 }
 
@@ -1361,13 +1481,42 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
     let mut remove_result: Option<SandboxDoctorCommandDebug> = None;
 
     if let Some(name) = container_name.clone() {
+        let remove_started = now_ms();
         match run_docker_command_detailed(&["rm", "-f", name.as_str()], Duration::from_secs(20)) {
             Ok(result) => {
                 container_removed = result.status == 0;
                 remove_result = Some(to_command_debug(result));
+                let _ = record_system_event(
+                    &app,
+                    DebugSystemEventInput {
+                        surface: "desktop.sandbox".to_string(),
+                        action: "docker.rm".to_string(),
+                        command: "docker rm".to_string(),
+                        status: "ok".to_string(),
+                        exit_code: Some(result.status),
+                        duration_ms: Some(now_ms().saturating_sub(remove_started)),
+                        stdout_excerpt: Some(result.stdout.clone()),
+                        stderr_excerpt: Some(result.stderr.clone()),
+                        payload: Some(json!({ "args": ["rm", "-f", name.as_str()] })),
+                    },
+                );
             }
             Err(err) => {
                 cleanup_errors.push(format!("docker rm -f {name} failed: {err}"));
+                let _ = record_system_event(
+                    &app,
+                    DebugSystemEventInput {
+                        surface: "desktop.sandbox".to_string(),
+                        action: "docker.rm".to_string(),
+                        command: "docker rm".to_string(),
+                        status: "error".to_string(),
+                        exit_code: None,
+                        duration_ms: Some(now_ms().saturating_sub(remove_started)),
+                        stdout_excerpt: None,
+                        stderr_excerpt: Some(err.clone()),
+                        payload: Some(json!({ "args": ["rm", "-f", name.as_str()] })),
+                    },
+                );
             }
         }
     }

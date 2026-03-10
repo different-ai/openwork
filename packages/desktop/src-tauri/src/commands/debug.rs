@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
 use std::fs;
@@ -87,12 +88,128 @@ pub struct DebugSessionActiveMarker {
     pub started_ts: i64,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSystemEventInput {
+    pub surface: String,
+    pub action: String,
+    pub command: String,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: Option<u64>,
+    pub stdout_excerpt: Option<String>,
+    pub stderr_excerpt: Option<String>,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DebugSystemEvent {
+    kind: String,
+    id: String,
+    at: String,
+    ts: i64,
+    debug_session_id: String,
+    correlation_id: Option<String>,
+    surface: String,
+    action: String,
+    command: String,
+    status: String,
+    exit_code: Option<i32>,
+    duration_ms: Option<u64>,
+    stdout_excerpt: Option<String>,
+    stderr_excerpt: Option<String>,
+    payload: Option<serde_json::Value>,
+}
+
 fn resolve_debug_root(app: &AppHandle) -> Result<PathBuf, String> {
     let data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
     Ok(data_dir.join(DEBUG_ROOT_DIR))
+}
+
+fn now_iso() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "".to_string())
+}
+
+fn now_ms() -> i64 {
+    let now = std::time::SystemTime::now();
+    match now.duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => duration.as_millis() as i64,
+        Err(_) => 0,
+    }
+}
+
+fn read_active_marker(app: &AppHandle) -> Result<Option<DebugSessionActiveMarker>, String> {
+    let root = resolve_debug_root(app)?;
+    let active_path = root.join(DEBUG_ACTIVE_FILE);
+    if !active_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&active_path)
+        .map_err(|e| format!("Failed to read {}: {e}", active_path.display()))?;
+    let marker = serde_json::from_str::<DebugSessionActiveMarker>(&raw)
+        .map_err(|e| format!("Failed to parse {}: {e}", active_path.display()))?;
+    Ok(Some(marker))
+}
+
+fn append_json_line(path: &Path, value: &impl Serialize) -> Result<(), String> {
+    ensure_parent(path)?;
+    let payload = serde_json::to_string(value)
+        .map_err(|e| format!("Failed to serialize {}: {e}", path.display()))?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open {}: {e}", path.display()))?;
+    use std::io::Write;
+    file.write_all(payload.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .map_err(|e| format!("Failed to append {}: {e}", path.display()))?;
+    Ok(())
+}
+
+fn truncate_excerpt(value: Option<String>) -> Option<String> {
+    value.map(|raw| {
+        let max = 2000usize;
+        if raw.len() <= max {
+            raw
+        } else {
+            format!("{}...", &raw[..max])
+        }
+    })
+}
+
+pub fn record_system_event(app: &AppHandle, input: DebugSystemEventInput) -> Result<(), String> {
+    let marker = match read_active_marker(app)? {
+        Some(marker) => marker,
+        None => return Ok(()),
+    };
+
+    let system_path = PathBuf::from(&marker.root_dir).join(DEBUG_SYSTEM_FILE);
+    let event = DebugSystemEvent {
+        kind: "system".to_string(),
+        id: format!("evt_{}", Uuid::new_v4()),
+        at: now_iso(),
+        ts: now_ms(),
+        debug_session_id: marker.id,
+        correlation_id: None,
+        surface: input.surface,
+        action: input.action,
+        command: input.command,
+        status: input.status,
+        exit_code: input.exit_code,
+        duration_ms: input.duration_ms,
+        stdout_excerpt: truncate_excerpt(input.stdout_excerpt),
+        stderr_excerpt: truncate_excerpt(input.stderr_excerpt),
+        payload: input.payload,
+    };
+
+    append_json_line(&system_path, &event)
 }
 
 fn sanitize_session_id(value: &str) -> String {
