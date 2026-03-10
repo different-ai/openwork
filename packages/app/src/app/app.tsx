@@ -4230,9 +4230,12 @@ export default function App() {
     });
     setModelPickerOpen(false);
     setSettingsTabLogged("general");
-    goToDashboard("settings");
-    void openProviderAuthModal(providerId).catch((error) => {
-      setProviderAuthError(error instanceof Error ? error.message : "Failed to load providers");
+    setTabState("settings");
+    navigate("/dashboard/settings");
+    requestAnimationFrame(() => {
+      void openProviderAuthModal(providerId).catch((error) => {
+        setProviderAuthError(error instanceof Error ? error.message : "Failed to load providers");
+      });
     });
   }
 
