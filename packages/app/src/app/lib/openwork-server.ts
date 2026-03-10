@@ -1,6 +1,7 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
+import { withDebugCall } from "./debug-log-writer";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };
@@ -1034,29 +1035,45 @@ async function requestJson<T>(
   path: string,
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<T> {
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
+  const method = options.method ?? "GET";
+  return withDebugCall(
     {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken),
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      operation: `openwork.${method} ${path}`,
+      surface: "app.openwork-server",
+      args: {
+        baseUrl,
+        path,
+        method,
+        hasBody: Boolean(options.body),
+        body: options.body ? (options.body as Record<string, unknown>) : undefined,
+      },
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    async () => {
+      const url = `${baseUrl}${path}`;
+      const fetchImpl = resolveFetch();
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method,
+          headers: buildHeaders(options.token, options.hostToken),
+          body: options.body ? JSON.stringify(options.body) : undefined,
+        },
+        options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+      );
+
+      const text = await response.text();
+      const json = text ? JSON.parse(text) : null;
+
+      if (!response.ok) {
+        const code = typeof json?.code === "string" ? json.code : "request_failed";
+        const message = typeof json?.message === "string" ? json.message : response.statusText;
+        throw new OpenworkServerError(response.status, code, message, json?.details);
+      }
+
+      return json as T;
+    },
   );
-
-  const text = await response.text();
-  const json = text ? JSON.parse(text) : null;
-
-  if (!response.ok) {
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
-  }
-
-  return json as T;
 }
 
 async function requestJsonRaw<T>(
@@ -1064,28 +1081,44 @@ async function requestJsonRaw<T>(
   path: string,
   options: { method?: string; token?: string; hostToken?: string; body?: unknown; timeoutMs?: number } = {},
 ): Promise<RawJsonResponse<T>> {
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
+  const method = options.method ?? "GET";
+  return withDebugCall(
     {
-      method: options.method ?? "GET",
-      headers: buildHeaders(options.token, options.hostToken),
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      operation: `openwork.${method} ${path}`,
+      surface: "app.openwork-server",
+      args: {
+        baseUrl,
+        path,
+        method,
+        hasBody: Boolean(options.body),
+        body: options.body ? (options.body as Record<string, unknown>) : undefined,
+      },
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    async () => {
+      const url = `${baseUrl}${path}`;
+      const fetchImpl = resolveFetch();
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method,
+          headers: buildHeaders(options.token, options.hostToken),
+          body: options.body ? JSON.stringify(options.body) : undefined,
+        },
+        options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+      );
+
+      const text = await response.text();
+      let json: T | null = null;
+      try {
+        json = text ? (JSON.parse(text) as T) : null;
+      } catch {
+        json = null;
+      }
+
+      return { ok: response.ok, status: response.status, json };
+    },
   );
-
-  const text = await response.text();
-  let json: T | null = null;
-  try {
-    json = text ? (JSON.parse(text) as T) : null;
-  } catch {
-    json = null;
-  }
-
-  return { ok: response.ok, status: response.status, json };
 }
 
 async function requestMultipartRaw(
@@ -1093,20 +1126,36 @@ async function requestMultipartRaw(
   path: string,
   options: { method?: string; token?: string; hostToken?: string; body?: FormData; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; status: number; text: string }>{
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
+  const method = options.method ?? "POST";
+  return withDebugCall(
     {
-      method: options.method ?? "POST",
-      headers: buildAuthHeaders(options.token, options.hostToken),
-      body: options.body,
+      operation: `openwork.${method} ${path}`,
+      surface: "app.openwork-server",
+      args: {
+        baseUrl,
+        path,
+        method,
+        hasBody: Boolean(options.body),
+        bodyType: "form-data",
+      },
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    async () => {
+      const url = `${baseUrl}${path}`;
+      const fetchImpl = resolveFetch();
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method,
+          headers: buildAuthHeaders(options.token, options.hostToken),
+          body: options.body,
+        },
+        options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+      );
+      const text = await response.text();
+      return { ok: response.ok, status: response.status, text };
+    },
   );
-  const text = await response.text();
-  return { ok: response.ok, status: response.status, text };
 }
 
 async function requestBinary(
@@ -1114,38 +1163,52 @@ async function requestBinary(
   path: string,
   options: { method?: string; token?: string; hostToken?: string; timeoutMs?: number } = {},
 ): Promise<{ data: ArrayBuffer; contentType: string | null; filename: string | null }>{
-  const url = `${baseUrl}${path}`;
-  const fetchImpl = resolveFetch();
-  const response = await fetchWithTimeout(
-    fetchImpl,
-    url,
+  const method = options.method ?? "GET";
+  return withDebugCall(
     {
-      method: options.method ?? "GET",
-      headers: buildAuthHeaders(options.token, options.hostToken),
+      operation: `openwork.${method} ${path}`,
+      surface: "app.openwork-server",
+      args: {
+        baseUrl,
+        path,
+        method,
+      },
     },
-    options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+    async () => {
+      const url = `${baseUrl}${path}`;
+      const fetchImpl = resolveFetch();
+      const response = await fetchWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method,
+          headers: buildAuthHeaders(options.token, options.hostToken),
+        },
+        options.timeoutMs ?? DEFAULT_OPENWORK_SERVER_TIMEOUT_MS,
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        let json: any = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = null;
+        }
+        const code = typeof json?.code === "string" ? json.code : "request_failed";
+        const message = typeof json?.message === "string" ? json.message : response.statusText;
+        throw new OpenworkServerError(response.status, code, message, json?.details);
+      }
+
+      const contentType = response.headers.get("content-type");
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
+      const filenameRaw = filenameMatch?.[1] ?? filenameMatch?.[2] ?? null;
+      const filename = filenameRaw ? decodeURIComponent(filenameRaw) : null;
+      const data = await response.arrayBuffer();
+      return { data, contentType, filename };
+    },
   );
-
-  if (!response.ok) {
-    const text = await response.text();
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = null;
-    }
-    const code = typeof json?.code === "string" ? json.code : "request_failed";
-    const message = typeof json?.message === "string" ? json.message : response.statusText;
-    throw new OpenworkServerError(response.status, code, message, json?.details);
-  }
-
-  const contentType = response.headers.get("content-type");
-  const disposition = response.headers.get("content-disposition") ?? "";
-  const filenameMatch = disposition.match(/filename\*=UTF-8''([^;]+)|filename="?([^";]+)"?/i);
-  const filenameRaw = filenameMatch?.[1] ?? filenameMatch?.[2] ?? null;
-  const filename = filenameRaw ? decodeURIComponent(filenameRaw) : null;
-  const data = await response.arrayBuffer();
-  return { data, contentType, filename };
 }
 
 export function createOpenworkServerClient(options: { baseUrl: string; token?: string; hostToken?: string }) {

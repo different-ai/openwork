@@ -1,8 +1,23 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
 import type { DebugSessionManifest, DebugSessionRetention } from "./debug-log";
+import { withDebugCall } from "./debug-log-writer";
+
+const invoke = <T>(command: string, args?: Record<string, unknown>) => {
+  if (command.startsWith("debug_session_")) {
+    return tauriInvoke<T>(command, args);
+  }
+  return withDebugCall(
+    {
+      operation: `tauri.${command}`,
+      surface: "app.tauri",
+      args: args ?? undefined,
+    },
+    () => tauriInvoke<T>(command, args),
+  );
+};
 
 export type EngineInfo = {
   running: boolean;

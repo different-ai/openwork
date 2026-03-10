@@ -2,6 +2,7 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
+import { withDebugCall } from "./debug-log-writer";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -72,6 +73,52 @@ async function fetchWithTimeout(
   }
 }
 
+function summarizeRequestBody(body: RequestInit["body"]) {
+  if (!body) return { hasBody: false };
+  if (typeof body === "string") {
+    return { hasBody: true, bodyBytes: body.length, bodyType: "string" };
+  }
+  if (typeof Blob !== "undefined" && body instanceof Blob) {
+    return { hasBody: true, bodyBytes: body.size, bodyType: body.type || "blob" };
+  }
+  if (typeof FormData !== "undefined" && body instanceof FormData) {
+    return { hasBody: true, bodyType: "form-data" };
+  }
+  return { hasBody: true, bodyType: typeof body };
+}
+
+function extractRequestPath(input: RequestInfo | URL): string {
+  const url = getRequestUrl(input);
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
+async function fetchWithDebug(
+  fetchImpl: typeof globalThis.fetch,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  timeoutMs: number,
+) {
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  const path = extractRequestPath(input);
+  const bodySummary = summarizeRequestBody(init?.body);
+  return withDebugCall(
+    {
+      operation: `opencode.${method} ${path}`,
+      surface: "app.opencode",
+      args: {
+        path,
+        method,
+        ...bodySummary,
+      },
+    },
+    () => fetchWithTimeout(fetchImpl, input, init, timeoutMs),
+  );
+}
+
 const encodeBasicAuth = (auth?: OpencodeAuth) => {
   if (!auth?.username || !auth?.password) return null;
   const token = `${auth.username}:${auth.password}`;
@@ -101,7 +148,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
       const headers = new Headers(input.headers);
       addAuth(headers);
       const request = new Request(input, { headers });
-      return fetchWithTimeout(
+      return fetchWithDebug(
         tauriFetch as unknown as typeof globalThis.fetch,
         request,
         undefined,
@@ -111,7 +158,7 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
-    return fetchWithTimeout(
+    return fetchWithDebug(
       tauriFetch as unknown as typeof globalThis.fetch,
       input,
       {
@@ -148,7 +195,7 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   const fetchImpl = isTauriRuntime()
     ? createTauriFetch(auth)
     : (input: RequestInfo | URL, init?: RequestInit) =>
-        fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+        fetchWithDebug(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   return createOpencodeClient({
     baseUrl,
     directory,
