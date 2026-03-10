@@ -260,7 +260,7 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="text-sm font-medium text-gray-12 truncate">{provider.title}</div>
-          <div class="mt-1 text-xs text-dls-accent">
+          <div class="mt-1 text-xs text-gray-10">
             Add provider in Settings
           </div>
         </div>
