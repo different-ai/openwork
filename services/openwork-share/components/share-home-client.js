@@ -4,11 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   getPreviewItems,
-  getPreviewPanelState,
   getPublishWarnings,
   getPublishedWarnings,
   getShareFeedback,
-  getSummaryCards,
 } from "./share-home-state.js";
 
 function toneClass(item) {
@@ -123,11 +121,6 @@ export default function ShareHomeClient() {
 
   const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
   const visibleItems = useMemo(() => getPreviewItems(preview), [preview]);
-  const summaryCards = useMemo(() => getSummaryCards(preview), [preview]);
-  const previewPanelState = useMemo(
-    () => getPreviewPanelState({ generatedUrl, preview, effectiveEntryCount: effectiveEntries.length }),
-    [generatedUrl, preview, effectiveEntries.length]
-  );
   const publishWarnings = useMemo(() => getPublishWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
   const publishedWarnings = useMemo(() => getPublishedWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
@@ -304,18 +297,17 @@ export default function ShareHomeClient() {
         <div className="share-cards-grid">
           <div className="package-card share-card surface-soft">
             <div className="package-card-header">
-              <div>
-                <span className="surface-chip">Package once</span>
-                <h2 className="simple-app-title">Create a share link</h2>
-                <p className="simple-app-copy">
-                  Drop <span className="inline-token token-agent">AGENTS.md</span>,{" "}
-                  <span className="inline-token token-skill">SKILL.md</span>,{" "}
-                  <span className="inline-token token-mcp">mcp.json</span>, or{" "}
-                  <span className="inline-token token-config">config</span> files, preview the inferred bundle, then publish a public import page.
-                </p>
-              </div>
+              <span className="surface-chip">Package once</span>
               {selectionLabel && <div className="selection-badge">{selectionLabel}</div>}
             </div>
+
+            <h2 className="simple-app-title">Create a share link</h2>
+            <p className="simple-app-copy">
+              Drop <span className="inline-token token-agent">AGENTS.md</span>,{" "}
+              <span className="inline-token token-skill">SKILL.md</span>,{" "}
+              <span className="inline-token token-mcp">mcp.json</span>, or{" "}
+              <span className="inline-token token-config">config</span> files, preview the inferred bundle, then publish a public import page.
+            </p>
 
             <div className="input-method-grid">
               <label
@@ -372,39 +364,6 @@ export default function ShareHomeClient() {
               </div>
             ) : null}
 
-            <div className="paste-panel">
-              <textarea
-                value={pasteValue}
-                onChange={handlePasteChange}
-                placeholder="Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
-              />
-              <div className="paste-meta">
-                <span>{pasteState}</span>
-                <span>{pasteCountLabel}</span>
-              </div>
-            </div>
-          </div>
-
-          <aside className="preview-panel share-card surface-shell">
-            <div className="preview-panel-header">
-              <span className="surface-chip">{previewPanelState.chipLabel}</span>
-              <span className={`preview-state${previewPanelState.isReady ? " is-ready" : ""}`}>
-                {previewPanelState.stateLabel}
-              </span>
-            </div>
-
-            <h3 className="simple-app-title">{previewPanelState.title}</h3>
-            <p className="simple-app-copy">{previewPanelState.copy}</p>
-
-            <div className="summary-grid">
-              {summaryCards.map((card) => (
-                <div className="summary-stat" key={card.label}>
-                  <strong className="summary-stat-value">{card.value}</strong>
-                  <span className="summary-stat-label">{card.label}</span>
-                </div>
-              ))}
-            </div>
-
             <div className="included-section">
               <h4>{preview?.items?.length ? "Included" : "Example contents"}</h4>
               <div className="included-list">
@@ -421,7 +380,20 @@ export default function ShareHomeClient() {
                 ))}
               </div>
             </div>
+          </div>
 
+          <aside className="preview-panel share-card surface-shell">
+            <div className="paste-panel">
+              <textarea
+                value={pasteValue}
+                onChange={handlePasteChange}
+                placeholder="Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
+              />
+              <div className="paste-meta">
+                <span>{pasteState}</span>
+                <span>{pasteCountLabel}</span>
+              </div>
+            </div>
           </aside>
 
           <div className="share-actions-bar share-card-full" aria-live="polite">

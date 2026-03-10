@@ -612,7 +612,7 @@ a {
 
 .input-method-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
@@ -644,7 +644,7 @@ a {
 }
 
 .simple-app-title {
-  margin-bottom: 6px;
+  margin-bottom: 0;
 }
 
 .share-feedback span,
@@ -717,11 +717,12 @@ a {
   gap: 16px;
   border: 1px dashed rgba(148, 163, 184, 0.42);
   border-radius: 24px;
-  padding: 32px 24px;
+  padding: 24px;
   text-align: center;
   background: rgba(255, 255, 255, 0.72);
   cursor: pointer;
-  min-height: 220px;
+  min-height: 120px;
+  flex-direction: row;
 }
 
 .drop-zone:hover,
@@ -1105,6 +1106,6 @@ a {
 
   .drop-zone,
   .clipboard-tile {
-    min-height: 180px;
+    min-height: 100px;
   }
 }
