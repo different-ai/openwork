@@ -162,7 +162,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }, MCP_AUTH_POLL_INTERVAL_MS);
   };
 
-  const startAuth = async (forceRetry = false) => {
+  const startAuth = async (forceRetry = false, allowAutoReload = true) => {
     const entry = props.entry;
     const client = props.client;
 
@@ -263,6 +263,15 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
       if (message.toLowerCase().includes("does not support oauth")) {
         const serverSlug = props.entry?.name.toLowerCase().replace(/[^a-z0-9]+/g, "-") ?? "server";
+        const canAutoReload =
+          allowAutoReload && !props.isRemoteWorkspace && !props.reloadBlocked && Boolean(props.onReloadEngine);
+
+        if (canAutoReload && props.onReloadEngine) {
+          await props.onReloadEngine();
+          await startAuth(true, false);
+          return;
+        }
+
         if (props.reloadRequired) {
           setReloadNotice(
             props.reloadBlocked
