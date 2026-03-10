@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
-import { CheckCircle2, Circle, Search, X } from "lucide-solid";
+import { CheckCircle2, Circle, ExternalLink, Search, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
@@ -16,6 +16,7 @@ export type ModelPickerModalProps = {
   target: "default" | "session";
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
+  onOpenProviderSettings: (providerId: string) => void;
   onClose: () => void;
 };
 
@@ -35,6 +36,18 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       }),
     );
   });
+
+  const enabledOptions = createMemo(() =>
+    props.filteredOptions
+      .map((opt, index) => ({ opt, index }))
+      .filter((entry) => entry.opt.isConnected),
+  );
+
+  const otherOptions = createMemo(() =>
+    props.filteredOptions
+      .map((opt, index) => ({ opt, index }))
+      .filter((entry) => !entry.opt.isConnected),
+  );
 
   const clampIndex = (next: number) => {
     const last = props.filteredOptions.length - 1;
@@ -105,6 +118,10 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         if (!opt) return;
         event.preventDefault();
         event.stopPropagation();
+        if (!opt.isConnected) {
+          props.onOpenProviderSettings(opt.providerID);
+          return;
+        }
         props.onSelect({ providerID: opt.providerID, modelID: opt.modelID });
       }
     };
@@ -112,6 +129,73 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   });
+
+  const renderOption = (opt: ModelOption, index: number) => {
+    const active = () =>
+      modelEquals(props.current, {
+        providerID: opt.providerID,
+        modelID: opt.modelID,
+      });
+
+    return (
+      <button
+        ref={(el) => {
+          optionRefs[index] = el;
+        }}
+        class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+          index === activeIndex()
+            ? "border-gray-8 bg-gray-12/10"
+            : active()
+              ? "border-gray-6/20 bg-gray-12/5"
+              : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
+        }`}
+        onMouseEnter={() => {
+          setActiveIndex(index);
+        }}
+        onClick={() => {
+          if (!opt.isConnected) {
+            props.onOpenProviderSettings(opt.providerID);
+            return;
+          }
+          props.onSelect({
+            providerID: opt.providerID,
+            modelID: opt.modelID,
+          });
+        }}
+      >
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <div class="text-sm font-medium text-gray-12 flex items-center gap-2">
+              <span class="truncate">{opt.title}</span>
+            </div>
+            <div class="mt-1 flex items-center gap-3 text-xs text-gray-10">
+              <span class="truncate">{opt.description ?? opt.providerID}</span>
+              <span class="ml-auto text-[11px] text-gray-7 font-mono">
+                {opt.providerID}/{opt.modelID}
+              </span>
+            </div>
+            <Show when={opt.footer}>
+              <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
+            </Show>
+            <Show when={!opt.isConnected}>
+              <div class="text-[11px] text-dls-accent mt-2">Add provider in Settings</div>
+            </Show>
+          </div>
+
+          <div class="pt-0.5 text-gray-10">
+            <Show
+              when={opt.isConnected}
+              fallback={<ExternalLink size={14} class="text-dls-accent" />}
+            >
+              <Show when={active()} fallback={<Circle size={14} />}>
+                <CheckCircle2 size={14} class="text-green-11" />
+              </Show>
+            </Show>
+          </div>
+        </div>
+      </button>
+    );
+  };
 
   return (
     <Show when={props.open}>
@@ -151,65 +235,30 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
               </Show>
             </div>
 
-            <div class="mt-4 space-y-2 overflow-y-auto pr-1 -mr-1 min-h-0">
-              <For each={props.filteredOptions}>
-                {(opt, idx) => {
-                  const active = () =>
-                    modelEquals(props.current, {
-                      providerID: opt.providerID,
-                      modelID: opt.modelID,
-                    });
+            <div class="mt-4 space-y-4 overflow-y-auto pr-1 -mr-1 min-h-0">
+              <Show when={enabledOptions().length > 0}>
+                <section class="space-y-2">
+                  <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                    Enabled Providers
+                  </div>
+                  <For each={enabledOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+                </section>
+              </Show>
 
-                  const i = () => idx();
+              <Show when={otherOptions().length > 0}>
+                <section class="space-y-2">
+                  <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
+                    Other Providers
+                  </div>
+                  <For each={otherOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+                </section>
+              </Show>
 
-                  return (
-                    <button
-                      ref={(el) => {
-                        optionRefs[i()] = el;
-                      }}
-                      class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
-                        i() === activeIndex()
-                          ? "border-gray-8 bg-gray-12/10"
-                          : active()
-                            ? "border-gray-6/20 bg-gray-12/5"
-                            : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
-                      }`}
-                      onMouseEnter={() => {
-                        setActiveIndex(i());
-                      }}
-                      onClick={() =>
-                        props.onSelect({
-                          providerID: opt.providerID,
-                          modelID: opt.modelID,
-                        })
-                      }
-                    >
-                      <div class="flex items-start justify-between gap-3">
-                        <div class="min-w-0">
-                          <div class="text-sm font-medium text-gray-12 flex items-center gap-2">
-                            <span class="truncate">{opt.title}</span>
-                          </div>
-                          <Show when={opt.description}>
-                            <div class="text-xs text-gray-10 mt-1 truncate">{opt.description}</div>
-                          </Show>
-                          <Show when={opt.footer}>
-                            <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
-                          </Show>
-                          <div class="text-[11px] text-gray-7 font-mono mt-2">
-                            {opt.providerID}/{opt.modelID}
-                          </div>
-                        </div>
-
-                        <div class="pt-0.5 text-gray-10">
-                          <Show when={active()} fallback={<Circle size={14} />}>
-                            <CheckCircle2 size={14} class="text-green-11" />
-                          </Show>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                }}
-              </For>
+              <Show when={props.filteredOptions.length === 0}>
+                <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
+                  No models match your search.
+                </div>
+              </Show>
             </div>
 
             <div class="mt-5 flex justify-end shrink-0">

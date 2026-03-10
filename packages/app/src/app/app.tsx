@@ -1117,6 +1117,7 @@ export default function App() {
   const [sessionModelById, setSessionModelById] = createSignal<
     Record<string, ModelRef>
   >({});
+  const [pendingSessionModel, setPendingSessionModel] = createSignal<ModelRef | null>(null);
   const [sessionModelOverridesReady, setSessionModelOverridesReady] = createSignal(false);
   const [workspaceDefaultModelReady, setWorkspaceDefaultModelReady] = createSignal(false);
   const [legacyDefaultModel, setLegacyDefaultModel] = createSignal<ModelRef>(DEFAULT_MODEL);
@@ -4052,7 +4053,7 @@ export default function App() {
 
   const selectedSessionModel = createMemo<ModelRef>(() => {
     const id = selectedSessionId();
-    if (!id) return defaultModel();
+    if (!id) return pendingSessionModel() ?? defaultModel();
 
     const override = sessionModelOverrideById()[id];
     if (override) return override;
@@ -4130,7 +4131,6 @@ export default function App() {
         if (defaultModelID === model.id || isDefault) {
           footerBits.push(t("settings.model_default", currentLocale()));
         }
-        if (isFree) footerBits.push(t("settings.model_free", currentLocale()));
         if (model.reasoning) footerBits.push(t("settings.model_reasoning", currentLocale()));
 
         next.push({
@@ -4199,6 +4199,9 @@ export default function App() {
 
     const id = selectedSessionId();
     if (!id) {
+      setPendingSessionModel(next);
+      setDefaultModelExplicit(true);
+      setDefaultModel(next);
       setModelPickerOpen(false);
       return;
     }
@@ -4213,6 +4216,19 @@ export default function App() {
         window.dispatchEvent(new CustomEvent("openwork:focusPrompt"));
       });
     }
+  }
+
+  function openProviderSettingsFromModelPicker(providerId: string) {
+    emitUiEvent({
+      surface: "app.settings",
+      action: "provider.open_from_model_picker",
+      interaction: "click",
+      payload: { providerId },
+    });
+    setModelPickerOpen(false);
+    setSettingsTabLogged("general");
+    setTab("settings");
+    setView("dashboard");
   }
 
 
@@ -4877,11 +4893,20 @@ export default function App() {
       }
 
       const session = unwrap(rawResult);
+      const pendingModel = pendingSessionModel();
       // Immediately select and show the new session before background list refresh.
       setBusyLabel("status.loading_session");
       mark("session:select:start", { sessionID: session.id });
       await selectSession(session.id);
       mark("session:select:ok", { sessionID: session.id });
+
+      if (pendingModel) {
+        setSessionModelOverrideById((current) => ({
+          ...current,
+          [session.id]: pendingModel,
+        }));
+        setPendingSessionModel(null);
+      }
 
       // Inject the new session into the reactive sessions() store so
       // the createEffect bridge (sessions → sidebar) will always include it,
@@ -6329,6 +6354,7 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
+        onOpenProviderSettings={openProviderSettingsFromModelPicker}
         onClose={() => setModelPickerOpen(false)}
       />
 
