@@ -12,7 +12,9 @@ type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  debugLoggingEnabled: boolean;
   onOpenSettings: () => void;
+  onOpenSupport: () => void;
   onOpenMessaging: () => void;
   onOpenProviders: () => Promise<void> | void;
   onOpenMcp: () => void;
@@ -224,6 +226,18 @@ export default function StatusBar(props: StatusBarProps) {
             >
               <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">Tip</span>
               <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
+            </button>
+          </Show>
+          <Show when={props.debugLoggingEnabled}>
+            <button
+              type="button"
+              class="flex h-7 items-center gap-2 rounded-full border border-red-7/45 bg-red-4/65 px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-red-11 transition-colors hover:bg-red-4/85 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-7/35"
+              onClick={props.onOpenSupport}
+              title="Open debug logging support flow"
+              aria-label="Open debug logging support flow"
+            >
+              <span class="h-2 w-2 rounded-full bg-red-10" />
+              <span>Debug logging enabled</span>
             </button>
           </Show>
           <Button

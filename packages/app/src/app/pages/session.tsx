@@ -4023,7 +4023,9 @@ export default function SessionView(props: SessionViewProps) {
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
+          debugLoggingEnabled={false}
           onOpenSettings={() => openSettings("general")}
+          onOpenSupport={() => openSettings("support")}
           onOpenMessaging={openConfig}
           onOpenProviders={openProviderAuth}
           onOpenMcp={openMcp}

@@ -1511,7 +1511,9 @@ export default function DashboardView(props: DashboardViewProps) {
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
+          debugLoggingEnabled={props.debugLoggingEnabled}
           onOpenSettings={() => openSettings("general")}
+          onOpenSupport={() => openSettings("support")}
           onOpenMessaging={openConfig}
           onOpenProviders={() => props.openProviderAuthModal()}
           onOpenMcp={() => props.setTab("mcp")}
