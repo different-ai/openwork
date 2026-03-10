@@ -455,7 +455,7 @@ fn truncate_for_report(input: &str) -> String {
     format!("{}...[truncated]", &trimmed[..MAX_LEN])
 }
 
-fn to_command_debug(result: DockerCommandResult) -> SandboxDoctorCommandDebug {
+fn to_command_debug(result: &DockerCommandResult) -> SandboxDoctorCommandDebug {
     SandboxDoctorCommandDebug {
         status: result.status,
         stdout: truncate_for_report(&result.stdout),
@@ -1287,7 +1287,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
 
     if doctor.ready {
         match orchestrator_start_detached(
-            app,
+            app.clone(),
             workspace_path.clone(),
             Some("docker".to_string()),
             Some(run_id.clone()),
@@ -1305,7 +1305,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
                     Duration::from_secs(6),
                 ) {
                     Ok(result) => {
-                        docker_inspect = Some(to_command_debug(result));
+                        docker_inspect = Some(to_command_debug(&result));
                     }
                     Err(err) => {
                         cleanup_errors.push(format!("docker inspect failed: {err}"));
@@ -1323,7 +1323,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
                     Duration::from_secs(8),
                 ) {
                     Ok(result) => {
-                        docker_logs = Some(to_command_debug(result));
+                        docker_logs = Some(to_command_debug(&result));
                     }
                     Err(err) => {
                         cleanup_errors.push(format!("docker logs failed: {err}"));
@@ -1364,7 +1364,7 @@ pub fn sandbox_debug_probe(app: AppHandle) -> SandboxDebugProbeResult {
         match run_docker_command_detailed(&["rm", "-f", name.as_str()], Duration::from_secs(20)) {
             Ok(result) => {
                 container_removed = result.status == 0;
-                remove_result = Some(to_command_debug(result));
+                remove_result = Some(to_command_debug(&result));
             }
             Err(err) => {
                 cleanup_errors.push(format!("docker rm -f {name} failed: {err}"));
