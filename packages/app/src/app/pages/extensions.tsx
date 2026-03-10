@@ -138,6 +138,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
             setSelectedMcp={props.setSelectedMcp}
             quickConnect={props.quickConnect}
             connectMcp={props.connectMcp}
+            authorizeMcp={props.authorizeMcp}
             logoutMcpAuth={props.logoutMcpAuth}
             removeMcp={props.removeMcp}
             showMcpReloadBanner={props.showMcpReloadBanner}

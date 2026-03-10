@@ -4661,6 +4661,29 @@ export default function App() {
     }
   }
 
+  function authorizeMcp(entry: McpServerEntry) {
+    if (entry.config.type !== "remote" || entry.config.oauth === false) {
+      setMcpStatus(t("mcp.login_unavailable", currentLocale()));
+      return;
+    }
+
+    const matchingQuickConnect = MCP_QUICK_CONNECT.find((candidate) => {
+      const candidateSlug = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      return candidateSlug === entry.name || candidate.name === entry.name;
+    });
+
+    setMcpAuthEntry(
+      matchingQuickConnect ?? {
+        name: entry.name,
+        description: "",
+        type: "remote",
+        url: entry.config.url,
+        oauth: true,
+      },
+    );
+    setMcpAuthModalOpen(true);
+  }
+
   async function logoutMcpAuth(name: string) {
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
@@ -6037,6 +6060,7 @@ export default function App() {
       setSelectedMcp,
       quickConnect: MCP_QUICK_CONNECT,
       connectMcp,
+      authorizeMcp,
       logoutMcpAuth,
       removeMcp,
       refreshMcpServers,
