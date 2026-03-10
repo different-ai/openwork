@@ -212,6 +212,7 @@ type DebugGate = {
 
 let debugGate: DebugGate | null = null;
 let debugSessionProvider: { get: () => DebugSessionManifest | null } | null = null;
+let activeCorrelationId: string | null = null;
 
 export function setDebugGate(gate: DebugGate | null) {
   debugGate = gate;
@@ -227,6 +228,14 @@ export function isDebugLoggingEnabled(): boolean {
 
 export function getActiveDebugSession(): DebugSessionManifest | null {
   return debugSessionProvider?.get() ?? null;
+}
+
+export function setActiveCorrelationId(value: string | null) {
+  activeCorrelationId = value;
+}
+
+export function getActiveCorrelationId(): string | null {
+  return activeCorrelationId;
 }
 
 function resolveCryptoId() {

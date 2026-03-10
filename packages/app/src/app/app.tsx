@@ -159,12 +159,17 @@ import {
   readStoredFontZoom,
 } from "./lib/font-zoom";
 import {
+  buildDebugEventBase,
+  createDebugCorrelationId,
   createDebugSessionId,
   DEBUG_DEFAULT_RETENTION,
+  setActiveCorrelationId,
   setDebugGate,
   setDebugSessionProvider,
+  type DebugEventBase,
   type DebugSessionManifest,
 } from "./lib/debug-log";
+import { appendDebugEvent } from "./lib/debug-log-writer";
 import {
   parseOpenworkWorkspaceIdFromUrl,
   readOpenworkBundleInviteFromSearch,
@@ -623,6 +628,15 @@ export default function App() {
   };
 
   const setTab = (nextTab: DashboardTab) => {
+    const prevTab = tab();
+    if (prevTab !== nextTab) {
+      emitUiEvent({
+        surface: "app.dashboard",
+        action: "dashboard.tab.change",
+        interaction: "navigate",
+        payload: { from: prevTab, to: nextTab },
+      });
+    }
     if (currentView() === "dashboard") {
       goToDashboard(nextTab);
       return;
@@ -631,6 +645,15 @@ export default function App() {
   };
 
   const setView = (next: View, sessionId?: string) => {
+    const prevView = currentView();
+    if (prevView !== next) {
+      emitUiEvent({
+        surface: "app.shell",
+        action: "view.change",
+        interaction: "navigate",
+        payload: { from: prevView, to: next, sessionId: sessionId ?? null },
+      });
+    }
     if (next === "dashboard" && creatingSession()) {
       return;
     }
@@ -1146,6 +1169,73 @@ export default function App() {
     } catch (error) {
       setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
     }
+  };
+
+  const emitUiEvent = (input: {
+    action: string;
+    interaction: string;
+    surface?: string;
+    payload?: Record<string, unknown>;
+    entity?: DebugEventBase["entity"];
+    correlationId?: string;
+  }) => {
+    const session = debugSession();
+    if (!session) return;
+    const correlationId = input.correlationId ?? createDebugCorrelationId();
+    setActiveCorrelationId(correlationId);
+    const base = buildDebugEventBase({
+      kind: "ui",
+      debugSessionId: session.id,
+      correlationId,
+      surface: input.surface ?? "app.shell",
+      action: input.action,
+      entity: input.entity,
+      payload: input.payload,
+    });
+    void appendDebugEvent({
+      ...base,
+      kind: "ui",
+      interaction: input.interaction,
+    });
+  };
+
+  const [lastRoutePath, setLastRoutePath] = createSignal<string | null>(null);
+  createEffect(() => {
+    const path = location.pathname;
+    const prev = lastRoutePath();
+    if (prev === null) {
+      setLastRoutePath(path);
+      return;
+    }
+    if (prev === path) return;
+    emitUiEvent({
+      surface: "app.router",
+      action: "route.change",
+      interaction: "navigate",
+      payload: { from: prev, to: path, view: currentView() },
+    });
+    setLastRoutePath(path);
+  });
+
+  const trackDialog = (dialogId: string, isOpen: () => boolean, payload?: () => Record<string, unknown>) => {
+    let initialized = false;
+    let prev = isOpen();
+    createEffect(() => {
+      const next = isOpen();
+      if (!initialized) {
+        initialized = true;
+        prev = next;
+        return;
+      }
+      if (prev === next) return;
+      emitUiEvent({
+        surface: "app.modal",
+        action: next ? "dialog.open" : "dialog.close",
+        interaction: "toggle",
+        payload: { dialogId, state: next ? "open" : "closed", ...(payload ? payload() : {}) },
+      });
+      prev = next;
+    });
   };
 
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
@@ -5747,6 +5837,15 @@ export default function App() {
     return "workspace.switching_status_preparing";
   });
 
+  trackDialog("model-picker", modelPickerOpen, () => ({ target: modelPickerTarget() }));
+  trackDialog("reset-openwork", resetModalOpen, () => ({ mode: resetModalMode() }));
+  trackDialog("mcp-auth", mcpAuthModalOpen, () => ({ provider: mcpAuthEntry()?.provider ?? null }));
+  trackDialog("provider-auth", providerAuthModalOpen);
+  trackDialog("workspace-create", () => workspaceStore.createWorkspaceOpen());
+  trackDialog("workspace-create-remote", () => workspaceStore.createRemoteWorkspaceOpen());
+  trackDialog("workspace-rename", renameWorkspaceOpen, () => ({ workspaceId: renameWorkspaceId() }));
+  trackDialog("workspace-switch", workspaceSwitchOpen, () => ({ workspaceId: workspaceStore.connectingWorkspaceId() }));
+
   const localHostLabel = createMemo(() => {
     const info = engine();
     if (info?.hostname && info?.port) {
@@ -5759,6 +5858,29 @@ export default function App() {
       return "localhost:4096";
     }
   });
+
+  const setSettingsTabLogged = (next: SettingsTab) => {
+    const prev = settingsTab();
+    if (prev !== next) {
+      emitUiEvent({
+        surface: "app.settings",
+        action: "settings.tab.change",
+        interaction: "navigate",
+        payload: { from: prev, to: next },
+      });
+    }
+    setSettingsTab(next);
+  };
+
+  const openSettingsFromUi = () => {
+    emitUiEvent({
+      surface: "app.settings",
+      action: "settings.open",
+      interaction: "click",
+    });
+    setTab("settings");
+    setView("dashboard");
+  };
 
   const onboardingProps = () => ({
     startupPreference: startupPreference(),
@@ -5828,10 +5950,7 @@ export default function App() {
         workspaceStore.engineDoctorResult()?.notes?.join("\n") ?? "";
       workspaceStore.setEngineInstallLogs(notes || null);
     },
-    onOpenSettings: () => {
-      setTab("settings");
-      setView("dashboard");
-    },
+    onOpenSettings: openSettingsFromUi,
     themeMode: themeMode(),
     setThemeMode,
   });
@@ -5871,7 +5990,7 @@ export default function App() {
       tab: tab(),
       setTab,
       settingsTab: settingsTab(),
-      setSettingsTab,
+      setSettingsTab: setSettingsTabLogged,
       providers: providers(),
       providerConnectedIds: providerConnectedIds(),
       providerAuthBusy: providerAuthBusy(),
