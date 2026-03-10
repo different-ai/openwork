@@ -21,6 +21,7 @@
     "test:fs-engine": "node scripts/fs-engine.mjs",
     "test:local-file-path": "node scripts/local-file-path.mjs",
     "test:browser-entry": "node scripts/browser-entry.mjs",
+    "test:debug-redaction": "tsx scripts/debug-redaction.ts",
     "test:e2e": "pnpm test:local-file-path && node scripts/e2e.mjs && node scripts/session-switch.mjs && node scripts/fs-engine.mjs && node scripts/browser-entry.mjs",
     "bump:patch": "node scripts/bump-version.mjs patch",
     "bump:minor": "node scripts/bump-version.mjs minor",
@@ -55,6 +56,7 @@
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vite": "^6.0.1",
     "vite-plugin-solid": "^2.11.0"
