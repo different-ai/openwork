@@ -84,6 +84,7 @@ export type DashboardViewProps = {
   providerAuthError: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
   openProviderAuthModal: () => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
   completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
@@ -1305,6 +1306,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}
                   openProviderAuthModal={props.openProviderAuthModal}
+                  disconnectProvider={props.disconnectProvider}
                   openworkServerStatus={props.openworkServerStatus}
                   openworkServerUrl={props.openworkServerUrl}
                   openworkReconnectBusy={props.openworkReconnectBusy}

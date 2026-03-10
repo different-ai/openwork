@@ -2031,6 +2031,45 @@ export default function App() {
     }
   }
 
+  async function disconnectProvider(providerId: string) {
+    setProviderAuthError(null);
+    const c = client();
+    if (!c) {
+      throw new Error("Not connected to a server");
+    }
+
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error("Provider ID is required");
+    }
+
+    const removeProviderAuth = async () => {
+      const rawClient = (c as unknown as { client?: { delete?: (options: { url: string }) => Promise<unknown> } })
+        .client;
+      if (rawClient?.delete) {
+        await rawClient.delete({ url: `/auth/${encodeURIComponent(resolved)}` });
+        return;
+      }
+      await c.auth.set({ providerID: resolved, auth: null as never });
+    };
+
+    try {
+      await removeProviderAuth();
+      try {
+        await c.global.dispose();
+      } catch {
+        // ignore
+      }
+      const updated = unwrap(await c.provider.list());
+      globalSync.set("provider", updated);
+      return `Disconnected ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, "Failed to disconnect provider");
+      setProviderAuthError(message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
   async function openProviderAuthModal() {
     setProviderAuthBusy(true);
     setProviderAuthError(null);
@@ -5717,6 +5756,7 @@ export default function App() {
       providerAuthError: providerAuthError(),
       providerAuthMethods: providerAuthMethods(),
       openProviderAuthModal,
+      disconnectProvider,
       closeProviderAuthModal,
       startProviderAuth,
       completeProviderAuthOAuth,
