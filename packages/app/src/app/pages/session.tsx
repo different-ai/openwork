@@ -86,6 +86,14 @@ import {
 } from "../utils";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
 import { normalizeLocalFilePath } from "../lib/local-file-path";
+import {
+  buildDebugEventBase,
+  createDebugCorrelationId,
+  getActiveDebugSession,
+  setActiveCorrelationId,
+  type DebugEventBase,
+} from "../lib/debug-log";
+import { appendDebugEvent } from "../lib/debug-log-writer";
 
 import browserSetupTemplate from "../data/commands/browser-setup.md?raw";
 import soulSetupTemplate from "../data/commands/give-me-a-soul.md?raw";
@@ -297,6 +305,36 @@ const COMMAND_PALETTE_THINKING_OPTIONS = [
 ] as const;
 
 export default function SessionView(props: SessionViewProps) {
+  const emitSessionUiEvent = (input: {
+    action: string;
+    interaction: string;
+    surface?: string;
+    payload?: Record<string, unknown>;
+    entity?: DebugEventBase["entity"];
+    correlationId?: string;
+  }) => {
+    const session = getActiveDebugSession();
+    if (!session) return;
+    const correlationId = input.correlationId ?? createDebugCorrelationId();
+    setActiveCorrelationId(correlationId);
+    const base = buildDebugEventBase({
+      kind: "ui",
+      debugSessionId: session.id,
+      correlationId,
+      surface: input.surface ?? "session.composer",
+      action: input.action,
+      entity: input.entity ?? {
+        workspaceId: props.activeWorkspaceId,
+        sessionId: props.selectedSessionId ?? undefined,
+      },
+      payload: input.payload,
+    });
+    void appendDebugEvent({
+      ...base,
+      kind: "ui",
+      interaction: input.interaction,
+    });
+  };
   let messagesEndEl: HTMLDivElement | undefined;
   let bottomVisibilityEl: HTMLDivElement | undefined;
   let chatContainerEl: HTMLDivElement | undefined;
@@ -368,6 +406,8 @@ export default function SessionView(props: SessionViewProps) {
       cancelled = true;
     });
   });
+
+  let lastAttachmentSnapshot = { count: 0, totalBytes: 0 };
 
   const agentLabel = createMemo(() => props.selectedSessionAgent ?? "Default agent");
   const workspaceLabel = (workspace: WorkspaceInfo) =>
@@ -2149,6 +2189,12 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
+    emitSessionUiEvent({
+      action: "composer.stop",
+      interaction: "click",
+      payload: { sessionId: props.selectedSessionId },
+    });
+
     setAbortBusy(true);
     setToastMessage("Stopping the run...");
     try {
@@ -2168,6 +2214,12 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage("Nothing to retry yet");
       return;
     }
+
+    emitSessionUiEvent({
+      action: "composer.retry",
+      interaction: "click",
+      payload: { sessionId: props.selectedSessionId, charCount: text.length },
+    });
 
     if (abortBusy()) return;
     setAbortBusy(true);
@@ -2940,6 +2992,18 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleSendPrompt = (draft: ComposerDraft) => {
+    const resolvedText = (draft.resolvedText ?? draft.text ?? "").trim();
+    emitSessionUiEvent({
+      action: "composer.submit",
+      interaction: "submit",
+      payload: {
+        mode: draft.mode,
+        command: draft.command?.name ?? null,
+        charCount: resolvedText.length,
+        partCount: draft.parts.length,
+        attachmentCount: draft.attachments.length,
+      },
+    });
     startRun();
     props.sendPromptAsync(draft).catch(() => undefined);
   };
@@ -3050,10 +3114,38 @@ export default function SessionView(props: SessionViewProps) {
 
   const handleDraftChange = (draft: ComposerDraft) => {
     props.setPrompt(draft.text);
+    const totalBytes = draft.attachments.reduce((sum, attachment) => sum + (attachment.size || 0), 0);
+    const types = Array.from(
+      new Set(draft.attachments.map((attachment) => attachment.mimeType).filter(Boolean)),
+    );
+    if (
+      draft.attachments.length !== lastAttachmentSnapshot.count ||
+      totalBytes !== lastAttachmentSnapshot.totalBytes
+    ) {
+      emitSessionUiEvent({
+        action: "composer.attachment.change",
+        interaction: "change",
+        payload: {
+          count: draft.attachments.length,
+          totalBytes,
+          types,
+        },
+      });
+      lastAttachmentSnapshot = {
+        count: draft.attachments.length,
+        totalBytes,
+      };
+    }
   };
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     if (!sessionId) return;
+    emitSessionUiEvent({
+      surface: "session.sidebar",
+      action: "session.select",
+      interaction: "select",
+      payload: { sessionId, workspaceId },
+    });
     // Route-driven selection: navigate first and let the route effect own selectSession.
     if (workspaceId === props.activeWorkspaceId) {
       props.setView("session", sessionId);
@@ -3069,6 +3161,12 @@ export default function SessionView(props: SessionViewProps) {
   const createTaskInWorkspace = (workspaceId: string) => {
     const id = workspaceId.trim();
     if (!id) return;
+    emitSessionUiEvent({
+      surface: "session.sidebar",
+      action: "session.create",
+      interaction: "click",
+      payload: { workspaceId: id },
+    });
     if (id === props.activeWorkspaceId) {
       props.createSessionAndOpen();
       return;

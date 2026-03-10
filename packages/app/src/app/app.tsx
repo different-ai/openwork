@@ -1735,6 +1735,13 @@ export default function App() {
       throw new Error("Select a session before compacting.");
     }
 
+    emitUiEvent({
+      surface: "session.actions",
+      action: "session.compact",
+      interaction: "click",
+      payload: { sessionId: sessionID },
+    });
+
     const visible = messages();
     if (!visible.length) {
       throw new Error("Nothing to compact yet.");
@@ -2019,6 +2026,12 @@ export default function App() {
 
   function setSessionAgent(sessionID: string, agent: string | null) {
     const trimmed = agent?.trim() ?? "";
+    emitUiEvent({
+      surface: "session.composer",
+      action: "session.agent.change",
+      interaction: "select",
+      payload: { sessionId: sessionID, agent: trimmed || null },
+    });
     setSessionAgentById((current) => {
       const next = { ...current };
       if (!trimmed) {
@@ -2343,6 +2356,31 @@ export default function App() {
     return fileName;
   }
 
+  const respondPermissionLogged = async (requestID: string, reply: "once" | "always" | "reject") => {
+    emitUiEvent({
+      surface: "session.permission",
+      action: "permission.respond",
+      interaction: "click",
+      payload: { requestId: requestID, reply },
+    });
+    await respondPermission(requestID, reply);
+  };
+
+  const respondQuestionLogged = async (requestID: string, answers: string[][]) => {
+    const totalParts = answers.reduce((sum, entry) => sum + entry.length, 0);
+    const totalChars = answers.reduce(
+      (sum, entry) => sum + entry.reduce((inner, value) => inner + value.length, 0),
+      0,
+    );
+    emitUiEvent({
+      surface: "session.question",
+      action: "question.respond",
+      interaction: "submit",
+      payload: { requestId: requestID, answersCount: answers.length, totalParts, totalChars },
+    });
+    await respondQuestion(requestID, answers);
+  };
+
 
   async function respondPermissionAndRemember(
     requestID: string,
@@ -2350,7 +2388,7 @@ export default function App() {
   ) {
     // Intentional no-op: permission prompts grant session-scoped access only.
     // Persistent workspace roots must be managed explicitly via workspace settings.
-    await respondPermission(requestID, reply);
+    await respondPermissionLogged(requestID, reply);
   }
 
   const [notionStatus, setNotionStatus] = createSignal<"disconnected" | "connecting" | "connected" | "error">(
@@ -6323,11 +6361,11 @@ export default function App() {
     setPrompt: setPrompt,
     activePermission: activePermissionMemo(),
     permissionReplyBusy: permissionReplyBusy(),
-    respondPermission: respondPermission,
+    respondPermission: respondPermissionLogged,
     respondPermissionAndRemember: respondPermissionAndRemember,
     activeQuestion: activeQuestion(),
     questionReplyBusy: questionReplyBusy(),
-    respondQuestion: respondQuestion,
+    respondQuestion: respondQuestionLogged,
     safeStringify: safeStringify,
     showTryNotionPrompt: tryNotionPromptVisible() && notionIsActive(),
     startProviderAuth: startProviderAuth,
