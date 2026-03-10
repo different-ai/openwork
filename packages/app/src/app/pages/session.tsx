@@ -211,11 +211,12 @@ export type SessionViewProps = {
   ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
   refreshProviders: () => Promise<unknown>;
-  openProviderAuthModal: () => Promise<void>;
+  openProviderAuthModal: (providerId?: string) => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
   providerAuthBusy: boolean;
   providerAuthError: string | null;
+  providerAuthInitialProviderId?: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
@@ -4142,6 +4143,7 @@ export default function SessionView(props: SessionViewProps) {
         loading={props.providerAuthBusy}
         submitting={providerAuthActionBusy()}
         error={props.providerAuthError}
+        initialProviderId={props.providerAuthInitialProviderId}
         providers={props.providers}
         connectedProviderIds={props.providerConnectedIds}
         authMethods={props.providerAuthMethods}

@@ -38,6 +38,7 @@ export type ProviderAuthModalProps = {
   loading: boolean;
   submitting: boolean;
   error: string | null;
+  initialProviderId?: string | null;
   providers: ProviderListItem[];
   connectedProviderIds: string[];
   authMethods: Record<string, ProviderAuthMethod[]>;
@@ -181,6 +182,15 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     queueMicrotask(() => {
       searchInputEl?.focus();
     });
+  });
+
+  createEffect(() => {
+    if (!props.open || props.loading || resolvedView() !== "list") return;
+    const initialId = props.initialProviderId?.trim();
+    if (!initialId || selectedProviderId()) return;
+    const entry = entries().find((item) => item.id === initialId);
+    if (!entry) return;
+    queueMicrotask(() => handleEntrySelect(entry));
   });
 
   const hasMethod = (entry: ProviderAuthEntry | null, type: ProviderAuthMethod["type"]) =>
