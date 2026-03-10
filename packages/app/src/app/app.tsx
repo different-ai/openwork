@@ -1962,6 +1962,23 @@ export default function App() {
       throw new Error("OAuth method is required");
     }
 
+    const waitForProviderConnection = async (timeoutMs = 15_000, pollMs = 1_000) => {
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < timeoutMs) {
+        try {
+          const updated = unwrap(await c.provider.list()) as { connected?: string[] };
+          if (Array.isArray(updated.connected) && updated.connected.includes(resolved)) {
+            globalSync.set("provider", updated);
+            return true;
+          }
+        } catch {
+          // ignore and retry
+        }
+        await new Promise((resolve) => setTimeout(resolve, pollMs));
+      }
+      return false;
+    };
+
     try {
       const trimmedCode = code?.trim();
       const result = await c.provider.oauth.callback({
@@ -1974,6 +1991,13 @@ export default function App() {
       globalSync.set("provider", updated);
       return `Connected ${resolved}`;
     } catch (error) {
+      const messageText = error instanceof Error ? error.message : String(error ?? "");
+      if (/request timed out/i.test(messageText)) {
+        const connected = await waitForProviderConnection();
+        if (connected) {
+          return `Connected ${resolved}`;
+        }
+      }
       const message = describeProviderError(error, "Failed to complete OAuth");
       setProviderAuthError(message);
       throw error instanceof Error ? error : new Error(message);

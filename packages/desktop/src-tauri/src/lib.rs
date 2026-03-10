@@ -24,9 +24,9 @@ use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
 use commands::misc::{
-    app_build_info, obsidian_is_available, open_in_obsidian, opencode_db_migrate,
-    opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache, reset_openwork_state,
-    write_obsidian_mirror_file,
+    app_build_info, nuke_opencode_dev_config_and_exit, obsidian_is_available, open_in_obsidian,
+    opencode_db_migrate, opencode_mcp_auth, read_obsidian_mirror_file, reset_opencode_cache,
+    reset_openwork_state, write_obsidian_mirror_file,
 };
 use commands::opencode_router::{
     opencodeRouter_config_set, opencodeRouter_info, opencodeRouter_start, opencodeRouter_status,
@@ -140,6 +140,7 @@ pub fn run() {
             write_opencode_config,
             updater_environment,
             app_build_info,
+            nuke_opencode_dev_config_and_exit,
             obsidian_is_available,
             open_in_obsidian,
             write_obsidian_mirror_file,

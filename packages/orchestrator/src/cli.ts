@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
@@ -234,6 +234,15 @@ type RouterState = {
   binaries?: RouterBinaryState;
   activeId: string;
   workspaces: RouterWorkspace[];
+};
+
+type OpencodeStateLayout = {
+  devMode: boolean;
+  rootDir: string;
+  configDir: string;
+  env: NodeJS.ProcessEnv;
+  importConfigDir?: string;
+  importDataDir?: string;
 };
 
 type FieldsResult<T> = {
@@ -508,7 +517,9 @@ async function isDir(input: string): Promise<boolean> {
 }
 
 async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled =
+    (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? (internalDevModeFromEnv() ? "0" : "1")).trim() !==
+    "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -545,7 +556,9 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
 }
 
 async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled =
+    (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? (internalDevModeFromEnv() ? "0" : "1")).trim() !==
+    "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -1907,6 +1920,91 @@ function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
   return join(homedir(), ".openwork", "openwork-orchestrator");
 }
 
+function resolveInternalDevMode(flags: Map<string, string | boolean>): boolean {
+  return readBool(flags, "internal-dev-mode", false, "OPENWORK_DEV_MODE");
+}
+
+function internalDevModeFromEnv(): boolean {
+  const value = process.env.OPENWORK_DEV_MODE?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveOpencodeStateLayout(options: {
+  dataDir: string;
+  workspace: string;
+  devMode: boolean;
+}): OpencodeStateLayout {
+  const workspaceId = workspaceIdForLocal(options.workspace);
+  if (!options.devMode) {
+    return {
+      devMode: false,
+      rootDir: join(options.dataDir, "opencode-config", workspaceId),
+      configDir: join(options.dataDir, "opencode-config", workspaceId),
+      env: {},
+    };
+  }
+
+  const rootDir = join(options.dataDir, "opencode-dev", workspaceId);
+  const homeDir = join(rootDir, "home");
+  const xdgConfigHome = join(rootDir, "xdg", "config");
+  const xdgDataHome = join(rootDir, "xdg", "data");
+  const xdgCacheHome = join(rootDir, "xdg", "cache");
+  const xdgStateHome = join(rootDir, "xdg", "state");
+  const configDir = join(rootDir, "config", "opencode");
+
+  return {
+    devMode: true,
+    rootDir,
+    configDir,
+    importConfigDir: process.env.OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR?.trim() || undefined,
+    importDataDir: process.env.OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR?.trim() || undefined,
+    env: {
+      OPENWORK_DEV_MODE: "1",
+      HOME: homeDir,
+      XDG_CONFIG_HOME: xdgConfigHome,
+      XDG_DATA_HOME: xdgDataHome,
+      XDG_CACHE_HOME: xdgCacheHome,
+      XDG_STATE_HOME: xdgStateHome,
+      OPENCODE_CONFIG_DIR: configDir,
+    },
+  };
+}
+
+async function ensureOpencodeStateLayout(layout: OpencodeStateLayout): Promise<void> {
+  await mkdir(layout.configDir, { recursive: true });
+  if (!layout.devMode) return;
+
+  const homeDir = layout.env.HOME;
+  const xdgConfigHome = layout.env.XDG_CONFIG_HOME;
+  const xdgDataHome = layout.env.XDG_DATA_HOME;
+  const xdgCacheHome = layout.env.XDG_CACHE_HOME;
+  const xdgStateHome = layout.env.XDG_STATE_HOME;
+  const opencodeDataDir = xdgDataHome ? join(xdgDataHome, "opencode") : undefined;
+
+  for (const dir of [layout.rootDir, homeDir, xdgConfigHome, xdgDataHome, xdgCacheHome, xdgStateHome, opencodeDataDir]) {
+    if (!dir) continue;
+    await mkdir(dir, { recursive: true });
+  }
+
+  if (layout.importConfigDir && (await isDir(layout.importConfigDir))) {
+    const entries = await readdir(layout.configDir).catch(() => [] as string[]);
+    if (entries.length === 0) {
+      await cp(layout.importConfigDir, layout.configDir, { recursive: true, force: false }).catch(() => undefined);
+    }
+  }
+
+  if (layout.importDataDir && opencodeDataDir && (await isDir(layout.importDataDir))) {
+    for (const file of ["auth.json", "mcp-auth.json"]) {
+      const dest = join(opencodeDataDir, file);
+      if (await fileExists(dest)) continue;
+      const source = join(layout.importDataDir, file);
+      if (await fileExists(source)) {
+        await copyFile(source, dest).catch(() => undefined);
+      }
+    }
+  }
+}
+
 function routerStatePath(dataDir: string): string {
   return join(dataDir, "openwork-orchestrator-state.json");
 }
@@ -2531,7 +2629,7 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
 async function startOpencode(options: {
   bin: string;
   workspace: string;
-  configDir?: string;
+  stateLayout?: OpencodeStateLayout;
   hotReload: OpencodeHotReload;
   bindHost: string;
   port: number;
@@ -2553,6 +2651,7 @@ async function startOpencode(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...(options.stateLayout?.env ?? {}),
       OPENCODE_CLIENT: "openwork-orchestrator",
       OPENWORK: "1",
       OPENWORK_RUN_ID: options.runId,
@@ -2566,7 +2665,7 @@ async function startOpencode(options: {
       ),
       ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
       ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
-      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+      ...(options.stateLayout?.configDir ? { OPENCODE_CONFIG_DIR: options.stateLayout.configDir } : {}),
       OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
       OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
       OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
@@ -2926,6 +3025,7 @@ async function writeSandboxEntrypoint(options: {
   const opencodeRouterEnv = options.openwork.opencodeRouterEnabled
     ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
     : "";
+  const openworkDevMode = (process.env.OPENWORK_DEV_MODE ?? "").trim() === "1";
 
   const script = [
     "set -eu",
@@ -2950,6 +3050,7 @@ async function writeSandboxEntrypoint(options: {
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
     `export OPENWORK=1`,
+    `export OPENWORK_DEV_MODE=${shQuote(openworkDevMode ? "1" : "0")}`,
     `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
     `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
     `export OPENWORK_SANDBOX_ENABLED=1`,
@@ -4077,7 +4178,14 @@ async function runRouterDaemon(args: ParsedArgs) {
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
-  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
+  const devMode = resolveInternalDevMode(args.flags);
+  const opencodeStateLayout = resolveOpencodeStateLayout({
+    dataDir,
+    workspace: resolvedWorkdir,
+    devMode,
+  });
+  const opencodeConfigDir = opencodeStateLayout.configDir;
+  await ensureOpencodeStateLayout(opencodeStateLayout);
   await ensureOpencodeManagedTools(opencodeConfigDir);
   logger.info(
     "Daemon starting",
@@ -4160,7 +4268,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     const child = await startOpencode({
       bin: opencodeBinary.bin,
       workspace: resolvedWorkdir,
-      configDir: opencodeConfigDir,
+      stateLayout: opencodeStateLayout,
       hotReload: opencodeHotReload,
       bindHost: opencodeHost,
       port: opencodePort,
@@ -4859,7 +4967,14 @@ async function runStart(args: ParsedArgs) {
   const sandboxPersistOverride =
     readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWORK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
-  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  const devMode = resolveInternalDevMode(args.flags);
+  const opencodeStateLayout = resolveOpencodeStateLayout({
+    dataDir,
+    workspace: resolvedWorkspace,
+    devMode,
+  });
+  const opencodeConfigDir = opencodeStateLayout.configDir;
+  await ensureOpencodeStateLayout(opencodeStateLayout);
   await ensureOpencodeManagedTools(opencodeConfigDir);
   const opencodeRouterDataDir =
     sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceIdForLocal(resolvedWorkspace)) : null;
@@ -5439,7 +5554,7 @@ async function runStart(args: ParsedArgs) {
       const opencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
-        configDir: opencodeConfigDir,
+        stateLayout: opencodeStateLayout,
         hotReload: opencodeHotReload,
         bindHost: opencodeBindHost,
         port: opencodePort,

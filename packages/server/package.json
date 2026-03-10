@@ -7,7 +7,7 @@
     "openwork-server": "dist/bin/openwork-server"
   },
   "scripts": {
-    "dev": "bun src/cli.ts",
+    "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
     "test": "bun test",
     "build": "tsc -p tsconfig.json",
     "build:bin": "bun build --compile src/cli.ts --outfile dist/bin/openwork-server",

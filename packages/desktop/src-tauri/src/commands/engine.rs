@@ -49,6 +49,20 @@ impl Drop for EnvVarGuard {
     }
 }
 
+fn env_truthy(key: &str) -> Option<bool> {
+    let value = std::env::var(key).ok()?;
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn openwork_dev_mode_enabled() -> bool {
+    env_truthy("OPENWORK_DEV_MODE").unwrap_or(cfg!(debug_assertions))
+}
+
 #[derive(Default)]
 struct OutputState {
     stdout: String,
@@ -313,6 +327,7 @@ pub fn engine_start(
         .unwrap_or_else(|| "0.0.0.0".to_string());
     let client_host = "127.0.0.1".to_string();
     let port = find_free_port()?;
+    let dev_mode = openwork_dev_mode_enabled();
     let enable_auth = std::env::var("OPENWORK_OPENCODE_AUTH")
         .ok()
         .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -371,6 +386,7 @@ pub fn engine_start(
         let opencode_bin = program.to_string_lossy().to_string();
         let spawn_options = OrchestratorSpawnOptions {
             data_dir: data_dir.clone(),
+            dev_mode,
             daemon_host: daemon_host.clone(),
             daemon_port,
             opencode_bin,
@@ -547,6 +563,7 @@ pub fn engine_start(
         port,
         &project_dir,
         use_sidecar,
+        dev_mode,
         opencode_username.as_deref(),
         opencode_password.as_deref(),
     )?;

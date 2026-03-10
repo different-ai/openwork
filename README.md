@@ -111,11 +111,15 @@ OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell)
 pnpm dev
 ```
 
+`pnpm dev` now enables `OPENWORK_DEV_MODE=1` automatically, so desktop dev uses an isolated OpenCode state instead of your personal global config/auth/data.
+
 ### Run (Web UI only)
 
 ```bash
 pnpm dev:ui
 ```
+
+All repo `dev` entrypoints now opt into the same dev-mode isolation so local testing uses the OpenWork-managed OpenCode state consistently.
 
 ### Arch Users:
 

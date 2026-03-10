@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
+    "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "test": "node --test server/b/render-bundle-page.test.js server/_lib/package-openwork-files.test.js"

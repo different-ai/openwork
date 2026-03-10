@@ -28,7 +28,7 @@
     "install.sh"
   ],
   "scripts": {
-    "dev": "bun src/cli.ts",
+    "dev": "OPENWORK_DEV_MODE=1 bun src/cli.ts",
     "build": "tsc -p tsconfig.json",
     "prepack": "node -e \"const fs=require('fs'); fs.rmSync('dist', { recursive: true, force: true });\" && tsc -p tsconfig.json",
     "build:bin": "bun ./script/build.ts --outdir dist/bin --filename opencode-router",

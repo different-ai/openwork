@@ -1,4 +1,5 @@
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use tauri::async_runtime::Receiver;
 use tauri::{AppHandle, Manager};
@@ -7,6 +8,57 @@ use tauri_plugin_shell::ShellExt;
 
 use crate::paths::{candidate_xdg_config_dirs, candidate_xdg_data_dirs, maybe_infer_xdg_home};
 use crate::paths::{prepended_path_env, sidecar_path_candidates};
+
+struct DevModePaths {
+    home_dir: PathBuf,
+    xdg_config_home: PathBuf,
+    xdg_data_home: PathBuf,
+    xdg_cache_home: PathBuf,
+    xdg_state_home: PathBuf,
+    opencode_config_dir: PathBuf,
+}
+
+fn workspace_dev_slug(project_dir: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in project_dir.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("ws-{hash:016x}")
+}
+
+fn resolve_dev_mode_paths(app: &AppHandle, project_dir: &str) -> Result<DevModePaths, String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    let root_dir = app_data_dir
+        .join("opencode-dev")
+        .join(workspace_dev_slug(project_dir));
+
+    let paths = DevModePaths {
+        home_dir: root_dir.join("home"),
+        xdg_config_home: root_dir.join("xdg").join("config"),
+        xdg_data_home: root_dir.join("xdg").join("data"),
+        xdg_cache_home: root_dir.join("xdg").join("cache"),
+        xdg_state_home: root_dir.join("xdg").join("state"),
+        opencode_config_dir: root_dir.join("config").join("opencode"),
+    };
+
+    for dir in [
+        &paths.home_dir,
+        &paths.xdg_config_home,
+        &paths.xdg_data_home,
+        &paths.xdg_cache_home,
+        &paths.xdg_state_home,
+        &paths.opencode_config_dir,
+        &paths.xdg_data_home.join("opencode"),
+    ] {
+        fs::create_dir_all(dir).map_err(|e| format!("Failed to create {}: {e}", dir.display()))?;
+    }
+
+    Ok(paths)
+}
 
 pub fn find_free_port() -> Result<u16, String> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|e| e.to_string())?;
@@ -35,6 +87,7 @@ pub fn spawn_engine(
     port: u16,
     project_dir: &str,
     use_sidecar: bool,
+    dev_mode: bool,
     opencode_username: Option<&str>,
     opencode_password: Option<&str>,
 ) -> Result<(Receiver<CommandEvent>, CommandChild), String> {
@@ -50,29 +103,40 @@ pub fn spawn_engine(
 
     let mut command = command.args(args).current_dir(project_dir);
 
-    if let Some(xdg_data_home) = maybe_infer_xdg_home(
-        "XDG_DATA_HOME",
-        candidate_xdg_data_dirs(),
-        Path::new("opencode/auth.json"),
-    ) {
-        command = command.env("XDG_DATA_HOME", xdg_data_home);
-    }
+    if dev_mode {
+        let dev_paths = resolve_dev_mode_paths(app, project_dir)?;
+        command = command.env("OPENWORK_DEV_MODE", "1");
+        command = command.env("HOME", dev_paths.home_dir);
+        command = command.env("XDG_CONFIG_HOME", dev_paths.xdg_config_home);
+        command = command.env("XDG_DATA_HOME", dev_paths.xdg_data_home);
+        command = command.env("XDG_CACHE_HOME", dev_paths.xdg_cache_home);
+        command = command.env("XDG_STATE_HOME", dev_paths.xdg_state_home);
+        command = command.env("OPENCODE_CONFIG_DIR", dev_paths.opencode_config_dir);
+    } else {
+        if let Some(xdg_data_home) = maybe_infer_xdg_home(
+            "XDG_DATA_HOME",
+            candidate_xdg_data_dirs(),
+            Path::new("opencode/auth.json"),
+        ) {
+            command = command.env("XDG_DATA_HOME", xdg_data_home);
+        }
 
-    let xdg_config_home = maybe_infer_xdg_home(
-        "XDG_CONFIG_HOME",
-        candidate_xdg_config_dirs(),
-        Path::new("opencode/opencode.jsonc"),
-    )
-    .or_else(|| {
-        maybe_infer_xdg_home(
+        let xdg_config_home = maybe_infer_xdg_home(
             "XDG_CONFIG_HOME",
             candidate_xdg_config_dirs(),
-            Path::new("opencode/opencode.json"),
+            Path::new("opencode/opencode.jsonc"),
         )
-    });
+        .or_else(|| {
+            maybe_infer_xdg_home(
+                "XDG_CONFIG_HOME",
+                candidate_xdg_config_dirs(),
+                Path::new("opencode/opencode.json"),
+            )
+        });
 
-    if let Some(xdg_config_home) = xdg_config_home {
-        command = command.env("XDG_CONFIG_HOME", xdg_config_home);
+        if let Some(xdg_config_home) = xdg_config_home {
+            command = command.env("XDG_CONFIG_HOME", xdg_config_home);
+        }
     }
 
     command = command.env("OPENCODE_CLIENT", "openwork");

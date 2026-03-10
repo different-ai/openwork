@@ -24,6 +24,7 @@ import type {
 import {
   appBuildInfo,
   engineRestart,
+  nukeOpencodeDevConfigAndExit,
   opencodeRouterRestart,
   opencodeRouterStop,
   openworkServerRestart,
@@ -723,6 +724,9 @@ export default function SettingsView(props: SettingsViewProps) {
   const [sandboxProbeBusy, setSandboxProbeBusy] = createSignal(false);
   const [sandboxProbeStatus, setSandboxProbeStatus] = createSignal<string | null>(null);
   const [sandboxProbeResult, setSandboxProbeResult] = createSignal<SandboxDebugProbeResult | null>(null);
+  const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
+  const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<string | null>(null);
+  const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
 
   const sandboxCreateSummary = createMemo(() => {
     const raw = props.sandboxCreateProgress as
@@ -873,6 +877,26 @@ export default function SettingsView(props: SettingsViewProps) {
       setConfigActionStatus(error instanceof Error ? error.message : "Failed to reset app config.");
     } finally {
       setResetConfigBusy(false);
+    }
+  };
+
+  const handleNukeOpencodeDevConfig = async () => {
+    if (!isTauriRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy()) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            "Delete the isolated OpenCode dev config and auth/data state, then quit OpenWork? This only affects dev-mode state."
+          );
+    if (!confirmed) return;
+    setNukeDevConfigBusy(true);
+    setNukeDevConfigStatus(null);
+    try {
+      await nukeOpencodeDevConfigAndExit();
+      setNukeDevConfigStatus("Removed OpenCode dev state. OpenWork is closing...");
+    } catch (error) {
+      setNukeDevConfigStatus(error instanceof Error ? error.message : "Failed to nuke OpenCode dev config.");
+      setNukeDevConfigBusy(false);
     }
   };
 
@@ -1150,6 +1174,25 @@ export default function SettingsView(props: SettingsViewProps) {
                   {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
                 </div>
               </div>
+              <Show when={isTauriRuntime() && opencodeDevModeEnabled()}>
+                <div class="pt-1 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    class={compactDangerActionClass}
+                    onClick={() => void handleNukeOpencodeDevConfig()}
+                    disabled={props.busy || nukeDevConfigBusy()}
+                  >
+                    <CircleAlert size={14} />
+                    {nukeDevConfigBusy() ? "Nuking OpenCode Dev Config..." : "Nuke Opencode Dev Config"}
+                  </button>
+                  <div class="text-xs text-gray-10">
+                    Deletes isolated OpenCode dev state and then quits OpenWork.
+                  </div>
+                </div>
+                <Show when={nukeDevConfigStatus()}>
+                  {(value) => <div class="text-xs text-red-11">{value()}</div>}
+                </Show>
+              </Show>
             </div>
 
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">

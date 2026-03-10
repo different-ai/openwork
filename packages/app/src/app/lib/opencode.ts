@@ -15,6 +15,22 @@ export type OpencodeAuth = {
 };
 
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
+const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
+
+function getRequestUrl(input: RequestInfo | URL): string {
+  if (typeof input === "string") return input;
+  if (input instanceof URL) return input.toString();
+  if (typeof Request !== "undefined" && input instanceof Request) return input.url;
+  return String(input);
+}
+
+function resolveRequestTimeoutMs(input: RequestInfo | URL, fallbackMs: number): number {
+  const url = getRequestUrl(input);
+  if (/\/provider\/oauth\//.test(url) || /\/mcp\/auth\/callback\b/.test(url)) {
+    return Math.max(fallbackMs, OAUTH_OPENCODE_REQUEST_TIMEOUT_MS);
+  }
+  return fallbackMs;
+}
 
 async function fetchWithTimeout(
   fetchImpl: typeof globalThis.fetch,
@@ -22,7 +38,8 @@ async function fetchWithTimeout(
   init: RequestInit | undefined,
   timeoutMs: number,
 ) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+  const effectiveTimeoutMs = resolveRequestTimeoutMs(input, timeoutMs);
+  if (!Number.isFinite(effectiveTimeoutMs) || effectiveTimeoutMs <= 0) {
     return fetchImpl(input, init);
   }
 
@@ -39,7 +56,7 @@ async function fetchWithTimeout(
         // ignore
       }
       reject(new Error("Request timed out."));
-    }, timeoutMs);
+    }, effectiveTimeoutMs);
   });
 
   try {

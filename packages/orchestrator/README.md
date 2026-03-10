@@ -63,6 +63,8 @@ pnpm --filter openwork-orchestrator dev -- \
   start --workspace /path/to/workspace --approval auto --allow-external
 ```
 
+When `OPENWORK_DEV_MODE=1` is set, orchestrator uses an isolated OpenCode dev state for config, auth, data, cache, and state. OpenWork's repo-level `pnpm dev` commands enable this automatically so local development does not reuse your personal OpenCode environment.
+
 The command prints pairing details (OpenWork server URL + token, OpenCode URL + auth) so remote OpenWork clients can connect.
 
 Use `--detach` to keep services running and exit the dashboard. The detach summary includes the
