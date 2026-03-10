@@ -71,12 +71,25 @@ import {
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
+import type { DebugSessionManifest } from "../lib/debug-log";
 
 export type DashboardViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  debugLoggingEnabled: boolean;
+  debugSession: DebugSessionManifest | null;
+  lastDebugSession: DebugSessionManifest | null;
+  debugSessionError: string | null;
+  debugSessionStarting: boolean;
+  debugSessionStopping: boolean;
+  supportSubmitBusy: boolean;
+  supportSubmitStatus: string | null;
+  supportSubmitError: string | null;
+  startDebugLogging: () => Promise<DebugSessionManifest | null>;
+  stopDebugLogging: () => Promise<DebugSessionManifest | null>;
+  submitSupportReport: (input: { email: string; message: string }) => Promise<void>;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
@@ -1311,6 +1324,18 @@ export default function DashboardView(props: DashboardViewProps) {
                   busy={props.busy}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
+                  debugLoggingEnabled={props.debugLoggingEnabled}
+                  debugSession={props.debugSession}
+                  lastDebugSession={props.lastDebugSession}
+                  debugSessionError={props.debugSessionError}
+                  debugSessionStarting={props.debugSessionStarting}
+                  debugSessionStopping={props.debugSessionStopping}
+                  supportSubmitBusy={props.supportSubmitBusy}
+                  supportSubmitStatus={props.supportSubmitStatus}
+                  supportSubmitError={props.supportSubmitError}
+                  startDebugLogging={props.startDebugLogging}
+                  stopDebugLogging={props.stopDebugLogging}
+                  submitSupportReport={props.submitSupportReport}
                   providers={props.providers}
                   providerConnectedIds={props.providerConnectedIds}
                   providerAuthBusy={props.providerAuthBusy}

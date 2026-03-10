@@ -1115,7 +1115,12 @@ export default function App() {
   const [developerMode, setDeveloperMode] = createSignal(false);
   const [documentVisible, setDocumentVisible] = createSignal(true);
   const [debugSession, setDebugSession] = createSignal<DebugSessionManifest | null>(null);
+  const [lastDebugSession, setLastDebugSession] = createSignal<DebugSessionManifest | null>(null);
   const [debugSessionError, setDebugSessionError] = createSignal<string | null>(null);
+  const [debugSessionPending, setDebugSessionPending] = createSignal<"start" | "stop" | null>(null);
+  const [supportReportSubmitBusy, setSupportReportSubmitBusy] = createSignal(false);
+  const [supportReportSubmitStatus, setSupportReportSubmitStatus] = createSignal<string | null>(null);
+  const [supportReportSubmitError, setSupportReportSubmitError] = createSignal<string | null>(null);
   const debugLoggingEnabled = createMemo(() => Boolean(debugSession()));
 
   setDebugGate({ enabled: () => debugLoggingEnabled() });
@@ -1134,7 +1139,11 @@ export default function App() {
       setDebugSessionError("Debug logging is only available in the desktop app.");
       return null;
     }
+    setDebugSessionPending("start");
     setDebugSessionError(null);
+    setSupportReportSubmitStatus(null);
+    setSupportReportSubmitError(null);
+    setLastDebugSession(null);
 
     const now = new Date();
     const envMode = typeof import.meta !== "undefined" ? (import.meta as any).env?.MODE : undefined;
@@ -1164,18 +1173,24 @@ export default function App() {
     } catch (error) {
       setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
       return null;
+    } finally {
+      setDebugSessionPending(null);
     }
   };
 
   const stopDebugSession = async () => {
-    if (!debugSession()) return;
+    const active = debugSession();
+    if (!active) return lastDebugSession();
     setDebugSessionError(null);
+    setDebugSessionPending("stop");
     if (!isTauriRuntime()) {
+      setLastDebugSession(active);
       setDebugSession(null);
-      return;
+      setDebugSessionPending(null);
+      return active;
     }
     try {
-      const session = debugSession();
+      const session = active;
       if (session) {
         const correlationId = createDebugCorrelationId();
         setActiveCorrelationId(correlationId);
@@ -1190,9 +1205,50 @@ export default function App() {
         void appendDebugEvent({ ...base, kind: "lifecycle", phase: "stop" });
       }
       await debugSessionStop();
+      setLastDebugSession(session);
       setDebugSession(null);
+      return session;
     } catch (error) {
       setDebugSessionError(error instanceof Error ? error.message : safeStringify(error));
+      return null;
+    } finally {
+      setDebugSessionPending(null);
+    }
+  };
+
+  const submitSupportReport = async (input: { email: string; message: string }) => {
+    const email = input.email.trim();
+    const message = input.message.trim();
+    setSupportReportSubmitBusy(true);
+    setSupportReportSubmitStatus(null);
+    setSupportReportSubmitError(null);
+    try {
+      const session = debugSession() ? await stopDebugSession() : lastDebugSession();
+      if (!session) {
+        throw new Error("Start debug logging, reproduce the issue, then stop recording before sending a report.");
+      }
+      const correlationId = createDebugCorrelationId();
+      setActiveCorrelationId(correlationId);
+      const emailDomain = email.includes("@") ? email.split("@").pop() ?? null : null;
+      const base = buildDebugEventBase({
+        kind: "lifecycle",
+        debugSessionId: session.id,
+        correlationId,
+        surface: "app.support",
+        action: "debug.submit.requested",
+        payload: {
+          emailDomain,
+          messageLength: message.length,
+        },
+      });
+      await appendDebugEvent({ ...base, kind: "lifecycle", phase: "submit" });
+      throw new Error("Support report upload is not wired yet in this build.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setSupportReportSubmitError(message);
+      throw error;
+    } finally {
+      setSupportReportSubmitBusy(false);
     }
   };
 
@@ -5968,7 +6024,7 @@ export default function App() {
 
   trackDialog("model-picker", modelPickerOpen, () => ({ target: modelPickerTarget() }));
   trackDialog("reset-openwork", resetModalOpen, () => ({ mode: resetModalMode() }));
-  trackDialog("mcp-auth", mcpAuthModalOpen, () => ({ provider: mcpAuthEntry()?.provider ?? null }));
+  trackDialog("mcp-auth", mcpAuthModalOpen, () => ({ provider: mcpAuthEntry()?.name ?? null }));
   trackDialog("provider-auth", providerAuthModalOpen);
   trackDialog("workspace-create", () => workspaceStore.createWorkspaceOpen());
   trackDialog("workspace-create-remote", () => workspaceStore.createRemoteWorkspaceOpen());
@@ -6151,6 +6207,18 @@ export default function App() {
       setTab,
       settingsTab: settingsTab(),
       setSettingsTab: setSettingsTabLogged,
+      debugLoggingEnabled: debugLoggingEnabled(),
+      debugSession: debugSession(),
+      lastDebugSession: lastDebugSession(),
+      debugSessionError: debugSessionError(),
+      debugSessionStarting: debugSessionPending() === "start",
+      debugSessionStopping: debugSessionPending() === "stop",
+      supportSubmitBusy: supportReportSubmitBusy(),
+      supportSubmitStatus: supportReportSubmitStatus(),
+      supportSubmitError: supportReportSubmitError(),
+      startDebugLogging: startDebugSession,
+      stopDebugLogging: stopDebugSession,
+      submitSupportReport,
       providers: providers(),
       providerConnectedIds: providerConnectedIds(),
       providerAuthBusy: providerAuthBusy(),
@@ -6428,7 +6496,8 @@ export default function App() {
       interaction: "click",
       payload: { sessionId: id },
     });
-    return saveSessionExport(sessionId);
+    if (!id) return Promise.resolve("");
+    return saveSessionExport(id);
   };
 
   const sessionProps = () => ({

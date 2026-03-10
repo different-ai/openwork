@@ -32,6 +32,7 @@ import {
   sandboxDebugProbe,
 } from "../lib/tauri";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
+import type { DebugSessionManifest } from "../lib/debug-log";
 
 export type SettingsViewProps = {
   startupPreference: StartupPreference | null;
@@ -40,6 +41,18 @@ export type SettingsViewProps = {
   busy: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
+  debugLoggingEnabled: boolean;
+  debugSession: DebugSessionManifest | null;
+  lastDebugSession: DebugSessionManifest | null;
+  debugSessionError: string | null;
+  debugSessionStarting: boolean;
+  debugSessionStopping: boolean;
+  supportSubmitBusy: boolean;
+  supportSubmitStatus: string | null;
+  supportSubmitError: string | null;
+  startDebugLogging: () => Promise<DebugSessionManifest | null>;
+  stopDebugLogging: () => Promise<DebugSessionManifest | null>;
+  submitSupportReport: (input: { email: string; message: string }) => Promise<void>;
   providers: ProviderListItem[];
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
@@ -622,6 +635,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const tabLabel = (tab: SettingsTab) => {
     switch (tab) {
+      case "support":
+        return "Support";
       case "model":
         return "Model";
       case "advanced":
@@ -634,7 +649,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "support", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -751,7 +766,57 @@ export default function SettingsView(props: SettingsViewProps) {
   const [sandboxProbeResult, setSandboxProbeResult] = createSignal<SandboxDebugProbeResult | null>(null);
   const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
   const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<string | null>(null);
+  const [supportEmail, setSupportEmail] = createSignal("");
+  const [supportMessage, setSupportMessage] = createSignal("");
+  const [supportValidationError, setSupportValidationError] = createSignal<string | null>(null);
   const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
+
+  const supportSession = createMemo(() => props.debugSession ?? props.lastDebugSession ?? null);
+  const supportSessionState = createMemo(() => {
+    if (props.debugLoggingEnabled) return "recording";
+    if (props.lastDebugSession) return "ready";
+    return "idle";
+  });
+  const supportCanSubmit = createMemo(
+    () => Boolean(props.lastDebugSession) && supportEmail().trim().length > 0 && supportMessage().trim().length > 0,
+  );
+
+  const handleStartDebugLogging = async () => {
+    setSupportValidationError(null);
+    try {
+      await props.startDebugLogging();
+    } catch {
+      // surfaced from parent state
+    }
+  };
+
+  const handleStopDebugLogging = async () => {
+    setSupportValidationError(null);
+    try {
+      await props.stopDebugLogging();
+    } catch {
+      // surfaced from parent state
+    }
+  };
+
+  const handleSubmitSupportReport = async () => {
+    const email = supportEmail().trim();
+    const message = supportMessage().trim();
+    if (!email || !message) {
+      setSupportValidationError("Email and a short description are required.");
+      return;
+    }
+    if (!props.lastDebugSession) {
+      setSupportValidationError("Stop recording after reproducing the issue before you send the report.");
+      return;
+    }
+    setSupportValidationError(null);
+    try {
+      await props.submitSupportReport({ email, message });
+    } catch {
+      // surfaced from parent state
+    }
+  };
 
   const sandboxCreateSummary = createMemo(() => {
     const raw = props.sandboxCreateProgress as
@@ -1069,6 +1134,45 @@ export default function SettingsView(props: SettingsViewProps) {
             </div>
 
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div class="bg-red-2/55 border border-red-7/25 rounded-2xl p-5 space-y-4">
+                <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div class="space-y-1.5">
+                    <div class="text-sm font-medium text-red-12">Support and debug logging</div>
+                    <div class="text-xs text-red-11/80 max-w-xl">
+                      Record a private support session only when you are actively reproducing a problem. Nothing is captured until you start.
+                    </div>
+                  </div>
+                  <div
+                    class={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                      supportSessionState() === "recording"
+                        ? "border-red-7/35 bg-red-4/55 text-red-11"
+                        : supportSessionState() === "ready"
+                          ? "border-amber-7/35 bg-amber-4/35 text-amber-11"
+                          : "border-gray-6/70 bg-gray-3/40 text-gray-11"
+                    }`}
+                  >
+                    {supportSessionState() === "recording"
+                      ? "Recording"
+                      : supportSessionState() === "ready"
+                        ? "Ready to send"
+                        : "Inactive"}
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="secondary"
+                    class="bg-red-10 text-white hover:bg-red-9"
+                    onClick={() => props.setSettingsTab("support")}
+                  >
+                    Open support flow
+                  </Button>
+                  <div class="text-xs text-red-11/80">
+                    Includes local debug logs, diagnostics, and redacted config snapshots when you choose to send a report.
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <div class="text-sm font-medium text-gray-12">Appearance</div>
                 <div class="text-xs text-gray-9">Match the system or force light/dark mode.</div>
@@ -1122,6 +1226,166 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="text-xs text-gray-8">
                 System mode follows your OS preference automatically.
+              </div>
+            </div>
+          </div>
+        </Match>
+
+        <Match when={activeTab() === "support"}>
+          <div class="space-y-6">
+            <div class="bg-red-2/55 border border-red-7/25 rounded-2xl p-5 space-y-4">
+              <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div class="space-y-1.5">
+                  <div class="text-sm font-medium text-red-12">Debug logging for support</div>
+                  <div class="text-xs text-red-11/80 max-w-2xl">
+                    Use this only while reproducing a problem. OpenWork stores structured logs on this device while recording is active, then prepares them for a private support report.
+                  </div>
+                </div>
+                <div
+                  class={`inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                    supportSessionState() === "recording"
+                      ? "border-red-7/35 bg-red-4/55 text-red-11"
+                      : supportSessionState() === "ready"
+                        ? "border-amber-7/35 bg-amber-4/35 text-amber-11"
+                        : "border-gray-6/70 bg-gray-3/40 text-gray-11"
+                  }`}
+                >
+                  {supportSessionState() === "recording"
+                    ? "Recording now"
+                    : supportSessionState() === "ready"
+                      ? "Capture ready"
+                      : "Not recording"}
+                </div>
+              </div>
+
+              <div class="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)]">
+                <div class="space-y-4 rounded-2xl border border-red-7/15 bg-red-1/40 p-4">
+                  <div class="space-y-2">
+                    <div class="text-sm font-medium text-gray-12">How this works</div>
+                    <div class="text-xs text-gray-10">
+                      1. Start recording. 2. Reproduce the issue. 3. Stop recording. 4. Add your email and a note for support.
+                    </div>
+                  </div>
+                  <div class="grid gap-2 text-xs text-gray-10 sm:grid-cols-2">
+                    <div class="rounded-xl border border-gray-6/60 bg-gray-1/50 px-3 py-2">
+                      <div class="font-medium text-gray-12">Included</div>
+                      <div class="mt-1">Timeline events, system logs, diagnostics, and redacted config snapshots.</div>
+                    </div>
+                    <div class="rounded-xl border border-gray-6/60 bg-gray-1/50 px-3 py-2">
+                      <div class="font-medium text-gray-12">Not always included</div>
+                      <div class="mt-1">Secrets, tokens, cookies, and raw provider credentials are masked before storage.</div>
+                    </div>
+                  </div>
+
+                  <Show when={supportSession()}>
+                    {(session) => (
+                      <div class="rounded-xl border border-gray-6/60 bg-gray-1/55 px-3 py-3 text-xs text-gray-10 space-y-1">
+                        <div class="font-medium text-gray-12">Current capture</div>
+                        <div><span class="text-gray-8">Session:</span> <span class="font-mono text-[11px]">{session().id}</span></div>
+                        <div><span class="text-gray-8">Started:</span> {formatRelativeTime(session().startedTs)}</div>
+                        <div><span class="text-gray-8">Version:</span> {session().appVersion || "Unknown"}</div>
+                      </div>
+                    )}
+                  </Show>
+
+                  <div class="flex flex-wrap items-center gap-3">
+                    <Show
+                      when={!props.debugLoggingEnabled}
+                      fallback={
+                        <Button
+                          variant="secondary"
+                          class="bg-red-10 text-white hover:bg-red-9"
+                          onClick={() => void handleStopDebugLogging()}
+                          disabled={props.debugSessionStopping}
+                        >
+                          {props.debugSessionStopping ? "Stopping recording..." : "Stop recording"}
+                        </Button>
+                      }
+                    >
+                      <Button
+                        variant="secondary"
+                        class="bg-red-10 text-white hover:bg-red-9"
+                        onClick={() => void handleStartDebugLogging()}
+                        disabled={props.debugSessionStarting || props.supportSubmitBusy}
+                      >
+                        {props.debugSessionStarting ? "Starting recording..." : props.lastDebugSession ? "Record another session" : "Start debug logging"}
+                      </Button>
+                    </Show>
+                    <div class="text-xs text-gray-10">
+                      {props.debugLoggingEnabled
+                        ? "Leave this on only while reproducing the issue."
+                        : props.lastDebugSession
+                          ? "Recording is stopped. Review and send the report when you are ready."
+                          : "Debug logging is off by default and stays off after restart."}
+                    </div>
+                  </div>
+                </div>
+
+                <div class="space-y-4 rounded-2xl border border-gray-7/60 bg-gray-2/30 p-4">
+                  <div>
+                    <div class="text-sm font-medium text-gray-12">Send support report</div>
+                    <div class="text-xs text-gray-9 mt-1">
+                      We need your email and a short description so support can follow up and understand what to inspect.
+                    </div>
+                  </div>
+
+                  <label class="block space-y-1.5">
+                    <div class="text-xs font-medium text-gray-11">Email</div>
+                    <input
+                      type="email"
+                      value={supportEmail()}
+                      onInput={(event) => setSupportEmail(event.currentTarget.value)}
+                      placeholder="you@example.com"
+                      class="w-full rounded-xl border border-gray-6/70 bg-gray-1/70 px-3 py-2 text-sm text-gray-12 outline-none transition-colors focus:border-red-7/45"
+                      autocomplete="email"
+                    />
+                  </label>
+
+                  <label class="block space-y-1.5">
+                    <div class="text-xs font-medium text-gray-11">What went wrong?</div>
+                    <textarea
+                      value={supportMessage()}
+                      onInput={(event) => setSupportMessage(event.currentTarget.value)}
+                      placeholder="Tell support what you expected, what happened instead, and which workspace/session was involved."
+                      class="min-h-32 w-full rounded-xl border border-gray-6/70 bg-gray-1/70 px-3 py-2 text-sm text-gray-12 outline-none transition-colors focus:border-red-7/45"
+                    />
+                  </label>
+
+                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/45 px-3 py-3 text-xs text-gray-10">
+                    <div class="font-medium text-gray-12">Before you send</div>
+                    <div class="mt-1">
+                      Support reports stay separate from public sharing. Do not include passwords, raw API keys, or anything you would not want in a support case note.
+                    </div>
+                  </div>
+
+                  <Show when={supportValidationError()}>
+                    {(value) => <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{value()}</div>}
+                  </Show>
+                  <Show when={props.debugSessionError}>
+                    <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{props.debugSessionError}</div>
+                  </Show>
+                  <Show when={props.supportSubmitError}>
+                    <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">{props.supportSubmitError}</div>
+                  </Show>
+                  <Show when={props.supportSubmitStatus}>
+                    <div class="rounded-xl border border-green-7/30 bg-green-1/40 px-3 py-2 text-xs text-green-11">{props.supportSubmitStatus}</div>
+                  </Show>
+
+                  <Button
+                    variant="secondary"
+                    class="w-full justify-center bg-red-10 text-white hover:bg-red-9 disabled:bg-gray-5 disabled:text-gray-9"
+                    onClick={() => void handleSubmitSupportReport()}
+                    disabled={!supportCanSubmit() || props.supportSubmitBusy || props.debugLoggingEnabled}
+                  >
+                    {props.supportSubmitBusy
+                      ? "Sending report..."
+                      : props.debugLoggingEnabled
+                        ? "Stop recording to send"
+                        : props.lastDebugSession
+                          ? "Send support report"
+                          : "Record an issue first"}
+                  </Button>
+                </div>
               </div>
             </div>
           </div>
