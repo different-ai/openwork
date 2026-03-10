@@ -10,6 +10,9 @@ import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
 import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
+const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
+const MCP_AUTH_TIMEOUT_MS = 90_000;
+
 export type McpAuthModalProps = {
   open: boolean;
   onClose: () => void;
@@ -142,20 +145,21 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const startStatusPolling = (slug: string) => {
     if (typeof window === "undefined") return;
     stopStatusPolling();
-    let attempts = 0;
+    const startedAt = Date.now();
     statusPoll = window.setInterval(async () => {
-      attempts += 1;
-      if (attempts > 20) {
+      if (Date.now() - startedAt >= MCP_AUTH_TIMEOUT_MS) {
         stopStatusPolling();
+        setError("Request timed out.");
         return;
       }
 
       const status = await fetchMcpStatus(slug);
       if (status?.status === "connected") {
         setAlreadyConnected(true);
+        setError(null);
         stopStatusPolling();
       }
-    }, 2000);
+    }, MCP_AUTH_POLL_INTERVAL_MS);
   };
 
   const startAuth = async (forceRetry = false) => {
@@ -337,6 +341,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
   const handleRetry = () => {
     startAuth(true);
+  };
+
+  const handleReopenBrowser = () => {
+    handleRetry();
   };
 
   const handleReloadAndRetry = async () => {
@@ -523,8 +531,25 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           {/* Content */}
           <div class="px-6 py-5 space-y-5">
             <Show when={isBusy()}>
-              <div class="flex items-center justify-center py-8">
-                <Loader2 size={32} class="animate-spin text-gray-11" />
+              <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-5 py-6 text-center space-y-4">
+                <div class="flex items-center justify-center">
+                  <Loader2 size={32} class="animate-spin text-gray-11" />
+                </div>
+                <div class="space-y-2">
+                  <p class="text-sm font-medium text-gray-12">
+                    {translate("mcp.auth.waiting_authorization")}
+                  </p>
+                  <p class="text-xs text-gray-10">
+                    {translate("mcp.auth.follow_browser_steps")}
+                  </p>
+                  <button
+                    type="button"
+                    class="text-xs text-gray-10 underline underline-offset-2 hover:text-gray-11 transition-colors"
+                    onClick={handleReopenBrowser}
+                  >
+                    {translate("mcp.auth.reopen_browser_link")}
+                  </button>
+                </div>
               </div>
             </Show>
 
@@ -725,7 +750,19 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
 
               <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 text-sm text-gray-11">
-                  {translate("mcp.auth.waiting_authorization")}
+                <div class="space-y-3">
+                  <p>{translate("mcp.auth.waiting_authorization")}</p>
+                  <p class="text-xs text-gray-10">
+                    {translate("mcp.auth.follow_browser_steps")}
+                  </p>
+                  <button
+                    type="button"
+                    class="text-xs text-gray-10 underline underline-offset-2 hover:text-gray-11 transition-colors text-left"
+                    onClick={handleReopenBrowser}
+                  >
+                    {translate("mcp.auth.reopen_browser_link")}
+                  </button>
+                </div>
               </div>
             </Show>
           </div>

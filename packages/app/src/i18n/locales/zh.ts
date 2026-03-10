@@ -449,6 +449,8 @@ export default {
   "mcp.auth.step3_title": "完成后返回此处",
   "mcp.auth.step3_description": "授权完成后我们将立即完成连接。",
   "mcp.auth.waiting_authorization": "正在等待您在浏览器中完成授权...",
+  "mcp.auth.follow_browser_steps": "请在浏览器中完成授权步骤。",
+  "mcp.auth.reopen_browser_link": "点击这里重新打开浏览器",
   "mcp.auth.done": "完成",
   "mcp.auth.cancel": "取消",
   "mcp.auth.im_done": "我已完成",

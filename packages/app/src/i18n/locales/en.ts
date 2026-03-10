@@ -487,6 +487,8 @@ export default {
   "mcp.auth.step3_title": "Return here when you're done",
   "mcp.auth.step3_description": "We'll finish connecting as soon as authorization completes.",
   "mcp.auth.waiting_authorization": "Waiting for authorization to complete in your browser...",
+  "mcp.auth.follow_browser_steps": "Follow the authorization steps in the browser.",
+  "mcp.auth.reopen_browser_link": "Click here to re-open the browser",
   "mcp.auth.done": "Done",
   "mcp.auth.cancel": "Cancel",
   "mcp.auth.im_done": "I'm done",
