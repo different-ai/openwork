@@ -4218,19 +4218,10 @@ export default function App() {
     }
   }
 
-  function openProviderSettingsFromModelPicker(providerId: string) {
-    emitUiEvent({
-      surface: "app.settings",
-      action: "provider.open_from_model_picker",
-      interaction: "click",
-      payload: { providerId },
-    });
-    setModelPickerOpen(false);
-    setSettingsTabLogged("general");
-    setTabState("settings");
-    navigate("/dashboard/settings");
+  function openSettingsFromModelPicker() {
+    setTab("settings");
+    setView("dashboard");
   }
-
 
   async function connectNotion() {
     if (workspaceStore.activeWorkspaceDisplay().workspaceType !== "local") {
@@ -6354,7 +6345,7 @@ export default function App() {
         target={modelPickerTarget()}
         current={modelPickerCurrent()}
         onSelect={applyModelSelection}
-        onOpenProviderSettings={openProviderSettingsFromModelPicker}
+        onOpenSettings={openSettingsFromModelPicker}
         onClose={() => setModelPickerOpen(false)}
       />
 

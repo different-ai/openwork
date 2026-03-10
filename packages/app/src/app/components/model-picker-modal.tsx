@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
-import { CheckCircle2, Circle, ExternalLink, Search, X } from "lucide-solid";
+import { CheckCircle2, Circle, Search, X } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";
@@ -16,7 +16,7 @@ export type ModelPickerModalProps = {
   target: "default" | "session";
   current: ModelRef;
   onSelect: (model: ModelRef) => void;
-  onOpenProviderSettings: (providerId: string) => void;
+  onOpenSettings: () => void;
   onClose: () => void;
 };
 
@@ -162,7 +162,8 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         event.preventDefault();
         event.stopPropagation();
         if (item.kind === "provider") {
-          props.onOpenProviderSettings(item.providerID);
+          props.onClose();
+          props.onOpenSettings();
           return;
         }
         props.onSelect({ providerID: item.opt.providerID, modelID: item.opt.modelID });
@@ -196,10 +197,6 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
           setActiveIndex(index);
         }}
         onClick={() => {
-          if (!opt.isConnected) {
-            props.onOpenProviderSettings(opt.providerID);
-            return;
-          }
           props.onSelect({
             providerID: opt.providerID,
             modelID: opt.modelID,
@@ -220,19 +217,11 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
             <Show when={opt.footer}>
               <div class="text-[11px] text-gray-7 mt-2">{opt.footer}</div>
             </Show>
-            <Show when={!opt.isConnected}>
-              <div class="text-[11px] text-dls-accent mt-2">Add provider in Settings</div>
-            </Show>
           </div>
 
           <div class="pt-0.5 text-gray-10">
-            <Show
-              when={opt.isConnected}
-              fallback={<ExternalLink size={14} class="text-dls-accent" />}
-            >
-              <Show when={active()} fallback={<Circle size={14} />}>
-                <CheckCircle2 size={14} class="text-green-11" />
-              </Show>
+            <Show when={active()} fallback={<Circle size={14} />}>
+              <CheckCircle2 size={14} class="text-green-11" />
             </Show>
           </div>
         </div>
@@ -254,21 +243,19 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
         setActiveIndex(index);
       }}
       onClick={() => {
-        props.onOpenProviderSettings(provider.providerID);
+        props.onClose();
+        props.onOpenSettings();
       }}
     >
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <div class="text-sm font-medium text-gray-12 truncate">{provider.title}</div>
-          <div class="mt-1 text-xs text-gray-10">
-            Add provider in Settings
-          </div>
+          <div class="mt-1 text-xs text-gray-10">Click to setup provider</div>
         </div>
         <div class="flex items-center gap-3 shrink-0">
           <div class="text-[11px] text-gray-7">
             {provider.matchCount} {provider.matchCount === 1 ? "model" : "models"}
           </div>
-          <ExternalLink size={14} class="text-dls-accent" />
         </div>
       </div>
     </button>
