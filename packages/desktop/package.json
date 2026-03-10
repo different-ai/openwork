@@ -2,13 +2,16 @@
   "name": "@different-ai/openwork",
   "private": true,
   "version": "0.11.136",
-  "opencodeVersion": "1.2.6",
+  "opencodeVersion": "1.2.24",
   "opencodeRouterVersion": "0.11.136",
   "type": "module",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "build": "tauri build",
-    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
+    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
+    "resolve:opencode-version": "node ./scripts/opencode-version.mjs resolve",
+    "set:opencode-version": "node ./scripts/opencode-version.mjs set",
+    "check:opencode-version-sync": "node ./scripts/check-opencode-version-sync.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0"

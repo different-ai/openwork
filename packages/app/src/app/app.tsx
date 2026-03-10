@@ -597,6 +597,7 @@ export default function App() {
       // ignore
     }
   };
+
   type ProviderAuthMethod = { type: "oauth" | "api"; label: string };
   type ProviderOAuthStartResult = {
     methodIndex: number;
