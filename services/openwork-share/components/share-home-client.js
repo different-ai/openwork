@@ -351,6 +351,21 @@ export default function ShareHomeClient() {
                   <p>Browse local files</p>
                 </div>
               </label>
+
+              <div className="included-section">
+                <h4>{preview?.items?.length ? "Included" : "Example contents"}</h4>
+                <div className="included-list">
+                  {visibleItems.map((item) => (
+                    <div className="included-item" key={`${item.kind}-${item.name}`}>
+                      <div className={`item-dot ${toneClass(item)}`}></div>
+                      <div className="item-text">
+                        <span className="item-title">{item.name || "Unnamed item"}</span>
+                        <span className="item-meta">{item.meta || item.kind || "Item"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
 
             {effectiveEntries.length ? (
@@ -363,23 +378,6 @@ export default function ShareHomeClient() {
                 ))}
               </div>
             ) : null}
-
-            <div className="included-section">
-              <h4>{preview?.items?.length ? "Included" : "Example contents"}</h4>
-              <div className="included-list">
-                {visibleItems.map((item) => (
-                  <div className="included-item" key={`${item.kind}-${item.name}`}>
-                    <div className="item-left">
-                      <div className={`item-dot ${toneClass(item)}`}></div>
-                      <div>
-                        <div className="item-title">{item.name || "Unnamed item"}</div>
-                        <div className="item-meta">{item.meta || item.kind || "Item"}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           <aside className="preview-panel share-card surface-shell">
