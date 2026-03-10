@@ -82,9 +82,8 @@ export type DashboardViewProps = {
   providerAuthBusy: boolean;
   providerAuthModalOpen: boolean;
   providerAuthError: string | null;
-  providerAuthInitialProviderId?: string | null;
   providerAuthMethods: Record<string, { type: "oauth" | "api"; label: string }[]>;
-  openProviderAuthModal: (providerId?: string) => Promise<void>;
+  openProviderAuthModal: () => Promise<void>;
   disconnectProvider: (providerId: string) => Promise<string | void>;
   closeProviderAuthModal: () => void;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
@@ -1441,7 +1440,6 @@ export default function DashboardView(props: DashboardViewProps) {
           loading={props.providerAuthBusy}
           submitting={providerAuthActionBusy()}
           error={props.providerAuthError}
-          initialProviderId={props.providerAuthInitialProviderId}
           providers={props.providers}
           connectedProviderIds={props.providerConnectedIds}
           authMethods={props.providerAuthMethods}

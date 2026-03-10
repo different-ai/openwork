@@ -24,33 +24,76 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
   let searchInputRef: HTMLInputElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
+  type RenderedItem =
+    | { kind: "model"; opt: ModelOption }
+    | { kind: "provider"; providerID: string; title: string; matchCount: number };
+
   const [activeIndex, setActiveIndex] = createSignal(0);
   const optionRefs: HTMLButtonElement[] = [];
 
-  const activeModelIndex = createMemo(() => {
-    const list = props.filteredOptions;
-    return list.findIndex((opt) =>
-      modelEquals(props.current, {
+  const otherProviderLinks = createMemo(() => {
+    const seen = new Set<string>();
+    const items: { providerID: string; title: string; matchCount: number }[] = [];
+    const counts = new Map<string, number>();
+
+    for (const opt of props.filteredOptions) {
+      if (opt.isConnected) continue;
+      counts.set(opt.providerID, (counts.get(opt.providerID) ?? 0) + 1);
+      if (seen.has(opt.providerID)) continue;
+      seen.add(opt.providerID);
+      items.push({
         providerID: opt.providerID,
-        modelID: opt.modelID,
-      }),
+        title: opt.description ?? opt.providerID,
+        matchCount: 1,
+      });
+    }
+
+    return items.map((item) => ({
+      ...item,
+      matchCount: counts.get(item.providerID) ?? 1,
+    }));
+  });
+
+  const renderedItems = createMemo<RenderedItem[]>(() => [
+    ...props.filteredOptions
+      .filter((opt) => opt.isConnected)
+      .map((opt) => ({ kind: "model" as const, opt })),
+    ...otherProviderLinks().map((item) => ({ kind: "provider" as const, ...item })),
+  ]);
+
+  const activeModelIndex = createMemo(() => {
+    const list = renderedItems();
+    return list.findIndex(
+      (item) =>
+        item.kind === "model" &&
+        modelEquals(props.current, {
+          providerID: item.opt.providerID,
+          modelID: item.opt.modelID,
+        }),
     );
   });
 
   const enabledOptions = createMemo(() =>
-    props.filteredOptions
-      .map((opt, index) => ({ opt, index }))
-      .filter((entry) => entry.opt.isConnected),
+    renderedItems()
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.kind === "model")
+      .map((entry) => ({ opt: entry.item.opt, index: entry.index })),
   );
 
   const otherOptions = createMemo(() =>
-    props.filteredOptions
-      .map((opt, index) => ({ opt, index }))
-      .filter((entry) => !entry.opt.isConnected),
+    renderedItems()
+      .map((item, index) => ({ item, index }))
+      .filter((entry) => entry.item.kind === "provider")
+      .map((entry) => ({
+        providerID: entry.item.providerID,
+        title: entry.item.title,
+        matchCount: entry.item.matchCount,
+        index: entry.index,
+      })),
   );
 
   const clampIndex = (next: number) => {
-    const last = props.filteredOptions.length - 1;
+    const last = renderedItems().length - 1;
     if (last < 0) return 0;
     return Math.max(0, Math.min(next, last));
   };
@@ -114,15 +157,15 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
       if (event.key === "Enter") {
         if (event.isComposing || event.keyCode === 229) return;
         const idx = activeIndex();
-        const opt = props.filteredOptions[idx];
-        if (!opt) return;
+        const item = renderedItems()[idx];
+        if (!item) return;
         event.preventDefault();
         event.stopPropagation();
-        if (!opt.isConnected) {
-          props.onOpenProviderSettings(opt.providerID);
+        if (item.kind === "provider") {
+          props.onOpenProviderSettings(item.providerID);
           return;
         }
-        props.onSelect({ providerID: opt.providerID, modelID: opt.modelID });
+        props.onSelect({ providerID: item.opt.providerID, modelID: item.opt.modelID });
       }
     };
 
@@ -197,6 +240,40 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     );
   };
 
+  const renderProviderLink = (provider: { providerID: string; title: string; matchCount: number }, index: number) => (
+    <button
+      ref={(el) => {
+        optionRefs[index] = el;
+      }}
+      class={`w-full text-left rounded-2xl border px-4 py-3 transition-colors ${
+        index === activeIndex()
+          ? "border-gray-8 bg-gray-12/10"
+          : "border-gray-6/70 bg-gray-1/40 hover:bg-gray-1/60"
+      }`}
+      onMouseEnter={() => {
+        setActiveIndex(index);
+      }}
+      onClick={() => {
+        props.onOpenProviderSettings(provider.providerID);
+      }}
+    >
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-gray-12 truncate">{provider.title}</div>
+          <div class="mt-1 text-xs text-dls-accent">
+            Add provider in Settings
+          </div>
+        </div>
+        <div class="flex items-center gap-3 shrink-0">
+          <div class="text-[11px] text-gray-7">
+            {provider.matchCount} {provider.matchCount === 1 ? "model" : "models"}
+          </div>
+          <ExternalLink size={14} class="text-dls-accent" />
+        </div>
+      </div>
+    </button>
+  );
+
   return (
     <Show when={props.open}>
       <div class="fixed inset-0 z-50 bg-gray-1/60 backdrop-blur-sm flex items-start justify-center p-4 overflow-y-auto">
@@ -250,11 +327,13 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
                   <div class="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-9">
                     Other Providers
                   </div>
-                  <For each={otherOptions()}>{({ opt, index }) => renderOption(opt, index)}</For>
+                  <For each={otherOptions()}>
+                    {(provider) => renderProviderLink(provider, provider.index)}
+                  </For>
                 </section>
               </Show>
 
-              <Show when={props.filteredOptions.length === 0}>
+              <Show when={renderedItems().length === 0}>
                 <div class="rounded-2xl border border-gray-6/70 bg-gray-1/40 px-4 py-6 text-sm text-gray-10">
                   No models match your search.
                 </div>

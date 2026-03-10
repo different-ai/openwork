@@ -1127,7 +1127,6 @@ export default function App() {
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
-  const [providerAuthInitialProviderId, setProviderAuthInitialProviderId] = createSignal<string | null>(null);
 
   const sessionStore = createSessionStore({
     client,
@@ -2128,10 +2127,9 @@ export default function App() {
     }
   }
 
-  async function openProviderAuthModal(providerId?: string) {
+  async function openProviderAuthModal() {
     setProviderAuthBusy(true);
     setProviderAuthError(null);
-    setProviderAuthInitialProviderId(providerId?.trim() || null);
     try {
       const methods = await loadProviderAuthMethods();
       setProviderAuthMethods(methods);
@@ -2148,7 +2146,6 @@ export default function App() {
   function closeProviderAuthModal() {
     setProviderAuthModalOpen(false);
     setProviderAuthError(null);
-    setProviderAuthInitialProviderId(null);
   }
 
   async function saveSessionExport(sessionID: string) {
@@ -4232,11 +4229,6 @@ export default function App() {
     setSettingsTabLogged("general");
     setTabState("settings");
     navigate("/dashboard/settings");
-    requestAnimationFrame(() => {
-      void openProviderAuthModal(providerId).catch((error) => {
-        setProviderAuthError(error instanceof Error ? error.message : "Failed to load providers");
-      });
-    });
   }
 
 
@@ -5843,7 +5835,6 @@ export default function App() {
       providerAuthBusy: providerAuthBusy(),
       providerAuthModalOpen: providerAuthModalOpen(),
       providerAuthError: providerAuthError(),
-      providerAuthInitialProviderId: providerAuthInitialProviderId(),
       providerAuthMethods: providerAuthMethods(),
       openProviderAuthModal,
       disconnectProvider,
@@ -6187,7 +6178,6 @@ export default function App() {
     providerAuthModalOpen: providerAuthModalOpen(),
     providerAuthBusy: providerAuthBusy(),
     providerAuthError: providerAuthError(),
-    providerAuthInitialProviderId: providerAuthInitialProviderId(),
     providerAuthMethods: providerAuthMethods(),
     providers: providers(),
     providerConnectedIds: providerConnectedIds(),
