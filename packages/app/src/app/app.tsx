@@ -162,6 +162,7 @@ import {
   createDebugSessionId,
   DEBUG_DEFAULT_RETENTION,
   setDebugGate,
+  setDebugSessionProvider,
   type DebugSessionManifest,
 } from "./lib/debug-log";
 import {
@@ -1096,6 +1097,8 @@ export default function App() {
 
   setDebugGate({ enabled: () => debugLoggingEnabled() });
   onCleanup(() => setDebugGate(null));
+  setDebugSessionProvider({ get: () => debugSession() });
+  onCleanup(() => setDebugSessionProvider(null));
 
   createEffect(() => {
     if (developerMode()) return;

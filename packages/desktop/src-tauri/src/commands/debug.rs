@@ -62,6 +62,24 @@ pub struct DebugSessionStartResult {
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct DebugSessionAppendInput {
+    pub session_id: String,
+    pub target: String,
+    pub line: String,
+    pub max_bytes: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSessionAppendResult {
+    pub ok: bool,
+    pub appended: bool,
+    pub truncated: bool,
+    pub bytes_written: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct DebugSessionActiveMarker {
     pub id: String,
     pub root_dir: String,
@@ -136,6 +154,21 @@ fn touch_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_session_file(root: &Path, session_id: &str, target: &str) -> Result<PathBuf, String> {
+    let sessions_dir = root.join(DEBUG_SESSIONS_DIR);
+    let clean_id = sanitize_session_id(session_id);
+    if clean_id.is_empty() {
+        return Err("session_id is required".to_string());
+    }
+    let session_dir = sessions_dir.join(clean_id);
+    let file_name = match target {
+        "timeline" => DEBUG_TIMELINE_FILE,
+        "system" => DEBUG_SYSTEM_FILE,
+        _ => return Err("target must be 'timeline' or 'system'".to_string()),
+    };
+    Ok(session_dir.join(file_name))
+}
+
 #[tauri::command]
 pub fn debug_session_start(
     app: AppHandle,
@@ -208,4 +241,54 @@ pub fn debug_session_clear_active(app: AppHandle) -> Result<(), String> {
             .map_err(|e| format!("Failed to remove {}: {e}", active_path.display()))?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub fn debug_session_append(
+    app: AppHandle,
+    input: DebugSessionAppendInput,
+) -> Result<DebugSessionAppendResult, String> {
+    let root = resolve_debug_root(&app)?;
+    let target = input.target.trim();
+    let line = input.line;
+    if line.is_empty() {
+        return Ok(DebugSessionAppendResult {
+            ok: true,
+            appended: false,
+            truncated: false,
+            bytes_written: 0,
+        });
+    }
+
+    let file_path = resolve_session_file(&root, &input.session_id, target)?;
+    ensure_parent(&file_path)?;
+
+    let current_size = fs::metadata(&file_path).map(|meta| meta.len()).unwrap_or(0);
+    let line_bytes = line.as_bytes().len() as u64 + 1;
+    if input.max_bytes > 0 && current_size.saturating_add(line_bytes) > input.max_bytes {
+        return Ok(DebugSessionAppendResult {
+            ok: true,
+            appended: false,
+            truncated: true,
+            bytes_written: 0,
+        });
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&file_path)
+        .map_err(|e| format!("Failed to open {}: {e}", file_path.display()))?;
+
+    use std::io::Write;
+    file.write_all(line.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .map_err(|e| format!("Failed to append {}: {e}", file_path.display()))?;
+
+    Ok(DebugSessionAppendResult {
+        ok: true,
+        appended: true,
+        truncated: false,
+        bytes_written: line_bytes,
+    })
 }

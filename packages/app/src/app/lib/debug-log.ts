@@ -211,13 +211,22 @@ type DebugGate = {
 };
 
 let debugGate: DebugGate | null = null;
+let debugSessionProvider: { get: () => DebugSessionManifest | null } | null = null;
 
 export function setDebugGate(gate: DebugGate | null) {
   debugGate = gate;
 }
 
+export function setDebugSessionProvider(provider: { get: () => DebugSessionManifest | null } | null) {
+  debugSessionProvider = provider;
+}
+
 export function isDebugLoggingEnabled(): boolean {
   return debugGate?.enabled() ?? false;
+}
+
+export function getActiveDebugSession(): DebugSessionManifest | null {
+  return debugSessionProvider?.get() ?? null;
 }
 
 function resolveCryptoId() {

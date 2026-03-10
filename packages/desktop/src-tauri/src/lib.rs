@@ -20,7 +20,9 @@ use commands::command_files::{
     opencode_command_delete, opencode_command_list, opencode_command_write,
 };
 use commands::config::{read_opencode_config, write_opencode_config};
-use commands::debug::{debug_session_clear_active, debug_session_start, debug_session_stop};
+use commands::debug::{
+    debug_session_append, debug_session_clear_active, debug_session_start, debug_session_stop,
+};
 use commands::engine::{
     engine_doctor, engine_info, engine_install, engine_restart, engine_start, engine_stop,
 };
@@ -101,6 +103,7 @@ pub fn run() {
             engine_install,
             engine_restart,
             debug_session_start,
+            debug_session_append,
             debug_session_stop,
             debug_session_clear_active,
             orchestrator_status,

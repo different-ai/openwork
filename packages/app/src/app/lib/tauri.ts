@@ -529,6 +529,10 @@ export async function debugSessionStart(input: DebugSessionStartInput): Promise<
   return invoke<DebugSessionStartResult>("debug_session_start", { input });
 }
 
+export async function debugSessionAppend(input: DebugSessionAppendInput): Promise<DebugSessionAppendResult> {
+  return invoke<DebugSessionAppendResult>("debug_session_append", { input });
+}
+
 export async function debugSessionStop(): Promise<void> {
   return invoke<void>("debug_session_stop");
 }
@@ -598,6 +602,20 @@ export type DebugSessionStartInput = {
 
 export type DebugSessionStartResult = {
   manifest: DebugSessionManifest;
+};
+
+export type DebugSessionAppendInput = {
+  sessionId: string;
+  target: "timeline" | "system";
+  line: string;
+  maxBytes: number;
+};
+
+export type DebugSessionAppendResult = {
+  ok: boolean;
+  appended: boolean;
+  truncated: boolean;
+  bytesWritten: number;
 };
 
 export type ScheduledJobRun = {
