@@ -133,7 +133,7 @@ export default function ShareHomeClient() {
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
   const selectionLabel = effectiveEntries.length
     ? `${effectiveEntries.length} ${effectiveEntries.length === 1 ? "entry" : "entries"} ready`
-    : "Drop files or paste content";
+    : null;
 
   const requestPackage = async (previewOnly) => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -314,7 +314,7 @@ export default function ShareHomeClient() {
                   <span className="inline-token token-config">config</span> files, preview the inferred bundle, then publish a public import page.
                 </p>
               </div>
-              <div className="selection-badge">{selectionLabel}</div>
+              {selectionLabel && <div className="selection-badge">{selectionLabel}</div>}
             </div>
 
             <div className="input-method-grid">
@@ -359,19 +359,6 @@ export default function ShareHomeClient() {
                   <p>Browse local files</p>
                 </div>
               </label>
-
-              <button className="clipboard-tile" type="button" onClick={pasteFromClipboard} disabled={busy}>
-                <div className="drop-icon clipboard-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="9" y="2" width="6" height="4" rx="1"></rect>
-                    <path d="M9 4H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"></path>
-                  </svg>
-                </div>
-                <div className="drop-text">
-                  <h3>Paste from clipboard</h3>
-                  <p>Use copied text</p>
-                </div>
-              </button>
             </div>
 
             {effectiveEntries.length ? (
