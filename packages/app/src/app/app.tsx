@@ -4230,8 +4230,7 @@ export default function App() {
     });
     setModelPickerOpen(false);
     setSettingsTabLogged("general");
-    setTab("settings");
-    setView("dashboard");
+    goToDashboard("settings");
     void openProviderAuthModal(providerId).catch((error) => {
       setProviderAuthError(error instanceof Error ? error.message : "Failed to load providers");
     });
