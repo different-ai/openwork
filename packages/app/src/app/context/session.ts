@@ -450,8 +450,8 @@ export function createSessionStore(options: {
 
   const inferHttpStatus = (value: string | null) => {
     if (!value) return null;
-    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|429)\b/i) ||
-      value.match(/\b(401|403|429)\b/);
+    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|413|429)\b/i) ||
+      value.match(/\b(401|403|413|429)\b/);
     if (!match) return null;
     const parsed = Number.parseInt(match[1], 10);
     if (!Number.isFinite(parsed)) return null;
@@ -520,10 +520,12 @@ export function createSessionStore(options: {
       if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
       if (errorName === "APIError") {
         if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+        if (effectiveStatus === 413) return "Context too large";
         if (effectiveStatus === 429) return "Rate limit exceeded";
         return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
       }
       if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+      if (effectiveStatus === 413) return "Context too large";
       if (effectiveStatus === 429) return "Rate limit exceeded";
       if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
       return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -531,6 +533,9 @@ export function createSessionStore(options: {
 
     const lines = [heading];
     if (rawMessage && rawMessage !== heading) lines.push(rawMessage);
+    if (effectiveStatus === 413) {
+      lines.push("Tip: Try compacting the session, or start a new session if the issue persists.");
+    }
     if (providerID && errorName !== "ProviderAuthError") lines.push(`Provider: ${providerID}`);
     if (effectiveStatus && errorName !== "APIError") lines.push(`Status: ${effectiveStatus}`);
     if (code) lines.push(`Code: ${code}`);
