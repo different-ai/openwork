@@ -233,6 +233,12 @@ type SharedBundleDeepLink = {
   label?: string;
 };
 
+type SharedBundleImportTarget = {
+  workspaceId?: string | null;
+  localRoot?: string | null;
+  directoryHint?: string | null;
+};
+
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
@@ -3008,13 +3014,73 @@ export default function App() {
     };
   };
 
-  const waitForSharedBundleImportTarget = async (timeoutMs = 20_000) => {
+  const findSharedBundleImportWorkspaceId = (
+    items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>,
+    target?: SharedBundleImportTarget,
+  ) => {
+    const explicitId = target?.workspaceId?.trim() ?? "";
+    if (explicitId) {
+      const match = items.find((entry) => entry.id === explicitId);
+      if (match?.id) return match.id;
+    }
+
+    const localRoot = normalizeDirectoryPath(target?.localRoot?.trim() ?? "");
+    if (localRoot) {
+      const match = items.find((entry) => normalizeDirectoryPath(entry.path ?? "") === localRoot);
+      if (match?.id) return match.id;
+    }
+
+    const directoryHint = normalizeDirectoryPath(target?.directoryHint?.trim() ?? "");
+    if (directoryHint) {
+      const match = items.find((entry) => {
+        const entryPath = normalizeDirectoryPath((entry.opencode?.directory ?? entry.directory ?? entry.path ?? "").trim());
+        return Boolean(entryPath && entryPath === directoryHint);
+      });
+      if (match?.id) return match.id;
+    }
+
+    return null;
+  };
+
+  const resolveActiveSharedBundleImportTarget = (): SharedBundleImportTarget => {
+    const active = workspaceStore.activeWorkspaceDisplay();
+    if (active.workspaceType === "local") {
+      return { localRoot: workspaceStore.activeWorkspaceRoot().trim() };
+    }
+
+    return {
+      workspaceId:
+        active.openworkWorkspaceId?.trim() ||
+        parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
+        parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
+        null,
+      directoryHint: active.directory?.trim() || active.path?.trim() || null,
+    };
+  };
+
+  const waitForSharedBundleImportTarget = async (timeoutMs = 20_000, target?: SharedBundleImportTarget) => {
     const startedAt = Date.now();
     while (Date.now() - startedAt < timeoutMs) {
       const client = openworkServerClient();
-      const workspaceId = openworkServerWorkspaceId();
-      if (client && workspaceId && openworkServerStatus() === "connected") {
-        return { client, workspaceId };
+      if (client && openworkServerStatus() === "connected") {
+        if (target?.workspaceId?.trim() || target?.localRoot?.trim() || target?.directoryHint?.trim()) {
+          try {
+            const response = await client.listWorkspaces();
+            const items = Array.isArray(response.items) ? response.items : [];
+            const matchId = findSharedBundleImportWorkspaceId(items, target);
+            if (matchId) {
+              setOpenworkServerWorkspaceId(matchId);
+              return { client, workspaceId: matchId };
+            }
+          } catch {
+            // ignore and keep polling
+          }
+        } else {
+          const workspaceId = openworkServerWorkspaceId();
+          if (workspaceId) {
+            return { client, workspaceId };
+          }
+        }
       }
       await new Promise<void>((resolve) => {
         window.setTimeout(resolve, 200);
@@ -3023,8 +3089,8 @@ export default function App() {
     throw new Error("OpenWork worker is not ready yet.");
   };
 
-  const importSharedBundlePayload = async (bundle: SharedBundleV1) => {
-    const { client, workspaceId } = await waitForSharedBundleImportTarget();
+  const importSharedBundlePayload = async (bundle: SharedBundleV1, target?: SharedBundleImportTarget) => {
+    const { client, workspaceId } = await waitForSharedBundleImportTarget(20_000, target);
     const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
     await client.importWorkspace(workspaceId, payload);
     await refreshSkills({ force: true });
@@ -3034,10 +3100,13 @@ export default function App() {
     }
   };
 
-  const importSharedBundleIntoActiveWorker = async (request: SharedBundleDeepLink) => {
+  const importSharedBundleIntoActiveWorker = async (
+    request: SharedBundleDeepLink,
+    target?: SharedBundleImportTarget,
+  ) => {
     try {
       const bundle = await fetchSharedBundle(request.bundleUrl);
-      await importSharedBundlePayload(bundle);
+      await importSharedBundlePayload(bundle, target);
       setError(null);
       return true;
     } catch (error) {
@@ -3093,9 +3162,12 @@ export default function App() {
 
     if (request.intent === "import_current") {
       const client = openworkServerClient();
-      const workspaceId = openworkServerWorkspaceId();
       const connected = openworkServerStatus() === "connected";
-      if (!client || !workspaceId || !connected) {
+      const target = resolveActiveSharedBundleImportTarget();
+      const hasTargetHint = Boolean(
+        target.workspaceId?.trim() || target.localRoot?.trim() || target.directoryHint?.trim(),
+      );
+      if (!client || !connected || !hasTargetHint) {
         if (!sharedBundleNoticeShown()) {
           setSharedBundleNoticeShown(true);
           setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
@@ -3126,7 +3198,7 @@ export default function App() {
           if (cancelled) return;
         }
 
-        await importSharedBundlePayload(bundle);
+        await importSharedBundlePayload(bundle, resolveActiveSharedBundleImportTarget());
         setError(null);
       } catch (error) {
         if (!cancelled) {
@@ -6478,7 +6550,9 @@ export default function App() {
           const request = sharedBundleCreateWorkerRequest();
           const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
           if (!ok || !request) return;
-          await importSharedBundleIntoActiveWorker(request);
+          await importSharedBundleIntoActiveWorker(request, {
+            localRoot: workspaceStore.activeWorkspaceRoot().trim(),
+          });
           setSharedBundleCreateWorkerRequest(null);
         }}
         onConfirmWorker={
@@ -6488,7 +6562,15 @@ export default function App() {
                 const ok = await workspaceStore.createSandboxFlow(preset, folder, {
                   onReady: async () => {
                     if (request) {
-                      await importSharedBundleIntoActiveWorker(request);
+                      const active = workspaceStore.activeWorkspaceDisplay();
+                      await importSharedBundleIntoActiveWorker(request, {
+                        workspaceId:
+                          active.openworkWorkspaceId?.trim() ||
+                          parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
+                          parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
+                          null,
+                        directoryHint: active.directory?.trim() || active.path?.trim() || null,
+                      });
                     }
                     await createSessionAndOpen();
                   },
