@@ -483,15 +483,20 @@ a {
   padding: 6px 16px;
   font-size: 12px;
   line-height: 1.4;
-  color: #f59e0b;
+  color: rgba(255, 255, 255, 0.45);
   background: rgba(255, 255, 255, 0.04);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
 }
 
+.carbon-status-bar.is-todo {
+  color: #f59e0b;
+}
+
 .carbon-editor-wrap {
   position: relative;
   background: #151718;
+  min-height: 46.5dvh;
 }
 
 .carbon-highlight,
@@ -512,6 +517,10 @@ a {
   color: #c5c8c6;
   background: transparent;
   pointer-events: none;
+}
+
+.carbon-highlight.is-baseline {
+  opacity: 0.5;
 }
 
 .carbon-editor {
@@ -654,9 +663,36 @@ a {
   font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
-  color: var(--ow-muted);
-  background: rgba(148, 163, 184, 0.08);
-  border-color: rgba(148, 163, 184, 0.14);
+}
+
+.token-agent {
+  color: #c2581a;
+  background: rgba(249, 115, 22, 0.08);
+  border-color: rgba(249, 115, 22, 0.15);
+}
+
+.token-skill {
+  color: #3b6fd8;
+  background: rgba(37, 99, 235, 0.07);
+  border-color: rgba(37, 99, 235, 0.14);
+}
+
+.token-mcp {
+  color: #1a8f7f;
+  background: rgba(15, 159, 127, 0.07);
+  border-color: rgba(15, 159, 127, 0.14);
+}
+
+.token-command {
+  color: #7e4fd6;
+  background: rgba(139, 92, 246, 0.07);
+  border-color: rgba(139, 92, 246, 0.14);
+}
+
+.token-config {
+  color: #6b7a8d;
+  background: rgba(71, 85, 105, 0.06);
+  border-color: rgba(71, 85, 105, 0.12);
 }
 
 .selection-item {

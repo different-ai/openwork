@@ -205,6 +205,22 @@ async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<F
 
 const DEFAULT_STATUS = "# TODO  Paste AGENTS.md, SKILL.md, or JSON/JSONC config here.";
 
+const BASELINE_EXAMPLE = `# My Skill
+
+Identity: a short description of what this skill does.
+
+Scope: the boundaries and focus area for this skill.
+
+## Trigger
+
+Runs when a specific event or condition is met.
+
+## Parameters
+
+- param_one: Description of the first parameter
+- param_two: Description of the second parameter
+`;
+
 export default function ShareHomeClient() {
   const [selectedEntries, setSelectedEntries] = useState<File[]>([]);
   const [pasteValue, setPasteValue] = useState("");
@@ -227,7 +243,11 @@ export default function ShareHomeClient() {
   );
 
   const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
-  const highlightedPaste = useMemo(() => highlightSyntax(pasteValue), [pasteValue]);
+  const showBaseline = !pasteValue;
+  const highlightedPaste = useMemo(
+    () => showBaseline ? highlightSyntax(BASELINE_EXAMPLE) : highlightSyntax(pasteValue),
+    [pasteValue, showBaseline]
+  );
   const visibleItems = useMemo(
     () => activeExample ? getPreviewItems(null) : getPreviewItems(preview),
     [preview, activeExample]
@@ -553,10 +573,10 @@ export default function ShareHomeClient() {
                         : "untitled"}
                 </span>
               </div>
-              <div className="carbon-status-bar">{pasteState}</div>
+              <div className={`carbon-status-bar${pasteState === DEFAULT_STATUS ? " is-todo" : ""}`}>{pasteState}</div>
               <div className="carbon-editor-wrap">
                 <pre
-                  className="carbon-highlight"
+                  className={`carbon-highlight${showBaseline ? " is-baseline" : ""}`}
                   aria-hidden="true"
                   dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
                 />
