@@ -1,8 +1,21 @@
-import { fetchBundleJsonById } from "../_lib/blob-store.js";
-import { renderBundleOgImage, renderRootOgImage } from "../_lib/render-og-image.js";
-import { setCors } from "../_lib/share-utils.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-export default async function handler(req, res) {
+import { fetchBundleJsonById } from "../_lib/blob-store.ts";
+import { renderBundleOgImage, renderRootOgImage } from "../_lib/render-og-image.ts";
+import { setCors } from "../_lib/share-utils.ts";
+
+interface LegacyApiRequest extends IncomingMessage {
+  method?: string;
+  query?: Record<string, string | string[] | undefined>;
+}
+
+interface LegacyApiResponse extends ServerResponse {
+  status(code: number): LegacyApiResponse;
+  json(body: unknown): void;
+  send(body: string): void;
+}
+
+export default async function handler(req: LegacyApiRequest, res: LegacyApiResponse): Promise<void> {
   setCors(res, { methods: "GET,OPTIONS", headers: "Content-Type,Accept" });
   if (req.method === "OPTIONS") {
     res.status(204).end();

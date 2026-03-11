@@ -3,8 +3,19 @@
 import { GrainGradient } from "@paper-design/shaders-react";
 import { useEffect, useRef, useState } from "react";
 
-export function ResponsiveGrain(props) {
-  const containerRef = useRef(null);
+interface ResponsiveGrainProps {
+  colors?: string[];
+  colorBack?: string;
+  softness?: number;
+  intensity?: number;
+  noise?: number;
+  shape?: "blob" | "wave" | "dots" | "truchet" | "corners" | "ripple" | "sphere";
+  speed?: number;
+  className?: string;
+}
+
+export function ResponsiveGrain(props: ResponsiveGrainProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {

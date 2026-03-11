@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:openwork.software)"
+      "WebFetch(domain:openwork.software)",
+      "Bash(ls -la /Users/jcarbs/Code/the-factory/_worktrees/openwork-share-inline-success/_repos/openwork/*.json | grep -E \"\\(tsconfig|prettier|eslint\\)\")"
     ]
   }
 }

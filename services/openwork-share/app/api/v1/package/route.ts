@@ -1,11 +1,11 @@
-import { storeBundleJson } from "../../../../server/_lib/blob-store.js";
-import { packageOpenworkFiles } from "../../../../server/_lib/package-openwork-files.js";
-import { buildBundleUrls, getEnv } from "../../../../server/_lib/share-utils.js";
-import { buildRequestLike } from "../../../../server/_lib/request-like.js";
+import { storeBundleJson } from "../../../../server/_lib/blob-store.ts";
+import { packageOpenworkFiles } from "../../../../server/_lib/package-openwork-files.ts";
+import { buildBundleUrls, getEnv } from "../../../../server/_lib/share-utils.ts";
+import { buildRequestLike } from "../../../../server/_lib/request-like.ts";
 
 export const runtime = "nodejs";
 
-function formatPublishError(error) {
+function formatPublishError(error: unknown): string {
   const message = error instanceof Error ? error.message : "Failed to package files";
   if (message.includes("BLOB_READ_WRITE_TOKEN") || message.includes("No token found")) {
     return "Publishing requires BLOB_READ_WRITE_TOKEN in the server environment.";
@@ -13,7 +13,7 @@ function formatPublishError(error) {
   return message;
 }
 
-function buildCorsHeaders() {
+function buildCorsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
@@ -21,7 +21,7 @@ function buildCorsHeaders() {
   };
 }
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
@@ -38,7 +38,7 @@ export function OPTIONS() {
   });
 }
 
-export async function POST(request) {
+export async function POST(request: Request) {
   const maxBytes = Number.parseInt(getEnv("MAX_BYTES", "5242880"), 10);
   const contentType = String(request.headers.get("content-type") ?? "").toLowerCase();
   if (!contentType.includes("application/json")) {
@@ -54,7 +54,7 @@ export async function POST(request) {
     return jsonResponse({ message: "Package request exceeds upload limit", maxBytes }, 413);
   }
 
-  let body;
+  let body: { preview?: boolean; [key: string]: unknown };
   try {
     body = JSON.parse(raw);
   } catch {

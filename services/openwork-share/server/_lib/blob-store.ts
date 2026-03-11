@@ -1,7 +1,9 @@
 import { head, put } from "@vercel/blob";
 import { ulid } from "ulid";
 
-export async function storeBundleJson(rawJson) {
+import type { FetchBundleResult, StoreBundleResult } from "./types.ts";
+
+export async function storeBundleJson(rawJson: string): Promise<StoreBundleResult> {
   const id = ulid();
   const pathname = `bundles/${id}.json`;
   const buffer = Buffer.from(String(rawJson), "utf8");
@@ -15,7 +17,7 @@ export async function storeBundleJson(rawJson) {
   return { id, pathname };
 }
 
-export async function fetchBundleJsonById(id) {
+export async function fetchBundleJsonById(id: string): Promise<FetchBundleResult> {
   const pathname = `bundles/${id}.json`;
   const blob = await head(pathname);
   const response = await fetch(blob.url, { method: "GET" });

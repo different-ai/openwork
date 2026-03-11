@@ -8,7 +8,7 @@ function GitHubMark() {
   );
 }
 
-export default function ShareNav({ stars = "—" }) {
+export default function ShareNav({ stars = "—" }: { stars?: string }) {
   return (
     <nav className="nav">
       <a className="brand" href="/" aria-label="OpenWork Share home">

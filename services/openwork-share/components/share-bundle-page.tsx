@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 
+import type { BundlePageProps } from "../server/_lib/types.ts";
 import ShareNav from "./share-nav";
 
-function toneClass(item) {
+function toneClass(item: { tone?: string } | null | undefined): string {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
   if (item?.tone === "command") return "dot-command";
@@ -12,7 +13,7 @@ function toneClass(item) {
   return "dot-skill";
 }
 
-export default function ShareBundlePage(props) {
+export default function ShareBundlePage(props: BundlePageProps) {
   const [copyState, setCopyState] = useState("Copy share link");
   const bundleSummary = [
     { label: "Schema", value: props.schemaVersion || "-" },
@@ -112,7 +113,7 @@ export default function ShareBundlePage(props) {
                       <div className="included-section">
                         <h4>Package contents</h4>
                         <div className="included-list">
-                          {props.items.length ? (
+                          {props.items?.length ? (
                             props.items.map((item) => (
                               <div className="included-item" key={`${item.kind}-${item.name}`}>
                                 <div className="item-left">
@@ -151,7 +152,7 @@ export default function ShareBundlePage(props) {
                 <h3>Bundle details</h3>
                 <p>Stable metadata for parsing and direct OpenWork import.</p>
                 <dl className="metadata-list">
-                  {props.metadataRows.map((row) => (
+                  {props.metadataRows?.map((row) => (
                     <div className="metadata-row" key={row.label}>
                       <dt>{row.label}</dt>
                       <dd>{row.value}</dd>

@@ -1,7 +1,19 @@
-import { storeBundleJson } from "../_lib/blob-store.js";
-import { buildBundleUrls, getEnv, readBody, setCors, validateBundlePayload } from "../_lib/share-utils.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
-function formatPublishError(error) {
+import { storeBundleJson } from "../_lib/blob-store.ts";
+import { buildBundleUrls, getEnv, readBody, setCors, validateBundlePayload } from "../_lib/share-utils.ts";
+
+interface LegacyApiRequest extends IncomingMessage {
+  method?: string;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+interface LegacyApiResponse extends ServerResponse {
+  status(code: number): LegacyApiResponse;
+  json(body: unknown): void;
+}
+
+function formatPublishError(error: unknown): string {
   const message = error instanceof Error ? error.message : "Blob put failed";
   if (message.includes("BLOB_READ_WRITE_TOKEN") || message.includes("No token found")) {
     return "Publishing requires BLOB_READ_WRITE_TOKEN in the server environment.";
@@ -9,7 +21,7 @@ function formatPublishError(error) {
   return message;
 }
 
-export default async function handler(req, res) {
+export default async function handler(req: LegacyApiRequest, res: LegacyApiResponse): Promise<void> {
   setCors(res);
   if (req.method === "OPTIONS") {
     res.status(204).end();
@@ -47,9 +59,9 @@ export default async function handler(req, res) {
 
   try {
     const { id } = await storeBundleJson(rawJson);
-    const urls = buildBundleUrls(req, id);
+    const urls = buildBundleUrls(req as unknown as import("../_lib/types").RequestLike, id);
     res.setHeader("Content-Type", "application/json");
-      res.status(200).send(JSON.stringify({ url: urls.shareUrl }));
+    res.status(200).end(JSON.stringify({ url: urls.shareUrl }));
   } catch (e) {
     res.status(500).json({ message: formatPublishError(e) });
   }

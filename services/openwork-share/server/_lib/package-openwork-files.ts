@@ -1,6 +1,8 @@
 import { parse as parseJsonc } from "jsonc-parser";
 
-import { humanizeType, maybeArray, maybeString, parseFrontmatter } from "./share-utils.js";
+import type { PreviewItem } from "../../components/share-home-types.ts";
+import { humanizeType, maybeArray, maybeString, parseFrontmatter } from "./share-utils.ts";
+import type { Frontmatter, NormalizedFile, PackageInput, PackageResult, PackageSummary } from "./types.ts";
 
 const MAX_FILES = 200;
 const SECRET_KEY_RE = /(token|secret|password|api[-_]?key|authorization|bearer|private[-_]?key|client[-_]?secret)/i;
@@ -8,7 +10,7 @@ const SAFE_SECRET_VALUE_RE = /^(\$\{|\{env:|env\.|process\.env\.|<|YOUR_|REPLACE
 const AGENT_FRONTMATTER_KEYS = new Set(["mode", "model", "tools", "permission", "temperature", "color", "prompt"]);
 const OPENCODE_CONFIG_KEYS = new Set(["model", "autoupdate", "server", "provider", "plugin", "mcp", "agent", "permission"]);
 
-function normalizePath(input) {
+function normalizePath(input: unknown): string {
   return String(input ?? "")
     .replaceAll("\\", "/")
     .replace(/\/+/g, "/")
@@ -16,24 +18,24 @@ function normalizePath(input) {
     .trim();
 }
 
-function basename(path) {
+function basename(path: string): string {
   const normalized = normalizePath(path);
   if (!normalized) return "";
   return normalized.split("/").pop() ?? normalized;
 }
 
-function dirname(path) {
+function dirname(path: string): string {
   const normalized = normalizePath(path);
   if (!normalized || !normalized.includes("/")) return "";
   return normalized.slice(0, normalized.lastIndexOf("/"));
 }
 
-function stem(path) {
+function stem(path: string): string {
   const name = basename(path);
   return name.replace(/\.[^.]+$/, "");
 }
 
-function slugify(value) {
+function slugify(value: unknown): string {
   return String(value ?? "")
     .trim()
     .toLowerCase()
@@ -42,31 +44,31 @@ function slugify(value) {
     .slice(0, 64);
 }
 
-function normalizeFile(input, index) {
+function normalizeFile(input: { path?: string; webkitRelativePath?: string; name?: string; content?: string }, index: number): NormalizedFile {
   const path = normalizePath(input.path || input.webkitRelativePath || input.name || `file-${index + 1}`);
   const name = basename(path) || `file-${index + 1}`;
   const content = String(input.content ?? "").replace(/^\uFEFF/, "");
   return { path, name, content };
 }
 
-function isMarkdownFile(file) {
+function isMarkdownFile(file: NormalizedFile): boolean {
   return /\.md$/i.test(file.name);
 }
 
-function isJsonFile(file) {
+function isJsonFile(file: NormalizedFile): boolean {
   return /\.jsonc?$/i.test(file.name);
 }
 
-function isSkillFile(file) {
+function isSkillFile(file: NormalizedFile): boolean {
   const lowerPath = file.path.toLowerCase();
   return /^(skills?|skill)\.md$/i.test(basename(lowerPath)) || /(^|\/)\.opencode\/skills\//.test(lowerPath) || /(^|\/)skills\//.test(lowerPath);
 }
 
-function isCommandFile(file) {
+function isCommandFile(file: NormalizedFile): boolean {
   return /(^|\/)\.opencode\/commands\//.test(file.path.toLowerCase()) || /(^|\/)commands\//.test(file.path.toLowerCase());
 }
 
-function isAgentFile(file, frontmatterData) {
+function isAgentFile(file: NormalizedFile, frontmatterData: Record<string, unknown>): boolean {
   const lowerPath = file.path.toLowerCase();
   if (/(^|\/)\.opencode\/agents\//.test(lowerPath) || /(^|\/)agents\//.test(lowerPath) || /(^|\/)agents?\.md$/i.test(lowerPath)) {
     return true;
@@ -74,23 +76,23 @@ function isAgentFile(file, frontmatterData) {
   return Object.keys(frontmatterData).some((key) => AGENT_FRONTMATTER_KEYS.has(key));
 }
 
-function isOpenworkConfigFile(file) {
+function isOpenworkConfigFile(file: NormalizedFile): boolean {
   return /(^|\/)(?:\.opencode\/)?openwork\.jsonc?$/i.test(file.path);
 }
 
-function isOpencodeConfigFile(file) {
+function isOpencodeConfigFile(file: NormalizedFile): boolean {
   return /(^|\/)opencode\.jsonc?$/i.test(file.path);
 }
 
-function looksLikeNamedMcpFile(file) {
+function looksLikeNamedMcpFile(file: NormalizedFile): boolean {
   return /(^|\/)mcp\//i.test(file.path) || /\.mcp\.jsonc?$/i.test(file.name) || /(^|[._-])mcp(?:[_-]?config)?\.jsonc?$/i.test(file.name);
 }
 
-function looksLikeNamedAgentJsonFile(file) {
+function looksLikeNamedAgentJsonFile(file: NormalizedFile): boolean {
   return /(^|\/)agents\//i.test(file.path) || /\.agent\.jsonc?$/i.test(file.name);
 }
 
-function resolveName(preferred, fallback) {
+function resolveName(preferred: unknown, fallback: unknown): string {
   const fromPreferred = slugify(preferred);
   if (fromPreferred) return fromPreferred;
   const fromFallback = slugify(fallback);
@@ -98,22 +100,22 @@ function resolveName(preferred, fallback) {
   return `item-${Date.now()}`;
 }
 
-function buildPreviewItem(name, kind, meta, tone) {
+function buildPreviewItem(name: string, kind: PreviewItem["kind"], meta: string, tone: PreviewItem["tone"]): PreviewItem {
   return { name, kind, meta, tone };
 }
 
-function countMatches(text, token) {
+function countMatches(text: string, token: string): number {
   if (!text) return 0;
   return (text.match(new RegExp(`\\b${token}\\b`, "gi")) || []).length;
 }
 
-function collectHeadings(content) {
+function collectHeadings(content: string): string {
   return Array.from(content.matchAll(/^#{1,3}\s+(.+)$/gm))
     .map((match) => match[1])
     .join("\n");
 }
 
-function inferMarkdownKind(file, frontmatterData) {
+function inferMarkdownKind(file: NormalizedFile, frontmatterData: Record<string, unknown>): "agent" | "skill" {
   const lowerPath = file.path.toLowerCase();
   const lowerContent = file.content.toLowerCase();
   const headings = collectHeadings(file.content).toLowerCase();
@@ -139,7 +141,15 @@ function inferMarkdownKind(file, frontmatterData) {
   return agentScore > skillScore ? "agent" : "skill";
 }
 
-function buildSkillRecord(file, warnings, frontmatter) {
+interface SkillRecord {
+  name: string;
+  description: string;
+  trigger: string;
+  content: string;
+  preview: PreviewItem;
+}
+
+function buildSkillRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): SkillRecord | null {
   const { data } = frontmatter;
   const parentName = basename(dirname(file.path));
   const name = resolveName(data.name, parentName || stem(file.path));
@@ -159,7 +169,13 @@ function buildSkillRecord(file, warnings, frontmatter) {
   };
 }
 
-function buildAgentRecord(file, warnings, frontmatter) {
+interface AgentRecord {
+  name: string;
+  config: Record<string, unknown>;
+  preview: PreviewItem;
+}
+
+function buildAgentRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): AgentRecord | null {
   const { data, body } = frontmatter;
   const name = resolveName(data.name, stem(file.path));
   if (!name) {
@@ -167,7 +183,7 @@ function buildAgentRecord(file, warnings, frontmatter) {
     return null;
   }
 
-  const config = { ...data };
+  const config: Record<string, unknown> = { ...data };
   delete config.name;
   const promptBody = body.trim();
   if (promptBody && typeof config.prompt !== "string") {
@@ -184,7 +200,17 @@ function buildAgentRecord(file, warnings, frontmatter) {
   };
 }
 
-function buildCommandRecord(file, warnings, frontmatter) {
+interface CommandRecord {
+  name: string;
+  description: string;
+  template: string;
+  agent: string;
+  model: string;
+  subtask: boolean;
+  preview: PreviewItem;
+}
+
+function buildCommandRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): CommandRecord | null {
   const { data, body } = frontmatter;
   const name = resolveName(data.name, stem(file.path));
   const template = body.trim();
@@ -204,29 +230,29 @@ function buildCommandRecord(file, warnings, frontmatter) {
   };
 }
 
-function parseJsonConfig(file) {
+function parseJsonConfig(file: NormalizedFile): unknown {
   try {
     return parseJsonc(file.content);
-  } catch (error) {
+  } catch {
     throw new Error(`Could not parse ${file.path} as JSON/JSONC`);
   }
 }
 
-function isRecord(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function cloneRecord(value) {
+function cloneRecord<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function mergeConfigSections(target, source) {
-  if (!source) return target;
-  const output = isRecord(target) ? cloneRecord(target) : {};
+function mergeConfigSections(target: Record<string, unknown> | null, source: Record<string, unknown> | null): Record<string, unknown> {
+  if (!source) return target ?? {};
+  const output: Record<string, unknown> = isRecord(target) ? cloneRecord(target) : {};
 
   for (const [key, value] of Object.entries(source)) {
     if (isRecord(value) && isRecord(output[key])) {
-      output[key] = mergeConfigSections(output[key], value);
+      output[key] = mergeConfigSections(output[key] as Record<string, unknown>, value);
       continue;
     }
 
@@ -236,22 +262,22 @@ function mergeConfigSections(target, source) {
   return output;
 }
 
-function buildConfigPreview(file, meta) {
+function buildConfigPreview(file: NormalizedFile, meta: string): PreviewItem {
   return buildPreviewItem(basename(file.path) || stem(file.path), "Config", meta, "config");
 }
 
-function collectOpencodePreviewItems(parsed) {
-  const preview = [];
+function collectOpencodePreviewItems(parsed: Record<string, unknown>): PreviewItem[] {
+  const preview: PreviewItem[] = [];
 
-  if (isRecord(parsed?.mcp) && Object.keys(parsed.mcp).length) {
-    for (const [name, entry] of Object.entries(parsed.mcp)) {
+  if (isRecord(parsed?.mcp) && Object.keys(parsed.mcp as Record<string, unknown>).length) {
+    for (const [name, entry] of Object.entries(parsed.mcp as Record<string, unknown>)) {
       const meta = isRecord(entry) && typeof entry.type === "string" ? `${humanizeType(entry.type)} MCP` : "MCP config";
       preview.push(buildPreviewItem(name, "MCP", meta, "mcp"));
     }
   }
 
-  if (isRecord(parsed?.agent) && Object.keys(parsed.agent).length) {
-    for (const [name, entry] of Object.entries(parsed.agent)) {
+  if (isRecord(parsed?.agent) && Object.keys(parsed.agent as Record<string, unknown>).length) {
+    for (const [name, entry] of Object.entries(parsed.agent as Record<string, unknown>)) {
       const meta = isRecord(entry) && typeof entry.model === "string" ? entry.model : "Agent config";
       preview.push(buildPreviewItem(name, "Agent", meta, "agent"));
     }
@@ -260,7 +286,7 @@ function collectOpencodePreviewItems(parsed) {
   return preview;
 }
 
-function looksLikeMcpShape(parsed) {
+function looksLikeMcpShape(parsed: unknown): boolean {
   if (!isRecord(parsed)) return false;
 
   const schema = maybeString(parsed.$schema).toLowerCase();
@@ -277,7 +303,7 @@ function looksLikeMcpShape(parsed) {
   return hasTransport || hasCommandRuntime;
 }
 
-function looksLikeOpencodeShape(parsed) {
+function looksLikeOpencodeShape(parsed: unknown): boolean {
   if (!isRecord(parsed)) return false;
 
   const schema = maybeString(parsed.$schema).toLowerCase();
@@ -292,21 +318,21 @@ function looksLikeOpencodeShape(parsed) {
   return matchedKeys >= 2;
 }
 
-function looksLikeOpenworkShape(parsed) {
+function looksLikeOpenworkShape(parsed: unknown): boolean {
   if (!isRecord(parsed)) return false;
 
   const schema = maybeString(parsed.$schema).toLowerCase();
   return schema.includes("openwork") && schema.includes("config");
 }
 
-function redactSecrets(value, prefix = [], hits = []) {
+function redactSecrets(value: unknown, prefix: string[] = [], hits: string[] = []): string[] {
   if (!value || typeof value !== "object") return hits;
 
-  for (const [key, child] of Object.entries(value)) {
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
     const nextPrefix = [...prefix, key];
     if (SECRET_KEY_RE.test(key) && typeof child === "string" && child.trim() && !SAFE_SECRET_VALUE_RE.test(child.trim())) {
       hits.push(nextPrefix.join("."));
-      value[key] = "********";
+      (value as Record<string, unknown>)[key] = "********";
     }
     if (typeof child === "object") {
       redactSecrets(child, nextPrefix, hits);
@@ -316,16 +342,24 @@ function redactSecrets(value, prefix = [], hits = []) {
   return hits;
 }
 
-function readConfigSection(file, warnings) {
+interface ConfigSection {
+  opencode: Record<string, unknown> | null;
+  openwork: Record<string, unknown> | null;
+  config: Record<string, unknown>;
+  preview: PreviewItem[];
+  configCount: number;
+}
+
+function readConfigSection(file: NormalizedFile, warnings: string[]): ConfigSection | null {
   const parsed = parseJsonConfig(file);
   if (!isRecord(parsed)) {
     throw new Error(`Expected ${file.path} to contain an object`);
   }
 
-  let opencode = null;
-  let openwork = null;
-  const config = {};
-  const preview = [];
+  let opencode: Record<string, unknown> | null = null;
+  let openwork: Record<string, unknown> | null = null;
+  const config: Record<string, unknown> = {};
+  const preview: PreviewItem[] = [];
   let configCount = 0;
 
   if (isOpenworkConfigFile(file)) {
@@ -391,13 +425,20 @@ function readConfigSection(file, warnings) {
   return { opencode, openwork, config, preview, configCount };
 }
 
-function mergeNamedObjects(target, source) {
+function mergeNamedObjects(target: Record<string, unknown>, source: Record<string, unknown> | undefined): void {
   for (const [name, value] of Object.entries(source ?? {})) {
     target[name] = value;
   }
 }
 
-function buildSummary(skills, agents, mcp, commands, warnings, configCount) {
+function buildSummary(
+  skills: Record<string, unknown>[],
+  agents: Record<string, unknown>,
+  mcp: Record<string, unknown>,
+  commands: Record<string, unknown>[],
+  warnings: string[],
+  configCount: number,
+): PackageSummary {
   return {
     skills: skills.length,
     agents: Object.keys(agents).length,
@@ -408,7 +449,14 @@ function buildSummary(skills, agents, mcp, commands, warnings, configCount) {
   };
 }
 
-function buildBundleName(inputName, skills, agentCount, mcpCount, commandCount, configCount) {
+function buildBundleName(
+  inputName: unknown,
+  skills: { name: string }[],
+  agentCount: number,
+  mcpCount: number,
+  commandCount: number,
+  configCount: number,
+): string {
   const explicit = String(inputName ?? "").trim();
   if (explicit) return explicit;
   if (skills.length === 1 && !agentCount && !mcpCount && !commandCount && !configCount) return skills[0].name;
@@ -417,10 +465,10 @@ function buildBundleName(inputName, skills, agentCount, mcpCount, commandCount, 
   return "Packaged worker";
 }
 
-function buildBundleDescription(bundleType, summary) {
+function buildBundleDescription(bundleType: string, summary: PackageSummary): string {
   if (bundleType === "skill") return "Single skill bundle generated from dropped markdown.";
   if (bundleType === "skills-set") return `${summary.skills} skills packaged together.`;
-  const parts = [];
+  const parts: string[] = [];
   if (summary.skills) parts.push(`${summary.skills} skill${summary.skills === 1 ? "" : "s"}`);
   if (summary.agents) parts.push(`${summary.agents} agent${summary.agents === 1 ? "" : "s"}`);
   if (summary.mcpServers) parts.push(`${summary.mcpServers} MCP${summary.mcpServers === 1 ? "" : "s"}`);
@@ -429,7 +477,7 @@ function buildBundleDescription(bundleType, summary) {
   return parts.length ? `${parts.join(", ")} bundled into a worker package.` : "Worker package generated from shareable files.";
 }
 
-export function packageOpenworkFiles(input) {
+export function packageOpenworkFiles(input: PackageInput): PackageResult {
   const rawFiles = Array.isArray(input?.files) ? input.files : [];
   if (!rawFiles.length) {
     throw new Error("Drop one or more OpenWork files to package them.");
@@ -438,15 +486,15 @@ export function packageOpenworkFiles(input) {
     throw new Error(`Too many files. Package up to ${MAX_FILES} files at once.`);
   }
 
-  const warnings = [];
-  const skills = [];
-  const commands = [];
-  const previewItems = [];
-  const opencodeAgent = {};
-  const opencodeMcp = {};
-  let opencodeConfig = null;
-  const genericConfig = {};
-  let openwork = null;
+  const warnings: string[] = [];
+  const skills: SkillRecord[] = [];
+  const commands: CommandRecord[] = [];
+  const previewItems: PreviewItem[] = [];
+  const opencodeAgent: Record<string, unknown> = {};
+  const opencodeMcp: Record<string, unknown> = {};
+  let opencodeConfig: Record<string, unknown> | null = null;
+  const genericConfig: Record<string, unknown> = {};
+  let openwork: Record<string, unknown> | null = null;
   let configCount = 0;
 
   for (let index = 0; index < rawFiles.length; index += 1) {
@@ -503,8 +551,8 @@ export function packageOpenworkFiles(input) {
       if (record.opencode) {
         opencodeConfig = mergeConfigSections(opencodeConfig, record.opencode);
       }
-      mergeNamedObjects(opencodeAgent, record.opencode?.agent ?? {});
-      mergeNamedObjects(opencodeMcp, record.opencode?.mcp ?? {});
+      mergeNamedObjects(opencodeAgent, (record.opencode?.agent ?? {}) as Record<string, unknown>);
+      mergeNamedObjects(opencodeMcp, (record.opencode?.mcp ?? {}) as Record<string, unknown>);
       if (record.openwork) openwork = record.openwork;
       mergeNamedObjects(genericConfig, record.config ?? {});
       configCount += record.configCount ?? 0;
@@ -515,8 +563,8 @@ export function packageOpenworkFiles(input) {
     warnings.push(`Ignored unsupported file type: ${file.path}`);
   }
 
-  const cleanSkills = skills.map(({ preview, ...skill }) => skill);
-  const cleanCommands = commands.map(({ preview, ...command }) => command);
+  const cleanSkills = skills.map(({ preview: _preview, ...skill }) => skill);
+  const cleanCommands = commands.map(({ preview: _preview, ...command }) => command);
 
   const summary = buildSummary(cleanSkills, opencodeAgent, opencodeMcp, cleanCommands, warnings, configCount);
   if (!summary.skills && !summary.agents && !summary.mcpServers && !summary.commands && !summary.configs && !openwork) {
@@ -533,7 +581,7 @@ export function packageOpenworkFiles(input) {
   const name = buildBundleName(input?.bundleName, cleanSkills, summary.agents, summary.mcpServers, summary.commands, summary.configs);
 
   let bundleType = "workspace-profile";
-  let bundle;
+  let bundle: Record<string, unknown>;
   if (cleanSkills.length === 1 && !hasWorkspaceConfig) {
     bundleType = "skill";
     const skill = cleanSkills[0];
@@ -555,7 +603,7 @@ export function packageOpenworkFiles(input) {
       skills: cleanSkills,
     };
   } else {
-    const workspace = {
+    const workspace: Record<string, unknown> = {
       workspaceId: "share-service-package",
       exportedAt: Date.now(),
       ...(cleanSkills.length ? { skills: cleanSkills } : null),
@@ -584,7 +632,7 @@ export function packageOpenworkFiles(input) {
   return {
     bundle,
     bundleType,
-    name: bundle.name,
+    name: bundle.name as string,
     summary,
     warnings,
     items: previewItems.slice(0, 12),

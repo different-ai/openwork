@@ -1,13 +1,15 @@
+import type { Metadata } from "next";
+
 import ShareHomeClient from "../components/share-home-client";
 import ShareNav from "../components/share-nav";
 import { ResponsiveGrain } from "../components/responsive-grain";
-import { DEFAULT_PUBLIC_BASE_URL } from "../server/_lib/share-utils.js";
+import { DEFAULT_PUBLIC_BASE_URL } from "../server/_lib/share-utils.ts";
 
 export const revalidate = 3600;
 
 const rootOgImageUrl = `${DEFAULT_PUBLIC_BASE_URL}/og/root`;
 
-export const metadata = {
+export const metadata: Metadata = {
   title: "Package Your Worker",
   description: "Drag and drop OpenWork skills, agents, commands, or MCP config to publish a shareable worker package.",
   alternates: {
@@ -28,7 +30,7 @@ export const metadata = {
   }
 };
 
-function formatCompact(value) {
+function formatCompact(value: number): string {
   try {
     return new Intl.NumberFormat("en", {
       notation: "compact",
@@ -39,7 +41,7 @@ function formatCompact(value) {
   }
 }
 
-async function getStars() {
+async function getStars(): Promise<string> {
   try {
     const response = await fetch("https://api.github.com/repos/different-ai/openwork", {
       headers: {

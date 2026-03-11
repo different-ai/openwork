@@ -1,6 +1,6 @@
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 
-function wantsJsonResponse(request) {
+function wantsJsonResponse(request: NextRequest): boolean {
   const format = String(request.nextUrl.searchParams.get("format") ?? "").trim().toLowerCase();
   if (format === "json") return true;
   if (format === "html") return false;
@@ -12,7 +12,7 @@ function wantsJsonResponse(request) {
   return true;
 }
 
-export function proxy(request) {
+export function proxy(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
   if (!pathname.startsWith("/b/") || pathname.endsWith("/data")) {
     return NextResponse.next();

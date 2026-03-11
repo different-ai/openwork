@@ -1,10 +1,11 @@
+import type { Metadata } from "next";
 import { headers } from "next/headers";
 
 import ShareBundlePage from "../../../components/share-bundle-page";
-import { getBundlePageProps } from "../../../server/b/get-bundle-page-props.js";
-import { buildRequestLike } from "../../../server/_lib/request-like.js";
+import { getBundlePageProps } from "../../../server/b/get-bundle-page-props.ts";
+import { buildRequestLike } from "../../../server/_lib/request-like.ts";
 
-async function loadBundlePageProps(id) {
+async function loadBundlePageProps(id: string) {
   const requestHeaders = await headers();
   return getBundlePageProps({
     id,
@@ -12,7 +13,7 @@ async function loadBundlePageProps(id) {
   });
 }
 
-export async function generateMetadata({ params }) {
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const routeParams = await params;
   const props = await loadBundlePageProps(routeParams?.id);
   const pageTitle = props.missing ? "Bundle not found" : props.title;
@@ -42,15 +43,15 @@ export async function generateMetadata({ params }) {
     other: props.missing
       ? undefined
       : {
-          "openwork:bundle-id": props.id,
-          "openwork:bundle-type": props.bundleType,
-          "openwork:schema-version": props.schemaVersion,
-          "openwork:open-in-app-url": props.openInAppDeepLink
+          "openwork:bundle-id": props.id!,
+          "openwork:bundle-type": props.bundleType!,
+          "openwork:schema-version": props.schemaVersion!,
+          "openwork:open-in-app-url": props.openInAppDeepLink!
         }
   };
 }
 
-export default async function BundlePage({ params }) {
+export default async function BundlePage({ params }: { params: Promise<{ id: string }> }) {
   const routeParams = await params;
   const props = await loadBundlePageProps(routeParams?.id);
   return <ShareBundlePage {...props} />;

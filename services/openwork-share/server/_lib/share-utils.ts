@@ -1,37 +1,53 @@
 import { parse as parseYaml } from "yaml";
 
+import type { PreviewItem } from "../../components/share-home-types.ts";
+import type {
+  BundleCounts,
+  BundleUrls,
+  Frontmatter,
+  NormalizedBundle,
+  NormalizedCommandItem,
+  NormalizedSkillItem,
+  OpenInAppUrls,
+  RequestLike,
+  ValidationResult,
+} from "./types.ts";
+
 export const OPENWORK_SITE_URL = "https://openwork.software";
 export const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
 export const DEFAULT_PUBLIC_BASE_URL = "https://share.openwork.software";
 export const DEFAULT_OPENWORK_APP_URL = "https://app.openwork.software";
 export const SHARE_EASE = "cubic-bezier(0.31, 0.325, 0, 0.92)";
 
-export function maybeString(value) {
+export function maybeString(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
 
-export function maybeObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+export function maybeObject(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
-export function maybeArray(value) {
+export function maybeArray(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-export function getEnv(name, fallback = "") {
+export function getEnv(name: string, fallback = ""): string {
   const value = process.env[name];
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
-export function normalizeBaseUrl(input) {
+export function normalizeBaseUrl(input: unknown): string {
   return String(input ?? "").trim().replace(/\/+$/, "");
 }
 
-export function normalizeAppUrl(input) {
+export function normalizeAppUrl(input: unknown): string {
   return normalizeBaseUrl(input);
 }
 
-export function setCors(res, options = {}) {
+export function setCors(
+  res: { setHeader(name: string, value: string): void },
+  options: { methods?: string; headers?: string } = {},
+): void {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", options.methods ?? "GET,POST,OPTIONS");
   res.setHeader(
@@ -41,16 +57,16 @@ export function setCors(res, options = {}) {
   );
 }
 
-export function readBody(req) {
+export function readBody(req: NodeJS.ReadableStream): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
 
-export function escapeHtml(value) {
+export function escapeHtml(value: unknown): string {
   return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
@@ -59,7 +75,7 @@ export function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-export function escapeJsonForScript(rawJson) {
+export function escapeJsonForScript(rawJson: string): string {
   return String(rawJson)
     .replaceAll("<", "\\u003c")
     .replaceAll(">", "\\u003e")
@@ -67,7 +83,7 @@ export function escapeJsonForScript(rawJson) {
     .replaceAll("\u2029", "\\u2029");
 }
 
-export function humanizeType(type) {
+export function humanizeType(type: unknown): string {
   if (!type) return "Bundle";
   return String(type)
     .split("-")
@@ -76,13 +92,13 @@ export function humanizeType(type) {
     .join(" ");
 }
 
-export function truncate(value, maxChars = 3200) {
+export function truncate(value: unknown, maxChars = 3200): string {
   const text = String(value ?? "");
   if (text.length <= maxChars) return text;
   return `${text.slice(0, maxChars)}\n\n... (truncated for display)`;
 }
 
-function getOrigin(req) {
+function getOrigin(req: RequestLike): string {
   const protocolHeader = String(req.headers?.["x-forwarded-proto"] ?? "https")
     .split(",")[0]
     .trim();
@@ -97,16 +113,16 @@ function getOrigin(req) {
   return `${protocolHeader || "https"}://${hostHeader}`;
 }
 
-export function buildRootUrl(req) {
+export function buildRootUrl(req: RequestLike): string {
   return normalizeBaseUrl(getOrigin(req)) || DEFAULT_PUBLIC_BASE_URL;
 }
 
-export function buildOgImageUrl(req, targetId = "root") {
+export function buildOgImageUrl(req: RequestLike, targetId = "root"): string {
   const origin = buildRootUrl(req);
   return `${origin}/og/${encodeURIComponent(targetId)}`;
 }
 
-export function buildBundleUrls(req, id) {
+export function buildBundleUrls(req: RequestLike, id: string): BundleUrls {
   const encodedId = encodeURIComponent(id);
   const origin = buildRootUrl(req);
   const path = `/b/${encodedId}`;
@@ -118,7 +134,7 @@ export function buildBundleUrls(req, id) {
   };
 }
 
-export function buildOpenInAppUrls(shareUrl, options = {}) {
+export function buildOpenInAppUrls(shareUrl: string, options: { label?: string } = {}): OpenInAppUrls {
   const query = new URLSearchParams();
   query.set("ow_bundle", shareUrl);
   query.set("ow_intent", "new_worker");
@@ -147,7 +163,7 @@ export function buildOpenInAppUrls(shareUrl, options = {}) {
   }
 }
 
-export function wantsJsonResponse(req) {
+export function wantsJsonResponse(req: RequestLike): boolean {
   const format = String(req.query?.format ?? "").trim().toLowerCase();
   if (format === "json") return true;
   if (format === "html") return false;
@@ -159,16 +175,16 @@ export function wantsJsonResponse(req) {
   return true;
 }
 
-export function wantsDownload(req) {
+export function wantsDownload(req: RequestLike): boolean {
   return String(req.query?.download ?? "").trim() === "1";
 }
 
-export function parseFrontmatter(content) {
+export function parseFrontmatter(content: unknown): Frontmatter {
   const text = String(content ?? "");
   const match = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (!match) return { data: {}, body: text };
   const raw = match[1] ?? "";
-  let data = {};
+  let data: Record<string, unknown> = {};
   try {
     data = maybeObject(parseYaml(raw)) ?? {};
   } catch {
@@ -177,7 +193,7 @@ export function parseFrontmatter(content) {
   return { data, body: text.slice(match[0].length) };
 }
 
-function normalizeSkillItem(value) {
+function normalizeSkillItem(value: unknown): NormalizedSkillItem | null {
   const record = maybeObject(value);
   if (!record) return null;
   const name = maybeString(record.name).trim();
@@ -191,7 +207,7 @@ function normalizeSkillItem(value) {
   };
 }
 
-function normalizeCommandItem(value) {
+function normalizeCommandItem(value: unknown): NormalizedCommandItem | null {
   const record = maybeObject(value);
   if (!record) return null;
   const name = maybeString(record.name).trim();
@@ -209,7 +225,7 @@ function normalizeCommandItem(value) {
   };
 }
 
-export function parseBundle(rawJson) {
+export function parseBundle(rawJson: string): NormalizedBundle {
   try {
     return normalizeBundleRecord(JSON.parse(rawJson));
   } catch {
@@ -217,7 +233,7 @@ export function parseBundle(rawJson) {
   }
 }
 
-function normalizeBundleRecord(parsed) {
+function normalizeBundleRecord(parsed: unknown): NormalizedBundle {
   const record = maybeObject(parsed);
   const workspace = maybeObject(record?.workspace);
 
@@ -229,13 +245,13 @@ function normalizeBundleRecord(parsed) {
     trigger: maybeString(record?.trigger).trim(),
     content: maybeString(record?.content),
     workspace,
-    skills: maybeArray(record?.skills).map(normalizeSkillItem).filter(Boolean),
-    commands: maybeArray(record?.commands).map(normalizeCommandItem).filter(Boolean),
+    skills: maybeArray(record?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null),
+    commands: maybeArray(record?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null),
   };
 }
 
-export function validateBundlePayload(rawJson) {
-  let parsed;
+export function validateBundlePayload(rawJson: string): ValidationResult {
+  let parsed: unknown;
   try {
     parsed = JSON.parse(rawJson);
   } catch {
@@ -272,12 +288,12 @@ export function validateBundlePayload(rawJson) {
   return { ok: true, bundle };
 }
 
-export function getBundleCounts(bundle) {
-  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter(Boolean);
+export function getBundleCounts(bundle: NormalizedBundle): BundleCounts {
+  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null);
   const opencode = maybeObject(bundle.workspace?.opencode);
   const openwork = maybeObject(bundle.workspace?.openwork);
   const genericConfig = maybeObject(bundle.workspace?.config);
-  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter(Boolean);
+  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
   const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
   const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
   const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
@@ -299,14 +315,14 @@ export function getBundleCounts(bundle) {
   };
 }
 
-function readVersionFromContent(content) {
+function readVersionFromContent(content: string): string {
   const { data } = parseFrontmatter(content);
   const version = maybeString(data.version).trim();
   return version || "";
 }
 
-export function collectBundleItems(bundle, limit = 8) {
-  const items = [];
+export function collectBundleItems(bundle: NormalizedBundle, limit = 8): PreviewItem[] {
+  const items: PreviewItem[] = [];
 
   if (bundle.type === "skill") {
     items.push({
@@ -329,7 +345,7 @@ export function collectBundleItems(bundle, limit = 8) {
   }
 
   if (bundle.type === "workspace-profile") {
-    const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter(Boolean);
+    const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((s): s is NormalizedSkillItem => s !== null);
     for (const skill of workspaceSkills) {
       items.push({
         name: skill.name,
@@ -364,7 +380,7 @@ export function collectBundleItems(bundle, limit = 8) {
       });
     }
 
-    const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter(Boolean);
+    const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((c): c is NormalizedCommandItem => c !== null);
     for (const command of commands) {
       items.push({
         name: command.name,
@@ -406,7 +422,7 @@ export function collectBundleItems(bundle, limit = 8) {
   return items.slice(0, limit);
 }
 
-export function prettyJson(rawJson) {
+export function prettyJson(rawJson: string): string {
   try {
     return JSON.stringify(JSON.parse(rawJson), null, 2);
   } catch {
@@ -414,7 +430,7 @@ export function prettyJson(rawJson) {
   }
 }
 
-export function buildBundleNarrative(bundle) {
+export function buildBundleNarrative(bundle: NormalizedBundle): string {
   const counts = getBundleCounts(bundle);
   if (bundle.type === "skill") {
     return "One reusable skill, wrapped in a share link that opens directly into a new OpenWork worker.";
@@ -423,7 +439,7 @@ export function buildBundleNarrative(bundle) {
     return `${counts.skillCount} skills packaged together so a new worker can start with the full set in one import.`;
   }
 
-  const parts = [];
+  const parts: string[] = [];
   if (counts.skillCount) parts.push(`${counts.skillCount} skill${counts.skillCount === 1 ? "" : "s"}`);
   if (counts.agentCount) parts.push(`${counts.agentCount} agent${counts.agentCount === 1 ? "" : "s"}`);
   if (counts.mcpCount) parts.push(`${counts.mcpCount} MCP${counts.mcpCount === 1 ? "" : "s"}`);
@@ -434,7 +450,17 @@ export function buildBundleNarrative(bundle) {
     : "Worker configuration bundle prepared for OpenWork import.";
 }
 
-export function buildStatusMarkup({ title, description, actionHref, actionLabel }) {
+export function buildStatusMarkup({
+  title,
+  description,
+  actionHref,
+  actionLabel,
+}: {
+  title: string;
+  description: string;
+  actionHref?: string;
+  actionLabel?: string;
+}): string {
   return `<!doctype html>
 <html lang="en">
 <head>

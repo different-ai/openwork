@@ -1,17 +1,18 @@
-import { buildBundleNarrative, collectBundleItems, escapeHtml, getBundleCounts, humanizeType, parseBundle } from "./share-utils.js";
+import type { PreviewItem } from "../../components/share-home-types.ts";
+import { buildBundleNarrative, collectBundleItems, escapeHtml, getBundleCounts, humanizeType, parseBundle } from "./share-utils.ts";
 
-function escapeSvgText(value) {
+function escapeSvgText(value: unknown): string {
   return escapeHtml(String(value ?? ""));
 }
 
-function toneFill(tone) {
+function toneFill(tone: string): string {
   if (tone === "agent") return "url(#agentGradient)";
   if (tone === "mcp") return "url(#mcpGradient)";
   if (tone === "command") return "url(#commandGradient)";
   return "url(#skillGradient)";
 }
 
-function renderItem(item, index) {
+function renderItem(item: PreviewItem, index: number): string {
   const y = 222 + index * 58;
   return `
     <g transform="translate(710 ${y})">
@@ -22,7 +23,7 @@ function renderItem(item, index) {
     </g>`;
 }
 
-function renderStats(stats) {
+function renderStats(stats: { label: string; value: number }[]): string {
   return stats
     .filter((stat) => stat.value)
     .map((stat, index) => {
@@ -37,7 +38,14 @@ function renderStats(stats) {
     .join("");
 }
 
-function renderBaseCard(title, subtitle, eyebrow, items, stats, kicker) {
+function renderBaseCard(
+  title: string,
+  subtitle: string,
+  eyebrow: string,
+  items: PreviewItem[],
+  stats: { label: string; value: number }[],
+  kicker: string,
+): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1200" height="630" viewBox="0 0 1200 630" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -84,7 +92,7 @@ function renderBaseCard(title, subtitle, eyebrow, items, stats, kicker) {
 </svg>`;
 }
 
-export function renderRootOgImage() {
+export function renderRootOgImage(): string {
   return renderBaseCard(
     "Package your worker",
     "Drop skills, agents, or MCPs into OpenWork Share.",
@@ -103,7 +111,7 @@ export function renderRootOgImage() {
   );
 }
 
-export function renderBundleOgImage({ id, rawJson }) {
+export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: string }): string {
   const bundle = parseBundle(rawJson);
   const counts = getBundleCounts(bundle);
   const items = collectBundleItems(bundle, 5);
@@ -118,7 +126,7 @@ export function renderBundleOgImage({ id, rawJson }) {
     bundle.name || `OpenWork ${humanizeType(bundle.type)}`,
     buildBundleNarrative(bundle),
     `${humanizeType(bundle.type)} · ${id.slice(-8)}`,
-    items.length ? items : [{ name: "OpenWork bundle", kind: humanizeType(bundle.type), meta: "Shared config", tone: "skill" }],
+    items.length ? items : [{ name: "OpenWork bundle", kind: humanizeType(bundle.type) as "Skill", meta: "Shared config", tone: "skill" as const }],
     stats,
     "Open directly in a new worker.",
   );

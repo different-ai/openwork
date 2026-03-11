@@ -7,10 +7,16 @@ import {
   getBundleCounts,
   humanizeType,
   parseBundle
-} from "../_lib/share-utils.js";
-import { fetchBundleJsonById } from "../_lib/blob-store.js";
+} from "../_lib/share-utils.ts";
+import { fetchBundleJsonById } from "../_lib/blob-store.ts";
+import type { BundlePageProps, RequestLike } from "../_lib/types.ts";
 
-function buildMetadataRows(id, bundle, counts, schemaVersion) {
+function buildMetadataRows(
+  id: string,
+  bundle: ReturnType<typeof parseBundle>,
+  counts: ReturnType<typeof getBundleCounts>,
+  schemaVersion: string,
+): { label: string; value: string }[] {
   return [
     { label: "ID", value: id },
     { label: "Type", value: bundle.type || "unknown" },
@@ -23,7 +29,7 @@ function buildMetadataRows(id, bundle, counts, schemaVersion) {
   ];
 }
 
-export function buildMissingBundlePageProps(requestLike, id = "missing") {
+export function buildMissingBundlePageProps(requestLike: RequestLike, id = "missing"): BundlePageProps {
   return {
     missing: true,
     canonicalUrl: buildBundleUrls(requestLike, id).shareUrl,
@@ -31,7 +37,7 @@ export function buildMissingBundlePageProps(requestLike, id = "missing") {
   };
 }
 
-export async function getBundlePageProps({ id, requestLike }) {
+export async function getBundlePageProps({ id, requestLike }: { id: string; requestLike: RequestLike }): Promise<BundlePageProps> {
   const normalizedId = String(id ?? "").trim();
   if (!normalizedId) {
     return buildMissingBundlePageProps(requestLike);

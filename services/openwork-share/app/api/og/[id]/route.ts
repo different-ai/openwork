@@ -1,9 +1,9 @@
-import { fetchBundleJsonById } from "../../../../server/_lib/blob-store.js";
-import { renderBundleOgImage, renderRootOgImage } from "../../../../server/_lib/render-og-image.js";
+import { fetchBundleJsonById } from "../../../../server/_lib/blob-store.ts";
+import { renderBundleOgImage, renderRootOgImage } from "../../../../server/_lib/render-og-image.ts";
 
 export const runtime = "nodejs";
 
-function getCorsHeaders() {
+function getCorsHeaders(): Record<string, string> {
   return {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "GET,OPTIONS",
@@ -18,7 +18,7 @@ export function OPTIONS() {
   });
 }
 
-export async function GET(_request, { params }) {
+export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const routeParams = await params;
   const id = String(routeParams?.id ?? "root").trim() || "root";
   const responseHeaders = new Headers({

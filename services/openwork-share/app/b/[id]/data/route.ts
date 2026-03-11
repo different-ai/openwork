@@ -1,10 +1,11 @@
-import { fetchBundleJsonById } from "../../../../server/_lib/blob-store.js";
-import { wantsDownload } from "../../../../server/_lib/share-utils.js";
-import { buildRequestLike } from "../../../../server/_lib/request-like.js";
+import { fetchBundleJsonById } from "../../../../server/_lib/blob-store.ts";
+import { wantsDownload } from "../../../../server/_lib/share-utils.ts";
+import { buildRequestLike } from "../../../../server/_lib/request-like.ts";
+import type { NextRequest } from "next/server";
 
 export const runtime = "nodejs";
 
-export async function GET(request, { params }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const routeParams = await params;
   const id = String(routeParams?.id ?? "").trim();
   if (!id) {
@@ -27,7 +28,7 @@ export async function GET(request, { params }) {
       responseHeaders.set("Content-Disposition", `attachment; filename="openwork-bundle-${id}.json"`);
     }
 
-    return new Response(rawBuffer, {
+    return new Response(rawBuffer as unknown as BodyInit, {
       status: 200,
       headers: responseHeaders
     });
