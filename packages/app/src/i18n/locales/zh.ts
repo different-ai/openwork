@@ -93,6 +93,8 @@ export default {
   "dashboard.starter_workspace_desc": "预配置以展示如何使用插件、命令和技能。",
   "dashboard.empty_workspace": "空白工作区",
   "dashboard.empty_workspace_desc": "从空白文件夹开始，添加您需要的内容。",
+  "dashboard.blueprints_workspace": "蓝图工作区",
+  "dashboard.blueprints_workspace_desc": "从适合复用技能、命令和共享流程的自动化工作区开始。",
 
   // ==================== Workspace ====================
   "workspace.rename_title": "编辑工作区名称",

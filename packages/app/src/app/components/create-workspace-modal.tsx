@@ -2,18 +2,20 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 
 import { CheckCircle2, FolderPlus, Loader2, X, XCircle } from "lucide-solid";
 import { t, currentLocale } from "../../i18n";
+import type { WorkspacePreset } from "../types";
 
 import Button from "./button";
 
 export default function CreateWorkspaceModal(props: {
   open: boolean;
   onClose: () => void;
-  onConfirm: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
-  onConfirmWorker?: (preset: "starter" | "automation" | "minimal", folder: string | null) => void;
+  onConfirm: (preset: WorkspacePreset, folder: string | null) => void;
+  onConfirmWorker?: (preset: WorkspacePreset, folder: string | null) => void;
   onPickFolder: () => Promise<string | null>;
   submitting?: boolean;
   inline?: boolean;
   showClose?: boolean;
+  defaultPreset?: WorkspacePreset;
   title?: string;
   subtitle?: string;
   confirmLabel?: string;
@@ -40,12 +42,13 @@ export default function CreateWorkspaceModal(props: {
   let pickFolderRef: HTMLButtonElement | undefined;
   const translate = (key: string) => t(key, currentLocale());
 
-  const [preset, setPreset] = createSignal<"starter" | "automation" | "minimal">("starter");
+  const [preset, setPreset] = createSignal<WorkspacePreset>("starter");
   const [selectedFolder, setSelectedFolder] = createSignal<string | null>(null);
   const [pickingFolder, setPickingFolder] = createSignal(false);
 
   createEffect(() => {
     if (props.open) {
+      setPreset(props.defaultPreset ?? "starter");
       requestAnimationFrame(() => pickFolderRef?.focus());
     }
   });
@@ -60,6 +63,11 @@ export default function CreateWorkspaceModal(props: {
       id: "minimal" as const,
       name: translate("dashboard.empty_workspace"),
       desc: translate("dashboard.empty_workspace_desc"),
+    },
+    {
+      id: "automation" as const,
+      name: translate("dashboard.blueprints_workspace"),
+      desc: translate("dashboard.blueprints_workspace_desc"),
     },
   ];
 

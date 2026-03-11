@@ -1395,15 +1395,15 @@ export function createWorkspaceStore(options: {
     }
   }
 
-  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null) {
+  async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null): Promise<boolean> {
     if (!isTauriRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
-      return;
+      return false;
     }
 
     if (!folder) {
       options.setError(t("app.error.choose_folder", currentLocale()));
-      return;
+      return false;
     }
 
     options.setBusy(true);
@@ -1417,7 +1417,7 @@ export function createWorkspaceStore(options: {
       const resolvedFolder = await resolveWorkspacePath(folder);
       if (!resolvedFolder) {
         options.setError(t("app.error.choose_folder", currentLocale()));
-        return;
+        return false;
       }
 
       const name = resolvedFolder.replace(/\\/g, "/").split("/").filter(Boolean).pop() ?? "Worker";
@@ -1438,9 +1438,11 @@ export function createWorkspaceStore(options: {
       options.setTab("scheduled");
       options.setView("dashboard");
       markOnboardingComplete();
+      return true;
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       options.setError(addOpencodeCacheHint(message));
+      return false;
     } finally {
       options.setBusy(false);
       options.setBusyLabel(null);

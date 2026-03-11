@@ -93,6 +93,8 @@ export default {
   "dashboard.starter_workspace_desc": "Preconfigured to show you how to use plugins, commands, and skills.",
   "dashboard.empty_workspace": "Empty worker",
   "dashboard.empty_workspace_desc": "Start with a blank folder and add what you need.",
+  "dashboard.blueprints_workspace": "Blueprints",
+  "dashboard.blueprints_workspace_desc": "Start with an automation-ready worker for reusable skills, commands, and shared flows.",
 
   // ==================== Workspace ====================
   "workspace.rename_title": "Edit worker name",

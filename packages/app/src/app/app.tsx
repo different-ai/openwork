@@ -92,6 +92,7 @@ import type {
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
+  WorkspacePreset,
 } from "./types";
 import {
   clearStartupPreference,
@@ -3022,6 +3023,30 @@ export default function App() {
     throw new Error("OpenWork worker is not ready yet.");
   };
 
+  const importSharedBundlePayload = async (bundle: SharedBundleV1) => {
+    const { client, workspaceId } = await waitForSharedBundleImportTarget();
+    const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
+    await client.importWorkspace(workspaceId, payload);
+    await refreshSkills({ force: true });
+    await refreshHubSkills({ force: true });
+    if (importedSkillsCount > 0) {
+      console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
+    }
+  };
+
+  const importSharedBundleIntoActiveWorker = async (request: SharedBundleDeepLink) => {
+    try {
+      const bundle = await fetchSharedBundle(request.bundleUrl);
+      await importSharedBundlePayload(bundle);
+      setError(null);
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      setError(addOpencodeCacheHint(message));
+      return false;
+    }
+  };
+
   const createWorkerForSharedBundle = async (request: SharedBundleDeepLink, bundle: SharedBundleV1) => {
     const target = resolveSharedBundleWorkerTarget();
     const hostUrl = target.hostUrl.trim();
@@ -3052,6 +3077,17 @@ export default function App() {
     }
 
     if (sharedBundleImportBusy()) {
+      return;
+    }
+
+    if (request.intent === "new_worker" && isTauriRuntime()) {
+      setView("dashboard");
+      setTab("scheduled");
+      setError(null);
+      setSharedBundleCreateWorkerRequest(request);
+      workspaceStore.setCreateWorkspaceOpen(true);
+      setPendingSharedBundleInvite(null);
+      setSharedBundleNoticeShown(false);
       return;
     }
 
@@ -3090,17 +3126,8 @@ export default function App() {
           if (cancelled) return;
         }
 
-        const { client, workspaceId } = await waitForSharedBundleImportTarget();
-        if (cancelled) return;
-
-        const { payload, importedSkillsCount } = buildImportPayloadFromBundle(bundle);
-        await client.importWorkspace(workspaceId, payload);
-        await refreshSkills({ force: true });
-        await refreshHubSkills({ force: true });
+        await importSharedBundlePayload(bundle);
         setError(null);
-        if (importedSkillsCount > 0) {
-          console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
-        }
       } catch (error) {
         if (!cancelled) {
           const message = error instanceof Error ? error.message : safeStringify(error);
@@ -3259,12 +3286,17 @@ export default function App() {
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
+  const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] = createSignal<SharedBundleDeepLink | null>(null);
   const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
   const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
+
+  const createWorkspaceDefaultPreset = createMemo<WorkspacePreset>(() =>
+    sharedBundleCreateWorkerRequest() ? "automation" : "starter"
+  );
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -6438,20 +6470,31 @@ export default function App() {
         onClose={() => {
           workspaceStore.setCreateWorkspaceOpen(false);
           workspaceStore.clearSandboxCreateProgress?.();
+          setSharedBundleCreateWorkerRequest(null);
         }}
         onPickFolder={workspaceStore.pickWorkspaceFolder}
-        onConfirm={(preset, folder) =>
-          workspaceStore.createWorkspaceFlow(preset, folder)
-        }
+        defaultPreset={createWorkspaceDefaultPreset()}
+        onConfirm={async (preset, folder) => {
+          const request = sharedBundleCreateWorkerRequest();
+          const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
+          if (!ok || !request) return;
+          await importSharedBundleIntoActiveWorker(request);
+          setSharedBundleCreateWorkerRequest(null);
+        }}
         onConfirmWorker={
           isTauriRuntime()
             ? async (preset, folder) => {
+                const request = sharedBundleCreateWorkerRequest();
                 const ok = await workspaceStore.createSandboxFlow(preset, folder, {
                   onReady: async () => {
+                    if (request) {
+                      await importSharedBundleIntoActiveWorker(request);
+                    }
                     await createSessionAndOpen();
                   },
                 });
                 if (!ok) return;
+                setSharedBundleCreateWorkerRequest(null);
               }
             : undefined
         }
