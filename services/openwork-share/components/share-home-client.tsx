@@ -203,6 +203,8 @@ async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<F
   return collected;
 }
 
+const DEFAULT_STATUS = "# TODO  Paste AGENTS.md, SKILL.md, or JSON/JSONC config here.";
+
 export default function ShareHomeClient() {
   const [selectedEntries, setSelectedEntries] = useState<File[]>([]);
   const [pasteValue, setPasteValue] = useState("");
@@ -212,7 +214,7 @@ export default function ShareHomeClient() {
   const [busyMode, setBusyMode] = useState<BusyMode>(null);
   const [dropActive, setDropActive] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
-  const [pasteState, setPasteState] = useState("Paste markdown or JSON/JSONC config text and we will package it like a dropped file.");
+  const [pasteState, setPasteState] = useState(DEFAULT_STATUS);
   const [activeExample, setActiveExample] = useState<string | null>(null);
   const requestIdRef = useRef<number>(0);
 
@@ -323,14 +325,14 @@ export default function ShareHomeClient() {
           ? texts[0]
           : texts.map((t, i) => `// --- ${entries[i].name} ---\n${t}`).join("\n\n");
         setPasteValue(combined);
-        setPasteState(`Showing ${entries.length === 1 ? entries[0].name : `${entries.length} files`}. Edit below or generate a share link.`);
+        setPasteState(`Showing ${entries.length === 1 ? entries[0].name : `${entries.length} files`}.`);
       } catch {
         setPasteValue("");
-        setPasteState("Could not read file contents for preview.");
+        setPasteState(DEFAULT_STATUS);
       }
     } else {
       setPasteValue("");
-      setPasteState("Paste markdown or JSON/JSONC config text and we will package it like a dropped file.");
+      setPasteState(DEFAULT_STATUS);
     }
   };
 
@@ -338,32 +340,7 @@ export default function ShareHomeClient() {
     setPasteValue(event.target.value);
     setSelectedEntries([]);
     resetFormState();
-    setPasteState(
-      event.target.value.trim()
-        ? "Preview the pasted content, then generate a share link."
-        : "Paste markdown or JSON/JSONC config text and we will package it like a dropped file."
-    );
-  };
-
-  const pasteFromClipboard = async () => {
-    if (!navigator.clipboard?.readText) {
-      setPasteState("Clipboard access is not available in this browser.");
-      return;
-    }
-
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text.trim()) {
-        setPasteState("Clipboard is empty.");
-        return;
-      }
-      setPasteValue(text);
-      setSelectedEntries([]);
-      resetFormState();
-      setPasteState("Clipboard pasted. Preview is ready.");
-    } catch {
-      setPasteState("Clipboard access was blocked. Paste manually into the field.");
-    }
+    setPasteState(event.target.value.trim() ? "Ready to preview." : DEFAULT_STATUS);
   };
 
   const publishBundle = async () => {
@@ -500,11 +477,7 @@ export default function ShareHomeClient() {
                           setGeneratedUrl("");
                           setWarnings([]);
                           setCopyState("ready-not-copied");
-                          setPasteState(
-                            isActive
-                              ? "Paste markdown or JSON/JSONC config text and we will package it like a dropped file."
-                              : `Loaded "${item.name}" example. Preview is ready.`
-                          );
+                          setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
                         }}
                       >
                         <div className={`item-dot ${toneClass(item)}`}></div>
@@ -591,7 +564,7 @@ export default function ShareHomeClient() {
                   className="carbon-editor"
                   value={pasteValue}
                   onChange={handlePasteChange}
-                  placeholder="# TODO  Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
+                  placeholder=""
                   spellCheck={false}
                 />
               </div>

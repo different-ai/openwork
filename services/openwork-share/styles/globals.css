@@ -406,7 +406,7 @@ a {
   align-content: start;
   padding: 20px 22px;
   border-radius: 28px;
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: var(--ow-shadow-soft);
   backdrop-filter: blur(22px);
@@ -421,13 +421,12 @@ a {
 }
 
 .carbon-preview {
-  background: rgba(171, 184, 195, 0.35);
-  border-radius: 28px;
-  padding: 24px;
-  box-shadow:
-    0 20px 68px -12px rgba(0, 0, 0, 0.25),
-    0 0 0 1px rgba(0, 0, 0, 0.06);
-  backdrop-filter: blur(20px);
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -439,7 +438,6 @@ a {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
-  flex: 1;
   overflow: hidden;
 }
 
@@ -485,7 +483,7 @@ a {
   padding: 6px 16px;
   font-size: 12px;
   line-height: 1.4;
-  color: rgba(255, 255, 255, 0.7);
+  color: #f59e0b;
   background: rgba(255, 255, 255, 0.04);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
@@ -493,14 +491,12 @@ a {
 
 .carbon-editor-wrap {
   position: relative;
-  min-height: 200px;
   background: #151718;
 }
 
 .carbon-highlight,
 .carbon-editor {
   width: 100%;
-  min-height: 200px;
   padding: 20px 18px;
   margin: 0;
   border: none;
