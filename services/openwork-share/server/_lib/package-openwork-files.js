@@ -306,7 +306,7 @@ function redactSecrets(value, prefix = [], hits = []) {
     const nextPrefix = [...prefix, key];
     if (SECRET_KEY_RE.test(key) && typeof child === "string" && child.trim() && !SAFE_SECRET_VALUE_RE.test(child.trim())) {
       hits.push(nextPrefix.join("."));
-      value[key] = "<REDACTED>";
+      value[key] = "********";
     }
     if (typeof child === "object") {
       redactSecrets(child, nextPrefix, hits);

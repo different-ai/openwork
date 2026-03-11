@@ -3,3 +3,5 @@ node_modules/
 .vercel/
 .vercel
 .env*.local
+__tests__/
+*.tsbuildinfo

@@ -1,4 +1,6 @@
-export const DEFAULT_PREVIEW_ITEMS = [
+import type { PreviewItem, PackageStatusInput, PackageStatus, CopyState, ShareFeedback } from "./share-home-types";
+
+const DEFAULT_PREVIEW_ITEMS: PreviewItem[] = [
   {
     name: "Sales Inbound",
     kind: "Agent",
@@ -29,44 +31,12 @@ export const DEFAULT_PREVIEW_ITEMS = [
   },
 ];
 
-export function getPreviewItems(preview) {
-  const items = Array.isArray(preview?.items) && preview.items.length ? preview.items : DEFAULT_PREVIEW_ITEMS;
+export function getPreviewItems(preview: { items?: PreviewItem[] } | null): PreviewItem[] {
+  const items = Array.isArray(preview?.items) && preview!.items!.length ? preview!.items! : DEFAULT_PREVIEW_ITEMS;
   return items.slice(0, 4);
 }
 
-export function getSummaryCards(preview) {
-  return [
-    { label: "Skills", value: preview?.summary?.skills ?? 1 },
-    { label: "Agents", value: preview?.summary?.agents ?? 1 },
-    { label: "MCPs", value: preview?.summary?.mcpServers ?? 1 },
-    { label: "Commands", value: preview?.summary?.commands ?? 0 },
-    { label: "Configs", value: preview?.summary?.configs ?? 1 },
-  ];
-}
-
-export function getPreviewPanelState({ generatedUrl, preview, effectiveEntryCount }) {
-  if (generatedUrl) {
-    return {
-      chipLabel: "Published link",
-      stateLabel: "Published",
-      isReady: true,
-      title: "Share link ready",
-      copy: "Your worker package is published. Anyone with this link can import it directly into OpenWork.",
-      mode: "published",
-    };
-  }
-
-  return {
-    chipLabel: "Preview",
-    stateLabel: preview ? "Ready to publish" : effectiveEntryCount ? "Previewing" : "Landing sample",
-    isReady: Boolean(preview),
-    title: "Worker package",
-    copy: "Review the inferred package before publishing a public import page.",
-    mode: "preview",
-  };
-}
-
-export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount, busy }) {
+export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount, busy }: PackageStatusInput): PackageStatus {
   const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
   const hasSecretWarning = hasWarnings && warnings.some((w) => /redacted|secret/i.test(w));
 
@@ -106,7 +76,7 @@ export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEnt
   return { severity: "success", label: "Ready — no issues detected", items: [] };
 }
 
-export function getShareFeedback(copyState) {
+export function getShareFeedback(copyState: CopyState): ShareFeedback {
   if (copyState === "copied") {
     return {
       badge: "Copied to clipboard",

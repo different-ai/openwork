@@ -2,27 +2,27 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import type { BusyMode, CopyState, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
 import {
   getPackageStatus,
   getPreviewItems,
   getShareFeedback,
-} from "./share-home-state.js";
+} from "./share-home-state";
 
 // TODO: replace with a proper syntax highlighting library (e.g. shiki or highlight.js)
 const SKILL_KEYWORDS = /\b(Identity|Scope|Trigger|Parameters|Default behaviors|When|Why|What|How|Runs|sends|handle|qualify|route|Score|Escalate|Send)\b/g;
 const SKILL_TYPES = /\b(Agent|Skill|MCP|Config|Remote|Trigger|OpenWork|OpenCode|Duration|Handlebars)\b/g;
-const SKILL_FIELDS = /^(\s*-\s*)([a-z_]+)(:)/gm;
 
-function esc(s) {
+function esc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function span(cls, inner) {
+function span(cls: string, inner: string): string {
   return `<span class="${cls}">${inner}</span>`;
 }
 
-function highlightJsonLine(raw) {
-  const tokens = [];
+function highlightJsonLine(raw: string): string {
+  const tokens: string[] = [];
   let i = 0;
 
   while (i < raw.length) {
@@ -54,16 +54,16 @@ function highlightJsonLine(raw) {
         tokens.push(esc(raw[i]));
         i++;
       }
-    } else if (raw.slice(i).startsWith("true") && !/\w/.test(raw[i + 4] || "")) {
+    } else if (raw.startsWith("true", i) && !/\w/.test(raw[i + 4] || "")) {
       tokens.push(span("hl-keyword", "true"));
       i += 4;
-    } else if (raw.slice(i).startsWith("false") && !/\w/.test(raw[i + 5] || "")) {
+    } else if (raw.startsWith("false", i) && !/\w/.test(raw[i + 5] || "")) {
       tokens.push(span("hl-keyword", "false"));
       i += 5;
-    } else if (raw.slice(i).startsWith("null") && !/\w/.test(raw[i + 4] || "")) {
+    } else if (raw.startsWith("null", i) && !/\w/.test(raw[i + 4] || "")) {
       tokens.push(span("hl-keyword", "null"));
       i += 4;
-    } else if (raw.slice(i).startsWith("//")) {
+    } else if (raw.startsWith("//", i)) {
       tokens.push(span("hl-comment", esc(raw.slice(i))));
       break;
     } else {
@@ -75,7 +75,7 @@ function highlightJsonLine(raw) {
   return tokens.join("");
 }
 
-function highlightMdLine(raw) {
+function highlightMdLine(raw: string): string {
   const line = esc(raw);
 
   if (/^#{1,6}\s/.test(raw)) {
@@ -85,10 +85,10 @@ function highlightMdLine(raw) {
 
   let result = line;
 
-  result = result.replace(/^(\s*)(- )([a-z_]+)(:\s)/g, (_, ws, bullet, field, sep) =>
+  result = result.replace(/^(\s*)(- )([a-z_]+)(:\s)/g, (_, ws: string, bullet: string, field: string, sep: string) =>
     ws + span("hl-punctuation", bullet) + span("hl-field", field) + span("hl-punctuation", sep)
   );
-  result = result.replace(/^(\s*)(- )/g, (_, ws, bullet) =>
+  result = result.replace(/^(\s*)(- )/g, (_, ws: string, bullet: string) =>
     ws + span("hl-punctuation", bullet)
   );
 
@@ -106,7 +106,7 @@ function highlightMdLine(raw) {
   return result;
 }
 
-function highlightSyntax(text) {
+function highlightSyntax(text: string): string {
   if (!text) return "";
   const trimmed = text.trimStart();
   const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
@@ -114,7 +114,7 @@ function highlightSyntax(text) {
   return text.split("\n").map(highlightLine).join("\n");
 }
 
-function toneClass(item) {
+function toneClass(item: PreviewItem | null): string {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
   if (item?.tone === "command") return "dot-command";
@@ -122,34 +122,34 @@ function toneClass(item) {
   return "dot-skill";
 }
 
-function buildVirtualEntry(content) {
+function buildVirtualEntry(content: string): EntryLike {
   const normalized = String(content || "");
   const trimmed = normalized.trimStart();
   const isJsonLike = trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith("//") || trimmed.startsWith("/*");
 
   return {
     name: isJsonLike ? "clipboard.jsonc" : "clipboard.md",
-    path: isJsonLike ? "clipboard/clipboard.jsonc" : "clipboard/clipboard.md",
     async text() {
       return normalized;
     }
   };
 }
 
-async function fileToPayload(file) {
+async function fileToPayload(file: EntryLike): Promise<FilePayload> {
+  const f = file as EntryLike & { relativePath?: string; webkitRelativePath?: string; path?: string };
   return {
     name: file.name,
-    path: file.relativePath || file.webkitRelativePath || file.path || file.name,
+    path: f.relativePath || f.webkitRelativePath || f.path || file.name,
     content: await file.text()
   };
 }
 
-function flattenEntries(entry, prefix = "") {
+function flattenEntries(entry: FileSystemEntry, prefix = ""): Promise<File[]> {
   return new Promise((resolve, reject) => {
     if (entry?.isFile) {
-      entry.file(
+      (entry as FileSystemFileEntry).file(
         (file) => {
-          file.relativePath = `${prefix}${file.name}`;
+          (file as File & { relativePath: string }).relativePath = `${prefix}${file.name}`;
           resolve([file]);
         },
         reject
@@ -162,8 +162,8 @@ function flattenEntries(entry, prefix = "") {
       return;
     }
 
-    const reader = entry.createReader();
-    const files = [];
+    const reader = (entry as FileSystemDirectoryEntry).createReader();
+    const files: File[] = [];
 
     const readBatch = () => {
       reader.readEntries(
@@ -185,10 +185,10 @@ function flattenEntries(entry, prefix = "") {
   });
 }
 
-async function collectDroppedFiles(dataTransfer) {
+async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<File[]> {
   const items = Array.from(dataTransfer?.items || []);
   if (!items.length) return Array.from(dataTransfer?.files || []);
-  const collected = [];
+  const collected: File[] = [];
 
   for (const item of items) {
     const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
@@ -204,23 +204,22 @@ async function collectDroppedFiles(dataTransfer) {
 }
 
 export default function ShareHomeClient() {
-  const [selectedEntries, setSelectedEntries] = useState([]);
+  const [selectedEntries, setSelectedEntries] = useState<File[]>([]);
   const [pasteValue, setPasteValue] = useState("");
-  const [preview, setPreview] = useState(null);
+  const [preview, setPreview] = useState<PackageResponse | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState("");
-  const [warnings, setWarnings] = useState([]);
-  const [statusText, setStatusText] = useState("Nothing selected yet.");
-  const [busyMode, setBusyMode] = useState(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [busyMode, setBusyMode] = useState<BusyMode>(null);
   const [dropActive, setDropActive] = useState(false);
-  const [copyState, setCopyState] = useState("ready-not-copied");
+  const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
   const [pasteState, setPasteState] = useState("Paste markdown or JSON/JSONC config text and we will package it like a dropped file.");
-  const [activeExample, setActiveExample] = useState(null);
-  const requestIdRef = useRef(0);
+  const [activeExample, setActiveExample] = useState<string | null>(null);
+  const requestIdRef = useRef<number>(0);
 
   const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
   const hasPastedSkill = trimmedPaste.length > 0;
   const busy = busyMode !== null;
-  const effectiveEntries = useMemo(
+  const effectiveEntries: EntryLike[] = useMemo(
     () => (selectedEntries.length ? selectedEntries : hasPastedSkill ? [buildVirtualEntry(trimmedPaste)] : []),
     [selectedEntries, hasPastedSkill, trimmedPaste]
   );
@@ -241,7 +240,7 @@ export default function ShareHomeClient() {
     ? `${effectiveEntries.length} ${effectiveEntries.length === 1 ? "entry" : "entries"} ready`
     : null;
 
-  const requestPackage = async (previewOnly) => {
+  const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
     const response = await fetch("/v1/package", {
       method: "POST",
@@ -252,7 +251,7 @@ export default function ShareHomeClient() {
       body: JSON.stringify({ files, preview: previewOnly })
     });
 
-    let json = null;
+    let json: PackageResponse | null = null;
     try {
       json = await response.json();
     } catch {
@@ -260,10 +259,10 @@ export default function ShareHomeClient() {
     }
 
     if (!response.ok) {
-      throw new Error(json?.message || "Packaging failed.");
+      throw new Error((json as Record<string, unknown> | null)?.message as string || "Packaging failed.");
     }
 
-    return json;
+    return json!;
   };
 
   useEffect(() => {
@@ -274,7 +273,6 @@ export default function ShareHomeClient() {
       setWarnings([]);
       setBusyMode(null);
       setCopyState("ready-not-copied");
-      setStatusText("Nothing selected yet.");
       return;
     }
 
@@ -283,18 +281,15 @@ export default function ShareHomeClient() {
     let cancelled = false;
 
     setBusyMode("preview");
-    setStatusText("Reading files...");
 
     void (async () => {
       try {
         const nextPreview = await requestPackage(true);
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(nextPreview);
-        setStatusText("Preview ready. Click Generate to publish.");
-      } catch (error) {
+      } catch {
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(null);
-        setStatusText(error instanceof Error ? error.message : "Preview failed.");
       } finally {
         if (!cancelled && requestIdRef.current === currentRequestId) {
           setBusyMode(null);
@@ -305,16 +300,21 @@ export default function ShareHomeClient() {
     return () => {
       cancelled = true;
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveEntries]);
 
-  const assignEntries = async (files) => {
-    const entries = Array.from(files || []).filter(Boolean);
-    setSelectedEntries(entries);
+  const resetFormState = () => {
     setPreview(null);
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
     setActiveExample(null);
+  };
+
+  const assignEntries = async (files: FileList | File[] | null) => {
+    const entries = Array.from(files || []).filter(Boolean);
+    setSelectedEntries(entries);
+    resetFormState();
 
     if (entries.length) {
       try {
@@ -334,14 +334,10 @@ export default function ShareHomeClient() {
     }
   };
 
-  const handlePasteChange = (event) => {
+  const handlePasteChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setPasteValue(event.target.value);
     setSelectedEntries([]);
-    setPreview(null);
-    setGeneratedUrl("");
-    setWarnings([]);
-    setCopyState("ready-not-copied");
-    setActiveExample(null);
+    resetFormState();
     setPasteState(
       event.target.value.trim()
         ? "Preview the pasted content, then generate a share link."
@@ -363,11 +359,7 @@ export default function ShareHomeClient() {
       }
       setPasteValue(text);
       setSelectedEntries([]);
-      setPreview(null);
-      setGeneratedUrl("");
-      setWarnings([]);
-      setCopyState("ready-not-copied");
-      setActiveExample(null);
+      resetFormState();
       setPasteState("Clipboard pasted. Preview is ready.");
     } catch {
       setPasteState("Clipboard access was blocked. Paste manually into the field.");
@@ -378,12 +370,11 @@ export default function ShareHomeClient() {
     if (!effectiveEntries.length || busy) return;
 
     setBusyMode("publish");
-    setStatusText("Publishing...");
 
     try {
       const result = await requestPackage(false);
       const nextUrl = typeof result?.url === "string" ? result.url : "";
-      let nextCopyState = "ready-not-copied";
+      let nextCopyState: CopyState = "ready-not-copied";
 
       if (nextUrl) {
         try {
@@ -398,9 +389,8 @@ export default function ShareHomeClient() {
       setWarnings(Array.isArray(result?.warnings) ? result.warnings : []);
       setGeneratedUrl(nextUrl);
       setCopyState(nextCopyState);
-      setStatusText("Package published successfully!");
-    } catch (error) {
-      setStatusText(error instanceof Error ? error.message : "Publishing failed.");
+    } catch {
+      // Errors surface through the packageStatus derived state
     } finally {
       setBusyMode(null);
     }
@@ -505,7 +495,7 @@ export default function ShareHomeClient() {
                         onClick={() => {
                           if (!isExample) return;
                           setActiveExample(isActive ? null : item.name);
-                          setPasteValue(isActive ? "" : item.example);
+                          setPasteValue(isActive ? "" : item.example!);
                           setSelectedEntries([]);
                           setGeneratedUrl("");
                           setWarnings([]);
@@ -549,6 +539,7 @@ export default function ShareHomeClient() {
                         : "untitled"}
                 </span>
               </div>
+              <div className="carbon-status-bar">{pasteState}</div>
               <div className="carbon-editor-wrap">
                 <pre
                   className="carbon-highlight"
@@ -565,7 +556,6 @@ export default function ShareHomeClient() {
               </div>
             </div>
             <div className="paste-meta">
-              <span>{pasteState}</span>
               <span>{pasteCountLabel}</span>
             </div>
           </aside>

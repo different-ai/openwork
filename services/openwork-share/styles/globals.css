@@ -480,6 +480,16 @@ a {
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
 }
 
+.carbon-status-bar {
+  padding: 6px 16px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+}
+
 .carbon-editor-wrap {
   position: relative;
   min-height: 200px;
@@ -1155,7 +1165,7 @@ button.included-item {
 .paste-meta {
   display: flex;
   flex-wrap: wrap;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
 }
 

@@ -87,7 +87,7 @@ importers:
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.1.18
-        version: 4.1.18(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+        version: 4.1.18(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
       tailwindcss:
         specifier: ^4.1.18
         version: 4.1.18
@@ -96,10 +96,10 @@ importers:
         version: 5.9.3
       vite:
         specifier: ^6.0.1
-        version: 6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+        version: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
       vite-plugin-solid:
         specifier: ^2.11.0
-        version: 2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+        version: 2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
 
   packages/desktop:
     devDependencies:
@@ -358,6 +358,19 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.8.2
+    devDependencies:
+      '@types/node':
+        specifier: ^25.4.0
+        version: 25.4.0
+      '@types/react':
+        specifier: 18.2.79
+        version: 18.2.79
+      '@types/react-dom':
+        specifier: 18.2.25
+        version: 18.2.25
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
 packages:
 
@@ -1934,6 +1947,9 @@ packages:
 
   '@types/node@22.19.7':
     resolution: {integrity: sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw==}
+
+  '@types/node@25.4.0':
+    resolution: {integrity: sha512-9wLpoeWuBlcbBpOY3XmzSTG3oscB6xjBEEtn+pYXTfhyXhIxC5FsBer2KTopBlvKEiW9l13po9fq+SJY/5lkhw==}
 
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
@@ -3567,6 +3583,9 @@ packages:
   undici-types@6.21.0:
     resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
 
+  undici-types@7.18.2:
+    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
+
   undici@5.29.0:
     resolution: {integrity: sha512-raqeBD6NQK4SkWhQzeYKd1KmIG6dllBOTt55Rmkt4HtI9mwdWtJljnrXjAFUBLTSN67HWrOIZ3EPF4kjUw80Bg==}
     engines: {node: '>=14.0'}
@@ -4863,7 +4882,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/web-api': 7.13.0
-      '@types/node': 22.19.7
+      '@types/node': 20.12.12
       '@types/ws': 8.18.1
       eventemitter3: 5.0.4
       ws: 8.19.0
@@ -4878,7 +4897,7 @@ snapshots:
     dependencies:
       '@slack/logger': 4.0.0
       '@slack/types': 2.19.0
-      '@types/node': 22.19.7
+      '@types/node': 20.12.12
       '@types/retry': 0.12.0
       axios: 1.13.4
       eventemitter3: 5.0.4
@@ -4983,12 +5002,12 @@ snapshots:
       '@tailwindcss/oxide-win32-arm64-msvc': 4.1.18
       '@tailwindcss/oxide-win32-x64-msvc': 4.1.18
 
-  '@tailwindcss/vite@4.1.18(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))':
+  '@tailwindcss/vite@4.1.18(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))':
     dependencies:
       '@tailwindcss/node': 4.1.18
       '@tailwindcss/oxide': 4.1.18
       tailwindcss: 4.1.18
-      vite: 6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+      vite: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   '@tanstack/solid-virtual@3.13.19(solid-js@1.9.10)':
     dependencies:
@@ -5139,6 +5158,10 @@ snapshots:
   '@types/node@22.19.7':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/node@25.4.0':
+    dependencies:
+      undici-types: 7.18.2
 
   '@types/prop-types@15.7.15': {}
 
@@ -5367,7 +5390,7 @@ snapshots:
 
   bun-types@1.3.6:
     dependencies:
-      '@types/node': 22.19.7
+      '@types/node': 20.12.12
 
   bun-webgpu-darwin-arm64@0.1.4:
     optional: true
@@ -6732,6 +6755,8 @@ snapshots:
 
   undici-types@6.21.0: {}
 
+  undici-types@7.18.2: {}
+
   undici@5.29.0:
     dependencies:
       '@fastify/busboy': 2.1.1
@@ -6754,7 +6779,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite-plugin-solid@2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
+  vite-plugin-solid@2.11.10(solid-js@1.9.10)(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
     dependencies:
       '@babel/core': 7.28.6
       '@types/babel__core': 7.20.5
@@ -6762,12 +6787,12 @@ snapshots:
       merge-anything: 5.1.7
       solid-js: 1.9.10
       solid-refresh: 0.6.3(solid-js@1.9.10)
-      vite: 6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
-      vitefu: 1.1.1(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
+      vite: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+      vitefu: 1.1.1(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2))
     transitivePeerDependencies:
       - supports-color
 
-  vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2):
+  vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2):
     dependencies:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.3)
@@ -6776,16 +6801,16 @@ snapshots:
       rollup: 4.55.1
       tinyglobby: 0.2.15
     optionalDependencies:
-      '@types/node': 22.19.7
+      '@types/node': 25.4.0
       fsevents: 2.3.3
       jiti: 2.6.1
       lightningcss: 1.30.2
       tsx: 4.21.0
       yaml: 2.8.2
 
-  vitefu@1.1.1(vite@6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
+  vitefu@1.1.1(vite@6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)):
     optionalDependencies:
-      vite: 6.4.1(@types/node@22.19.7)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
+      vite: 6.4.1(@types/node@25.4.0)(jiti@2.6.1)(lightningcss@1.30.2)(tsx@4.21.0)(yaml@2.8.2)
 
   w3c-keyname@2.2.8: {}
 
