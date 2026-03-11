@@ -299,17 +299,17 @@ function looksLikeOpenworkShape(parsed) {
   return schema.includes("openwork") && schema.includes("config");
 }
 
-function collectSecretPaths(value, prefix = []) {
-  const hits = [];
+function redactSecrets(value, prefix = [], hits = []) {
   if (!value || typeof value !== "object") return hits;
 
   for (const [key, child] of Object.entries(value)) {
     const nextPrefix = [...prefix, key];
     if (SECRET_KEY_RE.test(key) && typeof child === "string" && child.trim() && !SAFE_SECRET_VALUE_RE.test(child.trim())) {
       hits.push(nextPrefix.join("."));
+      value[key] = "<REDACTED>";
     }
     if (typeof child === "object") {
-      hits.push(...collectSecretPaths(child, nextPrefix));
+      redactSecrets(child, nextPrefix, hits);
     }
   }
 
@@ -374,13 +374,13 @@ function readConfigSection(file, warnings) {
   }
 
   const secretHits = [
-    ...collectSecretPaths(opencode ?? {}, ["opencode"]),
-    ...collectSecretPaths(openwork ?? {}, ["openwork"]),
-    ...collectSecretPaths(config, ["config"]),
+    ...redactSecrets(opencode ?? {}, ["opencode"]),
+    ...redactSecrets(openwork ?? {}, ["openwork"]),
+    ...redactSecrets(config, ["config"]),
   ];
 
   if (secretHits.length) {
-    throw new Error(`Potential secrets found in ${file.path}: ${secretHits.slice(0, 5).join(", ")}`);
+    warnings.push(`Redacted ${secretHits.length} potential secret${secretHits.length === 1 ? "" : "s"} in ${file.path}: ${secretHits.slice(0, 3).join(", ")}`);
   }
 
   if (!opencode && !openwork && !Object.keys(config).length) {

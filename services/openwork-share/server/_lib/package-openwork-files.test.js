@@ -70,28 +70,25 @@ You qualify leads and route follow-up.`,
   assert.equal(result.bundle.workspace.opencode.model, "openai/gpt-5.4");
 });
 
-test("packageOpenworkFiles rejects secret-looking MCP config values", () => {
-  assert.throws(
-    () =>
-      packageOpenworkFiles({
-        files: [
-          {
-            path: "opencode.json",
-            content: JSON.stringify({
-              mcp: {
-                crm: {
-                  type: "remote",
-                  headers: {
-                    Authorization: "Bearer real-secret-token",
-                  },
-                },
+test("packageOpenworkFiles redacts secret-looking values and adds a warning", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: "opencode.json",
+        content: JSON.stringify({
+          mcp: {
+            crm: {
+              type: "remote",
+              headers: {
+                Authorization: "Bearer real-secret-token",
               },
-            }),
+            },
           },
-        ],
-      }),
-    /Potential secrets found/,
-  );
+        }),
+      },
+    ],
+  });
+  assert.ok(result.warnings.some((w) => /[Rr]edacted/.test(w)));
 });
 
 test("packageOpenworkFiles infers AGENTS.md as agent markdown", () => {

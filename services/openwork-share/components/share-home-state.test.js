@@ -3,11 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_PREVIEW_ITEMS,
-  getPublishWarnings,
+  getPackageStatus,
   getPreviewItems,
-  getPreviewPanelState,
-  getPublishedWarnings,
-  getSummaryCards,
   getShareFeedback,
 } from "./share-home-state.js";
 
@@ -24,35 +21,6 @@ test("getPreviewItems falls back to default items and caps the list at four", ()
   assert.deepEqual(
     getPreviewItems({ items: previewItems }).map((item) => item.name),
     ["item-0", "item-1", "item-2", "item-3"],
-  );
-});
-
-test("getSummaryCards uses preview counts when available and stable defaults otherwise", () => {
-  assert.deepEqual(getSummaryCards(null), [
-    { label: "Skills", value: 1 },
-    { label: "Agents", value: 1 },
-    { label: "MCPs", value: 1 },
-    { label: "Commands", value: 0 },
-    { label: "Configs", value: 1 },
-  ]);
-
-  assert.deepEqual(
-    getSummaryCards({
-      summary: {
-        skills: 3,
-        agents: 2,
-        mcpServers: 4,
-        commands: 1,
-        configs: 2,
-      },
-    }),
-    [
-      { label: "Skills", value: 3 },
-      { label: "Agents", value: 2 },
-      { label: "MCPs", value: 4 },
-      { label: "Commands", value: 1 },
-      { label: "Configs", value: 2 },
-    ],
   );
 });
 
@@ -79,58 +47,51 @@ test("getShareFeedback returns the correct labels for copied, ready, and failed 
   });
 });
 
-test("getPreviewPanelState returns preview copy before publish and published copy after publish", () => {
-  assert.deepEqual(getPreviewPanelState({ generatedUrl: "", preview: null, effectiveEntryCount: 0 }), {
-    chipLabel: "Preview",
-    stateLabel: "Landing sample",
-    isReady: false,
-    title: "Worker package",
-    copy: "Review the inferred package before publishing a public import page.",
-    mode: "preview",
-  });
-
-  assert.deepEqual(getPreviewPanelState({ generatedUrl: "", preview: { items: [] }, effectiveEntryCount: 1 }), {
-    chipLabel: "Preview",
-    stateLabel: "Ready to publish",
-    isReady: true,
-    title: "Worker package",
-    copy: "Review the inferred package before publishing a public import page.",
-    mode: "preview",
-  });
-
-  assert.deepEqual(getPreviewPanelState({ generatedUrl: "https://share.openwork.software/b/abc", preview: { items: [] }, effectiveEntryCount: 1 }), {
-    chipLabel: "Published link",
-    stateLabel: "Published",
-    isReady: true,
-    title: "Share link ready",
-    copy: "Your worker package is published. Anyone with this link can import it directly into OpenWork.",
-    mode: "published",
-  });
+test("getPackageStatus shows neutral when nothing is selected", () => {
+  const status = getPackageStatus({ generatedUrl: "", warnings: [], preview: null, effectiveEntryCount: 0, busy: false });
+  assert.equal(status.severity, "neutral");
+  assert.equal(status.items.length, 0);
 });
 
-test("getPublishWarnings only shows advisory warnings before publish", () => {
-  assert.deepEqual(getPublishWarnings({ generatedUrl: "", warnings: ["Skipped file"] }), {
-    title: "Review before sharing",
-    copy: "Some files were skipped or adjusted. Check these before generating a public link.",
-    items: ["Skipped file"],
-  });
-
-  assert.equal(getPublishWarnings({ generatedUrl: "https://share.openwork.software/b/abc", warnings: ["Skipped file"] }), null);
-  assert.equal(getPublishWarnings({ generatedUrl: "", warnings: [] }), null);
+test("getPackageStatus shows success when preview is ready with no warnings", () => {
+  const status = getPackageStatus({ generatedUrl: "", warnings: [], preview: { items: [{ name: "test" }] }, effectiveEntryCount: 1, busy: false });
+  assert.equal(status.severity, "success");
+  assert.match(status.label, /no issues/i);
 });
 
-test("getPublishedWarnings only shows after publish and always includes a visible state", () => {
-  assert.equal(getPublishedWarnings({ generatedUrl: "", warnings: ["Skipped file"] }), null);
-
-  assert.deepEqual(getPublishedWarnings({ generatedUrl: "https://share.openwork.software/b/abc", warnings: ["Skipped file"] }), {
-    title: "Warnings",
-    copy: "Review any files that were skipped.",
-    items: [{ text: "Skipped file", empty: false }],
+test("getPackageStatus shows warn severity for secret redactions", () => {
+  const status = getPackageStatus({
+    generatedUrl: "",
+    warnings: ["Redacted 1 potential secret in config.json: opencode.token"],
+    preview: { items: [{ name: "test" }] },
+    effectiveEntryCount: 1,
+    busy: false,
   });
+  assert.equal(status.severity, "warn");
+  assert.match(status.label, /redacted/i);
+  assert.equal(status.items.length, 1);
+});
 
-  assert.deepEqual(getPublishedWarnings({ generatedUrl: "https://share.openwork.software/b/abc", warnings: [] }), {
-    title: "Warnings",
-    copy: "Review any files that were skipped.",
-    items: [{ text: "No warnings. Package is clean.", empty: true }],
+test("getPackageStatus shows info severity for non-secret warnings", () => {
+  const status = getPackageStatus({
+    generatedUrl: "",
+    warnings: ["Ignored unsupported file: readme.txt"],
+    preview: { items: [{ name: "test" }] },
+    effectiveEntryCount: 1,
+    busy: false,
   });
+  assert.equal(status.severity, "info");
+  assert.equal(status.items.length, 1);
+});
+
+test("getPackageStatus shows success after publish with no warnings", () => {
+  const status = getPackageStatus({
+    generatedUrl: "https://share.openwork.software/b/abc",
+    warnings: [],
+    preview: { items: [{ name: "test" }] },
+    effectiveEntryCount: 1,
+    busy: false,
+  });
+  assert.equal(status.severity, "success");
+  assert.match(status.label, /no issues/i);
 });

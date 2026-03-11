@@ -3,9 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  getPackageStatus,
   getPreviewItems,
-  getPublishWarnings,
-  getPublishedWarnings,
   getShareFeedback,
 } from "./share-home-state.js";
 
@@ -23,13 +22,57 @@ function span(cls, inner) {
 }
 
 function highlightJsonLine(raw) {
-  const line = esc(raw);
-  return line
-    .replace(/^(\s*)(&quot;(?:[^&]|&(?!quot;))*&quot;)(\s*:)/g, (_, ws, key, colon) => ws + span("hl-key", key) + colon)
-    .replace(/:\s*(&quot;(?:[^&]|&(?!quot;))*&quot;)/g, (m, val) => m.replace(val, span("hl-string", val)))
-    .replace(/:\s*(true|false|null)\b/g, (m, kw) => m.replace(kw, span("hl-keyword", kw)))
-    .replace(/:\s*(\d+(?:\.\d+)?)\b/g, (m, num) => m.replace(num, span("hl-number", num)))
-    .replace(/(\/\/[^\n]*)/g, span("hl-comment", "$1"));
+  const tokens = [];
+  let i = 0;
+
+  while (i < raw.length) {
+    if (raw[i] === '"') {
+      const end = raw.indexOf('"', i + 1);
+      if (end === -1) break;
+      const str = raw.slice(i, end + 1);
+      const afterStr = raw.slice(end + 1).trimStart();
+      if (afterStr.startsWith(":")) {
+        tokens.push(span("hl-key", esc(str)));
+      } else if (/^https?:\/\//.test(str.slice(1, -1))) {
+        tokens.push(span("hl-url", esc(str)));
+      } else {
+        tokens.push(span("hl-string", esc(str)));
+      }
+      i = end + 1;
+    } else if (/[{}\[\]]/.test(raw[i])) {
+      tokens.push(span("hl-bracket", esc(raw[i])));
+      i++;
+    } else if (raw[i] === ":" || raw[i] === ",") {
+      tokens.push(span("hl-punctuation", esc(raw[i])));
+      i++;
+    } else if (/\d/.test(raw[i])) {
+      const match = raw.slice(i).match(/^\d+(\.\d+)?/);
+      if (match) {
+        tokens.push(span("hl-number", match[0]));
+        i += match[0].length;
+      } else {
+        tokens.push(esc(raw[i]));
+        i++;
+      }
+    } else if (raw.slice(i).startsWith("true") && !/\w/.test(raw[i + 4] || "")) {
+      tokens.push(span("hl-keyword", "true"));
+      i += 4;
+    } else if (raw.slice(i).startsWith("false") && !/\w/.test(raw[i + 5] || "")) {
+      tokens.push(span("hl-keyword", "false"));
+      i += 5;
+    } else if (raw.slice(i).startsWith("null") && !/\w/.test(raw[i + 4] || "")) {
+      tokens.push(span("hl-keyword", "null"));
+      i += 4;
+    } else if (raw.slice(i).startsWith("//")) {
+      tokens.push(span("hl-comment", esc(raw.slice(i))));
+      break;
+    } else {
+      tokens.push(esc(raw[i]));
+      i++;
+    }
+  }
+
+  return tokens.join("");
 }
 
 function highlightMdLine(raw) {
@@ -189,8 +232,10 @@ export default function ShareHomeClient() {
     [preview, activeExample]
   );
   const hasRealFiles = !activeExample && Boolean(preview?.items?.length);
-  const publishWarnings = useMemo(() => getPublishWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
-  const publishedWarnings = useMemo(() => getPublishedWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
+  const packageStatus = useMemo(
+    () => getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount: effectiveEntries.length, busy }),
+    [generatedUrl, warnings, preview, effectiveEntries.length, busy]
+  );
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
   const selectionLabel = effectiveEntries.length
     ? `${effectiveEntries.length} ${effectiveEntries.length === 1 ? "entry" : "entries"} ready`
@@ -262,17 +307,37 @@ export default function ShareHomeClient() {
     };
   }, [effectiveEntries]);
 
-  const assignEntries = (files) => {
-    setSelectedEntries(Array.from(files || []).filter(Boolean));
+  const assignEntries = async (files) => {
+    const entries = Array.from(files || []).filter(Boolean);
+    setSelectedEntries(entries);
+    setPreview(null);
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
     setActiveExample(null);
+
+    if (entries.length) {
+      try {
+        const texts = await Promise.all(entries.slice(0, 4).map((f) => f.text()));
+        const combined = entries.length === 1
+          ? texts[0]
+          : texts.map((t, i) => `// --- ${entries[i].name} ---\n${t}`).join("\n\n");
+        setPasteValue(combined);
+        setPasteState(`Showing ${entries.length === 1 ? entries[0].name : `${entries.length} files`}. Edit below or generate a share link.`);
+      } catch {
+        setPasteValue("");
+        setPasteState("Could not read file contents for preview.");
+      }
+    } else {
+      setPasteValue("");
+      setPasteState("Paste markdown or JSON/JSONC config text and we will package it like a dropped file.");
+    }
   };
 
   const handlePasteChange = (event) => {
     setPasteValue(event.target.value);
     setSelectedEntries([]);
+    setPreview(null);
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
@@ -298,9 +363,11 @@ export default function ShareHomeClient() {
       }
       setPasteValue(text);
       setSelectedEntries([]);
+      setPreview(null);
       setGeneratedUrl("");
       setWarnings([]);
       setCopyState("ready-not-copied");
+      setActiveExample(null);
       setPasteState("Clipboard pasted. Preview is ready.");
     } catch {
       setPasteState("Clipboard access was blocked. Paste manually into the field.");
@@ -376,7 +443,7 @@ export default function ShareHomeClient() {
               Drop <span className="inline-token token-agent">AGENTS.md</span>,{" "}
               <span className="inline-token token-skill">SKILL.md</span>,{" "}
               <span className="inline-token token-mcp">mcp.json</span>, or{" "}
-              <span className="inline-token token-config">config</span> files, preview the inferred bundle, then publish a public import page.
+              <span className="inline-token token-config">config</span> files, preview and share them with others.
             </p>
 
             <div className="input-method-grid">
@@ -473,7 +540,13 @@ export default function ShareHomeClient() {
                   <span className="carbon-dot dot-expand"></span>
                 </div>
                 <span className="carbon-filename">
-                  {pasteValue.trim() ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md") : "untitled"}
+                  {selectedEntries.length === 1
+                    ? selectedEntries[0].name
+                    : selectedEntries.length > 1
+                      ? `${selectedEntries.length} files`
+                      : pasteValue.trim()
+                        ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md")
+                        : "untitled"}
                 </span>
               </div>
               <div className="carbon-editor-wrap">
@@ -498,21 +571,21 @@ export default function ShareHomeClient() {
           </aside>
 
           <div className="share-actions-bar share-card-full" aria-live="polite">
+            <div className={`package-status severity-${packageStatus.severity}`}>
+              <span className="package-status-dot"></span>
+              <span className="package-status-label">{packageStatus.label}</span>
+            </div>
+
+            {packageStatus.items.length > 0 && (
+              <ul className="package-status-items">
+                {packageStatus.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            )}
+
             {generatedUrl ? (
               <>
-                {publishedWarnings ? (
-                  <div className="publish-warning-card">
-                    <h4>{publishedWarnings.title}</h4>
-                    <p>{publishedWarnings.copy}</p>
-                    <ul className="warnings-list warnings-list-inline">
-                      {publishedWarnings.items.map((item) => (
-                        <li key={item.text} className={item.empty ? "warnings-empty" : ""}>
-                          {item.text}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
                 <div className="share-link-inline mono">{generatedUrl}</div>
                 <div className="share-link-bar-actions">
                   <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
@@ -527,33 +600,14 @@ export default function ShareHomeClient() {
                 </div>
               </>
             ) : (
-              <>
-                {publishWarnings ? (
-                  <div className="publish-warning-card">
-                    <h4>{publishWarnings.title}</h4>
-                    <p>{publishWarnings.copy}</p>
-                    <ul className="warnings-list warnings-list-inline">
-                      {publishWarnings.items.map((warning) => (
-                        <li key={warning}>{warning}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-                <button
-                  className="button-primary"
-                  type="button"
-                  onClick={() => void publishBundle()}
-                  disabled={busy || !effectiveEntries.length || !preview}
-                >
-                  {busyMode === "publish" ? "Publishing..." : "Generate share link"}
-                </button>
-                <div className="status-area" data-busy={busy ? "true" : "false"}>
-                  <span>{statusText}</span>
-                </div>
-                <div className="preview-note">
-                  Generate a share link to open this bundle in OpenWork or hand it directly to a teammate.
-                </div>
-              </>
+              <button
+                className="button-primary"
+                type="button"
+                onClick={() => void publishBundle()}
+                disabled={busy || !effectiveEntries.length || !preview}
+              >
+                {busyMode === "publish" ? "Publishing..." : "Generate share link"}
+              </button>
             )}
           </div>
         </div>

@@ -66,32 +66,44 @@ export function getPreviewPanelState({ generatedUrl, preview, effectiveEntryCoun
   };
 }
 
-export function getPublishWarnings({ generatedUrl, warnings }) {
-  if (generatedUrl || !Array.isArray(warnings) || warnings.length === 0) {
-    return null;
+export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount, busy }) {
+  const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
+  const hasSecretWarning = hasWarnings && warnings.some((w) => /redacted|secret/i.test(w));
+
+  if (generatedUrl) {
+    if (hasWarnings) {
+      return {
+        severity: hasSecretWarning ? "warn" : "info",
+        label: hasSecretWarning ? "Published with redactions" : "Published with notes",
+        items: warnings,
+      };
+    }
+    return { severity: "success", label: "Clean — no issues detected", items: [] };
   }
 
-  return {
-    title: "Review before sharing",
-    copy: "Some files were skipped or adjusted. Check these before generating a public link.",
-    items: warnings,
-  };
-}
-
-export function getPublishedWarnings({ generatedUrl, warnings }) {
-  if (!generatedUrl) {
-    return null;
+  if (busy) {
+    return { severity: "neutral", label: "Processing...", items: [] };
   }
 
-  const items = Array.isArray(warnings) && warnings.length
-    ? warnings.map((warning) => ({ text: warning, empty: false }))
-    : [{ text: "No warnings. Package is clean.", empty: true }];
+  if (!effectiveEntryCount) {
+    return { severity: "neutral", label: "Drop files or pick an example to get started", items: [] };
+  }
 
-  return {
-    title: "Warnings",
-    copy: "Review any files that were skipped.",
-    items,
-  };
+  if (!preview) {
+    return { severity: "neutral", label: "Analyzing contents...", items: [] };
+  }
+
+  if (hasWarnings) {
+    return {
+      severity: hasSecretWarning ? "warn" : "info",
+      label: hasSecretWarning
+        ? `${warnings.length} item${warnings.length === 1 ? "" : "s"} redacted — review before sharing`
+        : `${warnings.length} note${warnings.length === 1 ? "" : "s"} — review before sharing`,
+      items: warnings,
+    };
+  }
+
+  return { severity: "success", label: "Ready — no issues detected", items: [] };
 }
 
 export function getShareFeedback(copyState) {
