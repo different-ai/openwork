@@ -1,23 +1,26 @@
 "use client";
 
-import { ResponsiveGrain } from "./responsive-grain";
-
 export function LandingBackground() {
   return (
     <>
       {/* <div className="pointer-events-none fixed inset-0 z-0 bg-[#f6f9fc]" /> */}
 
-      <div className="landing-background-fade pointer-events-none fixed inset-0 z-0">
-        <ResponsiveGrain
-          colors={["#f6f9fc", "#f6f9fc", "#1e293b", "#334155"]}
-          colorBack="#f6f9fc"
-          softness={1}
-          intensity={0.03}
-          noise={0.14}
-          shape="corners"
-          speed={0.2}
-        />
-      </div>
+      {/*
+        Top landing paper-grain background is intentionally disabled for now.
+        Keep this block for quick reactivation later.
+
+        <div className="landing-background-fade pointer-events-none fixed inset-0 z-0">
+          <ResponsiveGrain
+            colors={["#f6f9fc", "#f6f9fc", "#1e293b", "#334155"]}
+            colorBack="#f6f9fc"
+            softness={1}
+            intensity={0.03}
+            noise={0.14}
+            shape="corners"
+            speed={0.2}
+          />
+        </div>
+      */}
 
       <style jsx>{`
         .landing-background-fade {
