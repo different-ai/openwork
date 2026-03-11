@@ -19,4 +19,13 @@
 
 - `packages/app/pr/screenshots/steps-composer-docked.png`
 
-Note: the screenshot was captured from the running web shell after the Docker + local headless startup paths both hit existing environment/auth blockers, so it demonstrates the corrected docked placement rather than a full server-backed session run.
+## Proof prompt
+
+- Prompt used in the proof capture: `Use the todo list to track these 5 steps and then do them: 1. say alpha 2. say beta 3. say gamma 4. say delta 5. say epsilon.`
+- Result: OpenWork rendered the task/steps strip (`5 out of 5 tasks completed`) directly above the composer with no floating gap.
+
+## Proof setup
+
+- Started `opencode serve` with explicit basic auth.
+- Started `packages/server/dist/bin/openwork-server` directly against that OpenCode instance.
+- Started Vite with `VITE_OPENWORK_URL` + `VITE_OPENWORK_TOKEN` so the web app could connect to the proof server and capture a real session screenshot.
