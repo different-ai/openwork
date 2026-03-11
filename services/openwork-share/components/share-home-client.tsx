@@ -5,7 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { BusyMode, CopyState, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
 import {
   getPackageStatus,
+  getPreviewFilename,
   getPreviewItems,
+  getSelectionLabel,
   getShareFeedback,
 } from "./share-home-state";
 
@@ -275,9 +277,12 @@ export default function ShareHomeClient() {
     [generatedUrl, warnings, effectiveEntries.length]
   );
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
-  const selectionLabel = effectiveEntries.length
-    ? `${preview?.items?.[0]?.kind ?? "File"} ready to share`
-    : "Drop files or paste a skill";
+  const selectionLabel = getSelectionLabel(effectiveEntries.length > 0);
+  const previewFilename = getPreviewFilename({
+    selectedEntryCount: selectedEntries.length,
+    selectedEntryName: selectedEntries[0]?.name ?? null,
+    hasPastedContent: hasPastedSkill,
+  });
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -553,7 +558,7 @@ export default function ShareHomeClient() {
               )}
 
               {generatedUrl ? (
-                <>
+                <div className="publish-result">
                   <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
                     <div className="share-link-inline mono">{generatedUrl}</div>
                     <button className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`} type="button" onClick={copyGeneratedUrl} title="Copy link">
@@ -572,7 +577,7 @@ export default function ShareHomeClient() {
                   <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
                     Open share page
                   </a>
-                </>
+                </div>
               ) : (
                 <div className="publish-action">
                   <p className="publish-hint">Creates a public URL that anyone can use to import this config.</p>
@@ -595,12 +600,8 @@ export default function ShareHomeClient() {
               <div className="preview-header">
                 <span className="preview-eyebrow">Preview</span>
                 <span className="preview-filename">
-                  {fileItems[0] && <span className={`preview-filename-dot ${toneClass(fileItems[0])}`} />}
-                  {selectedEntries.length === 1
-                    ? selectedEntries[0].name
-                    : selectedEntries.length > 1
-                      ? `${selectedEntries.length} files`
-                      : fileItems[0]?.name ?? "untitled"}
+                  <span className={`preview-filename-dot ${fileItems[0] ? toneClass(fileItems[0]) : "dot-pending"}`} />
+                  {previewFilename}
                 </span>
               </div>
               <div className="preview-editor-wrap">

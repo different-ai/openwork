@@ -405,16 +405,23 @@ a {
   backdrop-filter: blur(22px);
 }
 
-.publish-action {
+.publish-action,
+.publish-result {
   display: grid;
   gap: 10px;
+  min-height: 118px;
+  align-content: start;
 }
 
 .publish-hint {
   margin: 0;
+  display: flex;
+  align-items: center;
+  min-height: 52px;
   font-size: 13px;
   color: var(--ow-muted);
   line-height: 1.5;
+  padding: 0 16px;
 }
 
 .publish-button {
@@ -780,6 +787,7 @@ a {
 .share-link-row {
   display: flex;
   align-items: center;
+  min-height: 52px;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(255, 255, 255, 0.96);
@@ -1184,6 +1192,8 @@ button.included-item {
   border-radius: 50%;
   margin-right: 6px;
   vertical-align: middle;
+  background: rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.32);
 }
 
 .item-left {
@@ -1236,6 +1246,11 @@ button.included-item {
 
 .dot-config {
   background: #475569;
+}
+
+.dot-pending {
+  background: rgba(148, 163, 184, 0.38);
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.32);
 }
 
 .item-title {

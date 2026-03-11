@@ -54,6 +54,23 @@ export function getPreviewItems(preview: { items?: PreviewItem[] } | null): Prev
   return items.slice(0, 4);
 }
 
+export function getSelectionLabel(hasSelection: boolean): string {
+  return hasSelection ? "File ready to share" : "Drop files or paste content";
+}
+
+export function getPreviewFilename(input: {
+  selectedEntryCount: number;
+  selectedEntryName?: string | null;
+  hasPastedContent: boolean;
+}): string {
+  const { selectedEntryCount, selectedEntryName, hasPastedContent } = input;
+
+  if (selectedEntryCount === 1 && selectedEntryName) return selectedEntryName;
+  if (selectedEntryCount > 1) return `${selectedEntryCount} files`;
+  if (hasPastedContent) return "clipboard";
+  return "untitled";
+}
+
 export function getPackageStatus({ generatedUrl, warnings, effectiveEntryCount }: PackageStatusInput): PackageStatus {
   const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
   const hasSecretWarning = hasWarnings && warnings.some((w) => /redacted|secret/i.test(w));
