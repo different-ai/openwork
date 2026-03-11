@@ -356,13 +356,27 @@ export default function ShareHomeClient() {
                 <h4>{preview?.items?.length ? "Included" : "Example contents"}</h4>
                 <div className="included-list">
                   {visibleItems.map((item) => (
-                    <div className="included-item" key={`${item.kind}-${item.name}`}>
+                    <button
+                      type="button"
+                      className="included-item"
+                      key={`${item.kind}-${item.name}`}
+                      disabled={!item.example}
+                      onClick={() => {
+                        if (!item.example) return;
+                        setPasteValue(item.example);
+                        setSelectedEntries([]);
+                        setGeneratedUrl("");
+                        setWarnings([]);
+                        setCopyState("ready-not-copied");
+                        setPasteState(`Loaded "${item.name}" example. Preview is ready.`);
+                      }}
+                    >
                       <div className={`item-dot ${toneClass(item)}`}></div>
                       <div className="item-text">
                         <span className="item-title">{item.name || "Unnamed item"}</span>
                         <span className="item-meta">{item.meta || item.kind || "Item"}</span>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>

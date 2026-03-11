@@ -830,6 +830,13 @@ a {
   gap: 10px;
 }
 
+button.included-item {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .included-item {
   display: flex;
   align-items: flex-start;
@@ -838,6 +845,15 @@ a {
   border-radius: 16px;
   background: rgba(248, 250, 252, 0.92);
   border: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.included-item:hover:not(:disabled) {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(240, 247, 255, 0.95);
+}
+
+.included-item:disabled {
+  cursor: default;
 }
 
 .item-left {
