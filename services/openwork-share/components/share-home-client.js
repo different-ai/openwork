@@ -9,6 +9,68 @@ import {
   getShareFeedback,
 } from "./share-home-state.js";
 
+// TODO: replace with a proper syntax highlighting library (e.g. shiki or highlight.js)
+const SKILL_KEYWORDS = /\b(Identity|Scope|Trigger|Parameters|Default behaviors|When|Why|What|How|Runs|sends|handle|qualify|route|Score|Escalate|Send)\b/g;
+const SKILL_TYPES = /\b(Agent|Skill|MCP|Config|Remote|Trigger|OpenWork|OpenCode|Duration|Handlebars)\b/g;
+const SKILL_FIELDS = /^(\s*-\s*)([a-z_]+)(:)/gm;
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function span(cls, inner) {
+  return `<span class="${cls}">${inner}</span>`;
+}
+
+function highlightJsonLine(raw) {
+  const line = esc(raw);
+  return line
+    .replace(/^(\s*)(&quot;(?:[^&]|&(?!quot;))*&quot;)(\s*:)/g, (_, ws, key, colon) => ws + span("hl-key", key) + colon)
+    .replace(/:\s*(&quot;(?:[^&]|&(?!quot;))*&quot;)/g, (m, val) => m.replace(val, span("hl-string", val)))
+    .replace(/:\s*(true|false|null)\b/g, (m, kw) => m.replace(kw, span("hl-keyword", kw)))
+    .replace(/:\s*(\d+(?:\.\d+)?)\b/g, (m, num) => m.replace(num, span("hl-number", num)))
+    .replace(/(\/\/[^\n]*)/g, span("hl-comment", "$1"));
+}
+
+function highlightMdLine(raw) {
+  const line = esc(raw);
+
+  if (/^#{1,6}\s/.test(raw)) {
+    const match = line.match(/^(#{1,6}\s)(.*)/);
+    if (match) return span("hl-punctuation", match[1]) + span("hl-heading", match[2]);
+  }
+
+  let result = line;
+
+  result = result.replace(/^(\s*)(- )([a-z_]+)(:\s)/g, (_, ws, bullet, field, sep) =>
+    ws + span("hl-punctuation", bullet) + span("hl-field", field) + span("hl-punctuation", sep)
+  );
+  result = result.replace(/^(\s*)(- )/g, (_, ws, bullet) =>
+    ws + span("hl-punctuation", bullet)
+  );
+
+  result = result.replace(/(&quot;[^&]*(?:&[^&]*)*?&quot;)/g, span("hl-string", "$1"));
+  result = result.replace(/(`[^`]+`)/g, span("hl-inline-code", "$1"));
+  result = result.replace(/(\*\*[^*]+\*\*)/g, span("hl-bold", "$1"));
+
+  result = result.replace(SKILL_KEYWORDS, span("hl-keyword", "$1"));
+  result = result.replace(SKILL_TYPES, span("hl-type", "$1"));
+
+  result = result.replace(/\b(\d+(?:\.\d+)?(?:h|ms|s|m)?)\b/g, span("hl-number", "$1"));
+
+  result = result.replace(/(\|)/g, span("hl-punctuation", "$1"));
+
+  return result;
+}
+
+function highlightSyntax(text) {
+  if (!text) return "";
+  const trimmed = text.trimStart();
+  const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  const highlightLine = isJson ? highlightJsonLine : highlightMdLine;
+  return text.split("\n").map(highlightLine).join("\n");
+}
+
 function toneClass(item) {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
@@ -120,6 +182,7 @@ export default function ShareHomeClient() {
   );
 
   const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
+  const highlightedPaste = useMemo(() => highlightSyntax(pasteValue), [pasteValue]);
   const visibleItems = useMemo(() => getPreviewItems(preview), [preview]);
   const publishWarnings = useMemo(() => getPublishWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
   const publishedWarnings = useMemo(() => getPublishedWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
@@ -394,17 +457,36 @@ export default function ShareHomeClient() {
             ) : null}
           </div>
 
-          <aside className="preview-panel share-card surface-shell">
-            <div className="paste-panel">
-              <textarea
-                value={pasteValue}
-                onChange={handlePasteChange}
-                placeholder="Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
-              />
-              <div className="paste-meta">
-                <span>{pasteState}</span>
-                <span>{pasteCountLabel}</span>
+          <aside className="preview-panel carbon-preview">
+            <div className="carbon-window">
+              <div className="carbon-titlebar">
+                <div className="carbon-dots">
+                  <span className="carbon-dot dot-close"></span>
+                  <span className="carbon-dot dot-minimize"></span>
+                  <span className="carbon-dot dot-expand"></span>
+                </div>
+                <span className="carbon-filename">
+                  {pasteValue.trim() ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md") : "untitled"}
+                </span>
               </div>
+              <div className="carbon-editor-wrap">
+                <pre
+                  className="carbon-highlight"
+                  aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
+                />
+                <textarea
+                  className="carbon-editor"
+                  value={pasteValue}
+                  onChange={handlePasteChange}
+                  placeholder="Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
+                  spellCheck={false}
+                />
+              </div>
+            </div>
+            <div className="paste-meta">
+              <span>{pasteState}</span>
+              <span>{pasteCountLabel}</span>
             </div>
           </aside>
 

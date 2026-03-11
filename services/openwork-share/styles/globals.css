@@ -380,9 +380,10 @@ a {
 
 .share-cards-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 7fr 3fr;
+  grid-template-rows: auto 1fr;
   gap: 18px;
-  align-items: start;
+  flex: 1;
 }
 
 .share-card {
@@ -391,12 +392,18 @@ a {
 }
 
 .share-card-full {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.carbon-preview {
   grid-column: 1 / -1;
 }
 
 .share-actions-bar {
   display: grid;
   gap: 12px;
+  align-content: start;
   padding: 20px 22px;
   border-radius: 28px;
   background: rgba(255, 255, 255, 0.88);
@@ -411,6 +418,174 @@ a {
   gap: 18px;
   padding: 22px;
   align-content: start;
+}
+
+.carbon-preview {
+  background: rgba(171, 184, 195, 0.35);
+  border-radius: 28px;
+  padding: 24px;
+  box-shadow:
+    0 20px 68px -12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(0, 0, 0, 0.06);
+  backdrop-filter: blur(20px);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.carbon-window {
+  border-radius: 12px;
+  background: #151718;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.carbon-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #1d1f21;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.carbon-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.carbon-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.dot-close {
+  background: #ff5f57;
+}
+
+.dot-minimize {
+  background: #ffbd2e;
+}
+
+.dot-expand {
+  background: #28c840;
+}
+
+.carbon-filename {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+}
+
+.carbon-editor-wrap {
+  position: relative;
+  min-height: 200px;
+  background: #151718;
+}
+
+.carbon-highlight,
+.carbon-editor {
+  width: 100%;
+  min-height: 200px;
+  padding: 20px 18px;
+  margin: 0;
+  border: none;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.carbon-highlight {
+  color: #c5c8c6;
+  background: transparent;
+  pointer-events: none;
+}
+
+.carbon-editor {
+  position: absolute;
+  inset: 0;
+  resize: none;
+  outline: none;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: #c5c8c6;
+  height: 100%;
+  overflow: hidden;
+}
+
+.carbon-editor::placeholder {
+  color: rgba(255, 255, 255, 0.2);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.2);
+}
+
+.carbon-editor:focus {
+  outline: none;
+}
+
+/* Syntax highlighting — typed-language palette */
+
+.hl-heading {
+  color: #e5c07b;
+  font-weight: 700;
+}
+
+.hl-punctuation {
+  color: #636d83;
+}
+
+.hl-field {
+  color: #e06c75;
+}
+
+.hl-keyword {
+  color: #c678dd;
+  font-weight: 600;
+}
+
+.hl-type {
+  color: #56b6c2;
+  font-style: italic;
+}
+
+.hl-string {
+  color: #98c379;
+}
+
+.hl-number {
+  color: #d19a66;
+}
+
+.hl-bold {
+  color: #e5c07b;
+  font-weight: 700;
+}
+
+.hl-inline-code {
+  color: #56b6c2;
+  background: rgba(86, 182, 194, 0.08);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.hl-key {
+  color: #e06c75;
+}
+
+.hl-comment {
+  color: #5c6370;
+  font-style: italic;
+}
+
+.carbon-preview .paste-meta {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
 }
 
 .package-card-header,
@@ -907,25 +1082,12 @@ button.included-item {
   color: var(--ow-muted);
 }
 
-.paste-panel textarea,
 .url-box {
   width: 100%;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.28);
   background: rgba(255, 255, 255, 0.96);
   color: var(--ow-ink);
-}
-
-.paste-panel textarea {
-  min-height: 180px;
-  resize: vertical;
-  padding: 14px 16px;
-}
-
-.paste-panel textarea:focus {
-  outline: 2px solid rgba(36, 99, 235, 0.18);
-  outline-offset: 2px;
-  border-color: rgba(36, 99, 235, 0.34);
 }
 
 .paste-meta {
@@ -1062,8 +1224,10 @@ button.included-item {
     grid-template-columns: 1fr;
   }
 
-  .share-card-full {
+  .share-card-full,
+  .carbon-preview {
     grid-column: 1;
+    grid-row: auto;
   }
 
   .input-method-grid {

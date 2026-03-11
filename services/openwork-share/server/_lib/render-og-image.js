@@ -92,7 +92,7 @@ export function renderRootOgImage() {
     [
       { name: "Sales Inbound", kind: "Agent", meta: "v1.2.0", tone: "agent" },
       { name: "crm-sync", kind: "MCP", meta: "Remote MCP", tone: "mcp" },
-      { name: "follow-up-reminder", kind: "Skill", meta: "Trigger · daily", tone: "skill" },
+      { name: "meeting-reminder", kind: "Skill", meta: "Trigger · daily", tone: "skill" },
     ],
     [
       { label: "skills", value: 1 },
