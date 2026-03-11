@@ -521,45 +521,6 @@ export default function ShareHomeClient() {
 
           </div>
 
-          <aside className="preview-panel carbon-preview">
-            <div className="carbon-window">
-              <div className="carbon-titlebar">
-                <div className="carbon-dots">
-                  <span className="carbon-dot dot-close"></span>
-                  <span className="carbon-dot dot-minimize"></span>
-                  <span className="carbon-dot dot-expand"></span>
-                </div>
-                <span className="carbon-filename">
-                  {selectedEntries.length === 1
-                    ? selectedEntries[0].name
-                    : selectedEntries.length > 1
-                      ? `${selectedEntries.length} files`
-                      : pasteValue.trim()
-                        ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md")
-                        : "untitled"}
-                </span>
-              </div>
-              <div className="carbon-status-bar">{pasteState}</div>
-              <div className="carbon-editor-wrap">
-                <pre
-                  className="carbon-highlight"
-                  aria-hidden="true"
-                  dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
-                />
-                <textarea
-                  className="carbon-editor"
-                  value={pasteValue}
-                  onChange={handlePasteChange}
-                  placeholder="Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
-                  spellCheck={false}
-                />
-              </div>
-            </div>
-            <div className="paste-meta">
-              <span>{pasteCountLabel}</span>
-            </div>
-          </aside>
-
           <div className="share-actions-bar share-card-full" aria-live="polite">
             <div className={`package-status severity-${packageStatus.severity}`}>
               <span className="package-status-dot"></span>
@@ -600,6 +561,45 @@ export default function ShareHomeClient() {
               </button>
             )}
           </div>
+
+          <aside className="preview-panel carbon-preview">
+            <div className="carbon-window">
+              <div className="carbon-titlebar">
+                <div className="carbon-dots">
+                  <span className="carbon-dot dot-close"></span>
+                  <span className="carbon-dot dot-minimize"></span>
+                  <span className="carbon-dot dot-expand"></span>
+                </div>
+                <span className="carbon-filename">
+                  {selectedEntries.length === 1
+                    ? selectedEntries[0].name
+                    : selectedEntries.length > 1
+                      ? `${selectedEntries.length} files`
+                      : pasteValue.trim()
+                        ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md")
+                        : "untitled"}
+                </span>
+              </div>
+              <div className="carbon-status-bar">{pasteState}</div>
+              <div className="carbon-editor-wrap">
+                <pre
+                  className="carbon-highlight"
+                  aria-hidden="true"
+                  dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
+                />
+                <textarea
+                  className="carbon-editor"
+                  value={pasteValue}
+                  onChange={handlePasteChange}
+                  placeholder="# TODO  Paste AGENTS.md, SKILL.md, command markdown, or JSON/JSONC config content here."
+                  spellCheck={false}
+                />
+              </div>
+              <div className="carbon-footer">
+                <span>{pasteCountLabel}</span>
+              </div>
+            </div>
+          </aside>
         </div>
     </section>
   );

@@ -380,10 +380,9 @@ a {
 
 .share-cards-grid {
   display: grid;
-  grid-template-columns: 7fr 3fr;
-  grid-template-rows: auto 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1.1fr);
+  grid-template-rows: 1fr auto;
   gap: 18px;
-  flex: 1;
 }
 
 .share-card {
@@ -392,12 +391,13 @@ a {
 }
 
 .share-card-full {
-  grid-column: 2;
-  grid-row: 1;
+  grid-column: 1;
+  grid-row: 2;
 }
 
 .carbon-preview {
-  grid-column: 1 / -1;
+  grid-column: 2;
+  grid-row: 1 / -1;
 }
 
 .share-actions-bar {
@@ -434,12 +434,13 @@ a {
 }
 
 .carbon-window {
-  border-radius: 12px;
+  border-radius: 18px;
   background: #151718;
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
   display: flex;
   flex-direction: column;
   flex: 1;
+  overflow: hidden;
 }
 
 .carbon-titlebar {
@@ -531,12 +532,22 @@ a {
 }
 
 .carbon-editor::placeholder {
-  color: rgba(255, 255, 255, 0.2);
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.2);
+  color: rgba(227, 150, 62, 0.5);
+  -webkit-text-fill-color: rgba(227, 150, 62, 0.5);
 }
 
 .carbon-editor:focus {
   outline: none;
+}
+
+.carbon-footer {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  background: #252526;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  border-radius: 0 0 18px 18px;
 }
 
 /* Syntax highlighting — typed-language palette */
@@ -604,10 +615,6 @@ a {
   font-style: italic;
 }
 
-.carbon-preview .paste-meta {
-  color: rgba(255, 255, 255, 0.55);
-  font-size: 12px;
-}
 
 .package-card-header,
 .preview-panel-header {
@@ -648,39 +655,12 @@ a {
   padding: 0.15em 0.4em;
   border-radius: 4px;
   font-size: 0.88em;
-  font-weight: 600;
+  font-weight: 500;
   border: 1px solid transparent;
   white-space: nowrap;
-}
-
-.token-agent {
-  color: #9a3412;
-  background: rgba(249, 115, 22, 0.12);
-  border-color: rgba(249, 115, 22, 0.24);
-}
-
-.token-skill {
-  color: #1d4ed8;
-  background: rgba(37, 99, 235, 0.12);
-  border-color: rgba(37, 99, 235, 0.24);
-}
-
-.token-mcp {
-  color: #0f766e;
-  background: rgba(15, 159, 127, 0.12);
-  border-color: rgba(15, 159, 127, 0.24);
-}
-
-.token-command {
-  color: #6d28d9;
-  background: rgba(139, 92, 246, 0.12);
-  border-color: rgba(139, 92, 246, 0.24);
-}
-
-.token-config {
-  color: #334155;
-  background: rgba(71, 85, 105, 0.1);
-  border-color: rgba(71, 85, 105, 0.18);
+  color: var(--ow-muted);
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.14);
 }
 
 .selection-item {
@@ -1052,7 +1032,7 @@ a {
 
 .included-list {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 10px;
 }
 
@@ -1291,6 +1271,10 @@ button.included-item {
   .carbon-preview {
     grid-column: 1;
     grid-row: auto;
+  }
+
+  .carbon-preview {
+    min-height: 300px;
   }
 
   .input-method-grid {
