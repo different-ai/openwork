@@ -791,7 +791,7 @@ pub fn orchestrator_start_detached(
         );
     }
 
-    let (mut command, command_label) = match app.shell().sidecar("openwork-orchestrator") {
+    let (command, command_label) = match app.shell().sidecar("openwork-orchestrator") {
         Ok(command) => (command, "sidecar:openwork-orchestrator".to_string()),
         Err(_) => (app.shell().command("openwork"), "path:openwork".to_string()),
     };
