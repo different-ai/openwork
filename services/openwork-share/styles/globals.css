@@ -474,11 +474,20 @@ a {
 }
 
 .preview-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
   font-weight: 500;
   color: #94a3b8;
   font-family: var(--ow-mono);
   letter-spacing: 0.02em;
+}
+
+.preview-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .preview-editor-wrap {
@@ -1021,34 +1030,54 @@ a {
   pointer-events: none;
 }
 
-.clipboard-tile {
-  display: grid;
-  align-content: center;
-  justify-items: center;
-  gap: 14px;
-  min-height: 220px;
-  padding: 32px 24px;
-  text-align: center;
-  border-radius: 24px;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  background: rgba(248, 250, 252, 0.84);
-  color: var(--ow-ink);
+.clipboard-egg-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #64748b;
   cursor: pointer;
-  transition: border-color 300ms var(--ow-ease), background-color 300ms var(--ow-ease), transform 300ms var(--ow-ease);
+  transition: background-color 300ms var(--ow-ease), color 300ms var(--ow-ease);
 }
 
-.clipboard-tile:disabled {
-  cursor: progress;
-  opacity: 0.7;
+.clipboard-egg-button:hover {
+  background: rgba(100, 116, 139, 0.08);
 }
 
-.clipboard-tile:focus-visible {
-  outline: 2px solid rgba(36, 99, 235, 0.24);
-  outline-offset: 3px;
+.clipboard-egg-inline {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: currentColor;
 }
 
-.clipboard-icon {
-  color: #475569;
+.clipboard-egg-inline:hover {
+  background: rgba(100, 116, 139, 0.08);
+}
+
+.preview-copy-button {
+  color: currentColor;
+}
+
+.preview-copy-button:hover {
+  color: currentColor;
+}
+
+.clipboard-egg-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.clipboard-egg-inline svg {
+  width: 12px;
+  height: 12px;
 }
 
 .drop-icon {
@@ -1122,8 +1151,16 @@ a {
   min-width: 0;
 }
 
-.included-section h4 {
+.included-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 12px;
+}
+
+.included-section h4 {
+  margin: 0;
   font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -1501,8 +1538,7 @@ button.included-item {
     gap: 8px;
   }
 
-  .drop-zone,
-  .clipboard-tile {
+  .drop-zone {
     min-height: 100px;
   }
 }

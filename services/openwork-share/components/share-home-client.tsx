@@ -246,6 +246,7 @@ export default function ShareHomeClient() {
   const [busyMode, setBusyMode] = useState<BusyMode>(null);
   const [dropActive, setDropActive] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
+  const [previewCopied, setPreviewCopied] = useState(false);
   const [pasteState, setPasteState] = useState(DEFAULT_STATUS);
   const requestIdRef = useRef<number>(0);
 
@@ -283,6 +284,7 @@ export default function ShareHomeClient() {
     selectedEntryName: selectedEntries[0]?.name ?? null,
     hasPastedContent: hasPastedSkill,
   });
+  const previewCopyValue = showBaseline ? BASELINE_EXAMPLE : pasteValue;
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -385,6 +387,7 @@ export default function ShareHomeClient() {
   };
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const publishBundle = async () => {
     if (!effectiveEntries.length || busy) return;
@@ -439,6 +442,22 @@ export default function ShareHomeClient() {
       setCopyState("ready-not-copied");
       copyTimerRef.current = null;
     }, 800);
+  };
+
+  const copyPreviewText = async () => {
+    try {
+      await navigator.clipboard.writeText(previewCopyValue);
+      setPreviewCopied(true);
+      setPasteState("Copied preview to clipboard.");
+    } catch {
+      setPasteState("Clipboard access was blocked.");
+    }
+
+    if (previewCopyTimerRef.current) clearTimeout(previewCopyTimerRef.current);
+    previewCopyTimerRef.current = setTimeout(() => {
+      setPreviewCopied(false);
+      previewCopyTimerRef.current = null;
+    }, 300);
   };
 
   return (
@@ -514,32 +533,34 @@ export default function ShareHomeClient() {
               </label>
 
               <div className="included-section">
-                <h4>Example contents</h4>
-                <div className="included-list">
-                  {exampleItems.map((item) => {
-                    const isActive = activeExampleName === item.name;
-                    const isDimmed = Boolean(activeExampleName) && !isActive;
-                    return (
-                      <button
-                        type="button"
-                        className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
-                        key={`${item.kind}-${item.name}`}
-                        onClick={() => {
-                          setPasteValue(isActive ? "" : item.example!);
-                          setSelectedEntries([]);
-                          resetFormState();
-                          setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
-                        }}
-                      >
-                        <div className={`item-dot ${toneClass(item)}`}></div>
-                        <div className="item-text">
-                          <span className="item-title">{item.name || "Unnamed item"}</span>
-                          <span className="item-meta">{item.meta || item.kind || "Item"}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
+                <div className="included-section-header">
+                  <h4>Example contents</h4>
                 </div>
+                  <div className="included-list">
+                    {exampleItems.map((item) => {
+                      const isActive = activeExampleName === item.name;
+                      const isDimmed = Boolean(activeExampleName) && !isActive;
+                      return (
+                        <button
+                          type="button"
+                          className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
+                          key={`${item.kind}-${item.name}`}
+                          onClick={() => {
+                            setPasteValue(isActive ? "" : item.example!);
+                            setSelectedEntries([]);
+                            resetFormState();
+                            setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
+                          }}
+                        >
+                          <div className={`item-dot ${toneClass(item)}`}></div>
+                          <div className="item-text">
+                            <span className="item-title">{item.name || "Unnamed item"}</span>
+                            <span className="item-meta">{item.meta || item.kind || "Item"}</span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
               </div>
             </div>
 
@@ -599,10 +620,30 @@ export default function ShareHomeClient() {
             <div className="preview-surface">
               <div className="preview-header">
                 <span className="preview-eyebrow">Preview</span>
-                <span className="preview-filename">
-                  <span className={`preview-filename-dot ${fileItems[0] ? toneClass(fileItems[0]) : "dot-pending"}`} />
-                  {previewFilename}
-                </span>
+                <div className="preview-header-actions">
+                  <span className="preview-filename">
+                    <span className={`preview-filename-dot ${fileItems[0] ? toneClass(fileItems[0]) : "dot-pending"}`} />
+                    {previewFilename}
+                    <button
+                      type="button"
+                      className="clipboard-egg-button preview-copy-button clipboard-egg-inline"
+                      title="Copy preview"
+                      aria-label="Copy preview"
+                      onClick={() => void copyPreviewText()}
+                    >
+                      {previewCopied ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                      )}
+                    </button>
+                  </span>
+                </div>
               </div>
               <div className="preview-editor-wrap">
                 <pre
