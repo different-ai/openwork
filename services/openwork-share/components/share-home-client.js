@@ -171,6 +171,7 @@ export default function ShareHomeClient() {
   const [dropActive, setDropActive] = useState(false);
   const [copyState, setCopyState] = useState("ready-not-copied");
   const [pasteState, setPasteState] = useState("Paste markdown or JSON/JSONC config text and we will package it like a dropped file.");
+  const [activeExample, setActiveExample] = useState(null);
   const requestIdRef = useRef(0);
 
   const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
@@ -183,7 +184,11 @@ export default function ShareHomeClient() {
 
   const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
   const highlightedPaste = useMemo(() => highlightSyntax(pasteValue), [pasteValue]);
-  const visibleItems = useMemo(() => getPreviewItems(preview), [preview]);
+  const visibleItems = useMemo(
+    () => activeExample ? getPreviewItems(null) : getPreviewItems(preview),
+    [preview, activeExample]
+  );
+  const hasRealFiles = !activeExample && Boolean(preview?.items?.length);
   const publishWarnings = useMemo(() => getPublishWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
   const publishedWarnings = useMemo(() => getPublishedWarnings({ generatedUrl, warnings }), [generatedUrl, warnings]);
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
@@ -262,6 +267,7 @@ export default function ShareHomeClient() {
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
+    setActiveExample(null);
   };
 
   const handlePasteChange = (event) => {
@@ -270,6 +276,7 @@ export default function ShareHomeClient() {
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
+    setActiveExample(null);
     setPasteState(
       event.target.value.trim()
         ? "Preview the pasted content, then generate a share link."
@@ -416,45 +423,45 @@ export default function ShareHomeClient() {
               </label>
 
               <div className="included-section">
-                <h4>{preview?.items?.length ? "Included" : "Example contents"}</h4>
+                <h4>{hasRealFiles ? "Files" : "Example contents"}</h4>
                 <div className="included-list">
-                  {visibleItems.map((item) => (
-                    <button
-                      type="button"
-                      className="included-item"
-                      key={`${item.kind}-${item.name}`}
-                      disabled={!item.example}
-                      onClick={() => {
-                        if (!item.example) return;
-                        setPasteValue(item.example);
-                        setSelectedEntries([]);
-                        setGeneratedUrl("");
-                        setWarnings([]);
-                        setCopyState("ready-not-copied");
-                        setPasteState(`Loaded "${item.name}" example. Preview is ready.`);
-                      }}
-                    >
-                      <div className={`item-dot ${toneClass(item)}`}></div>
-                      <div className="item-text">
-                        <span className="item-title">{item.name || "Unnamed item"}</span>
-                        <span className="item-meta">{item.meta || item.kind || "Item"}</span>
-                      </div>
-                    </button>
-                  ))}
+                  {visibleItems.map((item) => {
+                    const isExample = Boolean(item.example);
+                    const isActive = activeExample === item.name;
+                    const isDimmed = isExample && activeExample && !isActive;
+                    return (
+                      <button
+                        type="button"
+                        className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
+                        key={`${item.kind}-${item.name}`}
+                        disabled={!isExample}
+                        onClick={() => {
+                          if (!isExample) return;
+                          setActiveExample(isActive ? null : item.name);
+                          setPasteValue(isActive ? "" : item.example);
+                          setSelectedEntries([]);
+                          setGeneratedUrl("");
+                          setWarnings([]);
+                          setCopyState("ready-not-copied");
+                          setPasteState(
+                            isActive
+                              ? "Paste markdown or JSON/JSONC config text and we will package it like a dropped file."
+                              : `Loaded "${item.name}" example. Preview is ready.`
+                          );
+                        }}
+                      >
+                        <div className={`item-dot ${toneClass(item)}`}></div>
+                        <div className="item-text">
+                          <span className="item-title">{item.name || "Unnamed item"}</span>
+                          <span className="item-meta">{item.meta || item.kind || "Item"}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            {effectiveEntries.length ? (
-              <div className="selection-list">
-                {effectiveEntries.slice(0, 4).map((entry) => (
-                  <div className="selection-item" key={entry.path || entry.name}>
-                    <span className="selection-item-name">{entry.name || entry.path}</span>
-                    <span className="selection-item-path mono">{entry.path || entry.name}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
           </div>
 
           <aside className="preview-panel carbon-preview">

@@ -1027,6 +1027,20 @@ button.included-item {
   background: rgba(240, 247, 255, 0.95);
 }
 
+.included-item.is-active {
+  border-color: rgba(37, 99, 235, 0.5);
+  background: rgba(240, 247, 255, 0.98);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+.included-item.is-dimmed {
+  opacity: 0.4;
+}
+
+.included-item.is-dimmed:hover {
+  opacity: 0.75;
+}
+
 .included-item:disabled {
   cursor: default;
 }
