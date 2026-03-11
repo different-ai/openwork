@@ -28,6 +28,16 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
     | { kind: "model"; opt: ModelOption }
     | { kind: "provider"; providerID: string; title: string; matchCount: number };
 
+  type RenderedItemWithIndex = { item: RenderedItem; index: number };
+
+  function isModelItem(entry: RenderedItemWithIndex): entry is { item: { kind: "model"; opt: ModelOption }; index: number } {
+    return entry.item.kind === "model";
+  }
+
+  function isProviderItem(entry: RenderedItemWithIndex): entry is { item: { kind: "provider"; providerID: string; title: string; matchCount: number }; index: number } {
+    return entry.item.kind === "provider";
+  }
+
   const [activeIndex, setActiveIndex] = createSignal(0);
   const optionRefs: HTMLButtonElement[] = [];
 
@@ -76,14 +86,14 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
   const enabledOptions = createMemo(() =>
     renderedItems()
       .map((item, index) => ({ item, index }))
-      .filter((entry) => entry.item.kind === "model")
+      .filter(isModelItem)
       .map((entry) => ({ opt: entry.item.opt, index: entry.index })),
   );
 
   const otherOptions = createMemo(() =>
     renderedItems()
       .map((item, index) => ({ item, index }))
-      .filter((entry) => entry.item.kind === "provider")
+      .filter(isProviderItem)
       .map((entry) => ({
         providerID: entry.item.providerID,
         title: entry.item.title,
