@@ -259,8 +259,8 @@ export default function ShareHomeClient() {
   );
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
   const selectionLabel = effectiveEntries.length
-    ? `${effectiveEntries.length} ${effectiveEntries.length === 1 ? "entry" : "entries"} ready`
-    : null;
+    ? `${preview?.items?.[0]?.kind ?? "File"} ready to share`
+    : "Drop files or paste a skill";
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -415,14 +415,13 @@ export default function ShareHomeClient() {
           <p className="hero-body">
             Package agents, skills, commands, and config files in seconds.
           </p>
-          <p className="hero-note">Secret-looking values stay out. Shareable config is checked before publish.</p>
         </div>
 
         <div className="share-cards-grid">
           <div className="package-card share-card surface-soft">
             <div className="package-card-header">
               <span className="surface-chip">Package once</span>
-              {selectionLabel && <div className="selection-badge">{selectionLabel}</div>}
+              <div className="selection-badge">{selectionLabel}</div>
             </div>
 
             <h2 className="simple-app-title">Create a share link</h2>
@@ -430,7 +429,8 @@ export default function ShareHomeClient() {
               Drop <span className="inline-token token-agent">AGENTS.md</span>,{" "}
               <span className="inline-token token-skill">SKILL.md</span>,{" "}
               <span className="inline-token token-mcp">mcp.json</span>, or{" "}
-              <span className="inline-token token-config">config</span> files, preview and share them with others.
+              <span className="inline-token token-config">config</span> files,
+              <span style={{ display: "block" }}>we remove the <span style={{ textDecoration: "line-through", opacity: 0.5 }}>secrets</span>, so share with others more easily.</span>
             </p>
 
             <div className="input-method-grid">
@@ -464,15 +464,15 @@ export default function ShareHomeClient() {
                   onChange={(event) => assignEntries(event.target.files)}
                 />
                 <div className="drop-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                    <polyline points="17 8 12 3 7 8"></polyline>
-                    <line x1="12" y1="3" x2="12" y2="15"></line>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path>
+                    <path d="M7 9l5-5 5 5"></path>
+                    <path d="M12 4v12"></path>
                   </svg>
                 </div>
                 <div className="drop-text">
-                  <h3>Drop files</h3>
-                  <p>Browse local files</p>
+                  <p className="drop-heading">Drag &amp; drop files here</p>
+                  <p className="drop-hint">or <span className="drop-browse">browse</span> to upload</p>
                 </div>
               </label>
 

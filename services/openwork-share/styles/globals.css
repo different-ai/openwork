@@ -960,27 +960,29 @@ a {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  border: 1px dashed rgba(148, 163, 184, 0.42);
-  border-radius: 24px;
-  padding: 24px;
+  gap: 14px;
+  border: 2px dashed rgba(148, 163, 184, 0.3);
+  border-radius: 20px;
+  padding: 32px 24px;
   text-align: center;
-  background: rgba(255, 255, 255, 0.72);
+  background: linear-gradient(180deg, rgba(248, 250, 252, 0.6), rgba(241, 245, 249, 0.4));
   cursor: pointer;
-  min-height: 120px;
-  flex-direction: row;
 }
 
 .drop-zone:hover,
-.drop-zone.is-dragover,
-.clipboard-tile:hover {
-  border-color: rgba(37, 99, 235, 0.4);
-  background: rgba(240, 247, 255, 0.95);
+.drop-zone.is-dragover {
+  border-color: rgba(37, 99, 235, 0.45);
+  background: linear-gradient(180deg, rgba(239, 246, 255, 0.9), rgba(219, 234, 254, 0.5));
+}
+
+.drop-zone.is-dragover {
+  transform: scale(1.01);
 }
 
 .drop-zone[aria-busy="true"] {
   cursor: progress;
-  opacity: 0.7;
+  opacity: 0.6;
+  pointer-events: none;
 }
 
 .clipboard-tile {
@@ -1015,32 +1017,63 @@ a {
 
 .drop-icon {
   display: flex;
-  width: 52px;
-  height: 52px;
+  width: 48px;
+  height: 48px;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  color: rgba(100, 116, 139, 0.7);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.drop-zone:hover .drop-icon,
+.drop-zone.is-dragover .drop-icon {
+  color: #3b82f6;
   background: #ffffff;
-  color: #2563eb;
-  box-shadow: 0 8px 20px -14px rgba(15, 23, 42, 0.22);
+  box-shadow: 0 4px 12px -4px rgba(59, 130, 246, 0.25);
 }
 
 .drop-icon svg {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
 }
 
-.drop-text h3,
+.drop-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.drop-heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ow-ink);
+}
+
+.drop-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ow-muted);
+}
+
+.drop-browse {
+  color: #3b82f6;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: rgba(59, 130, 246, 0.3);
+  text-underline-offset: 2px;
+}
+
+.drop-zone:hover .drop-browse {
+  text-decoration-color: rgba(59, 130, 246, 0.6);
+}
+
 .included-section h4 {
   margin: 0;
 }
 
-.drop-text h3 {
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.drop-text p,
 .paste-meta,
 .status-area {
   margin: 0;
