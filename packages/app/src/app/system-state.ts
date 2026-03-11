@@ -109,7 +109,7 @@ export function createSystemState(options: {
 
   const anyActiveRuns = createMemo(() => {
     const statuses = options.sessionStatusById();
-    return options.sessions().some((s) => statuses[s.id] === "running" || statuses[s.id] === "retry");
+    return options.sessions().some((s) => statuses[s.id] === "running");
   });
 
   function clearOpenworkLocalStorage() {

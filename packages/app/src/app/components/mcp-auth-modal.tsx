@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import { CheckCircle2, Loader2, RefreshCcw, X } from "lucide-solid";
 import Button from "./button";
 import TextInput from "./text-input";
@@ -12,6 +12,7 @@ import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
+const MCP_AUTH_DISCOVERY_TIMEOUT_MS = 15_000;
 
 export type McpAuthModalProps = {
   open: boolean;
@@ -20,11 +21,13 @@ export type McpAuthModalProps = {
   onReloadEngine?: () => void | Promise<void>;
   reloadRequired?: boolean;
   reloadBlocked?: boolean;
+  activeSessions?: Array<{ id: string; title: string }>;
   isRemoteWorkspace?: boolean;
   client: Client | null;
   entry: McpDirectoryInfo | null;
   projectDir: string;
   language: Language;
+  onForceStopSession?: (sessionID: string) => void | Promise<void>;
 };
 
 export default function McpAuthModal(props: McpAuthModalProps) {
@@ -52,6 +55,10 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   const [cliAuthResult, setCliAuthResult] = createSignal<string | null>(null);
   const [authUrlCopied, setAuthUrlCopied] = createSignal(false);
   const [resolvedDir, setResolvedDir] = createSignal("");
+  const [awaitingReload, setAwaitingReload] = createSignal(false);
+  const [reloadStarting, setReloadStarting] = createSignal(false);
+  const [reloadSatisfied, setReloadSatisfied] = createSignal(false);
+  const [forceStopBusySessionID, setForceStopBusySessionID] = createSignal<string | null>(null);
 
   let statusPoll: number | null = null;
   let authCopyTimeout: number | null = null;
@@ -142,6 +149,18 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     }
   };
 
+  const resolveSlug = (name: string) => validateMcpServerName(name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+  const waitForMcpAvailability = async (slug: string) => {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < MCP_AUTH_DISCOVERY_TIMEOUT_MS) {
+      const status = await fetchMcpStatus(slug);
+      if (status) return status;
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+    }
+    return null;
+  };
+
   const startStatusPolling = (slug: string) => {
     if (typeof window === "undefined") return;
     stopStatusPolling();
@@ -172,8 +191,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
     let slug = "";
     try {
-      const safeName = validateMcpServerName(entry.name);
-      slug = safeName.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      slug = resolveSlug(entry.name);
     } catch (err) {
       const message = err instanceof Error ? err.message : translate("mcp.auth.failed_to_start_oauth");
       setError(message);
@@ -204,7 +222,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       }
 
       const statusEntry = await fetchMcpStatus(slug);
-      if (props.reloadRequired && !statusEntry) {
+      if (props.reloadRequired && !reloadSatisfied() && !statusEntry) {
         setNeedsReload(true);
         setReloadNotice(
           props.reloadBlocked
@@ -272,7 +290,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
           return;
         }
 
-        if (props.reloadRequired) {
+        if (props.reloadRequired && !reloadSatisfied()) {
           setReloadNotice(
             props.reloadBlocked
               ? translate("mcp.auth.reload_blocked")
@@ -336,9 +354,17 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   // Start the OAuth flow when modal opens with an entry
   createEffect(
     on(
-      () => [props.open, props.entry, props.client] as const,
-      ([isOpen, entry, client]) => {
+      () => [props.open, props.entry, props.client, props.reloadRequired] as const,
+      ([isOpen, entry, client, reloadRequired], previous) => {
         if (!isOpen || !entry || !client) {
+          return;
+        }
+        const previousEntry = previous?.[1];
+        if (!previous || previousEntry?.name !== entry.name || !previous?.[0]) {
+          setReloadSatisfied(false);
+        }
+        if (reloadRequired && !reloadSatisfied()) {
+          setAwaitingReload(true);
           return;
         }
         // Only start auth on initial open, not on every prop change
@@ -347,6 +373,47 @@ export default function McpAuthModal(props: McpAuthModalProps) {
       { defer: true } // Defer to avoid double-firing on mount
     )
   );
+
+  createEffect(() => {
+    if (!props.open || !awaitingReload()) return;
+    if (props.reloadBlocked) return;
+    const reloadEngine = props.onReloadEngine;
+    const entry = props.entry;
+    if (!reloadEngine || !entry || reloadStarting()) return;
+
+    void (async () => {
+      setReloadStarting(true);
+      setError(null);
+      setNeedsReload(false);
+      setReloadNotice(null);
+      try {
+        await reloadEngine();
+        if (!props.open) return;
+        const slug = resolveSlug(entry.name);
+        const status = await waitForMcpAvailability(slug);
+        if (!status) {
+          setAwaitingReload(false);
+          setNeedsReload(true);
+          setReloadNotice(
+            props.reloadBlocked
+              ? translate("mcp.auth.reload_blocked")
+              : translate("mcp.auth.reload_notice")
+          );
+          return;
+        }
+        setReloadSatisfied(true);
+        setAwaitingReload(false);
+        startAuth(false, false);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : translate("mcp.auth.reload_failed");
+        setAwaitingReload(false);
+        setNeedsReload(true);
+        setError(message);
+      } finally {
+        setReloadStarting(false);
+      }
+    })();
+  });
 
   const handleRetry = () => {
     startAuth(true);
@@ -366,6 +433,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     startAuth(true);
   };
 
+  const handleForceStopSession = async (sessionID: string) => {
+    if (!props.onForceStopSession || forceStopBusySessionID()) return;
+    setForceStopBusySessionID(sessionID);
+    try {
+      await props.onForceStopSession(sessionID);
+    } finally {
+      setForceStopBusySessionID(null);
+    }
+  };
+
   const handleClose = () => {
     setError(null);
     setLoading(false);
@@ -379,11 +456,16 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     setReloadNotice(null);
     setCliAuthBusy(false);
     setCliAuthResult(null);
+    setAwaitingReload(false);
+    setReloadStarting(false);
+    setReloadSatisfied(false);
+    setForceStopBusySessionID(null);
     stopStatusPolling();
     props.onClose();
   };
 
   const isBusy = () => loading() || statusChecking() || manualAuthBusy();
+  const isPreparingReload = () => awaitingReload() || reloadStarting();
 
   const parseAuthCode = (value: string) => {
     const trimmed = value.trim();
@@ -562,6 +644,49 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
+            <Show when={!isBusy() && isPreparingReload()}>
+              <div class="rounded-xl border border-amber-6/60 bg-amber-2/40 px-5 py-6 text-center space-y-4">
+                <div class="flex items-center justify-center">
+                  <Loader2 size={32} class="animate-spin text-amber-11" />
+                </div>
+                <div class="space-y-2">
+                  <p class="text-sm font-medium text-gray-12">
+                    {props.reloadBlocked
+                      ? translate("mcp.auth.waiting_for_conversation_title")
+                      : translate("mcp.auth.applying_changes_title")}
+                  </p>
+                  <p class="text-xs text-gray-10">
+                    {props.reloadBlocked
+                      ? translate("mcp.auth.waiting_for_conversation_body")
+                      : translate("mcp.auth.applying_changes_body")}
+                  </p>
+                </div>
+                <Show when={props.reloadBlocked && (props.activeSessions?.length ?? 0) > 0}>
+                  <div class="space-y-2 text-left">
+                    <For each={props.activeSessions ?? []}>
+                      {(session) => (
+                        <div class="flex items-center justify-between gap-3 rounded-lg border border-amber-6/50 bg-amber-1/40 px-3 py-2">
+                          <span class="text-xs text-gray-11">
+                            {translate("mcp.auth.waiting_for_session", { session: session.title })}
+                          </span>
+                          <button
+                            type="button"
+                            class="text-xs text-amber-11 underline underline-offset-2 hover:text-amber-12 transition-colors disabled:no-underline disabled:opacity-60"
+                            onClick={() => handleForceStopSession(session.id)}
+                            disabled={forceStopBusySessionID() === session.id}
+                          >
+                            {forceStopBusySessionID() === session.id
+                              ? translate("mcp.auth.force_stopping")
+                              : translate("mcp.auth.force_stop")}
+                          </button>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            </Show>
+
             <Show when={!isBusy() && alreadyConnected()}>
               <div class="bg-green-7/10 border border-green-7/20 rounded-xl p-5 space-y-4">
                 <div class="flex items-center gap-3">
@@ -719,7 +844,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
               </div>
             </Show>
 
-            <Show when={!isBusy() && !error() && !reloadNotice() && !alreadyConnected()}>
+            <Show when={!isBusy() && !isPreparingReload() && !error() && !reloadNotice() && !alreadyConnected()}>
               <div class="space-y-4">
                 <div class="flex items-start gap-3">
                   <div class="flex-shrink-0 w-6 h-6 rounded-full bg-gray-4 flex items-center justify-center text-xs font-medium text-gray-11">
