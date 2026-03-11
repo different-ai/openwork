@@ -25,7 +25,6 @@ import {
   RefreshCw,
   Settings2,
   Unplug,
-  Users,
   Zap,
 } from "lucide-solid";
 import { currentLocale, t, type Language } from "../../i18n";
@@ -97,7 +96,6 @@ const serviceIcon = (name: string) => {
   if (lower.includes("linear")) return Zap;
   if (lower.includes("sentry")) return CircleAlert;
   if (lower.includes("stripe")) return CreditCard;
-  if (lower.includes("hubspot")) return Users;
   if (lower.includes("context")) return Globe;
   if (lower.includes("chrome") || lower.includes("devtools")) return MonitorSmartphone;
   return Plug2;
@@ -109,7 +107,6 @@ const serviceColor = (name: string) => {
   if (lower.includes("linear")) return "text-blue-11";
   if (lower.includes("sentry")) return "text-purple-11";
   if (lower.includes("stripe")) return "text-blue-11";
-  if (lower.includes("hubspot")) return "text-orange-11";
   if (lower.includes("context")) return "text-green-11";
   if (lower.includes("chrome") || lower.includes("devtools")) return "text-amber-11";
   return "text-dls-secondary";
@@ -121,7 +118,6 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("linear")) return "bg-blue-3 border-blue-6";
   if (lower.includes("sentry")) return "bg-purple-3 border-purple-6";
   if (lower.includes("stripe")) return "bg-blue-3 border-blue-6";
-  if (lower.includes("hubspot")) return "bg-orange-3 border-orange-6";
   if (lower.includes("context")) return "bg-green-3 border-green-6";
   if (lower.includes("chrome") || lower.includes("devtools")) return "bg-amber-3 border-amber-6";
   return "bg-dls-hover border-dls-border";
