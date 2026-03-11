@@ -5,7 +5,7 @@ import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, sta
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -830,6 +830,84 @@ async function isExecutable(path: string): Promise<boolean> {
   }
 }
 
+async function readPathHelperPaths(): Promise<string[]> {
+  if (process.platform !== "darwin") return [];
+  return await new Promise((resolve) => {
+    const child = spawnProcess("/usr/libexec/path_helper", ["-s"], { stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", () => resolve([]));
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      const match = stdout.match(/PATH="([^"]+)"/) ?? stdout.match(/PATH=([^;\n]+)/);
+      if (!match) {
+        resolve([]);
+        return;
+      }
+      resolve(match[1].split(":").filter(Boolean));
+    });
+  });
+}
+
+async function resolveDockerCandidates(): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+
+  for (const key of ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
+    const value = process.env[key];
+    if (value) push(value);
+  }
+
+  const addFromPath = (value?: string | null) => {
+    if (!value) return;
+    for (const dir of value.split(delimiter)) {
+      if (!dir.trim()) continue;
+      push(join(dir, "docker"));
+    }
+  };
+
+  addFromPath(process.env.PATH ?? "");
+
+  if (process.platform === "darwin") {
+    const helperPaths = await readPathHelperPaths();
+    for (const dir of helperPaths) {
+      push(join(dir, "docker"));
+    }
+  }
+
+  for (const raw of [
+    "/opt/homebrew/bin/docker",
+    "/usr/local/bin/docker",
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+  ]) {
+    push(raw);
+  }
+
+  const valid: string[] = [];
+  for (const candidate of out) {
+    if (await isExecutable(candidate)) {
+      valid.push(candidate);
+    }
+  }
+  return valid;
+}
+
+async function resolveDockerCommand(): Promise<string> {
+  const candidates = await resolveDockerCandidates();
+  return candidates[0] ?? "docker";
+}
+
 async function ensureWorkspace(workspace: string): Promise<string> {
   const resolved = resolve(workspace);
   await mkdir(resolved, { recursive: true });
@@ -1100,7 +1178,8 @@ async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMod
     if (containerOk) return "container";
   }
 
-  const dockerOk = await probeCommand("docker", ["version"]);
+  const dockerCommand = await resolveDockerCommand();
+  const dockerOk = await probeCommand(dockerCommand, ["version"]);
   if (dockerOk) return "docker";
 
   const containerOk = await probeCommand("container", ["--version"]);
@@ -2858,10 +2937,10 @@ async function opencodeRouterSupportsOpencodeUrl(bin: string): Promise<boolean> 
   });
 }
 
-async function stopDockerContainer(name: string): Promise<void> {
+async function stopDockerContainer(name: string, dockerCommand: string): Promise<void> {
   if (!name.trim()) return;
   await new Promise<void>((resolve) => {
-    const child = spawnProcess("docker", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
+    const child = spawnProcess(dockerCommand, ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
     child.on("error", () => resolve());
     child.on("exit", () => resolve());
   });
@@ -3089,6 +3168,7 @@ async function writeSandboxEntrypoint(options: {
 
 async function startDockerSandbox(options: {
   image: string;
+  dockerCommand: string;
   containerName: string;
   workspace: string;
   persistDir: string;
@@ -3202,7 +3282,15 @@ async function startDockerSandbox(options: {
   const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
   args.push(options.image, "sh", scriptInContainer);
 
-  const child = spawnProcess("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+  options.logger.debug("sandbox: docker run", {
+    dockerCommand: options.dockerCommand,
+    args,
+    containerName: options.containerName,
+    workspace: options.workspace,
+    persistDir: options.persistDir,
+  });
+
+  const child = spawnProcess(options.dockerCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
   prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
 
@@ -5083,8 +5171,12 @@ async function runStart(args: ParsedArgs) {
       opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
     }
   }
+  const dockerCommand = sandboxMode === "docker" ? await resolveDockerCommand() : null;
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sandbox: ${sandboxMode}`);
+  if (dockerCommand) {
+    logVerbose(`docker bin: ${dockerCommand}`);
+  }
   if (sandboxMode !== "none") {
     logVerbose(`sandbox image: ${sandboxImage}`);
     logVerbose(`sandbox persist dir: ${sandboxPersistDir}`);
@@ -5112,9 +5204,9 @@ async function runStart(args: ParsedArgs) {
 
   if (sandboxMode !== "none") {
     if (sandboxMode === "docker") {
-      if (!(await probeCommand("docker", ["version"]))) {
+      if (!(await probeCommand(dockerCommand ?? "docker", ["version"]))) {
         throw new Error(
-          "Docker is required for --sandbox docker. Install Docker Desktop and ensure 'docker' is on PATH.",
+          `Docker is required for --sandbox docker. Install Docker Desktop and ensure '${dockerCommand ?? "docker"}' is available.`,
         );
       }
     }
@@ -5447,51 +5539,96 @@ async function runStart(args: ParsedArgs) {
       const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
       sandboxContainerName = containerName;
 
-      sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
+      sandboxStop =
+        sandboxMode === "container"
+          ? stopAppleContainer
+          : (name: string) => stopDockerContainer(name, dockerCommand ?? "docker");
       sandboxStopCommand = sandboxMode === "container" ? "container stop" : "docker stop";
       const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
-      const runner = sandboxMode === "container" ? startAppleContainerSandbox : startDockerSandbox;
-      const sandboxChild = await runner({
-        image: sandboxImage,
-        containerName,
-        workspace: resolvedWorkspace,
-        persistDir: sandboxPersistDir,
-        opencodeConfigDir,
-        extraMounts: sandboxExtraMounts,
-        sidecars: {
-          opencode: opencodeBinary.bin,
-          openworkServer: openworkServerBinary.bin,
-          opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
-        },
-        ports: {
-          openwork: openworkPort,
-          // In sandbox mode, opencodeRouter is only reachable via openwork-server
-          // proxy (/opencode-router/*). Do not publish a separate host port.
-          opencodeRouterHealth: null,
-        },
-        opencode: {
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          username: opencodeUsername,
-          password: opencodePassword,
-          hotReload: opencodeHotReload,
-        },
-        openwork: {
-          token: openworkToken,
-          hostToken: openworkHostToken,
-          approvalMode: approvalMode === "auto" ? "auto" : "manual",
-          approvalTimeoutMs,
-          readOnly,
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          opencodeUsername,
-          opencodePassword,
-          logFormat,
-        },
-        runId,
-        logFormat,
-        detach: detachRequested,
-        logger,
-      });
+      const sandboxChild =
+        sandboxMode === "container"
+          ? await startAppleContainerSandbox({
+              image: sandboxImage,
+              containerName,
+              workspace: resolvedWorkspace,
+              persistDir: sandboxPersistDir,
+              opencodeConfigDir,
+              extraMounts: sandboxExtraMounts,
+              sidecars: {
+                opencode: opencodeBinary.bin,
+                openworkServer: openworkServerBinary.bin,
+                opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
+              },
+              ports: {
+                openwork: openworkPort,
+                // In sandbox mode, opencodeRouter is only reachable via openwork-server
+                // proxy (/opencode-router/*). Do not publish a separate host port.
+                opencodeRouterHealth: null,
+              },
+              opencode: {
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                username: opencodeUsername,
+                password: opencodePassword,
+                hotReload: opencodeHotReload,
+              },
+              openwork: {
+                token: openworkToken,
+                hostToken: openworkHostToken,
+                approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                approvalTimeoutMs,
+                readOnly,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                opencodeUsername,
+                opencodePassword,
+                logFormat,
+              },
+              runId,
+              logFormat,
+              detach: detachRequested,
+              logger,
+            })
+          : await startDockerSandbox({
+              image: sandboxImage,
+              dockerCommand: dockerCommand ?? "docker",
+              containerName,
+              workspace: resolvedWorkspace,
+              persistDir: sandboxPersistDir,
+              opencodeConfigDir,
+              extraMounts: sandboxExtraMounts,
+              sidecars: {
+                opencode: opencodeBinary.bin,
+                openworkServer: openworkServerBinary.bin,
+                opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
+              },
+              ports: {
+                openwork: openworkPort,
+                // In sandbox mode, opencodeRouter is only reachable via openwork-server
+                // proxy (/opencode-router/*). Do not publish a separate host port.
+                opencodeRouterHealth: null,
+              },
+              opencode: {
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                username: opencodeUsername,
+                password: opencodePassword,
+                hotReload: opencodeHotReload,
+              },
+              openwork: {
+                token: openworkToken,
+                hostToken: openworkHostToken,
+                approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                approvalTimeoutMs,
+                readOnly,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                opencodeUsername,
+                opencodePassword,
+                logFormat,
+              },
+              runId,
+              logFormat,
+              detach: detachRequested,
+              logger,
+            });
 
       sandboxCleanup = sandboxChild.cleanup;
       tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });

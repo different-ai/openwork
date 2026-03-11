@@ -249,7 +249,15 @@ export function createWorkspaceStore(options: {
   const [sandboxCreatePhase, setSandboxCreatePhase] = createSignal<SandboxCreatePhase>("idle");
 
   const [sandboxCreateProgress, setSandboxCreateProgress] = createSignal<SandboxCreateProgressState | null>(null);
-  const clearSandboxCreateProgress = () => setSandboxCreateProgress(null);
+  const [lastSandboxCreateProgress, setLastSandboxCreateProgress] =
+    createSignal<SandboxCreateProgressState | null>(null);
+  const clearSandboxCreateProgress = () => {
+    const snapshot = sandboxCreateProgress();
+    if (snapshot) {
+      setLastSandboxCreateProgress(snapshot);
+    }
+    setSandboxCreateProgress(null);
+  };
 
   const pushSandboxCreateLog = (line: string) => {
     const value = String(line ?? "").trim();
@@ -1581,6 +1589,10 @@ export function createWorkspaceStore(options: {
               const selected = String(payload.payload?.openworkDockerBin ?? "").trim();
               if (selected) {
                 pushSandboxCreateLog(`OPENWORK_DOCKER_BIN=${selected}`);
+              }
+              const resolved = String(payload.payload?.resolvedDockerBin ?? "").trim();
+              if (resolved) {
+                pushSandboxCreateLog(`Resolved docker: ${resolved}`);
               }
               const candidates = Array.isArray(payload.payload?.candidates)
                 ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
@@ -3182,6 +3194,7 @@ export function createWorkspaceStore(options: {
     setEngineInstallLogs,
     refreshSandboxDoctor,
     sandboxCreateProgress,
+    lastSandboxCreateProgress,
     clearSandboxCreateProgress,
     workspaceDebugEvents,
     clearWorkspaceDebugEvents,

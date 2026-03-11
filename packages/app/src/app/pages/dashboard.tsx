@@ -294,6 +294,7 @@ export type DashboardViewProps = {
   events: unknown;
   workspaceDebugEvents: unknown;
   sandboxCreateProgress: unknown;
+  sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -1379,6 +1380,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   events={props.events}
                   workspaceDebugEvents={props.workspaceDebugEvents}
                   sandboxCreateProgress={props.sandboxCreateProgress}
+                  sandboxCreateProgressLast={props.sandboxCreateProgressLast}
                   clearWorkspaceDebugEvents={props.clearWorkspaceDebugEvents}
                   safeStringify={props.safeStringify}
                   repairOpencodeMigration={props.repairOpencodeMigration}

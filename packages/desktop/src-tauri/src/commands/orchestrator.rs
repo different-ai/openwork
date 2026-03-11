@@ -775,6 +775,7 @@ pub fn orchestrator_start_detached(
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>();
+        let resolved = candidates.first().cloned();
         emit_sandbox_progress(
             &app,
             &sandbox_run_id,
@@ -782,6 +783,7 @@ pub fn orchestrator_start_detached(
             "Inspecting Docker configuration...",
             json!({
                 "candidates": candidates,
+                "resolvedDockerBin": resolved,
                 "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
                 "openwrkDockerBin": env::var("OPENWRK_DOCKER_BIN").ok(),
                 "dockerBin": env::var("DOCKER_BIN").ok(),
@@ -789,9 +791,9 @@ pub fn orchestrator_start_detached(
         );
     }
 
-    let command = match app.shell().sidecar("openwork-orchestrator") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("openwork"),
+    let (mut command, command_label) = match app.shell().sidecar("openwork-orchestrator") {
+        Ok(command) => (command, "sidecar:openwork-orchestrator".to_string()),
+        Err(_) => (app.shell().command("openwork"), "path:openwork".to_string()),
     };
 
     // Start a dedicated host stack for this workspace.
@@ -830,10 +832,36 @@ pub fn orchestrator_start_detached(
             str_args.push(arg.as_str());
         }
 
-        command
-            .args(str_args)
-            .spawn()
-            .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
+        emit_sandbox_progress(
+            &app,
+            &sandbox_run_id,
+            "spawn.config",
+            "Launching sandbox host...",
+            json!({
+                "command": command_label,
+                "args": args,
+                "env": {
+                    "PATH": env::var("PATH").ok(),
+                    "OPENWORK_DOCKER_BIN": env::var("OPENWORK_DOCKER_BIN").ok(),
+                    "OPENWRK_DOCKER_BIN": env::var("OPENWRK_DOCKER_BIN").ok(),
+                    "DOCKER_BIN": env::var("DOCKER_BIN").ok(),
+                }
+            }),
+        );
+
+        if let Err(err) = command.args(str_args).spawn() {
+            emit_sandbox_progress(
+                &app,
+                &sandbox_run_id,
+                "spawn.error",
+                "Failed to launch sandbox host.",
+                json!({
+                    "error": err.to_string(),
+                    "command": command_label,
+                }),
+            );
+            return Err(format!("Failed to start openwork orchestrator: {err}"));
+        }
         eprintln!(
             "[sandbox-create][at={}][runId={}][stage=spawn] launched openwork sidecar for detached sandbox host",
             now_ms(),

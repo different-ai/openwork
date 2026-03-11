@@ -114,6 +114,7 @@ export type SettingsViewProps = {
   events: unknown;
   workspaceDebugEvents: unknown;
   sandboxCreateProgress: unknown;
+  sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -754,17 +755,18 @@ export default function SettingsView(props: SettingsViewProps) {
   const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
 
   const sandboxCreateSummary = createMemo(() => {
-    const raw = props.sandboxCreateProgress as
-      | { runId?: string; stage?: string; error?: string | null; logs?: string[] }
+    const raw = (props.sandboxCreateProgress ?? props.sandboxCreateProgressLast) as
+      | { runId?: string; stage?: string; error?: string | null; logs?: string[]; startedAt?: number }
       | null
       | undefined;
     if (!raw || typeof raw !== "object") {
-      return { runId: null, stage: null, error: null, logs: [] as string[] };
+      return { runId: null, stage: null, error: null, logs: [] as string[], startedAt: null };
     }
     return {
       runId: typeof raw.runId === "string" && raw.runId.trim() ? raw.runId : null,
       stage: typeof raw.stage === "string" && raw.stage.trim() ? raw.stage : null,
       error: typeof raw.error === "string" && raw.error.trim() ? raw.error : null,
+      startedAt: typeof raw.startedAt === "number" ? raw.startedAt : null,
       logs: Array.isArray(raw.logs)
         ? raw.logs.filter((line) => typeof line === "string" && line.trim()).slice(-400)
         : [],
@@ -828,7 +830,10 @@ export default function SettingsView(props: SettingsViewProps) {
     pendingPermissions: props.pendingPermissions,
     recentEvents: props.events,
     workspaceDebugEvents: props.workspaceDebugEvents,
-    sandboxCreateProgress: sandboxCreateSummary(),
+    sandboxCreateProgress: {
+      ...sandboxCreateSummary(),
+      lastRunAt: sandboxCreateSummary().startedAt ? new Date(sandboxCreateSummary().startedAt!).toISOString() : null,
+    },
     sandboxProbe: sandboxProbeResult(),
   }));
 
