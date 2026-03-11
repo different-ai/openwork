@@ -1039,6 +1039,15 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          const c = options.client();
+          if (c) {
+            try {
+              const latest = unwrap(await c.session.get({ sessionID }));
+              setStore("sessions", (current) => upsertSession(current, latest));
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     }

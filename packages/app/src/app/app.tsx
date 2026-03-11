@@ -6560,22 +6560,25 @@ export default function App() {
           isTauriRuntime()
             ? async (preset, folder) => {
                 const request = sharedBundleCreateWorkerRequest();
-                const ok = await workspaceStore.createSandboxFlow(preset, folder, {
-                  onReady: async () => {
-                    if (request) {
-                      const active = workspaceStore.activeWorkspaceDisplay();
-                      await importSharedBundleIntoActiveWorker(request, {
-                        workspaceId:
-                          active.openworkWorkspaceId?.trim() ||
-                          parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
-                          parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
-                          null,
-                        directoryHint: active.directory?.trim() || active.path?.trim() || null,
-                      });
-                    }
-                    await createSessionAndOpen();
-                  },
-                });
+                const ok = await workspaceStore.createSandboxFlow(
+                  preset,
+                  folder,
+                  request
+                    ? {
+                        onReady: async () => {
+                          const active = workspaceStore.activeWorkspaceDisplay();
+                          await importSharedBundleIntoActiveWorker(request, {
+                            workspaceId:
+                              active.openworkWorkspaceId?.trim() ||
+                              parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
+                              parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
+                              null,
+                            directoryHint: active.directory?.trim() || active.path?.trim() || null,
+                          });
+                        },
+                      }
+                    : undefined,
+                );
                 if (!ok) return;
                 setSharedBundleCreateWorkerRequest(null);
               }

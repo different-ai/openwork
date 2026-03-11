@@ -74,22 +74,17 @@ export default function ModelPickerModal(props: ModelPickerModalProps) {
   });
 
   const enabledOptions = createMemo(() =>
-    renderedItems()
-      .map((item, index) => ({ item, index }))
-      .filter((entry) => entry.item.kind === "model")
-      .map((entry) => ({ opt: entry.item.opt, index: entry.index })),
+    renderedItems().flatMap((item, index) =>
+      item.kind === "model" ? [{ opt: item.opt, index }] : [],
+    ),
   );
 
   const otherOptions = createMemo(() =>
-    renderedItems()
-      .map((item, index) => ({ item, index }))
-      .filter((entry) => entry.item.kind === "provider")
-      .map((entry) => ({
-        providerID: entry.item.providerID,
-        title: entry.item.title,
-        matchCount: entry.item.matchCount,
-        index: entry.index,
-      })),
+    renderedItems().flatMap((item, index) =>
+      item.kind === "provider"
+        ? [{ providerID: item.providerID, title: item.title, matchCount: item.matchCount, index }]
+        : [],
+    ),
   );
 
   const clampIndex = (next: number) => {
