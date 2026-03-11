@@ -385,7 +385,7 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 1.1fr);
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .share-card {
@@ -433,10 +433,9 @@ a {
   grid-row: 1;
   display: flex;
   flex-direction: column;
-  align-self: start;
-  position: sticky;
-  top: 20px;
-  height: clamp(550px, 70vh, calc(100vh - 40px));
+  min-height: 550px;
+  overflow: hidden;
+  contain: size;
 }
 
 .preview-surface {
@@ -1178,6 +1177,15 @@ button.included-item {
   cursor: default;
 }
 
+.preview-filename-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
 .item-left {
   display: flex;
   align-items: flex-start;
@@ -1402,9 +1410,8 @@ button.included-item {
   }
 
   .preview-panel {
-    position: static;
-    align-self: stretch;
-    height: 50vh;
+    min-height: 300px;
+    max-height: 50vh;
   }
 
   .input-method-grid {

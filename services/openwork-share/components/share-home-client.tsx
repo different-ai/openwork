@@ -122,6 +122,20 @@ function toneClass(item: PreviewItem | null): string {
   return "dot-skill";
 }
 
+function buildPlaceholderItem(pasteValue: string, entries: File[]): PreviewItem {
+  if (entries.length) {
+    return {
+      name: entries.length === 1 ? entries[0].name : `${entries.length} files`,
+      kind: "Config", meta: "Analyzing...", tone: "config",
+    };
+  }
+  const isJson = pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[");
+  return {
+    name: isJson ? "clipboard.jsonc" : "clipboard.md",
+    kind: "Config", meta: "Analyzing...", tone: "config",
+  };
+}
+
 function buildVirtualEntry(content: string): EntryLike {
   const normalized = String(content || "");
   const trimmed = normalized.trimStart();
@@ -231,11 +245,11 @@ export default function ShareHomeClient() {
   const [dropActive, setDropActive] = useState(false);
   const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
   const [pasteState, setPasteState] = useState(DEFAULT_STATUS);
-  const [activeExample, setActiveExample] = useState<string | null>(null);
   const requestIdRef = useRef<number>(0);
 
   const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
   const hasPastedSkill = trimmedPaste.length > 0;
+  const showExamples = !trimmedPaste && !selectedEntries.length;
   const busy = busyMode !== null;
   const effectiveEntries: EntryLike[] = useMemo(
     () => (selectedEntries.length ? selectedEntries : hasPastedSkill ? [buildVirtualEntry(trimmedPaste)] : []),
@@ -248,11 +262,14 @@ export default function ShareHomeClient() {
     () => showBaseline ? highlightSyntax(BASELINE_EXAMPLE) : highlightSyntax(pasteValue),
     [pasteValue, showBaseline]
   );
-  const visibleItems = useMemo(
-    () => activeExample ? getPreviewItems(null) : getPreviewItems(preview),
-    [preview, activeExample]
-  );
-  const hasRealFiles = !activeExample && Boolean(preview?.items?.length);
+  const fileItems: PreviewItem[] = useMemo(() => {
+    if (showExamples) return [];
+    if (preview?.items?.length) return preview.items.slice(0, 4);
+    return [buildPlaceholderItem(pasteValue, selectedEntries)];
+  }, [showExamples, preview, pasteValue, selectedEntries]);
+
+  const exampleItems = useMemo(() => getPreviewItems(null), []);
+  const activeExampleName = exampleItems.find(item => item.example === pasteValue)?.name ?? null;
   const packageStatus = useMemo(
     () => getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount: effectiveEntries.length, busy }),
     [generatedUrl, warnings, preview, effectiveEntries.length, busy]
@@ -330,7 +347,6 @@ export default function ShareHomeClient() {
     setGeneratedUrl("");
     setWarnings([]);
     setCopyState("ready-not-copied");
-    setActiveExample(null);
   };
 
   const assignEntries = async (files: FileList | File[] | null) => {
@@ -493,26 +509,20 @@ export default function ShareHomeClient() {
               </label>
 
               <div className="included-section">
-                <h4>{hasRealFiles ? "Files" : "Example contents"}</h4>
+                <h4>Example contents</h4>
                 <div className="included-list">
-                  {visibleItems.map((item) => {
-                    const isExample = Boolean(item.example);
-                    const isActive = activeExample === item.name;
-                    const isDimmed = isExample && activeExample && !isActive;
+                  {exampleItems.map((item) => {
+                    const isActive = activeExampleName === item.name;
+                    const isDimmed = Boolean(activeExampleName) && !isActive;
                     return (
                       <button
                         type="button"
                         className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
                         key={`${item.kind}-${item.name}`}
-                        disabled={!isExample}
                         onClick={() => {
-                          if (!isExample) return;
-                          setActiveExample(isActive ? null : item.name);
                           setPasteValue(isActive ? "" : item.example!);
                           setSelectedEntries([]);
-                          setGeneratedUrl("");
-                          setWarnings([]);
-                          setCopyState("ready-not-copied");
+                          resetFormState();
                           setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
                         }}
                       >
@@ -585,13 +595,12 @@ export default function ShareHomeClient() {
               <div className="preview-header">
                 <span className="preview-eyebrow">Preview</span>
                 <span className="preview-filename">
+                  {fileItems[0] && <span className={`preview-filename-dot ${toneClass(fileItems[0])}`} />}
                   {selectedEntries.length === 1
                     ? selectedEntries[0].name
                     : selectedEntries.length > 1
                       ? `${selectedEntries.length} files`
-                      : pasteValue.trim()
-                        ? (pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[") ? "clipboard.jsonc" : "clipboard.md")
-                        : "untitled"}
+                      : fileItems[0]?.name ?? "untitled"}
                 </span>
               </div>
               <div className="preview-editor-wrap">
