@@ -381,8 +381,8 @@ a {
 .share-cards-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 1.1fr);
-  grid-template-rows: 1fr auto;
   gap: 18px;
+  align-items: start;
 }
 
 .share-card {
@@ -390,14 +390,9 @@ a {
   box-shadow: var(--ow-shadow);
 }
 
-.share-card-full {
-  grid-column: 1;
-  grid-row: 2;
-}
-
 .carbon-preview {
   grid-column: 2;
-  grid-row: 1 / -1;
+  grid-row: 1;
 }
 
 .share-actions-bar {
@@ -673,42 +668,61 @@ a {
 
 .inline-token {
   display: inline;
-  padding: 0.15em 0.4em;
-  border-radius: 4px;
+  padding: 0;
   font-size: 0.88em;
-  font-weight: 500;
-  border: 1px solid transparent;
+  font-weight: 600;
   white-space: nowrap;
+  color: var(--ow-ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.inline-token::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 4px;
+  vertical-align: baseline;
+  position: relative;
+  top: -1px;
 }
 
 .token-agent {
-  color: #c2581a;
-  background: rgba(249, 115, 22, 0.08);
-  border-color: rgba(249, 115, 22, 0.15);
+  text-decoration-color: rgba(29, 78, 216, 0.4);
+}
+.token-agent::before {
+  background: var(--ow-agent);
 }
 
 .token-skill {
-  color: #3b6fd8;
-  background: rgba(37, 99, 235, 0.07);
-  border-color: rgba(37, 99, 235, 0.14);
+  text-decoration-color: rgba(249, 115, 22, 0.4);
+}
+.token-skill::before {
+  background: var(--ow-skill);
 }
 
 .token-mcp {
-  color: #1a8f7f;
-  background: rgba(15, 159, 127, 0.07);
-  border-color: rgba(15, 159, 127, 0.14);
+  text-decoration-color: rgba(15, 118, 110, 0.4);
+}
+.token-mcp::before {
+  background: var(--ow-mcp);
 }
 
 .token-command {
-  color: #7e4fd6;
-  background: rgba(139, 92, 246, 0.07);
-  border-color: rgba(139, 92, 246, 0.14);
+  text-decoration-color: rgba(124, 58, 237, 0.4);
+}
+.token-command::before {
+  background: var(--ow-command);
 }
 
 .token-config {
-  color: #6b7a8d;
-  background: rgba(71, 85, 105, 0.06);
-  border-color: rgba(71, 85, 105, 0.12);
+  text-decoration-color: rgba(71, 85, 105, 0.35);
+}
+.token-config::before {
+  background: #475569;
 }
 
 .selection-item {
@@ -1216,10 +1230,22 @@ button.included-item {
 }
 
 .item-dot {
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: 999px;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.item-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)' opacity='0.45'/%3E%3C/svg%3E");
+  background-size: cover;
+  mix-blend-mode: overlay;
 }
 
 .item-text {

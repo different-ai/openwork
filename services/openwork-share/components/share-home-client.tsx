@@ -528,56 +528,56 @@ export default function ShareHomeClient() {
               </div>
             </div>
 
-          </div>
+            <div className="package-actions" aria-live="polite">
+              <div className={`package-status severity-${packageStatus.severity}`}>
+                <span className="package-status-dot"></span>
+                <span className="package-status-label">{packageStatus.label}</span>
+              </div>
 
-          <div className="share-actions-bar share-card-full" aria-live="polite">
-            <div className={`package-status severity-${packageStatus.severity}`}>
-              <span className="package-status-dot"></span>
-              <span className="package-status-label">{packageStatus.label}</span>
-            </div>
+              {packageStatus.items.length > 0 && (
+                <ul className="package-status-items">
+                  {packageStatus.items.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              )}
 
-            {packageStatus.items.length > 0 && (
-              <ul className="package-status-items">
-                {packageStatus.items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
-            )}
-
-            {generatedUrl ? (
-              <>
-                <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
-                  <div className="share-link-inline mono">{generatedUrl}</div>
-                  <button className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`} type="button" onClick={copyGeneratedUrl} title="Copy link">
-                    {copyState === "copied" ? (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                      </svg>
-                    )}
+              {generatedUrl ? (
+                <>
+                  <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
+                    <div className="share-link-inline mono">{generatedUrl}</div>
+                    <button className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`} type="button" onClick={copyGeneratedUrl} title="Copy link">
+                      {copyState === "copied" ? (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="20 6 9 17 4 12"></polyline>
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                      )}
+                    </button>
+                  </div>
+                  <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
+                    Open share page
+                  </a>
+                </>
+              ) : (
+                <div className="publish-action">
+                  <p className="publish-hint">Creates a public URL that anyone can use to import this config.</p>
+                  <button
+                    className="button-primary publish-button"
+                    type="button"
+                    onClick={() => void publishBundle()}
+                    disabled={busy || !effectiveEntries.length || !preview}
+                  >
+                    {busyMode === "publish" ? "Publishing..." : "🔗 Generate share link"}
                   </button>
                 </div>
-                <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
-                  Open share page
-                </a>
-              </>
-            ) : (
-              <div className="publish-action">
-                <p className="publish-hint">Creates a public URL that anyone can use to import this config.</p>
-                <button
-                  className="button-primary publish-button"
-                  type="button"
-                  onClick={() => void publishBundle()}
-                  disabled={busy || !effectiveEntries.length || !preview}
-                >
-                  {busyMode === "publish" ? "Publishing..." : "🔗 Generate share link"}
-                </button>
-              </div>
-            )}
+              )}
+            </div>
+
           </div>
 
           <aside className="preview-panel carbon-preview">
