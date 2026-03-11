@@ -46,13 +46,6 @@ const rolloutSteps = [
   "Pilot with one team, then expand into hosted workers or shared skills."
 ];
 
-const focusAreas = [
-  "Secure hosting",
-  "Permissioned tools",
-  "Auditability",
-  "Team rollout"
-];
-
 export function LandingEnterprise(props: Props) {
   return (
     <div className="relative min-h-screen overflow-hidden text-[#011627]">
@@ -117,37 +110,7 @@ export function LandingEnterprise(props: Props) {
             </div>
           </section>
 
-          <section className="grid gap-6 lg:grid-cols-[1.08fr_0.92fr] lg:items-start">
-            <div className="space-y-6">
-              <div className="landing-shell rounded-[2rem] p-6 md:p-8">
-                <div className="mb-3 text-[12px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                  What enterprise rollout means
-                </div>
-                <h2 className="mb-4 text-2xl font-medium tracking-tight text-[#011627] md:text-3xl">
-                  We keep the product surface familiar while tightening the
-                  operating model.
-                </h2>
-                <p className="mb-6 max-w-2xl text-[15px] leading-relaxed text-slate-600">
-                  The goal is not to invent a separate enterprise fork. It is to
-                  make OpenWork safe enough, clear enough, and structured enough
-                  for a team rollout without losing the speed of the local-first
-                  experience.
-                </p>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {focusAreas.map(item => (
-                    <div
-                      key={item}
-                      className="rounded-2xl border border-slate-200/70 bg-white/80 px-4 py-4 shadow-sm"
-                    >
-                      <div className="text-sm font-medium text-[#011627]">
-                        {item}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
+          <section className="space-y-6">
               <div className="grid gap-6 md:grid-cols-3">
                 {deploymentModes.map(mode => {
                   const Icon = mode.icon;
@@ -213,7 +176,6 @@ export function LandingEnterprise(props: Props) {
                   </Link>
                 </div>
               </div>
-            </div>
 
             <BookCallForm calUrl={props.calUrl} />
           </section>
