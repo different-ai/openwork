@@ -25,6 +25,7 @@
   --ow-agent: linear-gradient(135deg, #1d4ed8, #60a5fa);
   --ow-mcp: linear-gradient(135deg, #0f766e, #2dd4bf);
   --ow-command: linear-gradient(135deg, #7c3aed, #c084fc);
+  --ow-mono: var(--font-mono, ui-monospace), SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
 }
 
 * {
@@ -39,10 +40,12 @@ body,
 
 body {
   margin: 0;
-  font-family: Inter, "Segoe UI", "Helvetica Neue", sans-serif;
+  font-family: var(--font-inter, Inter), "Segoe UI", "Helvetica Neue", sans-serif;
   color: var(--ow-ink);
   background-color: #f6f9fc;
   overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body::before {
@@ -74,7 +77,7 @@ a {
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-family: var(--ow-mono);
 }
 
 .shell {
@@ -382,7 +385,7 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(320px, 1.1fr);
   gap: 18px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .share-card {
@@ -430,6 +433,10 @@ a {
   grid-row: 1;
   display: flex;
   flex-direction: column;
+  align-self: start;
+  position: sticky;
+  top: 20px;
+  height: clamp(550px, 70vh, calc(100vh - 40px));
 }
 
 .preview-surface {
@@ -464,12 +471,13 @@ a {
   font-size: 12px;
   font-weight: 500;
   color: #94a3b8;
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-family: var(--ow-mono);
   letter-spacing: 0.02em;
 }
 
 .preview-editor-wrap {
   display: grid;
+  grid-template-rows: 1fr;
   flex: 1;
   overflow: auto;
 }
@@ -482,7 +490,7 @@ a {
   padding: 20px 22px;
   margin: 0;
   border: none;
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-family: var(--ow-mono);
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
@@ -519,7 +527,7 @@ a {
   font-size: 12px;
   color: #94a3b8;
   border-top: 1px solid rgba(148, 163, 184, 0.12);
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-family: var(--ow-mono);
   text-align: right;
 }
 
@@ -776,7 +784,7 @@ a {
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(255, 255, 255, 0.96);
-  transition: border-color 300ms ease, background-color 300ms ease;
+  transition: border-color 300ms var(--ow-ease), background-color 300ms var(--ow-ease);
 }
 
 .share-link-row.is-copied {
@@ -807,7 +815,7 @@ a {
   background: transparent;
   color: var(--ow-muted);
   cursor: pointer;
-  transition: color 200ms ease, background-color 200ms ease;
+  transition: color 300ms var(--ow-ease), background-color 300ms var(--ow-ease);
 }
 
 .copy-icon-button:hover {
@@ -981,6 +989,7 @@ a {
   align-items: center;
   justify-content: center;
   gap: 14px;
+  min-height: 294px;
   border: 2px dashed rgba(148, 163, 184, 0.3);
   border-radius: 20px;
   padding: 32px 24px;
@@ -1018,7 +1027,7 @@ a {
   background: rgba(248, 250, 252, 0.84);
   color: var(--ow-ink);
   cursor: pointer;
-  transition: border-color 0.2s ease, background-color 0.2s ease, transform 0.2s ease;
+  transition: border-color 300ms var(--ow-ease), background-color 300ms var(--ow-ease), transform 300ms var(--ow-ease);
 }
 
 .clipboard-tile:disabled {
@@ -1148,6 +1157,7 @@ button.included-item {
 .included-item:hover:not(:disabled) {
   border-color: rgba(37, 99, 235, 0.35);
   background: rgba(240, 247, 255, 0.95);
+  transform: translateY(-1px);
 }
 
 .included-item.is-active {
@@ -1356,6 +1366,27 @@ button.included-item {
   border: 0;
 }
 
+.button-primary:focus-visible,
+.button-secondary:focus-visible,
+.drop-zone:focus-visible,
+.included-item:focus-visible,
+.preview-editor:focus-visible {
+  border-color: rgba(27, 41, 255, 0.55);
+  box-shadow: 0 0 0 0.22rem rgba(27, 41, 255, 0.16);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 @media (max-width: 960px) {
   .nav,
   .hero-layout,
@@ -1371,7 +1402,9 @@ button.included-item {
   }
 
   .preview-panel {
-    min-height: 300px;
+    position: static;
+    align-self: stretch;
+    height: 50vh;
   }
 
   .input-method-grid {
