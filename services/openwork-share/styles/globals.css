@@ -412,6 +412,22 @@ a {
   backdrop-filter: blur(22px);
 }
 
+.publish-action {
+  display: grid;
+  gap: 10px;
+}
+
+.publish-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ow-muted);
+  line-height: 1.5;
+}
+
+.publish-button {
+  width: 100%;
+}
+
 .package-card,
 .preview-panel {
   display: grid;
@@ -783,13 +799,58 @@ a {
   gap: 14px;
 }
 
-.share-link-inline {
-  padding: 14px 16px;
+.share-link-row {
+  display: flex;
+  align-items: center;
   border-radius: 18px;
   border: 1px solid rgba(148, 163, 184, 0.22);
   background: rgba(255, 255, 255, 0.96);
+  transition: border-color 300ms ease, background-color 300ms ease;
+}
+
+.share-link-row.is-copied {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(236, 253, 245, 0.6);
+}
+
+.share-link-inline {
+  flex: 1;
+  padding: 14px 16px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   font-size: 13px;
   word-break: break-word;
+}
+
+.copy-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  margin-right: 8px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ow-muted);
+  cursor: pointer;
+  transition: color 200ms ease, background-color 200ms ease;
+}
+
+.copy-icon-button:hover {
+  background: rgba(148, 163, 184, 0.1);
+  color: #3b82f6;
+}
+
+.copy-icon-button.is-copied {
+  color: #22c55e;
+}
+
+.copy-icon-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .share-link-bar-actions {

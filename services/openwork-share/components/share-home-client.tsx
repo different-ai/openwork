@@ -363,6 +363,8 @@ export default function ShareHomeClient() {
     setPasteState(event.target.value.trim() ? "Ready to preview." : DEFAULT_STATUS);
   };
 
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const publishBundle = async () => {
     if (!effectiveEntries.length || busy) return;
 
@@ -386,6 +388,14 @@ export default function ShareHomeClient() {
       setWarnings(Array.isArray(result?.warnings) ? result.warnings : []);
       setGeneratedUrl(nextUrl);
       setCopyState(nextCopyState);
+
+      if (nextCopyState === "copied") {
+        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+        copyTimerRef.current = setTimeout(() => {
+          setCopyState("ready-not-copied");
+          copyTimerRef.current = null;
+        }, 800);
+      }
     } catch {
       // Errors surface through the packageStatus derived state
     } finally {
@@ -402,6 +412,12 @@ export default function ShareHomeClient() {
     } catch {
       setCopyState("copy-failed");
     }
+
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => {
+      setCopyState("ready-not-copied");
+      copyTimerRef.current = null;
+    }, 800);
   };
 
   return (
@@ -530,28 +546,37 @@ export default function ShareHomeClient() {
 
             {generatedUrl ? (
               <>
-                <div className="share-link-inline mono">{generatedUrl}</div>
-                <div className="share-link-bar-actions">
-                  <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
-                    Open share page
-                  </a>
-                  <button className="button-secondary" type="button" onClick={copyGeneratedUrl}>
-                    {shareFeedback.copyLabel}
+                <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
+                  <div className="share-link-inline mono">{generatedUrl}</div>
+                  <button className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`} type="button" onClick={copyGeneratedUrl} title="Copy link">
+                    {copyState === "copied" ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    )}
                   </button>
-                  <span className={`share-feedback-inline${shareFeedback.isSuccess ? " is-success" : ""}`}>
-                    {shareFeedback.badge}
-                  </span>
                 </div>
+                <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
+                  Open share page
+                </a>
               </>
             ) : (
-              <button
-                className="button-primary"
-                type="button"
-                onClick={() => void publishBundle()}
-                disabled={busy || !effectiveEntries.length || !preview}
-              >
-                {busyMode === "publish" ? "Publishing..." : "Generate share link"}
-              </button>
+              <div className="publish-action">
+                <p className="publish-hint">Creates a public URL that anyone can use to import this config.</p>
+                <button
+                  className="button-primary publish-button"
+                  type="button"
+                  onClick={() => void publishBundle()}
+                  disabled={busy || !effectiveEntries.length || !preview}
+                >
+                  {busyMode === "publish" ? "Publishing..." : "🔗 Generate share link"}
+                </button>
+              </div>
             )}
           </div>
 
