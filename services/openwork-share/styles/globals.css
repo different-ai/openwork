@@ -390,11 +390,6 @@ a {
   box-shadow: var(--ow-shadow);
 }
 
-.carbon-preview {
-  grid-column: 2;
-  grid-row: 1;
-}
-
 .share-actions-bar {
   display: grid;
   gap: 12px;
@@ -423,213 +418,173 @@ a {
   width: 100%;
 }
 
-.package-card,
-.preview-panel {
+.package-card {
   display: grid;
   gap: 18px;
   padding: 22px;
   align-content: start;
 }
 
-.carbon-preview {
-  background: transparent;
-  border-radius: 0;
-  padding: 0;
-  border: none;
-  box-shadow: none;
-  backdrop-filter: none;
+.preview-panel {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
-  flex: 1;
 }
 
-.carbon-window {
-  border-radius: 18px;
-  background: #151718;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+.preview-surface {
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  box-shadow: var(--ow-shadow-soft);
+  backdrop-filter: blur(22px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   flex: 1;
 }
 
-.carbon-titlebar {
+.preview-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 16px;
-  background: #1d1f21;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
-.carbon-dots {
-  display: flex;
-  gap: 6px;
-}
-
-.carbon-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-}
-
-.dot-close {
-  background: #ff5f57;
-}
-
-.dot-minimize {
-  background: #ffbd2e;
-}
-
-.dot-expand {
-  background: #28c840;
-}
-
-.carbon-filename {
+.preview-eyebrow {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-  font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ow-muted);
 }
 
-.carbon-status-bar {
-  padding: 6px 16px;
+.preview-filename {
   font-size: 12px;
-  line-height: 1.4;
-  color: rgba(255, 255, 255, 0.45);
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-weight: 500;
+  color: #94a3b8;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.02em;
 }
 
-.carbon-status-bar.is-todo {
-  color: #f59e0b;
-}
-
-.carbon-editor-wrap {
-  position: relative;
-  background: #151718;
+.preview-editor-wrap {
+  display: grid;
   flex: 1;
-  overflow-y: auto;
+  overflow: auto;
 }
 
-.carbon-highlight,
-.carbon-editor {
+.preview-highlight,
+.preview-editor {
+  grid-area: 1 / 1;
   width: 100%;
-  padding: 20px 18px;
+  min-width: 0;
+  padding: 20px 22px;
   margin: 0;
   border: none;
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
 }
 
-.carbon-highlight {
-  color: #c5c8c6;
+.preview-highlight {
+  color: #334155;
   background: transparent;
   pointer-events: none;
 }
 
-.carbon-highlight.is-baseline {
-  opacity: 0.5;
-}
-
-.carbon-editor {
-  position: absolute;
-  inset: 0;
+.preview-editor {
   resize: none;
   outline: none;
   background: transparent;
   color: transparent;
   -webkit-text-fill-color: transparent;
-  caret-color: #c5c8c6;
-  height: 100%;
+  caret-color: var(--ow-ink);
   overflow: hidden;
 }
 
-.carbon-editor::placeholder {
-  color: rgba(227, 150, 62, 0.5);
-  -webkit-text-fill-color: rgba(227, 150, 62, 0.5);
+.preview-editor::placeholder {
+  color: rgba(148, 163, 184, 0.6);
+  -webkit-text-fill-color: rgba(148, 163, 184, 0.6);
 }
 
-.carbon-editor:focus {
+.preview-editor:focus {
   outline: none;
 }
 
-.carbon-footer {
-  padding: 8px 16px;
+.preview-footer {
+  padding: 10px 22px;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
-  background: #252526;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #94a3b8;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
   font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-  border-radius: 0 0 18px 18px;
+  text-align: right;
 }
 
-/* Syntax highlighting — typed-language palette */
+/* Syntax highlighting — light-surface palette */
 
 .hl-heading {
-  color: #e5c07b;
+  color: #0f172a;
   font-weight: 700;
 }
 
 .hl-punctuation {
-  color: #636d83;
+  color: #94a3b8;
 }
 
 .hl-field {
-  color: #e06c75;
+  color: #be123c;
 }
 
 .hl-keyword {
-  color: #c678dd;
+  color: #7c3aed;
   font-weight: 600;
 }
 
 .hl-type {
-  color: #56b6c2;
+  color: #0891b2;
   font-style: italic;
 }
 
 .hl-string {
-  color: #98c379;
+  color: #059669;
 }
 
 .hl-number {
-  color: #d19a66;
+  color: #d97706;
 }
 
 .hl-bold {
-  color: #e5c07b;
+  color: #0f172a;
   font-weight: 700;
 }
 
 .hl-inline-code {
-  color: #56b6c2;
-  background: rgba(86, 182, 194, 0.08);
+  color: #0891b2;
+  background: rgba(8, 145, 178, 0.08);
   border-radius: 3px;
   padding: 0 3px;
 }
 
 .hl-key {
-  color: #e06c75;
+  color: #be123c;
 }
 
 .hl-bracket {
-  color: #e5c07b;
+  color: #0f172a;
   font-weight: 700;
 }
 
 .hl-url {
-  color: #61afef;
+  color: #2563eb;
   text-decoration: underline;
-  text-decoration-color: rgba(97, 175, 239, 0.35);
+  text-decoration-color: rgba(37, 99, 235, 0.35);
 }
 
 .hl-comment {
-  color: #5c6370;
+  color: #94a3b8;
   font-style: italic;
 }
 
@@ -1410,12 +1365,12 @@ button.included-item {
   }
 
   .share-card-full,
-  .carbon-preview {
+  .preview-panel {
     grid-column: 1;
     grid-row: auto;
   }
 
-  .carbon-preview {
+  .preview-panel {
     min-height: 300px;
   }
 

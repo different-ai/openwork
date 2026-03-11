@@ -20,14 +20,32 @@ const DEFAULT_PREVIEW_ITEMS: PreviewItem[] = [
     kind: "MCP",
     meta: "MCP · Remote",
     tone: "mcp",
-    example: `{\n  "mcpServers": {\n    "crm-sync": {\n      "url": "https://mcp.example.com/crm-sync",\n      "transport": "sse",\n      "description": "Syncs contacts, deals, and activities with the CRM."\n    }\n  }\n}`,
+    example: JSON.stringify({
+      mcpServers: {
+        "crm-sync": {
+          url: "https://mcp.example.com/crm-sync",
+          transport: "sse",
+          description: "Syncs contacts, deals, and activities with the CRM.",
+        },
+      },
+    }, null, 2),
   },
   {
     name: "openwork.json",
     kind: "Config",
     meta: "OpenWork config",
     tone: "config",
-    example: `{\n  "name": "my-workspace",\n  "version": "0.1.0",\n  "agents": ["sales-inbound"],\n  "skills": ["meeting-reminder"],\n  "mcpServers": {\n    "crm-sync": {\n      "url": "https://mcp.example.com/crm-sync"\n    }\n  }\n}`,
+    example: JSON.stringify({
+      name: "my-workspace",
+      version: "0.1.0",
+      agents: ["sales-inbound"],
+      skills: ["meeting-reminder"],
+      mcpServers: {
+        "crm-sync": {
+          url: "https://mcp.example.com/crm-sync",
+        },
+      },
+    }, null, 2),
   },
 ];
 

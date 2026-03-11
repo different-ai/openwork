@@ -580,15 +580,11 @@ export default function ShareHomeClient() {
 
           </div>
 
-          <aside className="preview-panel carbon-preview">
-            <div className="carbon-window">
-              <div className="carbon-titlebar">
-                <div className="carbon-dots">
-                  <span className="carbon-dot dot-close"></span>
-                  <span className="carbon-dot dot-minimize"></span>
-                  <span className="carbon-dot dot-expand"></span>
-                </div>
-                <span className="carbon-filename">
+          <aside className="preview-panel">
+            <div className="preview-surface">
+              <div className="preview-header">
+                <span className="preview-eyebrow">Preview</span>
+                <span className="preview-filename">
                   {selectedEntries.length === 1
                     ? selectedEntries[0].name
                     : selectedEntries.length > 1
@@ -598,22 +594,21 @@ export default function ShareHomeClient() {
                         : "untitled"}
                 </span>
               </div>
-              <div className={`carbon-status-bar${pasteState === DEFAULT_STATUS ? " is-todo" : ""}`}>{pasteState}</div>
-              <div className="carbon-editor-wrap">
+              <div className="preview-editor-wrap">
                 <pre
-                  className={`carbon-highlight${showBaseline ? " is-baseline" : ""}`}
+                  className="preview-highlight"
                   aria-hidden="true"
                   dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
                 />
                 <textarea
-                  className="carbon-editor"
+                  className="preview-editor"
                   value={pasteValue}
                   onChange={handlePasteChange}
                   placeholder=""
                   spellCheck={false}
                 />
               </div>
-              <div className="carbon-footer">
+              <div className="preview-footer">
                 <span>{pasteCountLabel}</span>
               </div>
             </div>
