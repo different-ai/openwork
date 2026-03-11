@@ -28,9 +28,7 @@ export interface ShareFeedback {
 export interface PackageStatusInput {
   generatedUrl: string;
   warnings: string[];
-  preview: { items?: PreviewItem[] } | null;
   effectiveEntryCount: number;
-  busy: boolean;
 }
 
 export interface FilePayload {

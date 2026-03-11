@@ -54,7 +54,7 @@ export function getPreviewItems(preview: { items?: PreviewItem[] } | null): Prev
   return items.slice(0, 4);
 }
 
-export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount, busy }: PackageStatusInput): PackageStatus {
+export function getPackageStatus({ generatedUrl, warnings, effectiveEntryCount }: PackageStatusInput): PackageStatus {
   const hasWarnings = Array.isArray(warnings) && warnings.length > 0;
   const hasSecretWarning = hasWarnings && warnings.some((w) => /redacted|secret/i.test(w));
 
@@ -69,16 +69,8 @@ export function getPackageStatus({ generatedUrl, warnings, preview, effectiveEnt
     return { severity: "success", label: "Clean — no issues detected", items: [] };
   }
 
-  if (busy) {
-    return { severity: "neutral", label: "Processing...", items: [] };
-  }
-
   if (!effectiveEntryCount) {
     return { severity: "neutral", label: "Drop files or pick an example to get started", items: [] };
-  }
-
-  if (!preview) {
-    return { severity: "neutral", label: "Analyzing contents...", items: [] };
   }
 
   if (hasWarnings) {

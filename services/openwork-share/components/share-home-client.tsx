@@ -271,8 +271,8 @@ export default function ShareHomeClient() {
   const exampleItems = useMemo(() => getPreviewItems(null), []);
   const activeExampleName = exampleItems.find(item => item.example === pasteValue)?.name ?? null;
   const packageStatus = useMemo(
-    () => getPackageStatus({ generatedUrl, warnings, preview, effectiveEntryCount: effectiveEntries.length, busy }),
-    [generatedUrl, warnings, preview, effectiveEntries.length, busy]
+    () => getPackageStatus({ generatedUrl, warnings, effectiveEntryCount: effectiveEntries.length }),
+    [generatedUrl, warnings, effectiveEntries.length]
   );
   const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
   const selectionLabel = effectiveEntries.length
@@ -580,7 +580,7 @@ export default function ShareHomeClient() {
                     className="button-primary publish-button"
                     type="button"
                     onClick={() => void publishBundle()}
-                    disabled={busy || !effectiveEntries.length || !preview}
+                    disabled={busyMode === "publish" || !effectiveEntries.length}
                   >
                     {busyMode === "publish" ? "Publishing..." : "🔗 Generate share link"}
                   </button>
