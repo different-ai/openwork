@@ -7,8 +7,7 @@
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "test": "node --test __tests__/share-home-state.test.ts __tests__/render-bundle-page.test.ts __tests__/package-openwork-files.test.ts __tests__/preview-panel-height.test.ts",
-    "test:pw": "npx playwright test"
+    "test": "node --test __tests__/share-home-state.test.ts __tests__/render-bundle-page.test.ts __tests__/package-openwork-files.test.ts __tests__/preview-panel-height.test.ts"
   },
   "dependencies": {
     "@paper-design/shaders-react": "0.0.71",
@@ -21,7 +20,6 @@
     "yaml": "^2.8.1"
   },
   "devDependencies": {
-    "@playwright/test": "^1.58.2",
     "@types/node": "^25.4.0",
     "@types/react": "18.2.79",
     "@types/react-dom": "18.2.25",
