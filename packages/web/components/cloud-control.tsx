@@ -2666,7 +2666,7 @@ export function CloudControlPanel() {
 
                   {primaryWorker ? (
                     <div className="rounded-[20px] border border-slate-200 bg-slate-50 p-3">
-                      <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2">
                         <span className={`h-3 w-3 rounded-full ${trafficLights.red}`} />
                         <span className={`h-3 w-3 rounded-full ${trafficLights.amber}`} />
                         <span className={`h-3 w-3 rounded-full ${trafficLights.green}`} />
