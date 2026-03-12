@@ -1189,6 +1189,11 @@ export default function App() {
     goToDashboard("settings");
   };
 
+  let markReloadRequiredHandler: ((reason: ReloadReason, trigger?: ReloadTrigger) => void) | undefined;
+  const markReloadRequired = (reason: ReloadReason, trigger?: ReloadTrigger) => {
+    markReloadRequiredHandler?.(reason, trigger);
+  };
+
   const sessionStore = createSessionStore({
     client,
     activeWorkspaceRoot: () => workspaceStore.activeWorkspaceRoot().trim(),
@@ -1211,6 +1216,7 @@ export default function App() {
     developerMode,
     setError,
     setSseConnected,
+    markReloadRequired,
     onHotReloadApplied: () => {
       void refreshSkills({ force: true });
       void refreshPlugins(pluginScope());
@@ -2366,6 +2372,7 @@ export default function App() {
     setBusyLabel,
     setBusyStartedAt,
     setError,
+    markReloadRequired,
     onNotionSkillInstalled: () => {
       setNotionSkillInstalled(true);
       try {
@@ -3744,9 +3751,13 @@ export default function App() {
   });
 
   const {
+    reloadRequired,
+    reloadCopy,
+    reloadTrigger,
     reloadBusy,
     reloadError,
     reloadWorkspaceEngine,
+    clearReloadRequired,
     cacheRepairBusy,
     cacheRepairResult,
     repairOpencodeCache,
@@ -3777,6 +3788,8 @@ export default function App() {
     confirmReset,
     anyActiveRuns,
   } = systemState;
+
+  markReloadRequiredHandler = systemState.markReloadRequired;
 
   const UPDATE_AUTO_CHECK_EVERY_MS = 12 * 60 * 60_000;
   const UPDATE_AUTO_CHECK_POLL_MS = 60_000;
@@ -3884,7 +3897,7 @@ export default function App() {
     await reloadWorkspaceEngine();
   };
 
-  const activeMcpBlockingSessions = createMemo(() => {
+  const activeReloadBlockingSessions = createMemo(() => {
     const statuses = sessionStatusById();
     return sessions()
       .filter((session) => statuses[session.id] === "running")
@@ -3894,11 +3907,16 @@ export default function App() {
       }));
   });
 
-  const markReloadRequired = (
-    _reason: ReloadReason,
-    _options?: { force?: boolean; trigger?: ReloadTrigger },
-  ) => {
-    return;
+  const forceStopActiveSessionsAndReload = async () => {
+    const activeSessions = activeReloadBlockingSessions();
+    for (const session of activeSessions) {
+      try {
+        await abortSession(session.id);
+      } catch {
+        // ignore and continue stopping the rest before reload
+      }
+    }
+    await reloadWorkspaceEngineAndResume();
   };
 
   onMount(() => {
@@ -5447,9 +5465,7 @@ export default function App() {
           await openworkClient.patchConfig(openworkWorkspaceId, {
             opencode: { model: formatModelRef(nextModel) },
           });
-          markReloadRequired("config", {
-            trigger: { type: "config", name: "opencode.json", action: "updated" },
-          });
+          markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
           return;
         }
 
@@ -5463,9 +5479,7 @@ export default function App() {
           throw new Error(result.stderr || result.stdout || "Failed to update opencode.json");
         }
         setLastKnownConfigSnapshot(getConfigSnapshot(content));
-        markReloadRequired("config", {
-          trigger: { type: "config", name: "opencode.json", action: "updated" },
-        });
+        markReloadRequired("config", { type: "config", name: "opencode.json", action: "updated" });
       } catch (error) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : safeStringify(error);
@@ -6193,6 +6207,17 @@ export default function App() {
     mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
+    showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
+    reloadBannerTitle: reloadCopy().title,
+    reloadBannerBody: reloadCopy().body,
+    reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
+    reloadBannerActiveCount: activeReloadBlockingSessions().length,
+    canReloadWorkspace: canReloadWorkspace(),
+    reloadWorkspaceEngine: reloadWorkspaceEngineAndResume,
+    forceStopActiveConversations: forceStopActiveSessionsAndReload,
+    dismissReloadBanner: clearReloadRequired,
+    reloadBusy: reloadBusy(),
+    reloadError: reloadError(),
     createSessionAndOpen: createSessionAndOpen,
     sendPromptAsync: sendPrompt,
     abortSession: abortSession,
@@ -6446,8 +6471,8 @@ export default function App() {
         projectDir={workspaceProjectDir()}
         language={currentLocale()}
         reloadRequired={mcpAuthNeedsReload()}
-        reloadBlocked={activeMcpBlockingSessions().length > 0}
-        activeSessions={activeMcpBlockingSessions()}
+        reloadBlocked={activeReloadBlockingSessions().length > 0}
+        activeSessions={activeReloadBlockingSessions()}
         isRemoteWorkspace={activeWorkspaceDisplay().workspaceType === "remote"}
         onForceStopSession={(sessionID) => abortSession(sessionID)}
         onClose={() => {

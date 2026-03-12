@@ -180,6 +180,17 @@ export type SessionViewProps = {
   mcpStatus: string | null;
   skills: SkillCard[];
   skillsStatus: string | null;
+  showSkillReloadBanner: boolean;
+  reloadBannerTitle: string;
+  reloadBannerBody: string;
+  reloadBannerBlocked: boolean;
+  reloadBannerActiveCount: number;
+  canReloadWorkspace: boolean;
+  reloadWorkspaceEngine: () => Promise<void>;
+  forceStopActiveConversations: () => Promise<void>;
+  dismissReloadBanner: () => void;
+  reloadBusy: boolean;
+  reloadError: string | null;
   busy: boolean;
   prompt: string;
   setPrompt: (value: string) => void;
@@ -3619,6 +3630,53 @@ export default function SessionView(props: SessionViewProps) {
               >
                 <X size={14} />
               </button>
+            </div>
+          </div>
+        </Show>
+
+        <Show when={props.showSkillReloadBanner}>
+          <div class="border-b border-amber-6/50 bg-amber-2/70 px-6 py-3">
+            <div class="mx-auto flex w-full max-w-[800px] flex-col gap-3 rounded-2xl border border-amber-6/60 bg-amber-1/80 px-4 py-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+              <div class="min-w-0">
+                <div class="text-sm font-medium text-amber-11">{props.reloadBannerTitle}</div>
+                <div class="mt-0.5 text-xs text-amber-11/80">
+                  {props.reloadBannerBody}
+                  <Show when={props.reloadBannerBlocked}>
+                    <span>
+                      {` Reloading stops ${props.reloadBannerActiveCount} active conversation${props.reloadBannerActiveCount === 1 ? "" : "s"}.`}
+                    </span>
+                  </Show>
+                </div>
+                <Show when={props.reloadError}>
+                  <div class="mt-1 text-xs text-red-11">{props.reloadError}</div>
+                </Show>
+              </div>
+
+              <div class="flex items-center gap-2 sm:shrink-0">
+                <button
+                  type="button"
+                  class="rounded-xl border border-amber-7 bg-amber-4 px-3 py-2 text-xs font-medium text-amber-12 transition-colors hover:bg-amber-5 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!props.canReloadWorkspace || props.reloadBusy}
+                  onClick={() =>
+                    void (props.reloadBannerBlocked
+                      ? props.forceStopActiveConversations()
+                      : props.reloadWorkspaceEngine())
+                  }
+                >
+                  {props.reloadBusy
+                    ? "Reloading..."
+                    : props.reloadBannerBlocked
+                      ? "Reload & Stop Tasks"
+                      : "Reload"}
+                </button>
+                <button
+                  type="button"
+                  class="rounded-xl border border-amber-6/70 bg-transparent px-3 py-2 text-xs font-medium text-amber-11 transition-colors hover:bg-amber-3"
+                  onClick={props.dismissReloadBanner}
+                >
+                  Later
+                </button>
+              </div>
             </div>
           </div>
         </Show>
