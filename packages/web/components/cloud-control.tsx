@@ -3137,7 +3137,7 @@ export function CloudControlPanel() {
                 <div className="min-w-0 self-center text-center">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Desktop</p>
                   <h3 className="mt-2 text-[2.35rem] font-semibold leading-[1.05] tracking-tight text-slate-900">Download OpenWork</h3>
-                  <p className="mt-3 text-[1.35rem] font-medium leading-tight tracking-tight text-slate-700">
+                  <p className="mt-3 text-[1.1rem] font-normal leading-snug tracking-normal text-slate-600">
                     while we finish setting up your ai worker
                   </p>
                   <p className="mx-auto mt-4 max-w-[34rem] text-justify text-[1.05rem] leading-8 text-slate-600">
@@ -3182,7 +3182,7 @@ export function CloudControlPanel() {
                       href={OPENWORK_DOWNLOAD_FALLBACK_URL}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-sm font-semibold text-[#1B29FF] transition hover:text-[#151FDA]"
+                      className="text-sm text-slate-500 transition hover:text-slate-700"
                     >
                       That didn&apos;t work?
                     </a>
