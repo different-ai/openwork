@@ -49,6 +49,7 @@ import {
   shellInSession,
   listCommands as listCommandsTyped,
 } from "./lib/opencode-session";
+import { shouldAutoCompact } from "./lib/auto-compaction-policy";
 import { clearPerfLogs, finishPerf, perfNow, recordPerfLog } from "./lib/perf-log";
 import {
   AUTO_COMPACT_CONTEXT_PREF_KEY,
@@ -1691,6 +1692,7 @@ export default function App() {
     if (!autoCompactContext()) return;
     if (autoCompactingSessionId() === sessionID) return;
 
+    setLastAutoCompactedAtBySession((current) => ({ ...current, [sessionID]: Date.now() }));
     setAutoCompactingSessionId(sessionID);
     try {
       await compactCurrentSession(sessionID);
@@ -1701,17 +1703,30 @@ export default function App() {
     }
   };
 
-  const [lastSessionStatus, setLastSessionStatus] = createSignal<string | null>(null);
+  const [lastSessionStatus, setLastSessionStatus] = createSignal<{ sessionID: string | null; status: string | null }>({
+    sessionID: null,
+    status: null,
+  });
   createEffect(() => {
     const sessionID = selectedSessionId();
     const status = sessionID ? sessionStatusById()[sessionID] ?? null : null;
-    const previous = lastSessionStatus();
-    setLastSessionStatus(status);
+    const previousState = lastSessionStatus();
+    const previous = previousState.sessionID === sessionID ? previousState.status : null;
+    const visibleMessages = messages();
+    const lastAutoCompactedAt = sessionID ? lastAutoCompactedAtBySession()[sessionID] ?? null : null;
+    setLastSessionStatus({ sessionID: sessionID ?? null, status });
 
     if (!sessionID) return;
     if (!autoCompactContext()) return;
-    if (status !== "idle") return;
-    if (!previous || previous === "idle") return;
+    const decision = shouldAutoCompact({
+      sessionID,
+      previousStatus: previous,
+      status,
+      messages: visibleMessages,
+      lastAutoCompactedAt,
+      now: Date.now(),
+    });
+    if (!decision.shouldCompact) return;
     void triggerAutoCompaction(sessionID);
   });
 
@@ -2533,6 +2548,7 @@ export default function App() {
   const [autoCompactContext, setAutoCompactContext] = createSignal(false);
   const [modelVariant, setModelVariant] = createSignal<string | null>(null);
   const [autoCompactingSessionId, setAutoCompactingSessionId] = createSignal<string | null>(null);
+  const [lastAutoCompactedAtBySession, setLastAutoCompactedAtBySession] = createSignal<Record<string, number>>({});
 
   const MODEL_VARIANT_OPTIONS = [
     { value: "none", label: "None" },

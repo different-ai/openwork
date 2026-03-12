@@ -1208,7 +1208,7 @@ export default function SettingsView(props: SettingsViewProps) {
               <div class="flex items-center justify-between bg-gray-1 p-3 rounded-xl border border-gray-6 gap-3">
                 <div class="min-w-0">
                   <div class="text-sm text-gray-12">Auto context compaction</div>
-                  <div class="text-xs text-gray-7">Automatically compact after a run completes.</div>
+                  <div class="text-xs text-gray-7">Automatically compact once a session grows large enough after a run.</div>
                 </div>
                 <Button
                   variant="outline"
