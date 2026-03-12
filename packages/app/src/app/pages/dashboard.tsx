@@ -23,6 +23,7 @@ import {
   isWindowsPlatform,
   normalizeDirectoryPath,
 } from "../utils";
+import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 import {
   buildOpenworkConnectInviteUrl,
   buildOpenworkWorkspaceBaseUrl,
@@ -54,7 +55,7 @@ import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import {
   Box,
-  ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Circle,
   History,
@@ -62,7 +63,6 @@ import {
   MessageCircle,
   MoreHorizontal,
   Plus,
-  Settings,
   SlidersHorizontal,
   Zap,
 } from "lucide-solid";
@@ -92,6 +92,7 @@ export type DashboardViewProps = {
   refreshProviders: () => Promise<unknown>;
   view: View;
   setView: (view: View, sessionId?: string) => void;
+  toggleSettings: () => void;
   startupPreference: StartupPreference | null;
   baseUrl: string;
   clientConnected: boolean;
@@ -399,6 +400,13 @@ export default function DashboardView(props: DashboardViewProps) {
   const [refreshInProgress, setRefreshInProgress] = createSignal(false);
   const [providerAuthActionBusy, setProviderAuthActionBusy] = createSignal(false);
   const [shareWorkspaceId, setShareWorkspaceId] = createSignal<string | null>(null);
+  const {
+    leftSidebarWidth,
+    rightSidebarExpanded,
+    rightSidebarWidth,
+    startLeftSidebarResize,
+    toggleRightSidebar,
+  } = createWorkspaceShellLayout({ expandedRightWidth: 224 });
 
   const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
@@ -494,15 +502,17 @@ export default function DashboardView(props: DashboardViewProps) {
     return (
       <button
         type="button"
-        class={`w-full h-10 flex items-center gap-3 px-3 rounded-lg text-sm font-medium transition-colors ${
+        class={`w-full h-10 flex items-center rounded-lg text-sm font-medium transition-colors ${
           active()
             ? "bg-dls-active text-dls-text"
             : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-        }`}
+        } ${rightSidebarExpanded() ? "justify-start gap-3 px-3" : "justify-center px-0"}`}
         onClick={() => props.setTab(t)}
+        title={label}
+        aria-label={label}
       >
         {icon}
-        {label}
+        <Show when={rightSidebarExpanded()}>{label}</Show>
       </button>
     );
   };
@@ -1016,7 +1026,13 @@ export default function DashboardView(props: DashboardViewProps) {
 
   return (
     <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
-      <aside class="w-64 hidden md:flex flex-col bg-dls-sidebar border-r border-dls-border p-4">
+      <aside
+        class="relative hidden md:flex shrink-0 flex-col bg-dls-sidebar border-r border-dls-border p-4"
+        style={{
+          width: `${leftSidebarWidth()}px`,
+          "min-width": `${leftSidebarWidth()}px`,
+        }}
+      >
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -1068,6 +1084,12 @@ export default function DashboardView(props: DashboardViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
           />
         </div>
+        <div
+          class="absolute right-0 top-0 hidden h-full w-2 translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-gray-6/40 md:block"
+          onPointerDown={startLeftSidebarResize}
+          title="Resize workspace column"
+          aria-label="Resize workspace column"
+        />
 
       </aside>
 
@@ -1433,14 +1455,15 @@ export default function DashboardView(props: DashboardViewProps) {
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
+          settingsOpen={props.tab === "settings"}
+          onOpenSettings={props.toggleSettings}
           onOpenMessaging={openConfig}
           onOpenProviders={() => props.openProviderAuthModal()}
           onOpenMcp={() => props.setTab("mcp")}
           providerConnectedIds={props.providerConnectedIds}
           mcpStatuses={props.mcpStatuses}
         />
-        <nav class="md:hidden border-t border-dls-border bg-dls-surface">
+        <nav class="hidden border-t border-dls-border bg-dls-surface">
           <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1493,8 +1516,27 @@ export default function DashboardView(props: DashboardViewProps) {
         </nav>
       </main>
 
-      <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
-        <div class="space-y-1 pt-2">
+      <aside
+        class="flex shrink-0 flex-col overflow-hidden bg-dls-sidebar border-l border-dls-border p-3 transition-[width] duration-200"
+        style={{
+          width: `${rightSidebarWidth()}px`,
+          "min-width": `${rightSidebarWidth()}px`,
+        }}
+      >
+        <div class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}>
+          <button
+            type="button"
+            class="flex h-9 w-9 items-center justify-center rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            onClick={toggleRightSidebar}
+            title={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+            aria-label={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <Show when={rightSidebarExpanded()} fallback={<ChevronLeft size={18} />}>
+              <ChevronRight size={18} />
+            </Show>
+          </button>
+        </div>
+        <div class="space-y-1 pt-1">
           {navItem("scheduled", "Automations", <History size={18} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Extensions", <Box size={18} />)}

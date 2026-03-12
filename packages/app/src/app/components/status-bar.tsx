@@ -12,6 +12,7 @@ type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  settingsOpen: boolean;
   onOpenSettings: () => void;
   onOpenMessaging: () => void;
   onOpenProviders: () => Promise<void> | void;
@@ -228,13 +229,17 @@ export default function StatusBar(props: StatusBarProps) {
           </Show>
           <Button
             variant="ghost"
-            class="h-7 px-2.5 py-0 text-xs"
+            class={`h-7 px-2.5 py-0 text-xs ${
+              props.settingsOpen ? "bg-gray-3 text-gray-12 hover:bg-gray-4" : ""
+            }`}
             onClick={props.onOpenSettings}
-            title="Settings"
+            title={props.settingsOpen ? "Back to previous screen" : "Settings"}
           >
             <Settings class="w-4 h-4" />
             <Show when={props.developerMode}>
-              <span class="text-gray-11 font-medium">Settings</span>
+              <span class="text-gray-11 font-medium">
+                {props.settingsOpen ? "Back" : "Settings"}
+              </span>
             </Show>
           </Button>
         </div>

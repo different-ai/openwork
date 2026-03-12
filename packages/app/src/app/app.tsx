@@ -240,6 +240,12 @@ type SharedBundleImportTarget = {
   directoryHint?: string | null;
 };
 
+type SettingsReturnTarget = {
+  view: View;
+  tab: DashboardTab;
+  sessionId: string | null;
+};
+
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
   const normalized = (value ?? "").trim().toLowerCase();
   if (normalized === "new_worker" || normalized === "new-worker" || normalized === "newworker") {
@@ -1098,6 +1104,11 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  const [settingsReturnTarget, setSettingsReturnTarget] = createSignal<SettingsReturnTarget>({
+    view: "dashboard",
+    tab: "scheduled",
+    sessionId: null,
+  });
   const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
   const readSessionByWorkspace = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
@@ -1135,6 +1146,48 @@ export default function App() {
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+
+  createEffect(() => {
+    const view = currentView();
+    const currentTab = tab();
+    if (view === "dashboard" && currentTab === "settings") return;
+    setSettingsReturnTarget({
+      view,
+      tab: currentTab,
+      sessionId: selectedSessionId(),
+    });
+  });
+
+  const restoreSettingsReturnTarget = () => {
+    const target = settingsReturnTarget();
+    if (target.view === "session") {
+      if (target.sessionId) {
+        goToSession(target.sessionId);
+        return;
+      }
+      navigate("/session");
+      return;
+    }
+    if (target.view === "onboarding") {
+      navigate("/onboarding");
+      return;
+    }
+    if (target.view === "proto") {
+      navigate("/proto/workspaces");
+      return;
+    }
+    goToDashboard(target.tab);
+  };
+
+  const toggleSettingsView = (nextTab: SettingsTab = "general") => {
+    const settingsOpen = currentView() === "dashboard" && tab() === "settings";
+    if (settingsOpen) {
+      restoreSettingsReturnTarget();
+      return;
+    }
+    setSettingsTab(nextTab);
+    goToDashboard("settings");
+  };
 
   const sessionStore = createSessionStore({
     client,
@@ -5862,6 +5915,7 @@ export default function App() {
       submitProviderApiKey,
       view: currentView(),
       setView,
+      toggleSettings: () => toggleSettingsView("general"),
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
@@ -6095,6 +6149,7 @@ export default function App() {
     tab: tab(),
     setTab,
     setSettingsTab,
+    toggleSettings: () => toggleSettingsView("general"),
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
     workspaces: workspaceStore.workspaces(),

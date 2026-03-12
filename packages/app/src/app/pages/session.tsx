@@ -29,12 +29,14 @@ import {
   type OpenworkServerInfo,
   type WorkspaceInfo,
 } from "../lib/tauri";
+import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
 
 import {
   Box,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Circle,
-  Cpu,
   HardDrive,
   History,
   ListTodo,
@@ -45,7 +47,6 @@ import {
   MoreHorizontal,
   Redo2,
   Search,
-  Settings,
   Shield,
   SlidersHorizontal,
   Undo2,
@@ -102,6 +103,7 @@ export type SessionViewProps = {
   tab: DashboardTab;
   setTab: (tab: DashboardTab) => void;
   setSettingsTab: (tab: SettingsTab) => void;
+  toggleSettings: () => void;
   activeWorkspaceDisplay: WorkspaceDisplay;
   activeWorkspaceRoot: string;
   workspaces: WorkspaceInfo[];
@@ -335,6 +337,13 @@ export default function SessionView(props: SessionViewProps) {
   const showRightSidebarSelection = createMemo(() => false);
   let commandPaletteInputEl: HTMLInputElement | undefined;
   const commandPaletteOptionRefs: HTMLButtonElement[] = [];
+  const {
+    leftSidebarWidth,
+    rightSidebarExpanded,
+    rightSidebarWidth,
+    startLeftSidebarResize,
+    toggleRightSidebar,
+  } = createWorkspaceShellLayout({ expandedRightWidth: 280 });
 
   createEffect(() => {
     if (!isTauriRuntime()) {
@@ -3293,9 +3302,35 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const rightSidebarNavButton = (
+    label: string,
+    icon: any,
+    active: boolean,
+    onClick: () => void,
+  ) => (
+    <button
+      type="button"
+      class={`h-9 w-full rounded-lg text-[13px] font-medium transition-colors ${
+        active ? "bg-gray-4 text-gray-12" : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
+      } ${rightSidebarExpanded() ? "flex items-center gap-2.5 px-3 justify-start" : "flex items-center justify-center px-0"}`}
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+    >
+      {icon}
+      <Show when={rightSidebarExpanded()}>{label}</Show>
+    </button>
+  );
+
   return (
     <div class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden">
-      <aside class="w-[260px] hidden lg:flex flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-5">
+      <aside
+        class="relative hidden lg:flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-5"
+        style={{
+          width: `${leftSidebarWidth()}px`,
+          "min-width": `${leftSidebarWidth()}px`,
+        }}
+      >
         <div class="flex-1 overflow-y-auto">
           <Show when={showUpdatePill()}>
             <button
@@ -3348,6 +3383,12 @@ export default function SessionView(props: SessionViewProps) {
             onImportWorkspaceConfig={props.importWorkspaceConfig}
           />
         </div>
+        <div
+          class="absolute right-0 top-0 hidden h-full w-2 translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
+          onPointerDown={startLeftSidebarResize}
+          title="Resize workspace column"
+          aria-label="Resize workspace column"
+        />
 
       </aside>
 
@@ -3847,7 +3888,8 @@ export default function SessionView(props: SessionViewProps) {
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
           developerMode={props.developerMode}
-          onOpenSettings={() => openSettings("general")}
+          settingsOpen={false}
+          onOpenSettings={props.toggleSettings}
           onOpenMessaging={openConfig}
           onOpenProviders={openProviderAuth}
           onOpenMcp={openMcp}
@@ -3856,100 +3898,91 @@ export default function SessionView(props: SessionViewProps) {
         />
       </main>
 
-      <aside class="w-[280px] hidden xl:flex flex-col bg-dls-sidebar border-l border-gray-6/70 p-3">
-        <div class="flex-1 overflow-y-auto space-y-5 pt-2">
+      <aside
+        class="flex shrink-0 flex-col overflow-hidden bg-dls-sidebar border-l border-gray-6/70 p-3 transition-[width] duration-200"
+        style={{
+          width: `${rightSidebarWidth()}px`,
+          "min-width": `${rightSidebarWidth()}px`,
+        }}
+      >
+        <div class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}>
+          <button
+            type="button"
+            class="flex h-9 w-9 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+            onClick={toggleRightSidebar}
+            title={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+            aria-label={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <Show when={rightSidebarExpanded()} fallback={<ChevronLeft size={18} />}>
+              <ChevronRight size={18} />
+            </Show>
+          </button>
+        </div>
+        <div class={`flex-1 overflow-y-auto ${rightSidebarExpanded() ? "space-y-5 pt-1" : "space-y-3 pt-1"}`}>
           <div class="space-y-1 mb-2">
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "scheduled"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("scheduled");
-              props.setView("dashboard");
-            }}
-          >
-            <History size={18} />
-            Automations
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "skills"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("skills");
-              props.setView("dashboard");
-            }}
-          >
-            <Zap size={18} />
-            Skills
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins")
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("mcp");
-              props.setView("dashboard");
-            }}
-          >
-            <Box size={18} />
-            Extensions
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "identities"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => {
-              props.setTab("identities");
-              props.setView("dashboard");
-            }}
-          >
-            <MessageCircle size={18} />
-            Messaging
-          </button>
-          <Show when={props.developerMode}>
-            <button
-              type="button"
-              class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-                showRightSidebarSelection() && props.tab === "config"
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-              }`}
-              onClick={openConfig}
-            >
-              <SlidersHorizontal size={18} />
-              Advanced
-            </button>
-          </Show>
+            {rightSidebarNavButton(
+              "Automations",
+              <History size={18} />,
+              showRightSidebarSelection() && props.tab === "scheduled",
+              () => {
+                props.setTab("scheduled");
+                props.setView("dashboard");
+              },
+            )}
+            {rightSidebarNavButton(
+              "Skills",
+              <Zap size={18} />,
+              showRightSidebarSelection() && props.tab === "skills",
+              () => {
+                props.setTab("skills");
+                props.setView("dashboard");
+              },
+            )}
+            {rightSidebarNavButton(
+              "Extensions",
+              <Box size={18} />,
+              showRightSidebarSelection() && (props.tab === "mcp" || props.tab === "plugins"),
+              () => {
+                props.setTab("mcp");
+                props.setView("dashboard");
+              },
+            )}
+            {rightSidebarNavButton(
+              "Messaging",
+              <MessageCircle size={18} />,
+              showRightSidebarSelection() && props.tab === "identities",
+              () => {
+                props.setTab("identities");
+                props.setView("dashboard");
+              },
+            )}
+            <Show when={props.developerMode}>
+              {rightSidebarNavButton(
+                "Advanced",
+                <SlidersHorizontal size={18} />,
+                showRightSidebarSelection() && props.tab === "config",
+                openConfig,
+              )}
+            </Show>
           </div>
 
-          <InboxPanel
-            id="sidebar-inbox"
-            client={props.openworkServerClient}
-            workspaceId={props.openworkServerWorkspaceId}
-            onToast={(message) => setToastMessage(message)}
-          />
+          <Show when={rightSidebarExpanded()}>
+            <InboxPanel
+              id="sidebar-inbox"
+              client={props.openworkServerClient}
+              workspaceId={props.openworkServerWorkspaceId}
+              onToast={(message) => setToastMessage(message)}
+            />
 
-          <ArtifactsPanel
-            id="sidebar-artifacts"
-            files={touchedFiles()}
-            workspaceRoot={props.activeWorkspaceRoot}
-            onRevealArtifact={revealArtifact}
-            onOpenInObsidian={openArtifactInObsidian}
-            obsidianAvailable={obsidianAvailable()}
-          />
+            <ArtifactsPanel
+              id="sidebar-artifacts"
+              files={touchedFiles()}
+              workspaceRoot={props.activeWorkspaceRoot}
+              onRevealArtifact={revealArtifact}
+              onOpenInObsidian={openArtifactInObsidian}
+              obsidianAvailable={obsidianAvailable()}
+            />
+          </Show>
         </div>
       </aside>
 
