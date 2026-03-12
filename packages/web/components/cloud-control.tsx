@@ -204,16 +204,7 @@ const STARTUP_SEQUENCE: StartupSequenceItem[] = [
   { Icon: CheckCircle2, label: "Checking health", sublabel: "Waiting for the worker to report healthy." },
   { Icon: MessageCircle, label: "Opening channel", sublabel: "Bringing the app connection online." },
   { Icon: Terminal, label: "Preparing console", sublabel: "Getting the console ready for handoff." },
-  { Icon: Sparkles, label: "Almost ready", sublabel: "The launch buttons unlock the moment setup finishes." }
-];
-const AMBIENT_STARTUP_SEQUENCE: StartupSequenceItem[] = [
-  { Icon: RefreshCcw, label: "Scanning logs", sublabel: "Watching the startup output for the next milestone.", spin: true },
-  { Icon: Cpu, label: "Watching engine", sublabel: "Checking that the runtime stays responsive." },
-  { Icon: Globe, label: "Wiring services", sublabel: "Waiting for the internal service paths to settle." },
-  { Icon: Terminal, label: "Watching startup", sublabel: "Keeping an eye on the worker while it settles." },
-  { Icon: FileText, label: "Reading logs", sublabel: "Reviewing the latest startup output." },
-  { Icon: Server, label: "Settling runtime", sublabel: "Waiting for the last service checks to pass." },
-  { Icon: Sparkles, label: "Almost ready", sublabel: "The worker is in the last part of setup." }
+  { Icon: Sparkles, label: "Launch in progress", sublabel: "Setup is still running while we rotate startup signals." }
 ];
 
 function getEmailDomain(email: string): string {
@@ -1134,7 +1125,7 @@ function getStartupMilestoneIndex({
 }): number | null {
   const combined = `${latestEvent?.label ?? ""} ${latestEvent?.detail ?? ""} ${launchStatus}`.toLowerCase();
 
-  if (combined.includes("access token ready") || combined.includes("ready to connect") || combined.includes("almost ready")) {
+  if (combined.includes("access token ready") || combined.includes("ready to connect")) {
     return 15;
   }
 
@@ -1170,20 +1161,11 @@ function getStartupMilestoneIndex({
 }
 
 function getStartupSequenceItem(index: number): StartupSequenceItem {
-  if (index < STARTUP_SEQUENCE.length) {
-    return STARTUP_SEQUENCE[index];
-  }
-
-  return AMBIENT_STARTUP_SEQUENCE[(index - STARTUP_SEQUENCE.length) % AMBIENT_STARTUP_SEQUENCE.length];
+  return STARTUP_SEQUENCE[index % STARTUP_SEQUENCE.length];
 }
 
 function getNextStartupSequenceIndex(index: number): number {
-  if (index < STARTUP_SEQUENCE.length - 1) {
-    return index + 1;
-  }
-
-  const ambientOffset = index < STARTUP_SEQUENCE.length ? 0 : index - STARTUP_SEQUENCE.length + 1;
-  return STARTUP_SEQUENCE.length + (ambientOffset % AMBIENT_STARTUP_SEQUENCE.length);
+  return (index + 1) % STARTUP_SEQUENCE.length;
 }
 
 function StartupSequenceRow({
