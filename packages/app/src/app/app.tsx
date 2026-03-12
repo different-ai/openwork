@@ -4566,7 +4566,7 @@ export default function App() {
       return;
     }
 
-    const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
     try {
       setMcpStatus(null);

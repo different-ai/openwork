@@ -24,6 +24,7 @@ export const SUGGESTED_PLUGINS: SuggestedPlugin[] = [
 ];
 
 export type McpDirectoryInfo = {
+  id?: string;
   name: string;
   description: string;
   url?: string;
@@ -69,10 +70,11 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     oauth: false,
   },
   {
+    id: "chrome-devtools",
     name: "Control Chrome",
     description: "Drive Chrome tabs with browser automation.",
     type: "local",
-    command: ["chrome-devtools-mcp"],
+    command: ["npx", "-y", "chrome-devtools-mcp@latest"],
     oauth: false,
   },
 ];
