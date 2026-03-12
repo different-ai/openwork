@@ -510,7 +510,7 @@ export default function Composer(props: ComposerProps) {
   const [slashQuery, setSlashQuery] = createSignal("");
   const [slashIndex, setSlashIndex] = createSignal(0);
   const [slashCommands, setSlashCommands] = createSignal<SlashCommandOption[]>([]);
-  const [slashLoaded, setSlashLoaded] = createSignal(false);
+  const [slashLoading, setSlashLoading] = createSignal(false);
 
   onMount(() => {
     queueMicrotask(() => focusEditorEnd());
@@ -889,14 +889,16 @@ export default function Composer(props: ComposerProps) {
     setSlashIndex(0);
   });
 
-  // Fetch commands when slash popup opens for the first time
+  // Refresh commands each time the slash picker opens so hot-reloaded skills
+  // and commands become selectable without restarting the session view.
   createEffect(() => {
-    if (!slashOpen() || slashLoaded()) return;
+    if (!slashOpen()) return;
+    setSlashLoading(true);
     props
       .listCommands()
       .then((commands) => setSlashCommands(commands))
       .catch(() => setSlashCommands([]))
-      .finally(() => setSlashLoaded(true));
+      .finally(() => setSlashLoading(false));
   });
 
   // If the editor contains an exact /command (no spaces), auto-convert it into a styled chip.
@@ -1619,7 +1621,7 @@ export default function Composer(props: ComposerProps) {
                     when={slashFiltered().length}
                     fallback={
                       <div class="px-3 py-2 text-xs text-gray-10">
-                        {slashLoaded() ? "No commands found." : "Loading commands..."}
+                        {slashLoading() ? "Loading commands..." : "No commands found."}
                       </div>
                     }
                   >
