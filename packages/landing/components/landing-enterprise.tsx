@@ -111,71 +111,70 @@ export function LandingEnterprise(props: Props) {
           </section>
 
           <section className="space-y-6">
-              <div className="grid gap-6 md:grid-cols-3">
-                {deploymentModes.map(mode => {
-                  const Icon = mode.icon;
+            <div className="grid gap-6 md:grid-cols-3">
+              {deploymentModes.map(mode => {
+                const Icon = mode.icon;
 
-                  return (
-                    <div
-                      key={mode.title}
-                      className="landing-shell rounded-[2rem] p-6"
-                    >
-                      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-[#011627] shadow-inner">
-                        <Icon size={18} />
-                      </div>
-                      <h3 className="mb-2 text-[17px] font-medium tracking-tight text-[#011627]">
-                        {mode.title}
-                      </h3>
-                      <p className="text-[14px] leading-relaxed text-slate-600">
-                        {mode.description}
-                      </p>
+                return (
+                  <div
+                    key={mode.title}
+                    className="landing-shell rounded-[2rem] p-6"
+                  >
+                    <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-100 text-[#011627] shadow-inner">
+                      <Icon size={18} />
                     </div>
-                  );
-                })}
-              </div>
-
-              <div className="landing-shell rounded-[2rem] p-6 md:p-8">
-                <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
-                  <Rocket size={12} />
-                  Rollout pattern
-                </div>
-                <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
-                  <div>
-                    <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
-                      Start with the workflows that already matter.
+                    <h3 className="mb-2 text-[17px] font-medium tracking-tight text-[#011627]">
+                      {mode.title}
                     </h3>
-                    <p className="text-[15px] leading-relaxed text-slate-600">
-                      Most teams should begin with one approval-sensitive
-                      worker, one shared skill set, and one concrete business
-                      process. Once that path is safe and legible, the same
-                      model extends into OpenWork Cloud and Den.
+                    <p className="text-[14px] leading-relaxed text-slate-600">
+                      {mode.description}
                     </p>
                   </div>
-                  <div className="space-y-3">
-                    {rolloutSteps.map((step, index) => (
-                      <div
-                        key={step}
-                        className="flex gap-3 rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-4 shadow-sm"
-                      >
-                        <div className="step-circle shrink-0">{index + 1}</div>
-                        <p className="text-[14px] leading-relaxed text-slate-600">
-                          {step}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                );
+              })}
+            </div>
 
-                <div className="mt-6 inline-flex items-center gap-2 text-[14px] font-medium text-slate-600">
-                  <Link
-                    href="/den"
-                    className="inline-flex items-center gap-2 transition-colors hover:text-[#011627]"
-                  >
-                    Hosted workers continue into Den
-                    <ArrowRight size={14} />
-                  </Link>
+            <div className="landing-shell rounded-[2rem] p-6 md:p-8">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-700">
+                <Rocket size={12} />
+                Rollout pattern
+              </div>
+              <div className="grid gap-4 md:grid-cols-[1.1fr_0.9fr]">
+                <div>
+                  <h3 className="mb-3 text-2xl font-medium tracking-tight text-[#011627]">
+                    Start with the workflows that already matter.
+                  </h3>
+                  <p className="text-[15px] leading-relaxed text-slate-600">
+                    Most teams should begin with one approval-sensitive worker,
+                    one shared skill set, and one concrete business process.
+                    Once that path is safe and legible, the same model extends
+                    into OpenWork Cloud and Den.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  {rolloutSteps.map((step, index) => (
+                    <div
+                      key={step}
+                      className="flex gap-3 rounded-2xl border border-slate-200/70 bg-white/85 px-4 py-4 shadow-sm"
+                    >
+                      <div className="step-circle shrink-0">{index + 1}</div>
+                      <p className="text-[14px] leading-relaxed text-slate-600">
+                        {step}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
+              <div className="mt-6 inline-flex items-center gap-2 text-[14px] font-medium text-slate-600">
+                <Link
+                  href="/den"
+                  className="inline-flex items-center gap-2 transition-colors hover:text-[#011627]"
+                >
+                  Hosted workers continue into Den
+                  <ArrowRight size={14} />
+                </Link>
+              </div>
+            </div>
 
             <BookCallForm calUrl={props.calUrl} />
           </section>
