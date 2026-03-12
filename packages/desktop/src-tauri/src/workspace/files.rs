@@ -511,12 +511,12 @@ pub fn ensure_workspace_files(workspace_path: &str, preset: &str) -> Result<(), 
                 _ => serde_json::Map::new(),
             };
 
-            if !mcp_obj.contains_key("control-chrome") {
+            if !mcp_obj.contains_key("chrome-devtools") {
                 mcp_obj.insert(
-                    "control-chrome".to_string(),
+                    "chrome-devtools".to_string(),
                     serde_json::json!({
                       "type": "local",
-                      "command": ["chrome-devtools-mcp"]
+                      "command": ["npx", "-y", "chrome-devtools-mcp@latest"]
                     }),
                 );
                 config_changed = true;
