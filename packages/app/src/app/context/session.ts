@@ -14,6 +14,7 @@ import type {
   PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
+  SessionErrorTurn,
   TodoItem,
 } from "../types";
 import {
@@ -27,6 +28,7 @@ import {
 } from "../utils";
 import { unwrap } from "../lib/opencode";
 import { finishPerf, perfNow, recordPerfLog } from "../lib/perf-log";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../types";
 
 export type SessionModelState = {
   overrides: Record<string, ModelRef>;
@@ -38,6 +40,7 @@ export type SessionStore = ReturnType<typeof createSessionStore>;
 type StoreState = {
   sessions: Session[];
   sessionStatus: Record<string, string>;
+  sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
   parts: Record<string, Part[]>;
   todos: Record<string, TodoItem[]>;
@@ -162,6 +165,7 @@ export function createSessionStore(options: {
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
     sessionStatus: {},
+    sessionErrorTurns: {},
     messages: {},
     parts: {},
     todos: {},
@@ -440,6 +444,30 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
+  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
+    const text = message?.trim() ?? "";
+    if (!sessionID || !text) return;
+
+    const list = store.messages[sessionID] ?? [];
+    const lastMessage = list.length > 0 ? list[list.length - 1] : null;
+    const afterMessageID = lastMessage?.id ?? null;
+
+    setStore("sessionErrorTurns", sessionID, (current) => {
+      const existing = current ?? [];
+      const previous = existing[existing.length - 1];
+      if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
+        return existing;
+      }
+
+      return existing.concat({
+        id: `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${sessionID}:${Date.now()}:${existing.length}`,
+        text,
+        afterMessageID,
+        time: Date.now(),
+      });
+    });
+  };
+
   const truncateErrorField = (value: unknown, max = 500) => {
     if (typeof value !== "string") return null;
     const text = value.trim();
@@ -450,8 +478,8 @@ export function createSessionStore(options: {
 
   const inferHttpStatus = (value: string | null) => {
     if (!value) return null;
-    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|429)\b/i) ||
-      value.match(/\b(401|403|429)\b/);
+    const match = value.match(/\b(?:status|code|http)\s*(?:=|:)?\s*(401|403|413|429)\b/i) ||
+      value.match(/\b(401|403|413|429)\b/);
     if (!match) return null;
     const parsed = Number.parseInt(match[1], 10);
     if (!Number.isFinite(parsed)) return null;
@@ -520,10 +548,12 @@ export function createSessionStore(options: {
       if (errorName === "ProviderAuthError") return `Provider auth error${providerID ? ` (${providerID})` : ""}`;
       if (errorName === "APIError") {
         if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+        if (effectiveStatus === 413) return "Context too large";
         if (effectiveStatus === 429) return "Rate limit exceeded";
         return `API error${effectiveStatus ? ` (${effectiveStatus})` : ""}`;
       }
       if (effectiveStatus === 401 || effectiveStatus === 403) return "Authentication failed";
+      if (effectiveStatus === 413) return "Context too large";
       if (effectiveStatus === 429) return "Rate limit exceeded";
       if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
       return errorName.replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -531,6 +561,9 @@ export function createSessionStore(options: {
 
     const lines = [heading];
     if (rawMessage && rawMessage !== heading) lines.push(rawMessage);
+    if (effectiveStatus === 413) {
+      lines.push("Tip: Try compacting the session, or start a new session if the issue persists.");
+    }
     if (providerID && errorName !== "ProviderAuthError") lines.push(`Provider: ${providerID}`);
     if (effectiveStatus && errorName !== "APIError") lines.push(`Status: ${effectiveStatus}`);
     if (code) lines.push(`Code: ${code}`);
@@ -1010,6 +1043,11 @@ export function createSessionStore(options: {
           syntheticContinueEventTimesBySession.delete(info.id);
           syntheticContinueLoopLastWarnAtBySession.delete(info.id);
           setStore("sessions", (current) => removeSession(current, info.id));
+          setStore(
+            produce((draft: StoreState) => {
+              delete draft.sessionErrorTurns[info.id];
+            }),
+          );
         }
       }
     }
@@ -1034,6 +1072,15 @@ export function createSessionStore(options: {
         const sessionID = typeof record.sessionID === "string" ? record.sessionID : null;
         if (sessionID) {
           setStore("sessionStatus", sessionID, "idle");
+          const c = options.client();
+          if (c) {
+            try {
+              const latest = unwrap(await c.session.get({ sessionID }));
+              setStore("sessions", (current) => upsertSession(current, latest));
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     }
@@ -1050,23 +1097,30 @@ export function createSessionStore(options: {
           setStore("sessionStatus", sessionID, "idle");
         }
         const errorObj = record.error as Record<string, unknown> | undefined;
-        if (sessionID && sessionID !== options.selectedSessionId()) {
-          return;
-        }
         if (errorObj) {
           const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
           if (errorName === "MessageAbortedError") {
             // Cancellation is a user-driven control flow. Don't treat it as a
             // fatal error banner; the session UI already provides local UX.
-            options.setError(null);
+            if (!sessionID) {
+              options.setError(null);
+            }
             return;
           }
-          options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
+          if (sessionID) {
+            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+          } else {
+            options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
+          }
           return;
         }
 
         const fallback = truncateErrorField(record.error, 700) ?? "An unexpected error occurred";
-        options.setError(addOpencodeCacheHint(fallback));
+        if (sessionID) {
+          appendSessionErrorTurn(sessionID, addOpencodeCacheHint(fallback));
+        } else {
+          options.setError(addOpencodeCacheHint(fallback));
+        }
       }
     }
 
@@ -1411,6 +1465,11 @@ export function createSessionStore(options: {
 
   return {
     sessions,
+    sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
+    selectedSessionErrorTurns: createMemo(() => {
+      const sessionID = options.selectedSessionId();
+      return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
+    }),
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
@@ -1432,6 +1491,7 @@ export function createSessionStore(options: {
     respondPermission,
     respondQuestion,
     rejectQuestion,
+    appendSessionErrorTurn,
     setSessions,
     setSessionStatusById,
     setMessages,

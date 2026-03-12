@@ -64,6 +64,7 @@ pub struct OrchestratorWorkspaceList {
 
 pub struct OrchestratorSpawnOptions {
     pub data_dir: String,
+    pub dev_mode: bool,
     pub daemon_host: String,
     pub daemon_port: u16,
     pub opencode_bin: String,
@@ -275,6 +276,10 @@ pub fn spawn_orchestrator_daemon(
 
     for (key, value) in crate::bun_env::bun_env_overrides() {
         command = command.env(key, value);
+    }
+
+    if options.dev_mode {
+        command = command.env("OPENWORK_DEV_MODE", "1");
     }
 
     command

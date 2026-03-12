@@ -4,11 +4,16 @@ use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 use crate::engine::doctor::resolve_engine_path;
+use crate::engine::manager::EngineManager;
+use crate::opencode_router::manager::OpenCodeRouterManager;
+use crate::openwork_server::manager::OpenworkServerManager;
+use crate::orchestrator;
+use crate::orchestrator::manager::OrchestratorManager;
 use crate::paths::home_dir;
 use crate::platform::command_for_program;
 use crate::types::{ExecResult, WorkspaceOpenworkConfig};
 use crate::workspace::state::load_workspace_state;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(serde::Serialize)]
 pub struct CacheResetResult {
@@ -23,6 +28,16 @@ pub struct AppBuildInfo {
     pub version: String,
     pub git_sha: Option<String>,
     pub build_epoch: Option<String>,
+    pub openwork_dev_mode: bool,
+}
+
+fn env_truthy(key: &str) -> bool {
+    matches!(
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase()),
+        Some(value) if value == "1" || value == "true" || value == "yes" || value == "on"
+    )
 }
 
 fn opencode_cache_candidates() -> Vec<PathBuf> {
@@ -269,7 +284,64 @@ pub fn app_build_info(app: AppHandle) -> AppBuildInfo {
         version,
         git_sha,
         build_epoch,
+        openwork_dev_mode: env_truthy("OPENWORK_DEV_MODE"),
     }
+}
+
+#[tauri::command]
+pub fn nuke_opencode_dev_config_and_exit(
+    app: AppHandle,
+    engine_manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+) -> Result<(), String> {
+    if !env_truthy("OPENWORK_DEV_MODE") {
+        return Err("OpenCode dev mode is not enabled.".to_string());
+    }
+
+    if let Ok(mut engine) = engine_manager.inner.lock() {
+        EngineManager::stop_locked(&mut engine);
+    }
+    if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
+        OrchestratorManager::stop_locked(&mut orchestrator_state);
+    }
+    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
+        OpenworkServerManager::stop_locked(&mut openwork_state);
+    }
+    if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
+        OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
+    }
+
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+    let desktop_dev_dir = app_data_dir.join("opencode-dev");
+    if desktop_dev_dir.exists() {
+        fs::remove_dir_all(&desktop_dev_dir)
+            .map_err(|e| format!("Failed to remove {}: {e}", desktop_dev_dir.display()))?;
+    }
+
+    let orchestrator_data_dir = PathBuf::from(orchestrator::resolve_orchestrator_data_dir());
+    let orchestrator_dev_dir = orchestrator_data_dir.join("opencode-dev");
+    if orchestrator_dev_dir.exists() {
+        fs::remove_dir_all(&orchestrator_dev_dir)
+            .map_err(|e| format!("Failed to remove {}: {e}", orchestrator_dev_dir.display()))?;
+    }
+
+    for path in [
+        orchestrator_data_dir.join("openwork-orchestrator-state.json"),
+        orchestrator_data_dir.join("openwork-orchestrator-auth.json"),
+    ] {
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|e| format!("Failed to remove {}: {e}", path.display()))?;
+        }
+    }
+
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]

@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
+type SocialAuthProvider = "github" | "google";
 type ShellView = "workers" | "billing";
 type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
 
@@ -95,6 +96,27 @@ type WorkerListItem = {
   createdAt: string | null;
 };
 
+type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+
+type WorkerRuntimeService = {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  targetVersion: string | null;
+  actualVersion: string | null;
+  upgradeAvailable: boolean;
+};
+
+type WorkerRuntimeSnapshot = {
+  services: WorkerRuntimeService[];
+  upgrade: {
+    status: "idle" | "running" | "failed";
+    startedAt: string | null;
+    finishedAt: string | null;
+    error: string | null;
+  };
+};
+
 type EventLevel = "info" | "success" | "warning" | "error";
 
 type LaunchEvent = {
@@ -115,7 +137,7 @@ type DenSignupTrackPayload = {
   email: string;
   name: string | null;
   userId: string;
-  authMethod: "email" | "github";
+  authMethod: "email" | SocialAuthProvider;
 };
 
 declare global {
@@ -131,7 +153,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 }
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
-const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "openwork:web:pending-github-signup";
+const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
@@ -204,12 +226,50 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(): string {
+function getSocialCallbackUrl(): string {
   try {
     return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
   } catch {
     return "https://app.openwork.software/";
   }
+}
+
+function getSocialProviderLabel(provider: SocialAuthProvider): string {
+  return provider === "github" ? "GitHub" : "Google";
+}
+
+function GitHubLogo() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="ow-social-icon">
+      <path
+        fill="currentColor"
+        d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.5 7.5 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+      />
+    </svg>
+  );
+}
+
+function GoogleLogo() {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true" className="ow-social-icon">
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62Z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.31-1.58-5.01-3.7H.96v2.33A9 9 0 0 0 9 18Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.99 10.72A5.41 5.41 0 0 1 3.71 9c0-.6.1-1.18.28-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.05l3.03-2.33Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.32 0 2.5.45 3.43 1.33l2.57-2.57C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.03 2.33c.7-2.12 2.67-3.7 5.01-3.7Z"
+      />
+    </svg>
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -411,6 +471,55 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   }
 
   return { clientToken, hostToken, openworkUrl, workspaceId };
+}
+
+function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
+  if (!isRecord(payload) || !Array.isArray(payload.services)) {
+    return null;
+  }
+
+  const services = payload.services
+    .map((value) => {
+      if (!isRecord(value) || typeof value.name !== "string") {
+        return null;
+      }
+
+      return {
+        name: value.name as RuntimeServiceName,
+        enabled: value.enabled === true,
+        running: value.running === true,
+        targetVersion: typeof value.targetVersion === "string" ? value.targetVersion : null,
+        actualVersion: typeof value.actualVersion === "string" ? value.actualVersion : null,
+        upgradeAvailable: value.upgradeAvailable === true
+      };
+    })
+    .filter((item): item is WorkerRuntimeService => item !== null);
+
+  const upgrade = isRecord(payload.upgrade) ? payload.upgrade : null;
+
+  return {
+    services,
+    upgrade: {
+      status:
+        upgrade?.status === "running" || upgrade?.status === "failed" || upgrade?.status === "idle"
+          ? upgrade.status
+          : "idle",
+      startedAt: typeof upgrade?.startedAt === "number" ? new Date(upgrade.startedAt).toISOString() : null,
+      finishedAt: typeof upgrade?.finishedAt === "number" ? new Date(upgrade.finishedAt).toISOString() : null,
+      error: typeof upgrade?.error === "string" ? upgrade.error : null
+    }
+  };
+}
+
+function getRuntimeServiceLabel(name: RuntimeServiceName): string {
+  switch (name) {
+    case "openwork-server":
+      return "OpenWork server";
+    case "opencode":
+      return "OpenCode";
+    case "opencode-router":
+      return "OpenCode Router";
+  }
 }
 
 function getBillingPrice(value: unknown): BillingPrice | null {
@@ -839,7 +948,8 @@ async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 300
 
   let response: Response;
   try {
-    response = await fetch(`/api/den${path}`, {
+    const endpoint = path.startsWith("/api/") ? path : `/api/den${path}`;
+    response = await fetch(endpoint, {
       ...init,
       headers,
       credentials: "include",
@@ -954,6 +1064,10 @@ export function CloudControlPanel() {
   const [showLaunchForm, setShowLaunchForm] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<"connect" | "actions" | "advanced" | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<WorkerRuntimeSnapshot | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -965,6 +1079,8 @@ export function CloudControlPanel() {
 
   const progressWidth = step === 1 ? "45%" : "100%";
   const isShellStep = step === 2;
+  const defaultAuthInfo = getAuthInfoForMode(authMode);
+  const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const openworkDeepLink = buildOpenworkDeepLink(
@@ -1004,6 +1120,7 @@ export function CloudControlPanel() {
   const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
+  const runtimeUpgradeCount = runtimeSnapshot?.services.filter((item) => item.upgradeAvailable).length ?? 0;
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -1118,6 +1235,105 @@ export function CloudControlPanel() {
       setWorkersError(message);
     } finally {
       setWorkersBusy(false);
+    }
+  }
+
+  async function refreshRuntime(workerId?: string, options: { quiet?: boolean } = {}) {
+    const targetWorkerId = workerId ?? activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId) {
+      setRuntimeSnapshot(null);
+      if (!options.quiet) {
+        setRuntimeError("Select a worker to inspect runtime versions.");
+      }
+      return null;
+    }
+
+    setRuntimeBusy(true);
+    if (!options.quiet) {
+      setRuntimeError(null);
+    }
+
+    try {
+      const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(targetWorkerId)}/runtime`, {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      }, 12000);
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Runtime check failed with ${response.status}.`);
+        if (!options.quiet) {
+          setRuntimeError(message);
+        }
+        return null;
+      }
+
+      const snapshot = getWorkerRuntimeSnapshot(payload);
+      if (!snapshot) {
+        if (!options.quiet) {
+          setRuntimeError("Runtime details were missing from the worker response.");
+        }
+        return null;
+      }
+
+      setRuntimeSnapshot(snapshot);
+      return snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      if (!options.quiet) {
+        setRuntimeError(message);
+      }
+      return null;
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }
+
+  async function handleRuntimeUpgrade() {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId || runtimeUpgradeBusy) {
+      return;
+    }
+
+    setRuntimeUpgradeBusy(true);
+    setRuntimeError(null);
+
+    try {
+      const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(targetWorkerId)}/runtime/upgrade`, {
+        method: "POST",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        body: JSON.stringify({ services: ["openwork-server", "opencode"] })
+      }, 12000);
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Runtime upgrade failed with ${response.status}.`);
+        setRuntimeError(message);
+        appendEvent("error", "Runtime upgrade failed", message);
+        return;
+      }
+
+      appendEvent("info", "Runtime upgrade started", activeWorker?.workerName ?? selectedWorker?.workerName ?? targetWorkerId);
+      setRuntimeSnapshot((current) => current
+        ? {
+            ...current,
+            upgrade: {
+              ...current.upgrade,
+              status: "running",
+              startedAt: new Date().toISOString(),
+              finishedAt: null,
+              error: null
+            }
+          }
+        : current);
+
+      window.setTimeout(() => {
+        void refreshRuntime(targetWorkerId, { quiet: true });
+      }, 4000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setRuntimeError(message);
+      appendEvent("error", "Runtime upgrade failed", message);
+    } finally {
+      setRuntimeUpgradeBusy(false);
     }
   }
 
@@ -1317,6 +1533,30 @@ export function CloudControlPanel() {
   }, [user?.id, authToken]);
 
   useEffect(() => {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId) {
+      setRuntimeSnapshot(null);
+      setRuntimeError(null);
+      return;
+    }
+
+    void refreshRuntime(targetWorkerId, { quiet: true });
+  }, [user?.id, authToken, activeWorker?.workerId, selectedWorker?.workerId]);
+
+  useEffect(() => {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshRuntime(targetWorkerId, { quiet: true });
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);
+
+  useEffect(() => {
     if (!user) {
       setBillingSummary(null);
       setBillingError(null);
@@ -1341,22 +1581,22 @@ export function CloudControlPanel() {
 
     identifyPosthogUser(user);
 
-    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    if (!pendingSignup) {
+    const pendingSocialSignup = window.sessionStorage.getItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
+    if (pendingSocialSignup !== "github" && pendingSocialSignup !== "google") {
       return;
     }
 
-    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
     trackPosthogEvent("den_signup_completed", {
       mode: "sign-up",
-      method: "github",
+      method: pendingSocialSignup,
       email_domain: getEmailDomain(user.email)
     });
     void trackDenSignupInLoops({
       email: user.email,
       name: user.name,
       userId: user.id,
-      authMethod: "github"
+      authMethod: pendingSocialSignup
     });
   }, [user?.id]);
 
@@ -1606,44 +1846,44 @@ export function CloudControlPanel() {
     }
   }
 
-  async function handleGitHubSignIn() {
+  async function handleSocialSignIn(provider: SocialAuthProvider) {
     if (authBusy || typeof window === "undefined") {
       return;
     }
 
-    const shouldTrackGithubSignup = authMode === "sign-up";
-    if (shouldTrackGithubSignup) {
-      window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
+    const shouldTrackSocialSignup = authMode === "sign-up";
+    if (shouldTrackSocialSignup) {
+      window.sessionStorage.setItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY, provider);
     }
 
     setAuthBusy(true);
     setAuthError(null);
-    setAuthInfo("Redirecting to GitHub...");
+    setAuthInfo(`Redirecting to ${getSocialProviderLabel(provider)}...`);
     trackPosthogEvent("den_auth_submitted", {
       mode: authMode,
-      method: "github"
+      method: provider
     });
 
     try {
-      const callbackURL = getGithubCallbackUrl();
+      const callbackURL = getSocialCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
-          provider: "github",
+          provider,
           callbackURL,
           errorCallbackURL: callbackURL
         })
       });
 
       if (!response.ok) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
         }
         setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
+        setAuthError(getErrorMessage(payload, `${getSocialProviderLabel(provider)} sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
-          method: "github",
+          method: provider,
           status: response.status
         });
         setAuthBusy(false);
@@ -1655,14 +1895,14 @@ export function CloudControlPanel() {
       const redirectUrl = payloadUrl || headerUrl;
 
       if (!redirectUrl) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
         }
         setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError("GitHub sign-in did not return a redirect URL.");
+        setAuthError(`${getSocialProviderLabel(provider)} sign-in did not return a redirect URL.`);
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
-          method: "github",
+          method: provider,
           reason: "missing_redirect_url"
         });
         setAuthBusy(false);
@@ -1671,19 +1911,19 @@ export function CloudControlPanel() {
 
       trackPosthogEvent("den_auth_redirected", {
         mode: authMode,
-        method: "github"
+        method: provider
       });
       window.location.assign(redirectUrl);
     } catch (error) {
-      if (shouldTrackGithubSignup) {
-        window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      if (shouldTrackSocialSignup) {
+        window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       }
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthInfo(getAuthInfoForMode(authMode));
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
         mode: authMode,
-        method: "github",
+        method: provider,
         reason: "network_error"
       });
       setAuthBusy(false);
@@ -1744,7 +1984,7 @@ export function CloudControlPanel() {
 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
-      window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
     }
   }
 
@@ -2118,7 +2358,7 @@ export function CloudControlPanel() {
   }
 
   return (
-    <section className={`ow-card${isShellStep ? " ow-card-shell" : ""}`}>
+    <section className={`ow-card${isShellStep ? " ow-card-shell" : " ow-card-auth"}`}>
       {!isShellStep ? (
         <div className="ow-progress-track">
           <span className="ow-progress-fill" style={{ width: progressWidth }} />
@@ -2128,18 +2368,47 @@ export function CloudControlPanel() {
       <div className="ow-card-body">
 
         {step === 1 ? (
-          <div className="ow-stack">
+          <div className="ow-stack ow-auth-panel">
             <div className="ow-heading-block">
               <span className="ow-icon-chip">01</span>
               <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
               <p className="ow-subtitle">
-                {authMode === "sign-up"
-                  ? getAuthInfoForMode("sign-up")
-                  : getAuthInfoForMode("sign-in")}
+                {authMode === "sign-up" ? (
+                  <>
+                    <span className="ow-subtitle-line">Create an account to launch</span>
+                    <span className="ow-subtitle-line">and manage cloud workers.</span>
+                  </>
+                ) : (
+                  getAuthInfoForMode("sign-in")
+                )}
               </p>
             </div>
 
             <form className="ow-stack" onSubmit={handleAuthSubmit}>
+              <button
+                type="button"
+                className="ow-btn-secondary ow-social-btn"
+                onClick={() => void handleSocialSignIn("github")}
+                disabled={authBusy}
+              >
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </button>
+
+              <button
+                type="button"
+                className="ow-btn-secondary ow-social-btn"
+                onClick={() => void handleSocialSignIn("google")}
+                disabled={authBusy}
+              >
+                <GoogleLogo />
+                <span>Continue with Google</span>
+              </button>
+
+              <div className="ow-divider" aria-hidden="true">
+                <span>or</span>
+              </div>
+
               <label className="ow-field-block">
                 <span className="ow-field-label">Email</span>
                 <input
@@ -2167,10 +2436,6 @@ export function CloudControlPanel() {
               <button type="submit" className="ow-btn-primary" disabled={authBusy}>
                 {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
               </button>
-
-              <button type="button" className="ow-btn-secondary w-full" onClick={() => void handleGitHubSignIn()} disabled={authBusy}>
-                Continue with GitHub
-              </button>
             </form>
 
             <div className="ow-inline-row">
@@ -2189,10 +2454,12 @@ export function CloudControlPanel() {
               </button>
             </div>
 
-            <div className="ow-note-box">
-              <p>{authInfo}</p>
-              {authError ? <p className="ow-error-text">{authError}</p> : null}
-            </div>
+            {showAuthFeedback ? (
+              <div className="ow-auth-feedback" aria-live="polite">
+                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                {authError ? <p className="ow-error-text">{authError}</p> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
@@ -2435,7 +2702,7 @@ export function CloudControlPanel() {
                           </h2>
                           <p className="mb-6 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
 
-                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                             <div className="rounded-[20px] border border-slate-100 bg-white p-4">
                               <p className="text-sm font-medium text-slate-500">Status</p>
                               <p className="mt-2 text-2xl font-bold text-slate-900">{selectedStatusMeta.label}</p>
@@ -2444,6 +2711,79 @@ export function CloudControlPanel() {
                               <p className="text-sm font-medium text-slate-500">Connection</p>
                               <p className="mt-2 text-2xl font-bold text-slate-900">{openworkDeepLink ? "Ready" : "Preparing"}</p>
                             </div>
+                            <div className="rounded-[20px] border border-slate-100 bg-white p-4">
+                              <p className="text-sm font-medium text-slate-500">Runtime</p>
+                              <p className="mt-2 text-2xl font-bold text-slate-900">
+                                {runtimeBusy ? "Checking" : runtimeUpgradeCount > 0 ? `${runtimeUpgradeCount} update${runtimeUpgradeCount === 1 ? "" : "s"}` : "Current"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
+                          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Worker runtime</h3>
+                              <p className="text-sm text-slate-500">Compare installed runtime versions with the versions this worker should be running.</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void refreshRuntime(selectedWorker.workerId)}
+                                disabled={runtimeBusy || runtimeUpgradeBusy}
+                              >
+                                {runtimeBusy ? "Checking..." : "Refresh runtime"}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-[12px] bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void handleRuntimeUpgrade()}
+                                disabled={runtimeUpgradeBusy || runtimeBusy || selectedStatusMeta.bucket !== "ready"}
+                              >
+                                {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {runtimeError ? (
+                            <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div>
+                          ) : null}
+
+                          {runtimeSnapshot?.upgrade.status === "failed" && runtimeSnapshot.upgrade.error ? (
+                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                              Last upgrade failed: {runtimeSnapshot.upgrade.error}
+                            </div>
+                          ) : null}
+
+                          {runtimeUpgradeCount > 0 ? (
+                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                              This worker has {runtimeUpgradeCount} runtime component{runtimeUpgradeCount === 1 ? "" : "s"} behind the target version.
+                            </div>
+                          ) : null}
+
+                          <div className="space-y-3">
+                            {(runtimeSnapshot?.services ?? []).map((service) => (
+                              <div key={service.name} className="flex flex-col gap-3 rounded-[18px] border border-slate-100 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
+                                  <p className="text-xs text-slate-500">
+                                    Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                                  <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
+                                  </span>
+                                  <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.upgradeAvailable ? "Upgrade available" : "Current"}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            {!runtimeSnapshot && !runtimeBusy ? (
+                              <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                            ) : null}
                           </div>
                         </div>
 

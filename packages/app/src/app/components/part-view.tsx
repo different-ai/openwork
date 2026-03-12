@@ -907,6 +907,8 @@ export default function PartView(props: Props) {
                 textContainerEl = el;
               }}
               class={`markdown-content max-w-none ${textClass()}
+                [&_strong]:font-semibold
+                [&_em]:italic
                 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
                 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
                 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2

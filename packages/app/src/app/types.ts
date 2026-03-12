@@ -67,6 +67,15 @@ export type MessageWithParts = {
   parts: Part[];
 };
 
+export type SessionErrorTurn = {
+  id: string;
+  text: string;
+  afterMessageID: string | null;
+  time: number;
+};
+
+export const SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX = "session-error:";
+
 export type StepGroupMode = "exploration" | "standalone";
 
 export type MessageGroup =
@@ -137,7 +146,6 @@ export type OnboardingStep = "welcome" | "local" | "server" | "connecting";
 
 export type DashboardTab =
   | "scheduled"
-  | "soul"
   | "skills"
   | "plugins"
   | "mcp"

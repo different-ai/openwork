@@ -366,13 +366,39 @@ fn extract_description(raw: &str) -> Option<String> {
         }
 
         let max = 180;
-        if cleaned.len() > max {
-            return Some(format!("{}...", &cleaned[..max]));
+        let truncated: String = cleaned.chars().take(max).collect();
+        if truncated.len() < cleaned.len() {
+            return Some(format!("{}...", truncated));
         }
         return Some(cleaned);
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_description;
+
+    #[test]
+    fn extract_description_truncates_multibyte_text_without_panicking() {
+        let raw = &"て".repeat(181);
+
+        let description = extract_description(raw).expect("description should be present");
+
+        assert!(description.ends_with("..."));
+        assert!(description.is_char_boundary(description.len()));
+        assert_eq!(description.chars().count(), 183);
+    }
+
+    #[test]
+    fn extract_description_keeps_short_text_unchanged() {
+        let raw = "Short description";
+
+        let description = extract_description(raw).expect("description should be present");
+
+        assert_eq!(description, "Short description");
+    }
 }
 
 #[tauri::command]

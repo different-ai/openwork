@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile, realpath } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
 import { createServer as createHttpServer } from "node:http";
 import { homedir, hostname, networkInterfaces, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -167,6 +167,28 @@ type BinaryDiagnostics = {
   actualVersion?: string;
 };
 
+type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+
+type RuntimeServiceSnapshot = {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  source?: BinarySource;
+  path?: string;
+  targetVersion?: string;
+  actualVersion?: string;
+  upgradeAvailable: boolean;
+};
+
+type RuntimeUpgradeState = {
+  status: "idle" | "running" | "failed";
+  startedAt: number | null;
+  finishedAt: number | null;
+  error: string | null;
+  operationId: string | null;
+  services: RuntimeServiceName[];
+};
+
 type SidecarDiagnostics = {
   dir: string;
   baseUrl: string;
@@ -234,6 +256,15 @@ type RouterState = {
   binaries?: RouterBinaryState;
   activeId: string;
   workspaces: RouterWorkspace[];
+};
+
+type OpencodeStateLayout = {
+  devMode: boolean;
+  rootDir: string;
+  configDir: string;
+  env: NodeJS.ProcessEnv;
+  importConfigDir?: string;
+  importDataDir?: string;
 };
 
 type FieldsResult<T> = {
@@ -508,7 +539,9 @@ async function isDir(input: string): Promise<boolean> {
 }
 
 async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled =
+    (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? (internalDevModeFromEnv() ? "0" : "1")).trim() !==
+    "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -545,7 +578,9 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
 }
 
 async function resolveHostOpencodeGlobalDataDir(): Promise<string | null> {
-  const enabled = (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? "1").trim() !== "0";
+  const enabled =
+    (process.env.OPENWORK_SANDBOX_MOUNT_OPENCODE_CONFIG ?? (internalDevModeFromEnv() ? "0" : "1")).trim() !==
+    "0";
   if (!enabled) return null;
 
   const candidates: string[] = [];
@@ -815,6 +850,84 @@ async function isExecutable(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function readPathHelperPaths(): Promise<string[]> {
+  if (process.platform !== "darwin") return [];
+  return await new Promise((resolve) => {
+    const child = spawnProcess("/usr/libexec/path_helper", ["-s"], { stdio: ["ignore", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.on("error", () => resolve([]));
+    child.on("exit", (code) => {
+      if (code !== 0) {
+        resolve([]);
+        return;
+      }
+      const match = stdout.match(/PATH="([^"]+)"/) ?? stdout.match(/PATH=([^;\n]+)/);
+      if (!match) {
+        resolve([]);
+        return;
+      }
+      resolve(match[1].split(":").filter(Boolean));
+    });
+  });
+}
+
+async function resolveDockerCandidates(): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(trimmed);
+  };
+
+  for (const key of ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"]) {
+    const value = process.env[key];
+    if (value) push(value);
+  }
+
+  const addFromPath = (value?: string | null) => {
+    if (!value) return;
+    for (const dir of value.split(delimiter)) {
+      if (!dir.trim()) continue;
+      push(join(dir, "docker"));
+    }
+  };
+
+  addFromPath(process.env.PATH ?? "");
+
+  if (process.platform === "darwin") {
+    const helperPaths = await readPathHelperPaths();
+    for (const dir of helperPaths) {
+      push(join(dir, "docker"));
+    }
+  }
+
+  for (const raw of [
+    "/opt/homebrew/bin/docker",
+    "/usr/local/bin/docker",
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+  ]) {
+    push(raw);
+  }
+
+  const valid: string[] = [];
+  for (const candidate of out) {
+    if (await isExecutable(candidate)) {
+      valid.push(candidate);
+    }
+  }
+  return valid;
+}
+
+async function resolveDockerCommand(): Promise<string> {
+  const candidates = await resolveDockerCandidates();
+  return candidates[0] ?? "docker";
 }
 
 async function ensureWorkspace(workspace: string): Promise<string> {
@@ -1087,7 +1200,8 @@ async function resolveSandboxMode(mode: SandboxMode): Promise<ResolvedSandboxMod
     if (containerOk) return "container";
   }
 
-  const dockerOk = await probeCommand("docker", ["version"]);
+  const dockerCommand = await resolveDockerCommand();
+  const dockerOk = await probeCommand(dockerCommand, ["version"]);
   if (dockerOk) return "docker";
 
   const containerOk = await probeCommand("container", ["--version"]);
@@ -1907,6 +2021,91 @@ function resolveRouterDataDir(flags: Map<string, string | boolean>): string {
   return join(homedir(), ".openwork", "openwork-orchestrator");
 }
 
+function resolveInternalDevMode(flags: Map<string, string | boolean>): boolean {
+  return readBool(flags, "internal-dev-mode", false, "OPENWORK_DEV_MODE");
+}
+
+function internalDevModeFromEnv(): boolean {
+  const value = process.env.OPENWORK_DEV_MODE?.trim().toLowerCase();
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+function resolveOpencodeStateLayout(options: {
+  dataDir: string;
+  workspace: string;
+  devMode: boolean;
+}): OpencodeStateLayout {
+  const workspaceId = workspaceIdForLocal(options.workspace);
+  if (!options.devMode) {
+    return {
+      devMode: false,
+      rootDir: join(options.dataDir, "opencode-config", workspaceId),
+      configDir: join(options.dataDir, "opencode-config", workspaceId),
+      env: {},
+    };
+  }
+
+  const rootDir = join(options.dataDir, "opencode-dev", workspaceId);
+  const homeDir = join(rootDir, "home");
+  const xdgConfigHome = join(rootDir, "xdg", "config");
+  const xdgDataHome = join(rootDir, "xdg", "data");
+  const xdgCacheHome = join(rootDir, "xdg", "cache");
+  const xdgStateHome = join(rootDir, "xdg", "state");
+  const configDir = join(rootDir, "config", "opencode");
+
+  return {
+    devMode: true,
+    rootDir,
+    configDir,
+    importConfigDir: process.env.OPENWORK_DEV_OPENCODE_IMPORT_CONFIG_DIR?.trim() || undefined,
+    importDataDir: process.env.OPENWORK_DEV_OPENCODE_IMPORT_DATA_DIR?.trim() || undefined,
+    env: {
+      OPENWORK_DEV_MODE: "1",
+      HOME: homeDir,
+      XDG_CONFIG_HOME: xdgConfigHome,
+      XDG_DATA_HOME: xdgDataHome,
+      XDG_CACHE_HOME: xdgCacheHome,
+      XDG_STATE_HOME: xdgStateHome,
+      OPENCODE_CONFIG_DIR: configDir,
+    },
+  };
+}
+
+async function ensureOpencodeStateLayout(layout: OpencodeStateLayout): Promise<void> {
+  await mkdir(layout.configDir, { recursive: true });
+  if (!layout.devMode) return;
+
+  const homeDir = layout.env.HOME;
+  const xdgConfigHome = layout.env.XDG_CONFIG_HOME;
+  const xdgDataHome = layout.env.XDG_DATA_HOME;
+  const xdgCacheHome = layout.env.XDG_CACHE_HOME;
+  const xdgStateHome = layout.env.XDG_STATE_HOME;
+  const opencodeDataDir = xdgDataHome ? join(xdgDataHome, "opencode") : undefined;
+
+  for (const dir of [layout.rootDir, homeDir, xdgConfigHome, xdgDataHome, xdgCacheHome, xdgStateHome, opencodeDataDir]) {
+    if (!dir) continue;
+    await mkdir(dir, { recursive: true });
+  }
+
+  if (layout.importConfigDir && (await isDir(layout.importConfigDir))) {
+    const entries = await readdir(layout.configDir).catch(() => [] as string[]);
+    if (entries.length === 0) {
+      await cp(layout.importConfigDir, layout.configDir, { recursive: true, force: false }).catch(() => undefined);
+    }
+  }
+
+  if (layout.importDataDir && opencodeDataDir && (await isDir(layout.importDataDir))) {
+    for (const file of ["auth.json", "mcp-auth.json"]) {
+      const dest = join(opencodeDataDir, file);
+      if (await fileExists(dest)) continue;
+      const source = join(layout.importDataDir, file);
+      if (await fileExists(source)) {
+        await copyFile(source, dest).catch(() => undefined);
+      }
+    }
+  }
+}
+
 function routerStatePath(dataDir: string): string {
   return join(dataDir, "openwork-orchestrator-state.json");
 }
@@ -2531,7 +2730,7 @@ async function stopChild(child: ReturnType<typeof spawn>, timeoutMs = 2500): Pro
 async function startOpencode(options: {
   bin: string;
   workspace: string;
-  configDir?: string;
+  stateLayout?: OpencodeStateLayout;
   hotReload: OpencodeHotReload;
   bindHost: string;
   port: number;
@@ -2553,6 +2752,7 @@ async function startOpencode(options: {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
+      ...(options.stateLayout?.env ?? {}),
       OPENCODE_CLIENT: "openwork-orchestrator",
       OPENWORK: "1",
       OPENWORK_RUN_ID: options.runId,
@@ -2566,7 +2766,7 @@ async function startOpencode(options: {
       ),
       ...(options.username ? { OPENCODE_SERVER_USERNAME: options.username } : {}),
       ...(options.password ? { OPENCODE_SERVER_PASSWORD: options.password } : {}),
-      ...(options.configDir ? { OPENCODE_CONFIG_DIR: options.configDir } : {}),
+      ...(options.stateLayout?.configDir ? { OPENCODE_CONFIG_DIR: options.stateLayout.configDir } : {}),
       OPENCODE_HOT_RELOAD: options.hotReload.enabled ? "1" : "0",
       OPENCODE_HOT_RELOAD_DEBOUNCE_MS: String(options.hotReload.debounceMs),
       OPENCODE_HOT_RELOAD_COOLDOWN_MS: String(options.hotReload.cooldownMs),
@@ -2597,6 +2797,8 @@ async function startOpenworkServer(options: {
   opencodePassword?: string;
   opencodeRouterHealthPort?: number;
   opencodeRouterDataDir?: string;
+  controlBaseUrl?: string;
+  controlToken?: string;
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
@@ -2665,6 +2867,8 @@ async function startOpenworkServer(options: {
       ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
+      ...(options.controlBaseUrl ? { OPENWORK_CONTROL_BASE_URL: options.controlBaseUrl } : {}),
+      ...(options.controlToken ? { OPENWORK_CONTROL_TOKEN: options.controlToken } : {}),
     },
   });
 
@@ -2759,10 +2963,10 @@ async function opencodeRouterSupportsOpencodeUrl(bin: string): Promise<boolean> 
   });
 }
 
-async function stopDockerContainer(name: string): Promise<void> {
+async function stopDockerContainer(name: string, dockerCommand: string): Promise<void> {
   if (!name.trim()) return;
   await new Promise<void>((resolve) => {
-    const child = spawnProcess("docker", ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
+    const child = spawnProcess(dockerCommand, ["stop", name], { stdio: ["ignore", "ignore", "ignore"] });
     child.on("error", () => resolve());
     child.on("exit", () => resolve());
   });
@@ -2926,6 +3130,7 @@ async function writeSandboxEntrypoint(options: {
   const opencodeRouterEnv = options.openwork.opencodeRouterEnabled
     ? `export OPENCODE_ROUTER_HEALTH_PORT=${shQuote(String(SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT))}`
     : "";
+  const openworkDevMode = (process.env.OPENWORK_DEV_MODE ?? "").trim() === "1";
 
   const script = [
     "set -eu",
@@ -2950,6 +3155,7 @@ async function writeSandboxEntrypoint(options: {
     `export OPENCODE_HOT_RELOAD_DEBOUNCE_MS=${shQuote(String(options.opencode.hotReload.debounceMs))}`,
     `export OPENCODE_HOT_RELOAD_COOLDOWN_MS=${shQuote(String(options.opencode.hotReload.cooldownMs))}`,
     `export OPENWORK=1`,
+    `export OPENWORK_DEV_MODE=${shQuote(openworkDevMode ? "1" : "0")}`,
     `export OPENWORK_RUN_ID=${shQuote(options.runId)}`,
     `export OPENWORK_LOG_FORMAT=${shQuote(options.logFormat)}`,
     `export OPENWORK_SANDBOX_ENABLED=1`,
@@ -2988,6 +3194,7 @@ async function writeSandboxEntrypoint(options: {
 
 async function startDockerSandbox(options: {
   image: string;
+  dockerCommand: string;
   containerName: string;
   workspace: string;
   persistDir: string;
@@ -3101,7 +3308,15 @@ async function startDockerSandbox(options: {
   const scriptInContainer = `${staged.rootInContainer}/entrypoint.sh`;
   args.push(options.image, "sh", scriptInContainer);
 
-  const child = spawnProcess("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+  options.logger.debug("sandbox: docker run", {
+    dockerCommand: options.dockerCommand,
+    args,
+    containerName: options.containerName,
+    workspace: options.workspace,
+    persistDir: options.persistDir,
+  });
+
+  const child = spawnProcess(options.dockerCommand, args, { stdio: ["ignore", "pipe", "pipe"] });
   prefixStream(child.stdout, "sandbox", "stdout", options.logger, child.pid ?? undefined);
   prefixStream(child.stderr, "sandbox", "stderr", options.logger, child.pid ?? undefined);
 
@@ -3327,6 +3542,32 @@ async function verifyOpenworkServer(input: {
   await fetchJson(`${input.baseUrl}/approvals`, { headers: hostHeaders });
 
   return actualVersion;
+}
+
+async function installGlobalPackages(packages: string[]): Promise<void> {
+  if (!packages.length) return;
+  await captureCommandOutput("npm", ["install", "-g", ...packages], { timeoutMs: 5 * 60_000 });
+}
+
+function buildRuntimeServiceSnapshot(input: {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  binary?: ResolvedBinary | null;
+  actualVersion?: string;
+}): RuntimeServiceSnapshot {
+  const targetVersion = input.binary?.expectedVersion;
+  const actualVersion = input.actualVersion;
+  return {
+    name: input.name,
+    enabled: input.enabled,
+    running: input.enabled ? input.running : false,
+    source: input.binary?.source,
+    path: input.binary?.bin,
+    targetVersion,
+    actualVersion,
+    upgradeAvailable: Boolean(input.enabled && targetVersion && actualVersion && targetVersion !== actualVersion),
+  };
 }
 
 async function runChecks(input: {
@@ -4077,7 +4318,14 @@ async function runRouterDaemon(args: ParsedArgs) {
   const activeWorkspace = state.workspaces.find((entry) => entry.id === state.activeId && entry.workspaceType === "local");
   const opencodeWorkdir = opencodeWorkdirFlag ?? activeWorkspace?.path ?? process.cwd();
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
-  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
+  const devMode = resolveInternalDevMode(args.flags);
+  const opencodeStateLayout = resolveOpencodeStateLayout({
+    dataDir,
+    workspace: resolvedWorkdir,
+    devMode,
+  });
+  const opencodeConfigDir = opencodeStateLayout.configDir;
+  await ensureOpencodeStateLayout(opencodeStateLayout);
   await ensureOpencodeManagedTools(opencodeConfigDir);
   logger.info(
     "Daemon starting",
@@ -4099,7 +4347,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     `opencode hot reload: ${opencodeHotReload.enabled ? "on" : "off"} (debounce=${opencodeHotReload.debounceMs}ms cooldown=${opencodeHotReload.cooldownMs}ms)`,
   );
   logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
-  const opencodeBinary = await resolveOpencodeBin({
+  let opencodeBinary = await resolveOpencodeBin({
     explicit: opencodeBin,
     manifest,
     allowExternal,
@@ -4160,7 +4408,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     const child = await startOpencode({
       bin: opencodeBinary.bin,
       workspace: resolvedWorkdir,
-      configDir: opencodeConfigDir,
+      stateLayout: opencodeStateLayout,
       hotReload: opencodeHotReload,
       bindHost: opencodeHost,
       port: opencodePort,
@@ -4859,7 +5107,14 @@ async function runStart(args: ParsedArgs) {
   const sandboxPersistOverride =
     readFlag(args.flags, "sandbox-persist-dir") ?? process.env.OPENWORK_SANDBOX_PERSIST_DIR;
   const dataDir = resolveRouterDataDir(args.flags);
-  const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
+  const devMode = resolveInternalDevMode(args.flags);
+  const opencodeStateLayout = resolveOpencodeStateLayout({
+    dataDir,
+    workspace: resolvedWorkspace,
+    devMode,
+  });
+  const opencodeConfigDir = opencodeStateLayout.configDir;
+  await ensureOpencodeStateLayout(opencodeStateLayout);
   await ensureOpencodeManagedTools(opencodeConfigDir);
   const opencodeRouterDataDir =
     sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceIdForLocal(resolvedWorkspace)) : null;
@@ -4968,8 +5223,12 @@ async function runStart(args: ParsedArgs) {
       opencodeSource = explicitOpencodeBin ? "external" : "downloaded";
     }
   }
+  const dockerCommand = sandboxMode === "docker" ? await resolveDockerCommand() : null;
   logVerbose(`cli version: ${cliVersion}`);
   logVerbose(`sandbox: ${sandboxMode}`);
+  if (dockerCommand) {
+    logVerbose(`docker bin: ${dockerCommand}`);
+  }
   if (sandboxMode !== "none") {
     logVerbose(`sandbox image: ${sandboxImage}`);
     logVerbose(`sandbox persist dir: ${sandboxPersistDir}`);
@@ -4987,7 +5246,7 @@ async function runStart(args: ParsedArgs) {
     `opencode hot reload: ${opencodeHotReload.enabled ? "on" : "off"} (debounce=${opencodeHotReload.debounceMs}ms cooldown=${opencodeHotReload.cooldownMs}ms)`,
   );
   logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
-  const opencodeBinary = await resolveOpencodeBin({
+  let opencodeBinary = await resolveOpencodeBin({
     explicit: explicitOpencodeBin,
     manifest,
     allowExternal,
@@ -4997,9 +5256,9 @@ async function runStart(args: ParsedArgs) {
 
   if (sandboxMode !== "none") {
     if (sandboxMode === "docker") {
-      if (!(await probeCommand("docker", ["version"]))) {
+      if (!(await probeCommand(dockerCommand ?? "docker", ["version"]))) {
         throw new Error(
-          "Docker is required for --sandbox docker. Install Docker Desktop and ensure 'docker' is on PATH.",
+          `Docker is required for --sandbox docker. Install Docker Desktop and ensure '${dockerCommand ?? "docker"}' is available.`,
         );
       }
     }
@@ -5022,14 +5281,14 @@ async function runStart(args: ParsedArgs) {
     false,
     "OPENWORK_OPENCODE_ROUTER_REQUIRED",
   );
-  const openworkServerBinary = await resolveOpenworkServerBin({
+  let openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,
     manifest,
     allowExternal,
     sidecar,
     source: sidecarSource,
   });
-  const opencodeRouterBinary = opencodeRouterEnabled
+  let opencodeRouterBinary = opencodeRouterEnabled
     ? await resolveOpenCodeRouterBin({
         explicit: explicitOpenCodeRouterBin,
         manifest,
@@ -5092,8 +5351,251 @@ async function runStart(args: ParsedArgs) {
   let sandboxStop: ((name: string) => Promise<void>) | null = null;
   let sandboxStopCommand: string | null = null;
   let sandboxCleanup: (() => Promise<void>) | null = null;
+  let opencodeChild: ChildProcess | null = null;
+  let openworkChild: ChildProcess | null = null;
+  let opencodeRouterChild: ChildProcess | null = null;
+  let controlServer: ReturnType<typeof createHttpServer> | null = null;
+  const controlPort = await resolvePort(undefined, "127.0.0.1");
+  const controlToken = randomUUID();
+  const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
+  let opencodeActualVersion: string | undefined;
+  let openworkActualVersion: string | undefined;
   const startedAt = Date.now();
   let opencodeRouterHealthInterval: NodeJS.Timeout | null = null;
+  const restartingServices = new Set<string>();
+  const runtimeUpgradeState: RuntimeUpgradeState = {
+    status: "idle",
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+    operationId: null,
+    services: [],
+  };
+  const removeChildHandle = (name: string) => {
+    const index = children.findIndex((handle) => handle.name === name);
+    if (index >= 0) children.splice(index, 1);
+  };
+  const getRuntimeSnapshot = () => {
+    const services = [
+      buildRuntimeServiceSnapshot({
+        name: "openwork-server",
+        enabled: true,
+        running: Boolean(openworkChild && isProcessAlive(openworkChild.pid)),
+        binary: openworkServerBinary,
+        actualVersion: openworkActualVersion,
+      }),
+      buildRuntimeServiceSnapshot({
+        name: "opencode",
+        enabled: true,
+        running: Boolean(opencodeChild && isProcessAlive(opencodeChild.pid)),
+        binary: opencodeBinary,
+        actualVersion: opencodeActualVersion,
+      }),
+      buildRuntimeServiceSnapshot({
+        name: "opencode-router",
+        enabled: Boolean(opencodeRouterEnabled && opencodeRouterBinary),
+        running: Boolean(opencodeRouterChild && isProcessAlive(opencodeRouterChild.pid)),
+        binary: opencodeRouterBinary,
+        actualVersion: opencodeRouterActualVersion,
+      }),
+    ];
+    return {
+      ok: true,
+      orchestrator: {
+        version: cliVersion,
+        startedAt,
+      },
+      worker: {
+        workspace: resolvedWorkspace,
+        sandboxMode,
+      },
+      upgrade: {
+        ...runtimeUpgradeState,
+      },
+      services,
+    };
+  };
+  const restartOpencode = async () => {
+    if (sandboxMode !== "none") {
+      throw new Error("Runtime upgrade is not supported while sandbox mode is enabled");
+    }
+    if (opencodeChild) {
+      restartingServices.add("opencode");
+      removeChildHandle("opencode");
+      await stopChild(opencodeChild);
+      opencodeChild = null;
+    }
+    opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
+    const child = await startOpencode({
+      bin: opencodeBinary.bin,
+      workspace: resolvedWorkspace,
+      stateLayout: opencodeStateLayout,
+      hotReload: opencodeHotReload,
+      bindHost: opencodeBindHost,
+      port: opencodePort,
+      username: opencodeUsername,
+      password: opencodePassword,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+      logger,
+      runId,
+      logFormat,
+      opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
+    });
+    opencodeChild = child;
+    children.push({ name: "opencode", child });
+    logger.info("Process spawned", { pid: child.pid ?? 0, cause: "runtime-upgrade" }, "opencode");
+    child.on("exit", (code, signal) => handleExit("opencode", code, signal));
+    child.on("error", (error) => handleSpawnError("opencode", error));
+    await waitForOpencodeHealthy(
+      createOpencodeClient({
+        baseUrl: opencodeBaseUrl,
+        directory: resolvedWorkspace,
+        headers: opencodeUsername && opencodePassword ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` } : undefined,
+      }),
+    );
+  };
+  const restartOpenworkServer = async () => {
+    if (sandboxMode !== "none") {
+      throw new Error("Runtime upgrade is not supported while sandbox mode is enabled");
+    }
+    if (openworkChild) {
+      restartingServices.add("openwork-server");
+      removeChildHandle("openwork-server");
+      await stopChild(openworkChild);
+      openworkChild = null;
+    }
+    const child = await startOpenworkServer({
+      bin: openworkServerBinary.bin,
+      host: openworkHost,
+      port: openworkPort,
+      workspace: resolvedWorkspace,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      approvalMode: approvalMode === "auto" ? "auto" : "manual",
+      approvalTimeoutMs,
+      readOnly,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+      opencodeBaseUrl: opencodeConnectUrl,
+      opencodeDirectory: resolvedWorkspace,
+      opencodeUsername,
+      opencodePassword,
+      opencodeRouterHealthPort: opencodeRouterChild ? opencodeRouterHealthPort : undefined,
+      opencodeRouterDataDir: opencodeRouterChild ? (opencodeRouterDataDir ?? undefined) : undefined,
+      logger,
+      runId,
+      logFormat,
+      controlBaseUrl,
+      controlToken,
+    });
+    openworkChild = child;
+    children.push({ name: "openwork-server", child });
+    logger.info("Process spawned", { pid: child.pid ?? 0, cause: "runtime-upgrade" }, "openwork-server");
+    child.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+    child.on("error", (error) => handleSpawnError("openwork-server", error));
+    await waitForHealthy(openworkBaseUrl);
+    openworkActualVersion = await verifyOpenworkServer({
+      baseUrl: openworkBaseUrl,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      expectedVersion: openworkServerBinary.expectedVersion,
+      expectedWorkspace: resolvedWorkspace,
+      expectedOpencodeBaseUrl: opencodeConnectUrl,
+      expectedOpencodeDirectory: resolvedWorkspace,
+      expectedOpencodeUsername: opencodeUsername,
+      expectedOpencodePassword: opencodePassword,
+    });
+  };
+  const restartOpenCodeRouter = async () => {
+    if (!opencodeRouterEnabled || !opencodeRouterBinary || sandboxMode !== "none") {
+      return;
+    }
+    if (opencodeRouterChild) {
+      restartingServices.add("opencode-router");
+      removeChildHandle("opencode-router");
+      await stopChild(opencodeRouterChild);
+      opencodeRouterChild = null;
+    }
+    opencodeRouterActualVersion = await verifyOpenCodeRouterVersion(opencodeRouterBinary);
+    opencodeRouterChild = await startOpenCodeRouter({
+      bin: opencodeRouterBinary.bin,
+      workspace: resolvedWorkspace,
+      opencodeUrl: opencodeConnectUrl,
+      opencodeUsername,
+      opencodePassword,
+      opencodeRouterHealthPort,
+      opencodeRouterDataDir: opencodeRouterDataDir ?? undefined,
+      logger,
+      runId,
+      logFormat,
+    });
+    children.push({ name: "opencode-router", child: opencodeRouterChild });
+    opencodeRouterChild.on("exit", (code, signal) => handleExit("opencode-router", code, signal));
+    opencodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
+    await waitForOpenCodeRouterHealthy(`http://127.0.0.1:${opencodeRouterHealthPort}`, 10_000, 400);
+  };
+  const performRuntimeUpgrade = async (services: RuntimeServiceName[]) => {
+    const opId = randomUUID();
+    runtimeUpgradeState.status = "running";
+    runtimeUpgradeState.startedAt = Date.now();
+    runtimeUpgradeState.finishedAt = null;
+    runtimeUpgradeState.error = null;
+    runtimeUpgradeState.operationId = opId;
+    runtimeUpgradeState.services = services;
+    try {
+      if (sandboxMode !== "none") {
+        throw new Error("Runtime upgrade is only supported for non-sandbox workers");
+      }
+      if (services.includes("openwork-server") && openworkServerBinary.source === "external" && openworkServerBinary.expectedVersion) {
+        await installGlobalPackages([`openwork-server@${openworkServerBinary.expectedVersion}`]);
+      }
+      if (services.includes("opencode-router") && opencodeRouterBinary?.source === "external" && opencodeRouterBinary.expectedVersion) {
+        await installGlobalPackages([`opencode-router@${opencodeRouterBinary.expectedVersion}`]);
+      }
+      if (services.includes("openwork-server")) {
+        openworkServerBinary = await resolveOpenworkServerBin({
+          explicit: explicitOpenworkServerBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: sidecarSource,
+        });
+      }
+      if (services.includes("opencode")) {
+        opencodeBinary = await resolveOpencodeBin({
+          explicit: explicitOpencodeBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: opencodeSource,
+        });
+      }
+      if (services.includes("opencode-router") && opencodeRouterEnabled) {
+        opencodeRouterBinary = await resolveOpenCodeRouterBin({
+          explicit: explicitOpenCodeRouterBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: sidecarSource,
+        });
+      }
+      if (services.includes("opencode")) {
+        await restartOpencode();
+      }
+      if (services.includes("opencode-router")) {
+        await restartOpenCodeRouter();
+      }
+      if (services.includes("openwork-server") || services.includes("opencode")) {
+        await restartOpenworkServer();
+      }
+      runtimeUpgradeState.status = "idle";
+      runtimeUpgradeState.finishedAt = Date.now();
+    } catch (error) {
+      runtimeUpgradeState.status = "failed";
+      runtimeUpgradeState.finishedAt = Date.now();
+      runtimeUpgradeState.error = error instanceof Error ? error.message : String(error);
+      logger.error("Runtime upgrade failed", { error: runtimeUpgradeState.error, services }, "openwork-orchestrator");
+    }
+  };
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -5102,6 +5604,10 @@ async function runStart(args: ParsedArgs) {
     if (opencodeRouterHealthInterval) {
       clearInterval(opencodeRouterHealthInterval);
       opencodeRouterHealthInterval = null;
+    }
+    if (controlServer) {
+      await new Promise<void>((resolve) => controlServer?.close(() => resolve()));
+      controlServer = null;
     }
     logger.info(
       "Shutting down",
@@ -5303,6 +5809,10 @@ async function runStart(args: ParsedArgs) {
 
   const handleExit = (name: string, code: number | null, signal: NodeJS.Signals | null) => {
     if (shuttingDown || detached) return;
+    if (restartingServices.has(name)) {
+      restartingServices.delete(name);
+      return;
+    }
     const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
     const services =
       name === "sandbox"
@@ -5323,60 +5833,154 @@ async function runStart(args: ParsedArgs) {
   };
 
   try {
-    const opencodeActualVersion =
-      sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
-    let openworkActualVersion: string | undefined;
+    opencodeActualVersion = sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
+
+    controlServer = createHttpServer(async (req, res) => {
+      const method = req.method ?? "GET";
+      const url = new URL(req.url ?? "/", controlBaseUrl);
+      res.setHeader("Content-Type", "application/json");
+      const authHeader = req.headers.authorization ?? "";
+      if (authHeader !== `Bearer ${controlToken}`) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/runtime/versions") {
+        res.statusCode = 200;
+        res.end(JSON.stringify(getRuntimeSnapshot()));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/runtime/upgrade") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        let body: { services?: RuntimeServiceName[] } | null = null;
+        try {
+          body = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { services?: RuntimeServiceName[] }) : null;
+        } catch {
+          body = null;
+        }
+        const requested = Array.isArray(body?.services) ? body.services : ["openwork-server", "opencode"];
+        const services = Array.from(new Set(requested.filter((item): item is RuntimeServiceName => item === "openwork-server" || item === "opencode" || item === "opencode-router")));
+        if (!services.length) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "invalid_services" }));
+          return;
+        }
+        if (runtimeUpgradeState.status === "running") {
+          res.statusCode = 409;
+          res.end(JSON.stringify({ ok: false, error: "upgrade_in_progress", upgrade: runtimeUpgradeState }));
+          return;
+        }
+        res.statusCode = 202;
+        res.end(JSON.stringify({ ok: true, started: true, services, upgrade: { ...runtimeUpgradeState, status: "running" } }));
+        void performRuntimeUpgrade(services);
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false, error: "not_found" }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      controlServer?.once("error", reject);
+      controlServer?.listen(controlPort, "127.0.0.1", () => resolve());
+    });
 
     if (sandboxMode !== "none") {
       const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
       sandboxContainerName = containerName;
 
-      sandboxStop = sandboxMode === "container" ? stopAppleContainer : stopDockerContainer;
+      sandboxStop =
+        sandboxMode === "container"
+          ? stopAppleContainer
+          : (name: string) => stopDockerContainer(name, dockerCommand ?? "docker");
       sandboxStopCommand = sandboxMode === "container" ? "container stop" : "docker stop";
       const opencodeInternalBaseUrl = `http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`;
 
-      const runner = sandboxMode === "container" ? startAppleContainerSandbox : startDockerSandbox;
-      const sandboxChild = await runner({
-        image: sandboxImage,
-        containerName,
-        workspace: resolvedWorkspace,
-        persistDir: sandboxPersistDir,
-        opencodeConfigDir,
-        extraMounts: sandboxExtraMounts,
-        sidecars: {
-          opencode: opencodeBinary.bin,
-          openworkServer: openworkServerBinary.bin,
-          opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
-        },
-        ports: {
-          openwork: openworkPort,
-          // In sandbox mode, opencodeRouter is only reachable via openwork-server
-          // proxy (/opencode-router/*). Do not publish a separate host port.
-          opencodeRouterHealth: null,
-        },
-        opencode: {
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          username: opencodeUsername,
-          password: opencodePassword,
-          hotReload: opencodeHotReload,
-        },
-        openwork: {
-          token: openworkToken,
-          hostToken: openworkHostToken,
-          approvalMode: approvalMode === "auto" ? "auto" : "manual",
-          approvalTimeoutMs,
-          readOnly,
-          corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
-          opencodeUsername,
-          opencodePassword,
-          logFormat,
-        },
-        runId,
-        logFormat,
-        detach: detachRequested,
-        logger,
-      });
+      const sandboxChild =
+        sandboxMode === "container"
+          ? await startAppleContainerSandbox({
+              image: sandboxImage,
+              containerName,
+              workspace: resolvedWorkspace,
+              persistDir: sandboxPersistDir,
+              opencodeConfigDir,
+              extraMounts: sandboxExtraMounts,
+              sidecars: {
+                opencode: opencodeBinary.bin,
+                openworkServer: openworkServerBinary.bin,
+                opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
+              },
+              ports: {
+                openwork: openworkPort,
+                // In sandbox mode, opencodeRouter is only reachable via openwork-server
+                // proxy (/opencode-router/*). Do not publish a separate host port.
+                opencodeRouterHealth: null,
+              },
+              opencode: {
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                username: opencodeUsername,
+                password: opencodePassword,
+                hotReload: opencodeHotReload,
+              },
+              openwork: {
+                token: openworkToken,
+                hostToken: openworkHostToken,
+                approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                approvalTimeoutMs,
+                readOnly,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                opencodeUsername,
+                opencodePassword,
+                logFormat,
+              },
+              runId,
+              logFormat,
+              detach: detachRequested,
+              logger,
+            })
+          : await startDockerSandbox({
+              image: sandboxImage,
+              dockerCommand: dockerCommand ?? "docker",
+              containerName,
+              workspace: resolvedWorkspace,
+              persistDir: sandboxPersistDir,
+              opencodeConfigDir,
+              extraMounts: sandboxExtraMounts,
+              sidecars: {
+                opencode: opencodeBinary.bin,
+                openworkServer: openworkServerBinary.bin,
+                opencodeRouter: opencodeRouterEnabled ? (opencodeRouterBinary?.bin ?? null) : null,
+              },
+              ports: {
+                openwork: openworkPort,
+                // In sandbox mode, opencodeRouter is only reachable via openwork-server
+                // proxy (/opencode-router/*). Do not publish a separate host port.
+                opencodeRouterHealth: null,
+              },
+              opencode: {
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                username: opencodeUsername,
+                password: opencodePassword,
+                hotReload: opencodeHotReload,
+              },
+              openwork: {
+                token: openworkToken,
+                hostToken: openworkHostToken,
+                approvalMode: approvalMode === "auto" ? "auto" : "manual",
+                approvalTimeoutMs,
+                readOnly,
+                corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+                opencodeUsername,
+                opencodePassword,
+                logFormat,
+              },
+              runId,
+              logFormat,
+              detach: detachRequested,
+              logger,
+            });
 
       sandboxCleanup = sandboxChild.cleanup;
       tui?.updateService("opencode", { status: "running", port: SANDBOX_INTERNAL_OPENCODE_PORT });
@@ -5436,10 +6040,10 @@ async function runStart(args: ParsedArgs) {
       }
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
     } else {
-      const opencodeChild = await startOpencode({
+      const startedOpencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
-        configDir: opencodeConfigDir,
+        stateLayout: opencodeStateLayout,
         hotReload: opencodeHotReload,
         bindHost: opencodeBindHost,
         port: opencodePort,
@@ -5451,15 +6055,16 @@ async function runStart(args: ParsedArgs) {
         logFormat,
         opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
       });
-      children.push({ name: "opencode", child: opencodeChild });
+      opencodeChild = startedOpencodeChild;
+      children.push({ name: "opencode", child: startedOpencodeChild });
       tui?.updateService("opencode", {
         status: "running",
-        pid: opencodeChild.pid ?? undefined,
+        pid: startedOpencodeChild.pid ?? undefined,
         port: opencodePort,
       });
-      logger.info("Process spawned", { pid: opencodeChild.pid ?? 0 }, "opencode");
-      opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
-      opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
+      logger.info("Process spawned", { pid: startedOpencodeChild.pid ?? 0 }, "opencode");
+      startedOpencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
+      startedOpencodeChild.on("error", (error) => handleSpawnError("opencode", error));
 
       const authHeaders: Record<string, string> = {};
       if (opencodeUsername && opencodePassword) {
@@ -5476,7 +6081,6 @@ async function runStart(args: ParsedArgs) {
       logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 
-      let opencodeRouterChild: ChildProcess | null = null;
       let opencodeRouterReady = false;
       if (opencodeRouterEnabled) {
         if (!opencodeRouterBinary) {
@@ -5486,7 +6090,7 @@ async function runStart(args: ParsedArgs) {
         logVerbose(`opencodeRouter version: ${opencodeRouterActualVersion ?? "unknown"}`);
 
         try {
-          opencodeRouterChild = await startOpenCodeRouter({
+          const startedOpenCodeRouterChild = await startOpenCodeRouter({
             bin: opencodeRouterBinary.bin,
             workspace: resolvedWorkspace,
             opencodeUrl: opencodeConnectUrl,
@@ -5498,14 +6102,19 @@ async function runStart(args: ParsedArgs) {
             runId,
             logFormat,
           });
-          children.push({ name: "opencode-router", child: opencodeRouterChild });
+          opencodeRouterChild = startedOpenCodeRouterChild;
+          children.push({ name: "opencode-router", child: startedOpenCodeRouterChild });
           tui?.updateService("router", {
             status: "running",
-            pid: opencodeRouterChild.pid ?? undefined,
+            pid: startedOpenCodeRouterChild.pid ?? undefined,
             port: opencodeRouterHealthPort,
           });
-          logger.info("Process spawned", { pid: opencodeRouterChild.pid ?? 0 }, "opencode-router");
-          opencodeRouterChild.on("exit", (code, signal) => {
+          logger.info("Process spawned", { pid: startedOpenCodeRouterChild.pid ?? 0 }, "opencode-router");
+          startedOpenCodeRouterChild.on("exit", (code, signal) => {
+            if (restartingServices.has("opencode-router")) {
+              restartingServices.delete("opencode-router");
+              return;
+            }
             if (opencodeRouterRequired) {
               handleExit("opencode-router", code, signal);
               return;
@@ -5514,7 +6123,7 @@ async function runStart(args: ParsedArgs) {
             tui?.updateService("router", { status: "stopped", message: reason });
             logger.warn("Process exited, continuing without opencodeRouter", { reason, code, signal }, "opencode-router");
           });
-          opencodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
+          startedOpenCodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
 
           const healthBaseUrl = `http://127.0.0.1:${opencodeRouterHealthPort}`;
           logger.info("Waiting for health", { url: healthBaseUrl }, "opencode-router");
@@ -5542,7 +6151,7 @@ async function runStart(args: ParsedArgs) {
         }
       }
 
-      const openworkChild = await startOpenworkServer({
+      const startedOpenworkChild = await startOpenworkServer({
         bin: openworkServerBinary.bin,
         host: openworkHost,
         port: openworkPort,
@@ -5562,16 +6171,19 @@ async function runStart(args: ParsedArgs) {
         logger,
         runId,
         logFormat,
+        controlBaseUrl,
+        controlToken,
       });
-      children.push({ name: "openwork-server", child: openworkChild });
+      openworkChild = startedOpenworkChild;
+      children.push({ name: "openwork-server", child: startedOpenworkChild });
       tui?.updateService("openwork-server", {
         status: "running",
-        pid: openworkChild.pid ?? undefined,
+        pid: startedOpenworkChild.pid ?? undefined,
         port: openworkPort,
       });
-      logger.info("Process spawned", { pid: openworkChild.pid ?? 0 }, "openwork-server");
-      openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
-      openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
+      logger.info("Process spawned", { pid: startedOpenworkChild.pid ?? 0 }, "openwork-server");
+      startedOpenworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+      startedOpenworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
 
       logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
       await waitForHealthy(openworkBaseUrl);

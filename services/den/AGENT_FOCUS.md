@@ -50,6 +50,7 @@ Expected: worker creation `201` with Render-backed instance.
 ## Required env vars (summary)
 
 - Base: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`
+- Optional social auth: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - Render: `PROVISIONER_MODE=render`, `RENDER_API_KEY`, `RENDER_OWNER_ID`, and `RENDER_WORKER_*`
 - Polar gate:
   - `POLAR_FEATURE_GATE_ENABLED`

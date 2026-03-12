@@ -14,9 +14,11 @@ pnpm dev
 
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
-- `BETTER_AUTH_URL` base URL for auth callbacks
+- `BETTER_AUTH_URL` public base URL Better Auth uses for OAuth redirects and callbacks
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
+- `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
+- `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
 - `PROVISIONER_MODE` `stub` or `render`
@@ -96,6 +98,8 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 
 - `DEN_GITHUB_CLIENT_ID`
 - `DEN_GITHUB_CLIENT_SECRET`
+- `DEN_GOOGLE_CLIENT_ID`
+- `DEN_GOOGLE_CLIENT_SECRET`
 
 Optional GitHub Actions variable:
 
@@ -104,6 +108,7 @@ Optional GitHub Actions variable:
 - `DEN_CORS_ORIGINS` (defaults to `https://app.openwork.software,https://api.openwork.software,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `openwork.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)
+- `DEN_BETTER_AUTH_URL` (defaults to `https://app.openwork.software`)
 - `DEN_VERCEL_API_BASE` (defaults to `https://api.vercel.com`)
 - `DEN_VERCEL_TEAM_ID` (optional)
 - `DEN_VERCEL_TEAM_SLUG` (optional, defaults to `prologe`)

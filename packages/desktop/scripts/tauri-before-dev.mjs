@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -68,7 +69,7 @@ const holdOpenUntilSignal = ({ uiChild } = {}) => {
   // alive with a timer until Tauri stops the dev process.
   const timer = setInterval(() => {}, 60_000);
 
-   let stopping = false;
+  let stopping = false;
 
   const stop = () => {
     if (stopping) return;
@@ -124,6 +125,73 @@ const runPrepareSidecars = () => {
   }
 };
 
+const readLinuxReleaseInfo = () => {
+  try {
+    const content = readFileSync("/etc/os-release", "utf8");
+    const values = new Map();
+    for (const line of content.split(/\r?\n/)) {
+      if (!line || line.startsWith("#") || !line.includes("=")) continue;
+      const separator = line.indexOf("=");
+      const key = line.slice(0, separator);
+      const rawValue = line.slice(separator + 1).trim();
+      const value = rawValue.replace(/^"|"$/g, "");
+      values.set(key, value);
+    }
+    return {
+      id: values.get("ID") ?? "",
+      like: values.get("ID_LIKE") ?? "",
+      prettyName: values.get("PRETTY_NAME") ?? values.get("NAME") ?? "Linux",
+    };
+  } catch {
+    return { id: "", like: "", prettyName: "Linux" };
+  }
+};
+
+const getLinuxDesktopDependencyHint = () => {
+  const release = readLinuxReleaseInfo();
+  const family = `${release.id} ${release.like}`.toLowerCase();
+
+  if (family.includes("arch")) {
+    return "Install the missing desktop dependency and retry:\n  sudo pacman -S --needed webkit2gtk-4.1";
+  }
+
+  if (family.includes("ubuntu") || family.includes("debian")) {
+    return (
+      "Install the missing desktop dependencies and retry:\n" +
+      "  sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev"
+    );
+  }
+
+  if (family.includes("fedora") || family.includes("rhel")) {
+    return (
+      "Install the missing desktop dependencies and retry:\n" +
+      "  sudo dnf install webkit2gtk4.1-devel openssl-devel curl wget file libappindicator-gtk3-devel librsvg2-devel"
+    );
+  }
+
+  return `Install WebKitGTK 4.1 development packages for ${release.prettyName} so pkg-config can resolve both webkit2gtk-4.1 and javascriptcoregtk-4.1, then retry.`;
+};
+
+const ensureLinuxDesktopDependencies = () => {
+  if (process.platform !== "linux") return;
+
+  const requiredPkgConfigs = ["webkit2gtk-4.1", "javascriptcoregtk-4.1"];
+  const missing = requiredPkgConfigs.filter((pkg) => {
+    const result = spawnSync("pkg-config", ["--exists", pkg], { stdio: "ignore" });
+    return result.status !== 0;
+  });
+
+  if (missing.length === 0) return;
+
+  console.error(
+    "[openwork] Missing Linux desktop system dependencies required by Tauri:\n" +
+      `  ${missing.join(", ")}\n\n` +
+      `${getLinuxDesktopDependencyHint()}\n\n` +
+      "If you only need the web UI, run `pnpm dev:ui`."
+  );
+  process.exit(1);
+};
+
 const runUiDevServer = () => {
   const child = spawn(pnpmCmd, ["-w", "dev:ui"], {
     stdio: "inherit",
@@ -156,6 +224,7 @@ const runUiDevServer = () => {
 };
 
 runPrepareSidecars();
+ensureLinuxDesktopDependencies();
 
 const main = async () => {
   let detectedViteUrl = null;

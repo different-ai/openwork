@@ -25,7 +25,6 @@ import {
   RefreshCw,
   Settings2,
   Unplug,
-  Users,
   Zap,
 } from "lucide-solid";
 import { currentLocale, t, type Language } from "../../i18n";
@@ -44,6 +43,7 @@ export type McpViewProps = {
   setSelectedMcp: (name: string | null) => void;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => void;
+  authorizeMcp: (entry: McpServerEntry) => void;
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
   showMcpReloadBanner: boolean;
@@ -96,7 +96,6 @@ const serviceIcon = (name: string) => {
   if (lower.includes("linear")) return Zap;
   if (lower.includes("sentry")) return CircleAlert;
   if (lower.includes("stripe")) return CreditCard;
-  if (lower.includes("hubspot")) return Users;
   if (lower.includes("context")) return Globe;
   if (lower.includes("chrome") || lower.includes("devtools")) return MonitorSmartphone;
   return Plug2;
@@ -108,7 +107,6 @@ const serviceColor = (name: string) => {
   if (lower.includes("linear")) return "text-blue-11";
   if (lower.includes("sentry")) return "text-purple-11";
   if (lower.includes("stripe")) return "text-blue-11";
-  if (lower.includes("hubspot")) return "text-orange-11";
   if (lower.includes("context")) return "text-green-11";
   if (lower.includes("chrome") || lower.includes("devtools")) return "text-amber-11";
   return "text-dls-secondary";
@@ -120,7 +118,6 @@ const serviceIconBg = (name: string) => {
   if (lower.includes("linear")) return "bg-blue-3 border-blue-6";
   if (lower.includes("sentry")) return "bg-purple-3 border-purple-6";
   if (lower.includes("stripe")) return "bg-blue-3 border-blue-6";
-  if (lower.includes("hubspot")) return "bg-orange-3 border-orange-6";
   if (lower.includes("context")) return "bg-green-3 border-green-6";
   if (lower.includes("chrome") || lower.includes("devtools")) return "bg-amber-3 border-amber-6";
   return "bg-dls-hover border-dls-border";
@@ -237,6 +234,9 @@ export default function McpView(props: McpViewProps) {
   };
 
   const canConnect = () => !props.busy;
+
+  const supportsOauth = (entry: McpServerEntry) =>
+    entry.config.type === "remote" && entry.config.oauth !== false;
 
   const resolveStatus = (entry: McpServerEntry): McpStatus => {
     if (entry.config.enabled === false) return "disabled";
@@ -510,7 +510,26 @@ export default function McpView(props: McpViewProps) {
                           </div>
                         </details>
 
-                        <Show when={entry.config.type === "remote"}>
+                        <Show when={supportsOauth(entry) && status() !== "connected"}>
+                          <div class="pt-1 flex items-center justify-between gap-3">
+                            <div class="text-xs text-dls-secondary">
+                              {tr("mcp.logout_label")}
+                            </div>
+                            <Button
+                              variant="secondary"
+                              class="px-3 py-1.5 text-xs"
+                              disabled={props.busy}
+                              onClick={() => props.authorizeMcp(entry)}
+                            >
+                              {tr("mcp.login_action")}
+                            </Button>
+                          </div>
+                          <div class="text-[11px] text-dls-secondary/70">
+                            {tr("mcp.login_hint")}
+                          </div>
+                        </Show>
+
+                        <Show when={supportsOauth(entry) && status() === "connected"}>
                           <div class="pt-1 flex items-center justify-between gap-3">
                             <div class="text-xs text-dls-secondary">
                               {tr("mcp.logout_label")}

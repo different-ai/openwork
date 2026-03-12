@@ -31,6 +31,11 @@ const nextConfig = {
         permanent: false,
       },
       {
+        source: "/orbita-layout-style",
+        destination: "/docs/orbita-layout-style",
+        permanent: false,
+      },
+      {
         source: "/opencode-router",
         destination: "/docs/opencode-router",
         permanent: false,

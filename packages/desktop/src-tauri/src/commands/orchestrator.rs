@@ -708,6 +708,37 @@ pub fn orchestrator_instance_dispose(
     Ok(result.disposed)
 }
 
+fn format_sandbox_start_timeout_error(
+    elapsed_ms: u64,
+    openwork_url: &str,
+    last_error: Option<&str>,
+    container_state: Option<&str>,
+    container_probe_error: Option<&str>,
+) -> String {
+    let mut details = vec![
+        format!("stage=openwork.healthcheck"),
+        format!("elapsed_ms={elapsed_ms}"),
+        format!("url={openwork_url}"),
+        format!(
+            "last_error={}",
+            last_error.unwrap_or("none")
+        ),
+        format!(
+            "container_state={}",
+            container_state.unwrap_or("unknown")
+        ),
+    ];
+
+    if let Some(probe_error) = container_probe_error {
+        details.push(format!("container_probe_error={probe_error}"));
+    }
+
+    format!(
+        "Timed out waiting for OpenWork server ({})",
+        details.join(", ")
+    )
+}
+
 #[tauri::command]
 pub fn orchestrator_start_detached(
     app: AppHandle,
@@ -775,6 +806,7 @@ pub fn orchestrator_start_detached(
             .into_iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>();
+        let resolved = candidates.first().cloned();
         emit_sandbox_progress(
             &app,
             &sandbox_run_id,
@@ -782,6 +814,7 @@ pub fn orchestrator_start_detached(
             "Inspecting Docker configuration...",
             json!({
                 "candidates": candidates,
+                "resolvedDockerBin": resolved,
                 "openworkDockerBin": env::var("OPENWORK_DOCKER_BIN").ok(),
                 "openwrkDockerBin": env::var("OPENWRK_DOCKER_BIN").ok(),
                 "dockerBin": env::var("DOCKER_BIN").ok(),
@@ -789,9 +822,9 @@ pub fn orchestrator_start_detached(
         );
     }
 
-    let command = match app.shell().sidecar("openwork-orchestrator") {
-        Ok(command) => command,
-        Err(_) => app.shell().command("openwork"),
+    let (command, command_label) = match app.shell().sidecar("openwork-orchestrator") {
+        Ok(command) => (command, "sidecar:openwork-orchestrator".to_string()),
+        Err(_) => (app.shell().command("openwork"), "path:openwork".to_string()),
     };
 
     // Start a dedicated host stack for this workspace.
@@ -830,10 +863,36 @@ pub fn orchestrator_start_detached(
             str_args.push(arg.as_str());
         }
 
-        command
-            .args(str_args)
-            .spawn()
-            .map_err(|e| format!("Failed to start openwork orchestrator: {e}"))?;
+        emit_sandbox_progress(
+            &app,
+            &sandbox_run_id,
+            "spawn.config",
+            "Launching sandbox host...",
+            json!({
+                "command": command_label,
+                "args": args,
+                "env": {
+                    "PATH": env::var("PATH").ok(),
+                    "OPENWORK_DOCKER_BIN": env::var("OPENWORK_DOCKER_BIN").ok(),
+                    "OPENWRK_DOCKER_BIN": env::var("OPENWRK_DOCKER_BIN").ok(),
+                    "DOCKER_BIN": env::var("DOCKER_BIN").ok(),
+                }
+            }),
+        );
+
+        if let Err(err) = command.args(str_args).spawn() {
+            emit_sandbox_progress(
+                &app,
+                &sandbox_run_id,
+                "spawn.error",
+                "Failed to launch sandbox host.",
+                json!({
+                    "error": err.to_string(),
+                    "command": command_label,
+                }),
+            );
+            return Err(format!("Failed to start openwork orchestrator: {err}"));
+        }
         eprintln!(
             "[sandbox-create][at={}][runId={}][stage=spawn] launched openwork sidecar for detached sandbox host",
             now_ms(),
@@ -954,8 +1013,14 @@ pub fn orchestrator_start_detached(
     }
 
     if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
-        let message =
-            last_error.unwrap_or_else(|| "Timed out waiting for OpenWork server".to_string());
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+        let message = format_sandbox_start_timeout_error(
+            elapsed_ms,
+            &openwork_url,
+            last_error.as_deref(),
+            last_container_state.as_deref(),
+            last_container_probe_error.as_deref(),
+        );
         emit_sandbox_progress(
             &app,
             &sandbox_run_id,
@@ -963,7 +1028,7 @@ pub fn orchestrator_start_detached(
             "Sandbox failed to start.",
             json!({
                 "error": message,
-                "elapsedMs": start.elapsed().as_millis() as u64,
+                "elapsedMs": elapsed_ms,
                 "openworkUrl": openwork_url,
                 "containerState": last_container_state,
                 "containerProbeError": last_container_probe_error,
@@ -973,7 +1038,7 @@ pub fn orchestrator_start_detached(
             "[sandbox-create][at={}][runId={}][stage=timeout] health wait timed out after {}ms error={}",
             now_ms(),
             sandbox_run_id,
-            start.elapsed().as_millis(),
+            elapsed_ms,
             message
         );
         return Err(message);
@@ -1531,6 +1596,24 @@ exit 0
                 .status();
         }
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn sandbox_start_timeout_error_includes_stage_diagnostics() {
+        let message = format_sandbox_start_timeout_error(
+            90_000,
+            "http://127.0.0.1:43210",
+            Some("Connection refused (os error 61)"),
+            Some("created"),
+            Some("No such container"),
+        );
+
+        assert!(message.contains("stage=openwork.healthcheck"));
+        assert!(message.contains("elapsed_ms=90000"));
+        assert!(message.contains("url=http://127.0.0.1:43210"));
+        assert!(message.contains("last_error=Connection refused (os error 61)"));
+        assert!(message.contains("container_state=created"));
+        assert!(message.contains("container_probe_error=No such container"));
     }
 
     #[test]

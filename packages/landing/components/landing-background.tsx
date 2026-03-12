@@ -1,30 +1,54 @@
 "use client";
 
-import { motion, useScroll, useTransform } from "framer-motion";
-import { ResponsiveGrain } from "./responsive-grain";
-
 export function LandingBackground() {
-  const { scrollY } = useScroll();
-  const darkOpacity = useTransform(scrollY, [0, 500], [0.6, 0.015]);
-
   return (
     <>
-      <div className="pointer-events-none fixed inset-0 z-0 bg-[#f6f7f3]" />
+      {/* <div className="pointer-events-none fixed inset-0 z-0 bg-[#f6f9fc]" /> */}
 
-      <motion.div
-        style={{ opacity: darkOpacity, willChange: "opacity" }}
-        className="pointer-events-none fixed inset-0 z-0 mix-blend-multiply"
-      >
-        <ResponsiveGrain
-          colors={["#f6f7f3", "#f6f7f3", "#0f172a", "#334155"]}
-          colorBack="#f6f7f3"
-          softness={1}
-          intensity={0.03}
-          noise={0.14}
-          shape="corners"
-          speed={0.2}
-        />
-      </motion.div>
+      {/*
+        Top landing paper-grain background is intentionally disabled for now.
+        Keep this block for quick reactivation later.
+
+        <div className="landing-background-fade pointer-events-none fixed inset-0 z-0">
+          <ResponsiveGrain
+            colors={["#f6f9fc", "#f6f9fc", "#1e293b", "#334155"]}
+            colorBack="#f6f9fc"
+            softness={1}
+            intensity={0.03}
+            noise={0.14}
+            shape="corners"
+            speed={0.2}
+          />
+        </div>
+      */}
+
+      <style jsx>{`
+        .landing-background-fade {
+          opacity: 0.6;
+          will-change: opacity;
+        }
+
+        @supports (animation-timeline: scroll(root block)) {
+          .landing-background-fade {
+            animation-name: landing-background-fade-out;
+            animation-duration: 1s;
+            animation-timing-function: linear;
+            animation-fill-mode: both;
+            animation-timeline: scroll(root block);
+            animation-range: 0px 500px;
+          }
+        }
+
+        @keyframes landing-background-fade-out {
+          from {
+            opacity: 0.6;
+          }
+
+          to {
+            opacity: 0;
+          }
+        }
+      `}</style>
     </>
   );
 }

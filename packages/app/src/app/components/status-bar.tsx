@@ -1,17 +1,10 @@
-import {
-  Show,
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  onMount,
-} from "solid-js";
+import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
 
 import { currentLocale, t } from "../../i18n";
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
-import type { McpStatusMap, StartupPreference } from "../types";
+import type { McpStatusMap } from "../types";
 import { getOpenCodeRouterStatus } from "../lib/tauri";
 
 import Button from "./button";
@@ -21,7 +14,6 @@ const tr = (key: string) => t(key, currentLocale());
 type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
-  startupPreference: StartupPreference | null;
   developerMode: boolean;
   onOpenSettings: () => void;
   onOpenMessaging: () => void;
@@ -32,33 +24,8 @@ type StatusBarProps = {
 };
 
 export default function StatusBar(props: StatusBarProps) {
-  const [opencodeRouterStatus, setOpenCodeRouterStatus] =
-    createSignal<OpenCodeRouterStatus | null>(null);
+  const [opencodeRouterStatus, setOpenCodeRouterStatus] = createSignal<OpenCodeRouterStatus | null>(null);
   const [documentVisible, setDocumentVisible] = createSignal(true);
-  const [statusDetailOpen, setStatusDetailOpen] = createSignal(false);
-  let statusPopoverRef: HTMLDivElement | undefined;
-  let statusAutoCloseTimer: number | undefined;
-
-  const openStatusDetail = () => {
-    setStatusDetailOpen(true);
-    if (statusAutoCloseTimer) window.clearTimeout(statusAutoCloseTimer);
-    statusAutoCloseTimer = window.setTimeout(() => setStatusDetailOpen(false), 5000);
-  };
-
-  const closeStatusDetail = () => {
-    setStatusDetailOpen(false);
-    if (statusAutoCloseTimer) window.clearTimeout(statusAutoCloseTimer);
-  };
-
-  createEffect(() => {
-    if (!statusDetailOpen()) return;
-    const onClick = (e: MouseEvent) => {
-      if (statusPopoverRef?.contains(e.target as Node)) return;
-      closeStatusDetail();
-    };
-    window.addEventListener("click", onClick, true);
-    onCleanup(() => window.removeEventListener("click", onClick, true));
-  });
 
   const opencodeStatusMeta = createMemo(() => ({
     dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
@@ -69,13 +36,9 @@ export default function StatusBar(props: StatusBarProps) {
   const openworkStatusMeta = createMemo(() => {
     switch (props.openworkServerStatus) {
       case "connected":
-        return { dot: "bg-green-9", text: "text-green-11", label: "Connected" };
+        return { dot: "bg-green-9", text: "text-green-11", label: "Ready" };
       case "limited":
-        return {
-          dot: "bg-amber-9",
-          text: "text-amber-11",
-          label: "Limited access",
-        };
+        return { dot: "bg-amber-9", text: "text-amber-11", label: "Limited access" };
       default:
         return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
     }
@@ -88,40 +51,21 @@ export default function StatusBar(props: StatusBarProps) {
       ? { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") }
       : { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
   });
-
   const messagingMeta = createMemo(() => {
     const status = opencodeRouterStatus();
     if (!status) {
-      return {
-        dot: "bg-gray-6",
-        text: "text-gray-10",
-        label: "Messaging bridge unavailable",
-      };
+      return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge unavailable" };
     }
     const telegramConfigured = (status.telegram.items?.length ?? 0) > 0;
     const slackConfigured = (status.slack.items?.length ?? 0) > 0;
-    const configuredCount = [telegramConfigured, slackConfigured].filter(
-      Boolean,
-    ).length;
+    const configuredCount = [telegramConfigured, slackConfigured].filter(Boolean).length;
     if (status.running && configuredCount > 0) {
-      return {
-        dot: "bg-green-9",
-        text: "text-green-11",
-        label: "Messaging bridge ready",
-      };
+      return { dot: "bg-green-9", text: "text-green-11", label: "Messaging bridge ready" };
     }
     if (configuredCount > 0 || status.running) {
-      return {
-        dot: "bg-amber-9",
-        text: "text-amber-11",
-        label: "Messaging bridge setup",
-      };
+      return { dot: "bg-amber-9", text: "text-amber-11", label: "Messaging bridge setup" };
     }
-    return {
-      dot: "bg-gray-6",
-      text: "text-gray-10",
-      label: "Messaging bridge offline",
-    };
+    return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge offline" };
   });
 
   type ProTip = {
@@ -131,12 +75,8 @@ export default function StatusBar(props: StatusBarProps) {
     action: () => void | Promise<void>;
   };
 
-  const providerConnectedCount = createMemo(
-    () => props.providerConnectedIds?.length ?? 0,
-  );
-  const notionStatus = createMemo(
-    () => props.mcpStatuses?.notion?.status ?? "disconnected",
-  );
+  const providerConnectedCount = createMemo(() => props.providerConnectedIds?.length ?? 0);
+  const notionStatus = createMemo(() => props.mcpStatuses?.notion?.status ?? "disconnected");
 
   const runAction = (action?: () => void | Promise<void>) => {
     if (!action) return;
@@ -179,9 +119,7 @@ export default function StatusBar(props: StatusBarProps) {
     },
   ]);
 
-  const availableTips = createMemo<ProTip[]>(() =>
-    proTips().filter((tip: ProTip) => tip.enabled()),
-  );
+  const availableTips = createMemo<ProTip[]>(() => proTips().filter((tip: ProTip) => tip.enabled()));
   const [activeTip, setActiveTip] = createSignal<ProTip | null>(null);
   const [tipVisible, setTipVisible] = createSignal(false);
   const [tipCursor, setTipCursor] = createSignal(0);
@@ -238,8 +176,7 @@ export default function StatusBar(props: StatusBarProps) {
 
   createEffect(() => {
     if (typeof document === "undefined") return;
-    const update = () =>
-      setDocumentVisible(document.visibilityState !== "hidden");
+    const update = () => setDocumentVisible(document.visibilityState !== "hidden");
     update();
     document.addEventListener("visibilitychange", update);
     onCleanup(() => document.removeEventListener("visibilitychange", update));
@@ -261,56 +198,29 @@ export default function StatusBar(props: StatusBarProps) {
   });
 
   return (
-    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md z-[100] relative">
+    <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
       <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
-        <div class="relative">
-          <button
-            type="button"
-            class="flex items-center gap-2 hover:opacity-80 transition-opacity"
-            title={`Status: ${unifiedStatusMeta().label}`}
-            onClick={() => (statusDetailOpen() ? closeStatusDetail() : openStatusDetail())}
-          >
-            <span class={`w-2 h-2 rounded-full ${unifiedStatusMeta().dot}`} />
-            <span class={`font-medium ${unifiedStatusMeta().text}`}>
-              {unifiedStatusMeta().label}
-            </span>
-          </button>
-
-          <Show when={statusDetailOpen()}>
-            <div
-              ref={statusPopoverRef}
-              class="absolute bottom-full left-0 mb-2 z-[200] w-64 rounded-xl border border-gray-6 bg-gray-2 shadow-xl p-3 space-y-3"
-            >
-              <div class="text-[11px] font-medium text-gray-11 uppercase tracking-wider">
-                Service Status
-              </div>
-              <div class="space-y-2">
-                <div class="flex items-center gap-2">
-                  <span
-                    class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`}
-                  />
-                  <Cpu class="w-3.5 h-3.5 text-gray-11" />
-                  <span class="text-xs text-gray-12 font-medium">
-                    OpenCode Engine
-                  </span>
-                  <span class={`ml-auto text-xs ${opencodeStatusMeta().text}`}>
-                    {opencodeStatusMeta().label}
-                  </span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span
-                    class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`}
-                  />
-                  <Server class="w-3.5 h-3.5 text-gray-11" />
-                  <span class="text-xs text-gray-12 font-medium">
-                    {props.startupPreference === "server" ? "Remote Server" : "Local Server"}
-                  </span>
-                  <span class={`ml-auto text-xs ${openworkStatusMeta().text}`}>
-                    {openworkStatusMeta().label}
-                  </span>
-                </div>
-              </div>
-            </div>
+        <div
+          class="flex items-center gap-2"
+          title={`OpenCode Engine: ${opencodeStatusMeta().label}`}
+        >
+          <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
+          <Cpu class="w-4 h-4 text-gray-11" />
+          <Show when={props.developerMode || !props.clientConnected}>
+            <span class="text-gray-11 font-medium">OpenCode</span>
+            <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
+          </Show>
+        </div>
+        <div class="w-px h-4 bg-gray-6/70" />
+        <div
+          class="flex items-center gap-2"
+          title={`OpenWork Server: ${openworkStatusMeta().label}`}
+        >
+          <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
+          <Server class="w-4 h-4 text-gray-11" />
+          <Show when={props.developerMode || props.openworkServerStatus !== "connected"}>
+            <span class="text-gray-11 font-medium">OpenWork</span>
+            <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
           </Show>
         </div>
         <div class="ml-auto flex items-center gap-2">

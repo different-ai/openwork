@@ -142,6 +142,78 @@ async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: st
   return null
 }
 
+async function getWorkerRuntimeAccess(workerId: string) {
+  const instance = await getLatestWorkerInstance(workerId)
+  const tokenRows = await db
+    .select()
+    .from(WorkerTokenTable)
+    .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
+    .orderBy(asc(WorkerTokenTable.created_at))
+
+  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+  if (!instance?.url || !hostToken) {
+    return null
+  }
+
+  return {
+    instance,
+    hostToken,
+    candidates: getConnectUrlCandidates(workerId, instance.url),
+  }
+}
+
+async function fetchWorkerRuntimeJson(input: {
+  workerId: string
+  path: string
+  method?: "GET" | "POST"
+  body?: unknown
+}) {
+  const access = await getWorkerRuntimeAccess(input.workerId)
+  if (!access) {
+    return {
+      ok: false as const,
+      status: 409,
+      payload: {
+        error: "worker_runtime_unavailable",
+        message: "Worker runtime access is not ready yet. Wait for provisioning to finish and try again.",
+      },
+    }
+  }
+
+  let lastPayload: unknown = null
+  let lastStatus = 502
+
+  for (const candidate of access.candidates) {
+    try {
+      const response = await fetch(`${normalizeUrl(candidate)}${input.path}`, {
+        method: input.method ?? "GET",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-OpenWork-Host-Token": access.hostToken,
+        },
+        body: input.body === undefined ? undefined : JSON.stringify(input.body),
+      })
+
+      const text = await response.text()
+      lastStatus = response.status
+      try {
+        lastPayload = text ? JSON.parse(text) : null
+      } catch {
+        lastPayload = text ? { message: text } : null
+      }
+
+      if (response.ok) {
+        return { ok: true as const, status: response.status, payload: lastPayload }
+      }
+    } catch (error) {
+      lastPayload = { message: error instanceof Error ? error.message : "worker_request_failed" }
+    }
+  }
+
+  return { ok: false as const, status: lastStatus, payload: lastPayload }
+}
+
 async function requireSession(req: express.Request, res: express.Response) {
   const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
@@ -547,6 +619,66 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
     },
     connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
   })
+}))
+
+workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .limit(1)
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const runtime = await fetchWorkerRuntimeJson({
+    workerId: rows[0].id,
+    path: "/runtime/versions",
+  })
+
+  res.status(runtime.status).json(runtime.payload)
+}))
+
+workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .limit(1)
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const runtime = await fetchWorkerRuntimeJson({
+    workerId: rows[0].id,
+    path: "/runtime/upgrade",
+    method: "POST",
+    body: req.body ?? {},
+  })
+
+  res.status(runtime.status).json(runtime.payload)
 }))
 
 workersRouter.delete("/:id", asyncRoute(async (req, res) => {

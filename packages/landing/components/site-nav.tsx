@@ -9,6 +9,8 @@ type Props = {
   stars: string;
   callUrl?: string;
   downloadHref?: string;
+  mobilePrimaryHref?: string;
+  mobilePrimaryLabel?: string;
   active?: "home" | "download" | "enterprise" | "den";
 };
 
@@ -16,8 +18,11 @@ export function SiteNav(props: Props) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const callHref = props.callUrl || "/enterprise#book";
   const downloadHref = props.downloadHref || "/download";
+  const mobilePrimaryHref = props.mobilePrimaryHref || downloadHref;
+  const mobilePrimaryLabel = props.mobilePrimaryLabel || "Download for free";
   const callExternal = /^https?:\/\//.test(callHref);
   const downloadExternal = /^https?:\/\//.test(downloadHref);
+  const mobilePrimaryExternal = /^https?:\/\//.test(mobilePrimaryHref);
   const navItems = [
     { href: "/docs", label: "Docs", key: "docs" },
     { href: "/download", label: "Download", key: "download" },
@@ -39,7 +44,7 @@ export function SiteNav(props: Props) {
             className="group inline-flex items-center gap-2"
             onClick={() => setMobileOpen(false)}
           >
-            <OpenWorkMark className="h-[30px] w-[38px] text-[#011627] transition-opacity group-hover:opacity-80" />
+            <OpenWorkMark className="h-[30px] w-[38px] transition-opacity group-hover:opacity-80" />
             <span className="text-[1.2rem] font-semibold tracking-tight text-[#011627] lowercase md:text-[1.3rem]">
               OpenWork
             </span>
@@ -60,7 +65,7 @@ export function SiteNav(props: Props) {
           <div className="flex items-center gap-4">
             <a
               href={downloadHref}
-              className="hidden rounded-full bg-[#011627] px-6 py-2.5 text-sm font-medium text-white shadow-sm transition-all hover:bg-black md:inline-flex"
+              className="doc-button !hidden px-6 text-sm md:!inline-flex"
               rel={downloadExternal ? "noreferrer" : undefined}
               target={downloadExternal ? "_blank" : undefined}
             >
@@ -116,16 +121,16 @@ export function SiteNav(props: Props) {
 
             <div className="mt-4 flex flex-col gap-3">
               <a
-                href={downloadHref}
-                className="inline-flex items-center justify-center rounded-full bg-[#011627] px-6 py-3 text-sm font-medium text-white shadow-sm transition-all hover:bg-black"
-                rel={downloadExternal ? "noreferrer" : undefined}
-                target={downloadExternal ? "_blank" : undefined}
+                href={mobilePrimaryHref}
+                className="doc-button text-sm"
+                rel={mobilePrimaryExternal ? "noreferrer" : undefined}
+                target={mobilePrimaryExternal ? "_blank" : undefined}
               >
-                Download for free
+                {mobilePrimaryLabel}
               </a>
               <a
                 href={callHref}
-                className="inline-flex items-center justify-center rounded-full border border-gray-200 bg-white px-6 py-3 text-sm font-medium text-[#011627] shadow-sm transition-colors hover:bg-gray-50"
+                className="secondary-button text-sm"
                 rel={callExternal ? "noreferrer" : undefined}
                 target={callExternal ? "_blank" : undefined}
               >

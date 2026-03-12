@@ -23,6 +23,7 @@ import type {
 import {
   appBuildInfo,
   engineRestart,
+  nukeOpencodeDevConfigAndExit,
   opencodeRouterRestart,
   opencodeRouterStop,
   openworkServerRestart,
@@ -41,6 +42,7 @@ export type SettingsViewProps = {
   providerConnectedIds: string[];
   providerAuthBusy: boolean;
   openProviderAuthModal: () => Promise<void>;
+  disconnectProvider: (providerId: string) => Promise<string | void>;
   openworkServerStatus: OpenworkServerStatus;
   openworkServerUrl: string;
   openworkReconnectBusy: boolean;
@@ -108,6 +110,8 @@ export type SettingsViewProps = {
   pendingPermissions: unknown;
   events: unknown;
   workspaceDebugEvents: unknown;
+  sandboxCreateProgress: unknown;
+  sandboxCreateProgressLast: unknown;
   clearWorkspaceDebugEvents: () => void;
   safeStringify: (value: unknown) => string;
   repairOpencodeMigration: () => void;
@@ -324,6 +328,9 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const [providerConnectError, setProviderConnectError] = createSignal<string | null>(null);
+  const [providerDisconnectStatus, setProviderDisconnectStatus] = createSignal<string | null>(null);
+  const [providerDisconnectError, setProviderDisconnectError] = createSignal<string | null>(null);
+  const [providerDisconnectingId, setProviderDisconnectingId] = createSignal<string | null>(null);
   const [openworkReconnectStatus, setOpenworkReconnectStatus] = createSignal<string | null>(null);
   const [openworkReconnectError, setOpenworkReconnectError] = createSignal<string | null>(null);
   const [openworkRestartBusy, setOpenworkRestartBusy] = createSignal(false);
@@ -331,20 +338,17 @@ export default function SettingsView(props: SettingsViewProps) {
   const [openworkRestartError, setOpenworkRestartError] = createSignal<string | null>(null);
   const providerConnectedCount = createMemo(() => (props.providerConnectedIds ?? []).length);
   const providerAvailableCount = createMemo(() => (props.providers ?? []).length);
-  const connectedProviderNames = createMemo(() => {
+  const connectedProviders = createMemo(() => {
     const connectedIds = props.providerConnectedIds ?? [];
-    if (!connectedIds.length) return [] as string[];
-
+    if (!connectedIds.length) return [] as { id: string; name: string }[];
     const providersById = new Map((props.providers ?? []).map((provider) => [provider.id, provider]));
-    const names = connectedIds
+    return connectedIds
       .map((id) => {
         const provider = providersById.get(id);
         const label = provider?.name?.trim() || provider?.id?.trim() || id.trim();
-        return label;
+        return { id, name: label || id };
       })
-      .filter((name) => name.length > 0);
-
-    return Array.from(new Set(names));
+      .filter((entry) => entry.id.trim());
   });
   const providerStatusLabel = createMemo(() => {
     if (!providerAvailableCount()) return translate("settings.providers_unavailable");
@@ -367,11 +371,35 @@ export default function SettingsView(props: SettingsViewProps) {
   const handleOpenProviderAuth = async () => {
     if (props.busy || props.providerAuthBusy) return;
     setProviderConnectError(null);
+    setProviderDisconnectError(null);
+    setProviderDisconnectStatus(null);
     try {
       await props.openProviderAuthModal();
     } catch (error) {
       const message = error instanceof Error ? error.message : translate("settings.failed_open_providers");
       setProviderConnectError(message);
+    }
+  };
+
+  const handleDisconnectProvider = async (providerId: string) => {
+    const resolved = providerId.trim();
+    if (!resolved || props.busy || props.providerAuthBusy || providerDisconnectingId()) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Disconnect ${resolved}? This removes the stored credentials.`);
+    if (!confirmed) return;
+    setProviderDisconnectError(null);
+    setProviderDisconnectStatus(null);
+    setProviderDisconnectingId(resolved);
+    try {
+      const result = await props.disconnectProvider(resolved);
+      setProviderDisconnectStatus(result || `Disconnected ${resolved}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to disconnect provider";
+      setProviderDisconnectError(message);
+    } finally {
+      setProviderDisconnectingId(null);
     }
   };
 
@@ -711,6 +739,143 @@ export default function SettingsView(props: SettingsViewProps) {
     return formatRelativeTime(Date.now() - uptimeMs);
   };
 
+  const [debugReportStatus, setDebugReportStatus] = createSignal<string | null>(null);
+  const [configActionStatus, setConfigActionStatus] = createSignal<string | null>(null);
+  const [revealConfigBusy, setRevealConfigBusy] = createSignal(false);
+  const [resetConfigBusy, setResetConfigBusy] = createSignal(false);
+  const [sandboxProbeBusy, setSandboxProbeBusy] = createSignal(false);
+  const [sandboxProbeStatus, setSandboxProbeStatus] = createSignal<string | null>(null);
+  const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
+  const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<string | null>(null);
+  const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
+
+  const sandboxCreateSummary = createMemo(() => {
+    const raw = (props.sandboxCreateProgress ?? props.sandboxCreateProgressLast) as
+      | { runId?: string; stage?: string; error?: string | null; logs?: string[]; startedAt?: number }
+      | null
+      | undefined;
+    if (!raw || typeof raw !== "object") {
+      return { runId: null, stage: null, error: null, logs: [] as string[], startedAt: null };
+    }
+    return {
+      runId: typeof raw.runId === "string" && raw.runId.trim() ? raw.runId : null,
+      stage: typeof raw.stage === "string" && raw.stage.trim() ? raw.stage : null,
+      error: typeof raw.error === "string" && raw.error.trim() ? raw.error : null,
+      startedAt: typeof raw.startedAt === "number" ? raw.startedAt : null,
+      logs: Array.isArray(raw.logs)
+        ? raw.logs.filter((line) => typeof line === "string" && line.trim()).slice(-400)
+        : [],
+    };
+  });
+
+  const runtimeDebugReport = createMemo(() => ({
+    generatedAt: new Date().toISOString(),
+    app: {
+      version: appVersionLabel(),
+      commit: appCommitLabel(),
+      startupPreference: props.startupPreference ?? "unset",
+    },
+    versions: {
+      orchestrator: orchestratorVersionLabel(),
+      opencode: opencodeVersionLabel(),
+      openworkServer: openworkServerVersionLabel(),
+      opencodeRouter: opencodeRouterVersionLabel(),
+    },
+    services: {
+      engine: {
+        status: engineStatusLabel(),
+        baseUrl: props.engineInfo?.baseUrl ?? null,
+        pid: props.engineInfo?.pid ?? null,
+        stdout: engineStdout(),
+        stderr: engineStderr(),
+      },
+      orchestrator: {
+        status: orchestratorStatusLabel(),
+        dataDir: props.orchestratorStatus?.dataDir ?? null,
+        activeWorkspace: props.orchestratorStatus?.activeId ?? null,
+        sidecar: orchestratorSidecarSummary(),
+      },
+      openworkServer: {
+        status: openworkStatusLabel(),
+        baseUrl: (props.openworkServerHostInfo?.baseUrl ?? props.openworkServerUrl) || null,
+        pid: props.openworkServerHostInfo?.pid ?? null,
+        stdout: openworkStdout(),
+        stderr: openworkStderr(),
+      },
+      opencodeRouter: {
+        status: opencodeRouterStatusLabel(),
+        healthPort: props.opencodeRouterInfo?.healthPort ?? null,
+        pid: props.opencodeRouterInfo?.pid ?? null,
+        stdout: opencodeRouterStdout(),
+        stderr: opencodeRouterStderr(),
+      },
+    },
+    diagnostics: props.openworkServerDiagnostics,
+    capabilities: props.openworkServerCapabilities,
+    pendingPermissions: props.pendingPermissions,
+    recentEvents: props.events,
+    workspaceDebugEvents: props.workspaceDebugEvents,
+    sandboxCreateProgress: {
+      ...sandboxCreateSummary(),
+      lastRunAt: sandboxCreateSummary().startedAt ? new Date(sandboxCreateSummary().startedAt!).toISOString() : null,
+    },
+  }));
+
+  const runtimeDebugReportJson = createMemo(() => `${JSON.stringify(runtimeDebugReport(), null, 2)}\n`);
+
+  const copyRuntimeDebugReport = async () => {
+    if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+      setDebugReportStatus("Clipboard is unavailable in this environment.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(runtimeDebugReportJson());
+      setDebugReportStatus("Copied runtime report JSON.");
+    } catch (error) {
+      setDebugReportStatus(error instanceof Error ? error.message : "Failed to copy runtime report.");
+    }
+  };
+
+  const exportRuntimeDebugReport = () => {
+    if (typeof window === "undefined" || typeof document === "undefined") {
+      setDebugReportStatus("Export is unavailable in this environment.");
+      return;
+    }
+    try {
+      const stamp = new Date().toISOString().replace(/[:]/g, "-").replace(/\..+$/, "");
+      const blob = new Blob([runtimeDebugReportJson()], { type: "application/json" });
+      const url = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `openwork-debug-report-${stamp}.json`;
+      anchor.click();
+      window.URL.revokeObjectURL(url);
+      setDebugReportStatus("Exported runtime report JSON.");
+    } catch (error) {
+      setDebugReportStatus(error instanceof Error ? error.message : "Failed to export runtime report.");
+    }
+  };
+
+  const handleNukeOpencodeDevConfig = async () => {
+    if (!isTauriRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy()) return;
+    const confirmed =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(
+            "Delete the isolated OpenCode dev config and auth/data state, then quit OpenWork? This only affects dev-mode state."
+          );
+    if (!confirmed) return;
+    setNukeDevConfigBusy(true);
+    setNukeDevConfigStatus(null);
+    try {
+      await nukeOpencodeDevConfigAndExit();
+      setNukeDevConfigStatus("Removed OpenCode dev state. OpenWork is closing...");
+    } catch (error) {
+      setNukeDevConfigStatus(error instanceof Error ? error.message : "Failed to nuke OpenCode dev config.");
+      setNukeDevConfigBusy(false);
+    }
+  };
+
   const compactOutlineActionClass =
     "inline-flex items-center gap-1.5 rounded-md border border-dls-border bg-dls-surface px-3 py-1.5 text-xs font-medium text-dls-secondary shadow-sm transition-colors duration-150 hover:bg-dls-hover hover:text-dls-text focus:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(var(--dls-accent-rgb),0.25)] disabled:cursor-not-allowed disabled:opacity-60";
   const compactDangerActionClass =
@@ -789,13 +954,26 @@ export default function SettingsView(props: SettingsViewProps) {
                 <div class="text-xs text-gray-10">{providerSummary()}</div>
               </div>
 
-              <Show when={connectedProviderNames().length > 0}>
-                <div class="flex flex-wrap items-center gap-2">
-                  <For each={connectedProviderNames()}>
-                    {(name) => (
-                      <span class="rounded-full border border-green-7/30 bg-green-3/40 px-2 py-1 text-[11px] font-medium text-green-12">
-                        {name}
-                      </span>
+              <Show when={connectedProviders().length > 0}>
+                <div class="space-y-2">
+                  <For each={connectedProviders()}>
+                    {(provider) => (
+                      <div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2">
+                        <div class="min-w-0">
+                          <div class="text-sm font-medium text-gray-12 truncate">{provider.name}</div>
+                          <div class="text-[11px] text-gray-8 font-mono truncate">{provider.id}</div>
+                        </div>
+                        <Button
+                          variant="outline"
+                          class="text-xs h-8 py-0 px-3"
+                          onClick={() => void handleDisconnectProvider(provider.id)}
+                          disabled={
+                            props.busy || props.providerAuthBusy || providerDisconnectingId() !== null
+                          }
+                        >
+                          {providerDisconnectingId() === provider.id ? "Disconnecting..." : "Disconnect"}
+                        </Button>
+                      </div>
                     )}
                   </For>
                 </div>
@@ -804,6 +982,16 @@ export default function SettingsView(props: SettingsViewProps) {
               <Show when={providerConnectError()}>
                 <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
                   {providerConnectError()}
+                </div>
+              </Show>
+              <Show when={providerDisconnectStatus()}>
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 px-3 py-2 text-xs text-gray-10">
+                  {providerDisconnectStatus()}
+                </div>
+              </Show>
+              <Show when={providerDisconnectError()}>
+                <div class="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+                  {providerDisconnectError()}
                 </div>
               </Show>
 
@@ -966,6 +1154,25 @@ export default function SettingsView(props: SettingsViewProps) {
                   {props.developerMode ? translate("settings.dev_panel_enabled") : translate("settings.dev_panel_hint")}
                 </div>
               </div>
+              <Show when={isTauriRuntime() && opencodeDevModeEnabled()}>
+                <div class="pt-1 flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    class={compactDangerActionClass}
+                    onClick={() => void handleNukeOpencodeDevConfig()}
+                    disabled={props.busy || nukeDevConfigBusy()}
+                  >
+                    <CircleAlert size={14} />
+                    {nukeDevConfigBusy() ? "Nuking OpenCode Dev Config..." : "Nuke Opencode Dev Config"}
+                  </button>
+                  <div class="text-xs text-gray-10">
+                    Deletes isolated OpenCode dev state and then quits OpenWork.
+                  </div>
+                </div>
+                <Show when={nukeDevConfigStatus()}>
+                  {(value) => <div class="text-xs text-red-11">{value()}</div>}
+                </Show>
+              </Show>
             </div>
 
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">

@@ -18,7 +18,6 @@ import type {
   WorkspaceConnectionState,
   WorkspaceDisplay,
   WorkspaceSessionGroup,
-  StartupPreference,
 } from "../types";
 
 import { currentLocale, t } from "../../i18n";
@@ -38,7 +37,6 @@ import {
   Check,
   Circle,
   Cpu,
-  HeartPulse,
   HardDrive,
   History,
   ListTodo,
@@ -75,7 +73,6 @@ import type {
   OpenworkServerClient,
   OpenworkServerSettings,
   OpenworkServerStatus,
-  OpenworkSoulStatus,
   OpenworkWorkspaceExport,
 } from "../lib/openwork-server";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
@@ -92,8 +89,6 @@ import { normalizeLocalFilePath } from "../lib/local-file-path";
 
 import browserSetupTemplateEn from "../data/commands/browser-setup.md?raw";
 import browserSetupTemplateTh from "../data/commands/browser-setup.th.md?raw";
-import soulSetupTemplateEn from "../data/commands/give-me-a-soul.md?raw";
-import soulSetupTemplateTh from "../data/commands/give-me-a-soul.th.md?raw";
 
 import MessageList from "../components/session/message-list";
 import Composer from "../components/session/composer";
@@ -121,7 +116,6 @@ export type SessionViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   editWorkspaceConnection: (workspaceId: string) => void;
   forgetWorkspace: (workspaceId: string) => void;
-  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
   importWorkspaceConfig: () => void;
@@ -130,7 +124,6 @@ export type SessionViewProps = {
   exportWorkspaceBusy: boolean;
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
-  startupPreference: StartupPreference | null;
   openworkServerClient: OpenworkServerClient | null;
   openworkServerSettings: OpenworkServerSettings;
   openworkServerHostInfo: OpenworkServerInfo | null;
@@ -210,8 +203,13 @@ export type SessionViewProps = {
   sessionStatus: string;
   renameSession: (sessionId: string, title: string) => Promise<void>;
   startProviderAuth: (providerId?: string) => Promise<ProviderOAuthStartResult>;
-  completeProviderAuthOAuth: (providerId: string, methodIndex: number, code?: string) => Promise<string | void>;
+  completeProviderAuthOAuth: (
+    providerId: string,
+    methodIndex: number,
+    code?: string
+  ) => Promise<{ connected: boolean; pending?: boolean; message?: string }>;
   submitProviderApiKey: (providerId: string, apiKey: string) => Promise<string | void>;
+  refreshProviders: () => Promise<unknown>;
   openProviderAuthModal: () => Promise<void>;
   closeProviderAuthModal: () => void;
   providerAuthModalOpen: boolean;
@@ -271,20 +269,6 @@ const getBrowserSetupTemplate = () => {
   const parsed = parseTemplateFrontmatter(template);
   const name = parsed?.data?.name?.trim() || "browser-setup";
   const description = parsed?.data?.description?.trim() || "Guide the user through browser automation setup";
-  const body = (parsed?.body ?? template).trim();
-  return { name, description, body };
-};
-
-/**
- * Get soul setup template based on current locale
- */
-const getSoulSetupTemplate = () => {
-  const template = currentLocale() === "th" ? soulSetupTemplateTh : soulSetupTemplateEn;
-  const parsed = parseTemplateFrontmatter(template);
-  const name = parsed?.data?.name?.trim() || "give-me-a-soul";
-  const description =
-    parsed?.data?.description?.trim() ||
-    "Enable optional soul mode with persistent memory and scheduled check-ins";
   const body = (parsed?.body ?? template).trim();
   return { name, description, body };
 };
@@ -2544,15 +2528,19 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleProviderAuthOAuth = async (providerId: string, methodIndex: number, code?: string) => {
-    if (providerAuthActionBusy()) return;
+    if (providerAuthActionBusy()) return { connected: false, pending: true };
     setProviderAuthActionBusy(true);
     try {
-      const message = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
-      setToastMessage(message || "Provider connected");
-      props.closeProviderAuthModal();
+      const result = await props.completeProviderAuthOAuth(providerId, methodIndex, code);
+      if (result.connected) {
+        setToastMessage(result.message || "Provider connected");
+        props.closeProviderAuthModal();
+      }
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "OAuth failed";
       setToastMessage(message);
+      return { connected: false };
     } finally {
       setProviderAuthActionBusy(false);
     }
@@ -2991,38 +2979,6 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
-  const handleSoulQuickstart = async () => {
-    const template = getSoulSetupTemplate();
-    const name = template.name;
-    const slashCommand = `/${name}`;
-    try {
-      const commands = await props.listCommands();
-      const hasCommand = commands.some((cmd) => cmd.name === name);
-      if (hasCommand) {
-        handleSendPrompt({
-          mode: "prompt",
-          text: slashCommand,
-          resolvedText: slashCommand,
-          parts: [{ type: "text", text: slashCommand }],
-          attachments: [],
-          command: { name, arguments: "" },
-        });
-        return;
-      }
-    } catch {
-      // Fall back to prompt-based setup below.
-    }
-
-    const text = template.body || "Give me a soul.";
-    handleSendPrompt({
-      mode: "prompt",
-      text,
-      resolvedText: text,
-      parts: [{ type: "text", text }],
-      attachments: [],
-    });
-  };
-
   const isSandboxWorkspace = createMemo(() => Boolean((props.activeWorkspaceDisplay as any)?.sandboxContainerName?.trim()));
 
   const uploadInboxFiles = async (
@@ -3350,24 +3306,6 @@ export default function SessionView(props: SessionViewProps) {
     props.setView("dashboard");
   };
 
-  const openSoul = (workspaceId?: string) => {
-    const id = (workspaceId ?? props.activeWorkspaceId).trim();
-    if (!id) return;
-    void (async () => {
-      if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id));
-      }
-      props.setTab("soul");
-      props.setView("dashboard");
-    })();
-  };
-
-  const soulModeEnabled = createMemo(() =>
-    Boolean(props.soulStatusByWorkspaceId[props.activeWorkspaceId]?.enabled)
-  );
-
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
-
   const openProviderAuth = () => {
     void props.openProviderAuthModal().catch((error) => {
       const message = error instanceof Error ? error.message : "Connect failed";
@@ -3415,13 +3353,11 @@ export default function SessionView(props: SessionViewProps) {
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
-            soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-            onOpenSoul={openSoul}
             onRevealWorkspace={revealWorkspaceInFinder}
             onRecoverWorkspace={props.recoverWorkspace}
             onTestWorkspaceConnection={props.testWorkspaceConnection}
@@ -3715,7 +3651,7 @@ export default function SessionView(props: SessionViewProps) {
                   {tr("session.pick_starting_point")}
                 </p>
               </div>
-              <div class="grid gap-3 sm:grid-cols-2 max-w-2xl mx-auto text-left">
+              <div class="grid gap-3 max-w-lg mx-auto text-left">
                 <button
                   type="button"
                   class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
@@ -3726,18 +3662,6 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="text-sm font-semibold text-dls-text">{tr("session.automate_browser")}</div>
                   <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
                     {tr("session.automate_browser_desc")}
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
-                  onClick={() => {
-                    void handleSoulQuickstart();
-                  }}
-                >
-                  <div class="text-sm font-semibold text-dls-text">{tr("session.give_me_soul")}</div>
-                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
-                    {tr("session.give_me_soul_desc")}
                   </div>
                 </button>
               </div>
@@ -3900,6 +3824,7 @@ export default function SessionView(props: SessionViewProps) {
           developerMode={props.developerMode}
           busy={props.busy}
           isStreaming={showRunIndicator()}
+          compactTopSpacing={todoCount() > 0}
           onSend={handleSendPrompt}
           onStop={cancelRun}
           onDraftChange={handleDraftChange}
@@ -3941,7 +3866,6 @@ export default function SessionView(props: SessionViewProps) {
         <StatusBar
           clientConnected={props.clientConnected}
           openworkServerStatus={props.openworkServerStatus}
-          startupPreference={props.startupPreference}
           developerMode={props.developerMode}
           onOpenSettings={() => openSettings("general")}
           onOpenMessaging={openConfig}
@@ -3969,18 +3893,6 @@ export default function SessionView(props: SessionViewProps) {
           >
             <History size={18} />
             {tr("dashboard.automations")}
-          </button>
-          <button
-            type="button"
-            class={`w-full h-9 flex items-center gap-2.5 px-3 rounded-lg text-[13px] font-medium transition-colors ${
-              showRightSidebarSelection() && props.tab === "soul"
-                ? "bg-gray-4 text-gray-12"
-                : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-            }`}
-            onClick={() => openSoul()}
-          >
-            <HeartPulse size={18} class={soulNavIconClass()} />
-            {tr("dashboard.soul")}
           </button>
           <button
             type="button"
@@ -4166,6 +4078,7 @@ export default function SessionView(props: SessionViewProps) {
         onSelect={handleProviderAuthSelect}
         onSubmitApiKey={handleProviderAuthApiKey}
         onSubmitOAuth={handleProviderAuthOAuth}
+        onRefreshProviders={props.refreshProviders}
         onClose={props.closeProviderAuthModal}
       />
 

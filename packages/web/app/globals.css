@@ -130,6 +130,10 @@ body {
   overflow: hidden;
 }
 
+.ow-card-auth {
+  width: min(100%, 28rem);
+}
+
 .ow-card-shell {
   width: calc(100vw - 3rem);
   max-width: none;
@@ -178,6 +182,11 @@ body {
   gap: 0.95rem;
 }
 
+.ow-auth-panel {
+  width: min(100%, 21.875rem);
+  margin: 0 auto;
+}
+
 .ow-heading-block {
   display: grid;
   gap: 0.45rem;
@@ -212,6 +221,10 @@ body {
   color: var(--ow-muted);
   font-size: 0.92rem;
   line-height: 1.45;
+}
+
+.ow-subtitle-line {
+  display: block;
 }
 
 .ow-field-block {
@@ -308,11 +321,54 @@ body {
   cursor: not-allowed;
 }
 
+.ow-social-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.68rem;
+  padding: 0.78rem 0.92rem;
+  font-size: 0.92rem;
+}
+
+.ow-social-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.ow-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ow-divider::before,
+.ow-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: #d9e1f2;
+}
+
 .ow-inline-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
+}
+
+.ow-auth-feedback {
+  display: grid;
+  gap: 0.42rem;
+  text-align: center;
+  color: #475569;
+  font-size: 0.82rem;
 }
 
 .ow-app-shell {
@@ -967,6 +1023,8 @@ body {
   .ow-shell {
     padding-top: 4.4rem;
     padding-bottom: 2.2rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
   }
 
   .ow-brand {
@@ -976,6 +1034,10 @@ body {
 
   .ow-card {
     border-radius: 1.45rem;
+  }
+
+  .ow-card-auth {
+    width: 100%;
   }
 
   .ow-card-shell {
@@ -998,7 +1060,17 @@ body {
   }
 
   .ow-card-body {
-    padding: 1.25rem 1.05rem;
+    padding: 1.25rem 0.95rem;
+  }
+
+  .ow-auth-panel {
+    width: 100%;
+  }
+
+  .ow-auth-panel .ow-inline-row {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
   }
 }
 

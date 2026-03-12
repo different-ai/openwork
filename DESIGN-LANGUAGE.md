@@ -29,10 +29,22 @@ The goal is not generic SaaS polish. OpenWork should feel like calm, premium ope
 - Default shell is airy and bright.
 - Large surfaces should feel like frosted panels on top of a luminous field.
 - Use blur, translucent white fills, and soft shadows.
+- Treat grain as a presentational layer, not content.
+- Treat paper as the readable layer that sits above the atmospheric field.
 - Prefer rounded geometry everywhere:
   - Large containers: `rounded-[2rem]` to `rounded-[2.5rem]`
   - Medium cards: `rounded-2xl`
   - Buttons/chips: `rounded-full`
+
+### Grain and paper
+
+- Grain belongs behind UI or inside isolated showcase canvases. It should never compete with text contrast or become the primary surface.
+- Use grain to give the page atmosphere, depth, and a sense of motion; do not use it as a texture wash across every card.
+- The canonical fixed-page grain treatment lives in `packages/landing/components/landing-background.tsx` and is powered by `packages/landing/components/responsive-grain.tsx`.
+- Grain intensity should stay low on default page backgrounds; stronger color can appear only inside showcase moments like the enterprise canvas.
+- Paper means the readable surface layer: white or warm off-white cards with enough opacity to feel stable over the grain field.
+- The canonical paper shells live in `packages/landing/app/globals.css` via `.landing-shell`, `.landing-shell-soft`, and `.landing-chip`.
+- Use `landing-shell` for primary frosted containers, `landing-shell-soft` for denser interior cards, and `landing-chip` for pills, filters, and lightweight app chrome.
 
 ### Shadows and borders
 
@@ -67,6 +79,8 @@ The goal is not generic SaaS polish. OpenWork should feel like calm, premium ope
   - hover lift of 1-2px max
 - Background motion should be slow and atmospheric.
 - Avoid bouncy UI, large parallax, or busy looping animation.
+- Default landing interaction timing should use `300ms` with `cubic-bezier(0.31, 0.325, 0, 0.92)`.
+- On interactive controls, prefer color/background/shadow transitions first, then a very small positional shift.
 
 ### Interaction philosophy
 
@@ -75,6 +89,77 @@ The goal is not generic SaaS polish. OpenWork should feel like calm, premium ope
 - Active state should feel selected through fill, weight, and shadow.
 - Primary action is almost always a dark filled pill.
 - Secondary action is usually a white/translucent pill with border.
+
+### Micro-interaction rules
+
+- OpenWork should feel alive in small ways, especially on hover, focus, and active transitions.
+- Micro-interactions should be visible enough to reward intent, but subtle enough to avoid feeling animated for its own sake.
+- The most important place to get this right is buttons, tabs, cards, and interactive rows.
+
+#### Button motion baseline
+
+- Use `transition-duration: 0.3s`.
+- Use `transition-timing-function: cubic-bezier(0.31, 0.325, 0, 0.92)`.
+- Prefer transitions on:
+  - `color`
+  - `background-color`
+  - `border-color`
+  - `box-shadow`
+  - `transform`
+
+#### Primary button behavior
+
+- Base state:
+  - dark fill
+  - white text
+  - pill radius
+  - compact horizontal padding
+- Hover state:
+  - shift upward slightly (`translateY(-1px)` or `-2px` max)
+  - lighten or soften the dark fill rather than making it more saturated
+  - keep the shadow tight and controlled
+- Avoid oversized lift, glow, or springy bounce.
+
+Reference hover target:
+
+```css
+.primary-button:hover {
+  background-color: rgb(110, 110, 110);
+  transform: translateY(-1px);
+}
+```
+
+#### Secondary button behavior
+
+- Base state:
+  - white surface
+  - dark text
+  - pill radius
+  - subtle border or edge definition
+- Hover state:
+  - background shifts to a soft center-gray (`rgb(242, 242, 242)`)
+  - text remains dark
+  - use a crisp micro-shadow so it feels tactile
+  - no dramatic lift required; the color change is the main signal
+
+Reference hover target:
+
+```css
+.secondary-button:hover {
+  background-color: rgb(242, 242, 242);
+  box-shadow:
+    rgba(0, 0, 0, 0.06) 0px 0px 0px 1px,
+    rgba(0, 0, 0, 0.04) 0px 1px 2px 0px,
+    rgba(0, 0, 0, 0.04) 0px 2px 4px 0px;
+}
+```
+
+#### Card and row behavior
+
+- Cards may lift by `1-2px` max.
+- Interactive rows should slightly darken or tint their background on hover.
+- Active pills/tabs should animate with a soft spring or equivalent eased slide.
+- Never rely on opacity-only hover for core controls when a clearer material shift would help.
 
 ## Core Tokens
 
@@ -117,6 +202,7 @@ The app is not a marketing page. It should feel more operational, more focused, 
   - Right rail: `~280px`
   - Center canvas: fluid
 - Reading width in the center should stay constrained enough for long-form scanning.
+- Canonical landing-derived shell reference: `packages/landing/components/landing-app-demo-panel.tsx`.
 
 ### App background and surfaces
 
@@ -138,6 +224,7 @@ The app is not a marketing page. It should feel more operational, more focused, 
 - Rows should feel compact but touch-safe.
 - Active session state should be obvious through fill/tint, not only text weight.
 - Hover actions should appear progressively, not all at once.
+- Use worker pills and compact metadata rows like the left column in `packages/landing/components/landing-app-demo-panel.tsx`.
 
 ### Center canvas rules
 
@@ -153,6 +240,7 @@ The app is not a marketing page. It should feel more operational, more focused, 
 - Workspace mode label above or inside composer.
 - Agent/model/tool selectors appear as chips or compact menus.
 - Send button should be a strong circular or pill blue affordance.
+- The default visual reference for task + context + result composition is the composer block in `packages/landing/components/landing-app-demo-panel.tsx`.
 
 ### Right rail rules
 
@@ -194,6 +282,10 @@ The landing experience should feel like the same company as the app, but more ci
   - open text-led sections
   - frosted demonstration panels
   - dense proof/feature blocks
+- Canonical shell references:
+  - `packages/landing/components/landing-background.tsx`
+  - `packages/landing/components/responsive-grain.tsx`
+  - `packages/landing/app/globals.css`
 
 ### Landing navigation
 
@@ -222,6 +314,11 @@ The landing experience should feel like the same company as the app, but more ci
   - clear active selection states
   - visible task/result flow
 - Use glass shells, white internals, and restrained gradients.
+- Extract showcase UI into reusable components before duplicating it in new pages.
+- Canonical app-interior reference: `packages/landing/components/landing-app-demo-panel.tsx`.
+- Canonical share/package card reference: `packages/landing/components/landing-share-package-card.tsx`.
+- Canonical cloud worker integration card reference: `packages/landing/components/landing-cloud-workers-card.tsx`.
+- Source data for the rotating demo states lives in `packages/landing/components/landing-demo-flows.ts`.
 
 ### Landing cards
 
@@ -229,11 +326,14 @@ The landing experience should feel like the same company as the app, but more ci
 - Each card should have a single idea.
 - Use a tint or micro-illustration to separate categories.
 - Headings are medium weight, not overly bold.
+- Reuse the share/package card pattern in `packages/landing/components/landing-share-package-card.tsx` when you need a paper card that explains packaging, bundling, or share-link creation.
+- Reuse the worker/integration card pattern in `packages/landing/components/landing-cloud-workers-card.tsx` when you need to show remote readiness, worker state pills, or connector actions like Slack.
 
 ### CTA rules
 
 - Primary CTA: dark navy/black pill, medium weight.
 - Secondary CTA: white or translucent with border.
+- Primary and secondary CTAs must have explicit hover states; do not leave them visually static.
 - CTA copy should be short and direct:
   - `Download for free`
   - `Contact sales`
@@ -300,6 +400,8 @@ When building a landing enterprise page in this language, use this structure:
 - Is the raster accent used sparingly and intentionally?
 - Are large cards rounded, translucent, and softly shadowed?
 - Can a user understand the value proposition from the hero + first proof section alone?
+- Are grain and paper clearly separated so readable content never sits directly on top of a noisy effect?
+- If a section references the app, does it borrow from the extracted canonical components instead of inventing a second shell language?
 
 ## Do / Don't
 
@@ -335,3 +437,8 @@ When creating a new OpenWork UI from scratch, implement in this order:
 - Product guidance: `AGENTS.md`
 - App session-surface reference: `packages/docs/orbita-layout-style.mdx`
 - Product landing implementation target: `packages/landing`
+- Landing background + grain reference: `packages/landing/components/landing-background.tsx`
+- Landing shell tokens + button behavior: `packages/landing/app/globals.css`
+- Canonical app demo interior: `packages/landing/components/landing-app-demo-panel.tsx`
+- Canonical share card: `packages/landing/components/landing-share-package-card.tsx`
+- Canonical cloud worker card: `packages/landing/components/landing-cloud-workers-card.tsx`

@@ -1,5 +1,7 @@
 [![Discord](https://img.shields.io/badge/discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/VEhNQXxYMB)
 
+English | [简体中文](./README_ZH.md) | [繁體中文](./README_ZH_hk.md)
+
 # OpenWork
 
 > OpenWork helps you run your agents, skills, and MCP. It's an open-source alternative to Claude Cowork/Codex (desktop app).
@@ -82,6 +84,7 @@ Before running `pnpm dev`, ensure these are installed and active in your shell:
 - **Bun 1.3.9+** (`bun --version`)
 - Rust toolchain (for Tauri), with Cargo from current `rustup` stable (supports `Cargo.lock` v4)
 - Xcode Command Line Tools (macOS)
+- On Linux, WebKitGTK 4.1 development packages so `pkg-config` can resolve `webkit2gtk-4.1` and `javascriptcoregtk-4.1`
 
 ### One-minute sanity check
 
@@ -111,15 +114,20 @@ OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell)
 pnpm dev
 ```
 
+`pnpm dev` now enables `OPENWORK_DEV_MODE=1` automatically, so desktop dev uses an isolated OpenCode state instead of your personal global config/auth/data.
+
 ### Run (Web UI only)
 
 ```bash
 pnpm dev:ui
 ```
 
+All repo `dev` entrypoints now opt into the same dev-mode isolation so local testing uses the OpenWork-managed OpenCode state consistently.
+
 ### Arch Users:
 
 ```bash
+sudo pacman -S --needed webkit2gtk-4.1
 yay -s opencode # Releases version
 ```
 

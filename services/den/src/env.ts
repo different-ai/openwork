@@ -6,6 +6,8 @@ const schema = z.object({
   BETTER_AUTH_URL: z.string().min(1),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render"]).optional(),
@@ -62,6 +64,10 @@ export const env = {
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
+  },
+  google: {
+    clientId: parsed.GOOGLE_CLIENT_ID?.trim() || undefined,
+    clientSecret: parsed.GOOGLE_CLIENT_SECRET?.trim() || undefined,
   },
   port: Number(parsed.PORT ?? "8788"),
   corsOrigins: corsOrigins ?? [],

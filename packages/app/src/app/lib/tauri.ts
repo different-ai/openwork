@@ -387,10 +387,15 @@ export type AppBuildInfo = {
   version: string;
   gitSha?: string | null;
   buildEpoch?: string | null;
+  openworkDevMode?: boolean;
 };
 
 export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
+}
+
+export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
+  return invoke<void>("nuke_opencode_dev_config_and_exit");
 }
 
 export type OrchestratorDetachedHost = {
