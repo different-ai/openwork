@@ -1038,56 +1038,6 @@ export default function SettingsView(props: SettingsViewProps) {
         <Match when={activeTab() === "general"}>
           <div class="space-y-6">
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
-              <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div class="text-sm font-medium text-gray-12">Runtime</div>
-                  <div class="text-xs text-gray-9">Quick status for your local engine and OpenWork server.</div>
-                </div>
-                <Button
-                  variant="outline"
-                  class="text-xs h-8 py-0 px-3 self-start"
-                  onClick={() => props.setSettingsTab("advanced")}
-                >
-                  Manage runtime
-                </Button>
-              </div>
-
-              <div class="grid gap-3 sm:grid-cols-2">
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
-                  <div class="flex items-start gap-3">
-                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
-                      <Cpu size={18} />
-                    </div>
-                    <div>
-                      <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
-                      <div class="text-xs text-gray-9">Local runtime for agents, tools, and model providers.</div>
-                    </div>
-                  </div>
-                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${clientStatusStyle()}`}>
-                    <span class={`h-2 w-2 rounded-full ${clientStatusDot()}`} />
-                    {clientStatusLabel()}
-                  </div>
-                </div>
-
-                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
-                  <div class="flex items-start gap-3">
-                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
-                      <Server size={18} />
-                    </div>
-                    <div>
-                      <div class="text-sm font-medium text-gray-12">OpenWork server</div>
-                      <div class="text-xs text-gray-9">Session control plane for app sync, workers, and remote access.</div>
-                    </div>
-                  </div>
-                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${openworkStatusStyle()}`}>
-                    <span class={`h-2 w-2 rounded-full ${openworkStatusDot()}`} />
-                    {openworkStatusLabel()}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
               <div class="flex items-start justify-between gap-4">
                 <div>
                   <div class="flex items-center gap-2">
@@ -1290,6 +1240,47 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Runtime</div>
+                <div class="text-xs text-gray-9">Status for your local engine and OpenWork server.</div>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Cpu size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
+                      <div class="text-xs text-gray-9">Local runtime for agents, tools, and model providers.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${clientStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${clientStatusDot()}`} />
+                    {clientStatusLabel()}
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Server size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+                      <div class="text-xs text-gray-9">Session control plane for app sync, workers, and remote access.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${openworkStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${openworkStatusDot()}`} />
+                    {openworkStatusLabel()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-gray-12">Developer mode</div>
               <div class="text-xs text-gray-9">
