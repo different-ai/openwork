@@ -1723,6 +1723,7 @@ export default function App() {
       previousStatus: previous,
       status,
       messages: visibleMessages,
+      providers: providers(),
       lastAutoCompactedAt,
       now: Date.now(),
     });

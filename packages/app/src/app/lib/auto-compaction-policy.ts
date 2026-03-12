@@ -1,18 +1,31 @@
-import type { MessageWithParts } from "../types";
+import type { MessageWithParts, ProviderListItem } from "../types";
 import { customAutoCompactionPolicies, resolveCustomAutoCompactionPolicyId } from "./auto-compaction-policy.custom";
+
+type AssistantMessageWithTokens = MessageWithParts["info"] & {
+  role: "assistant";
+  providerID: string;
+  modelID: string;
+  tokens: {
+    input: number;
+    output: number;
+    reasoning: number;
+    cache: { read: number; write: number };
+  };
+};
 
 export type AutoCompactionPolicyContext = {
   sessionID: string;
   previousStatus: string | null;
   status: string | null;
   messages: MessageWithParts[];
+  providers: ProviderListItem[];
   lastAutoCompactedAt: number | null;
   now: number;
 };
 
 export type AutoCompactionPolicyDecision = {
   shouldCompact: boolean;
-  estimatedTokens: number;
+  usagePercent: number | null;
 };
 
 export type AutoCompactionPolicy = {
@@ -20,8 +33,11 @@ export type AutoCompactionPolicy = {
   shouldCompact: (context: AutoCompactionPolicyContext) => AutoCompactionPolicyDecision;
 };
 
-const DEFAULT_POLICY_ID = "token-threshold";
-const DEFAULT_MIN_TOKENS = parsePositiveInt(import.meta.env?.VITE_OPENWORK_AUTO_COMPACTION_MIN_TOKENS, 100_000);
+const DEFAULT_POLICY_ID = "context-percent";
+const DEFAULT_MIN_CONTEXT_PERCENT = parsePositiveInt(
+  import.meta.env?.VITE_OPENWORK_AUTO_COMPACTION_MIN_CONTEXT_PERCENT,
+  50,
+);
 const DEFAULT_COOLDOWN_MS = parsePositiveInt(import.meta.env?.VITE_OPENWORK_AUTO_COMPACTION_COOLDOWN_MS, 60_000);
 
 function parsePositiveInt(value: unknown, fallback: number) {
@@ -29,13 +45,39 @@ function parsePositiveInt(value: unknown, fallback: number) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-export function estimateSessionTokens(messages: MessageWithParts[]): number {
-  return messages.reduce((sum, message) => {
-    if (!("tokens" in message.info)) return sum;
-    const tokens = message.info.tokens;
-    if (!tokens) return sum;
-    return sum + tokens.input + tokens.output + tokens.reasoning + tokens.cache.read + tokens.cache.write;
-  }, 0);
+function lastAssistantWithTokens(messages: MessageWithParts[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const candidate = messages[index];
+    if (candidate.info.role !== "assistant") continue;
+    if (!("tokens" in candidate.info) || !("providerID" in candidate.info) || !("modelID" in candidate.info)) {
+      continue;
+    }
+    const info = candidate.info as AssistantMessageWithTokens;
+    const total =
+      info.tokens.input +
+      info.tokens.output +
+      info.tokens.reasoning +
+      info.tokens.cache.read +
+      info.tokens.cache.write;
+    if (total <= 0) continue;
+    return info;
+  }
+}
+
+function contextUsagePercent(context: AutoCompactionPolicyContext) {
+  const message = lastAssistantWithTokens(context.messages);
+  if (!message) return null;
+  const provider = context.providers.find((item) => item.id === message.providerID);
+  const model = provider?.models?.[message.modelID];
+  const limit = model?.limit?.context;
+  if (!limit || limit <= 0) return null;
+  const total =
+    message.tokens.input +
+    message.tokens.output +
+    message.tokens.reasoning +
+    message.tokens.cache.read +
+    message.tokens.cache.write;
+  return Math.round((total / limit) * 100);
 }
 
 function isIdleTransition(context: AutoCompactionPolicyContext) {
@@ -47,29 +89,29 @@ const idleAfterRunPolicy: AutoCompactionPolicy = {
   shouldCompact(context) {
     return {
       shouldCompact: isIdleTransition(context),
-      estimatedTokens: estimateSessionTokens(context.messages),
+      usagePercent: contextUsagePercent(context),
     };
   },
 };
 
-const tokenThresholdPolicy: AutoCompactionPolicy = {
-  id: DEFAULT_POLICY_ID,
+const contextPercentPolicy: AutoCompactionPolicy = {
+  id: "context-percent",
   shouldCompact(context) {
-    const estimatedTokens = estimateSessionTokens(context.messages);
+    const usagePercent = contextUsagePercent(context);
     if (!isIdleTransition(context)) {
-      return { shouldCompact: false, estimatedTokens };
+      return { shouldCompact: false, usagePercent };
     }
-    if (estimatedTokens < DEFAULT_MIN_TOKENS) {
-      return { shouldCompact: false, estimatedTokens };
+    if (usagePercent === null || usagePercent < DEFAULT_MIN_CONTEXT_PERCENT) {
+      return { shouldCompact: false, usagePercent };
     }
     if (context.lastAutoCompactedAt && context.now - context.lastAutoCompactedAt < DEFAULT_COOLDOWN_MS) {
-      return { shouldCompact: false, estimatedTokens };
+      return { shouldCompact: false, usagePercent };
     }
-    return { shouldCompact: true, estimatedTokens };
+    return { shouldCompact: true, usagePercent };
   },
 };
 
-const builtInPolicies: AutoCompactionPolicy[] = [tokenThresholdPolicy, idleAfterRunPolicy];
+const builtInPolicies: AutoCompactionPolicy[] = [contextPercentPolicy, idleAfterRunPolicy];
 
 function allPolicies() {
   return [...builtInPolicies, ...customAutoCompactionPolicies];
@@ -93,6 +135,6 @@ export function resolveAutoCompactionPolicyId() {
 }
 
 export function shouldAutoCompact(context: AutoCompactionPolicyContext): AutoCompactionPolicyDecision {
-  const policy = policyMap().get(resolveAutoCompactionPolicyId()) ?? tokenThresholdPolicy;
+  const policy = policyMap().get(resolveAutoCompactionPolicyId()) ?? contextPercentPolicy;
   return policy.shouldCompact(context);
 }
