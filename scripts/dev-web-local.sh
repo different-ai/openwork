@@ -4,13 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.web-local.yml"
 PROJECT_NAME="openwork-web-local"
+ENV_FILE="$ROOT_DIR/.env.local"
 LOCAL_DEN_PORT="8788"
 LOCAL_WEB_PORT="3005"
-LOCAL_DATABASE_URL="mysql://root:password@127.0.0.1:3306/openwork_den"
 LOCAL_BETTER_AUTH_URL="http://127.0.0.1:${LOCAL_DEN_PORT}"
 LOCAL_WEB_ORIGIN="http://127.0.0.1:${LOCAL_WEB_PORT}"
 LOCAL_WORKER_URL_TEMPLATE="https://workers.example.com/{workerId}"
-LOCAL_BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-openwork-local-dev-secret-000000000000}"
 DEV_CMD=(pnpm --parallel --filter @openwork/den --filter @different-ai/openwork-web dev)
 
 detect_web_origins() {
@@ -50,6 +49,21 @@ trap cleanup EXIT INT TERM
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required for pnpm dev:web-local" >&2
+  exit 1
+fi
+
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ENV_FILE"
+  set +a
+fi
+
+LOCAL_DATABASE_URL="${DATABASE_URL:-mysql://root:password@127.0.0.1:3306/openwork_den}"
+LOCAL_BETTER_AUTH_SECRET="${BETTER_AUTH_SECRET:-}"
+
+if [[ -z "$LOCAL_BETTER_AUTH_SECRET" ]]; then
+  echo "BETTER_AUTH_SECRET must be set in $ENV_FILE (or exported in the shell)." >&2
   exit 1
 fi
 

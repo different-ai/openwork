@@ -1,6 +1,24 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import {
+  Boxes,
+  CheckCircle2,
+  Cpu,
+  FileText,
+  FolderOpen,
+  Globe,
+  KeyRound,
+  Loader2,
+  MessageCircle,
+  Package,
+  RefreshCcw,
+  Server,
+  Sparkles,
+  Terminal,
+  Zap,
+  type LucideIcon
+} from "lucide-react";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
@@ -127,6 +145,13 @@ type LaunchEvent = {
   at: string;
 };
 
+type StartupSequenceItem = {
+  label: string;
+  sublabel: string;
+  Icon: LucideIcon;
+  spin?: boolean;
+};
+
 type PosthogClient = {
   capture?: (eventName: string, properties?: Record<string, unknown>) => void;
   identify?: (distinctId?: string, properties?: Record<string, unknown>) => void;
@@ -162,6 +187,30 @@ const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_C
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/";
 const OPENWORK_DOWNLOAD_FALLBACK_URL = "https://openwork.software/download";
 const BILLING_DISABLED_FOR_EXPERIMENT = true;
+const STARTUP_ROTATION_MS = 1900;
+const STARTUP_SEQUENCE: StartupSequenceItem[] = [
+  { Icon: Loader2, label: "Warming Docker", sublabel: "Spinning up the local container stack.", spin: true },
+  { Icon: Cpu, label: "Checking engine", sublabel: "Verifying the runtime is responding." },
+  { Icon: Package, label: "Pulling layers", sublabel: "Preparing the worker image in the background." },
+  { Icon: FolderOpen, label: "Mounting workspace", sublabel: "Connecting the worker to your files." },
+  { Icon: Globe, label: "Priming network", sublabel: "Opening the paths the worker needs." },
+  { Icon: Server, label: "Starting MySQL", sublabel: "Bringing the data layer online." },
+  { Icon: RefreshCcw, label: "Applying migrations", sublabel: "Aligning the schema before launch.", spin: true },
+  { Icon: FileText, label: "Reading config", sublabel: "Loading the worker settings for this session." },
+  { Icon: Zap, label: "Starting Den", sublabel: "Booting the OpenWork server layer." },
+  { Icon: KeyRound, label: "Minting tokens", sublabel: "Preparing secure access for the worker." },
+  { Icon: Boxes, label: "Creating worker", sublabel: "Provisioning the worker container." },
+  { Icon: RefreshCcw, label: "Spinning runtime", sublabel: "Starting the runtime services.", spin: true },
+  { Icon: CheckCircle2, label: "Checking health", sublabel: "Waiting for the worker to report healthy." },
+  { Icon: MessageCircle, label: "Opening channel", sublabel: "Bringing the app connection online." },
+  { Icon: Terminal, label: "Preparing console", sublabel: "Getting the console ready for handoff." },
+  { Icon: Sparkles, label: "Almost ready", sublabel: "The launch buttons unlock the moment setup finishes." }
+];
+const AMBIENT_STARTUP_SEQUENCE: StartupSequenceItem[] = [
+  { Icon: RefreshCcw, label: "Scanning logs", sublabel: "Watching the startup output for the next milestone.", spin: true },
+  { Icon: Terminal, label: "Watching startup", sublabel: "Keeping an eye on the worker while it settles." },
+  { Icon: Boxes, label: "Wiring services", sublabel: "Waiting for the last service checks to pass." }
+];
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -1066,6 +1115,177 @@ function CredentialRow({
   );
 }
 
+function getStartupMilestoneIndex({
+  launchStatus,
+  latestEvent,
+  bucket,
+  launchBusy,
+  workersBusy
+}: {
+  launchStatus: string;
+  latestEvent: LaunchEvent | null;
+  bucket: WorkerStatusBucket;
+  launchBusy: boolean;
+  workersBusy: boolean;
+}): number | null {
+  const combined = `${latestEvent?.label ?? ""} ${latestEvent?.detail ?? ""} ${launchStatus}`.toLowerCase();
+
+  if (combined.includes("access token ready") || combined.includes("ready to connect") || combined.includes("almost ready")) {
+    return 15;
+  }
+
+  if (combined.includes("token")) {
+    return 9;
+  }
+
+  if (combined.includes("provisioning complete") || combined.includes("health")) {
+    return 12;
+  }
+
+  if (combined.includes("status refreshed") || combined.includes("provisioning update") || workersBusy) {
+    return 12;
+  }
+
+  if (combined.includes("provisioning started")) {
+    return 10;
+  }
+
+  if (combined.includes("worker launched") || combined.includes("worker is currently") || bucket === "starting") {
+    return 11;
+  }
+
+  if (combined.includes("checking subscription") || combined.includes("launch requested")) {
+    return 1;
+  }
+
+  if (launchBusy) {
+    return 0;
+  }
+
+  return null;
+}
+
+function getStartupSequenceItem(index: number): StartupSequenceItem {
+  if (index < STARTUP_SEQUENCE.length) {
+    return STARTUP_SEQUENCE[index];
+  }
+
+  return AMBIENT_STARTUP_SEQUENCE[(index - STARTUP_SEQUENCE.length) % AMBIENT_STARTUP_SEQUENCE.length];
+}
+
+function getNextStartupSequenceIndex(index: number): number {
+  if (index < STARTUP_SEQUENCE.length - 1) {
+    return index + 1;
+  }
+
+  const ambientOffset = index < STARTUP_SEQUENCE.length ? 0 : index - STARTUP_SEQUENCE.length + 1;
+  return STARTUP_SEQUENCE.length + (ambientOffset % AMBIENT_STARTUP_SEQUENCE.length);
+}
+
+function StartupSequenceRow({
+  active,
+  launchStatus,
+  latestEvent,
+  bucket,
+  launchBusy,
+  workersBusy
+}: {
+  active: boolean;
+  launchStatus: string;
+  latestEvent: LaunchEvent | null;
+  bucket: WorkerStatusBucket;
+  launchBusy: boolean;
+  workersBusy: boolean;
+}) {
+  const milestoneIndex = getStartupMilestoneIndex({ launchStatus, latestEvent, bucket, launchBusy, workersBusy });
+  const [currentIndex, setCurrentIndex] = useState(milestoneIndex ?? 0);
+  const [phraseVisible, setPhraseVisible] = useState(true);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => setPrefersReducedMotion(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!active) {
+      setCurrentIndex(0);
+      setPhraseVisible(true);
+      return;
+    }
+
+    if (milestoneIndex !== null) {
+      setCurrentIndex((value) => Math.max(value, milestoneIndex));
+    }
+  }, [active, milestoneIndex]);
+
+  useEffect(() => {
+    if (!active || typeof window === "undefined") {
+      return;
+    }
+
+    let fadeTimeout: number | undefined;
+
+    const interval = window.setInterval(() => {
+      if (prefersReducedMotion) {
+        setCurrentIndex((value) => getNextStartupSequenceIndex(value));
+        return;
+      }
+
+      setPhraseVisible(false);
+      fadeTimeout = window.setTimeout(() => {
+        setCurrentIndex((value) => getNextStartupSequenceIndex(value));
+        setPhraseVisible(true);
+      }, 180);
+    }, STARTUP_ROTATION_MS);
+
+    return () => {
+      window.clearInterval(interval);
+      if (fadeTimeout !== undefined) {
+        window.clearTimeout(fadeTimeout);
+      }
+    };
+  }, [active, prefersReducedMotion]);
+
+  const item = getStartupSequenceItem(currentIndex);
+  const Icon = item.Icon;
+
+  return (
+    <div className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-[#1B29FF] shadow-[0_10px_24px_rgba(27,41,255,0.08)]">
+          <Icon className={`h-4 w-4 ${item.spin ? "animate-spin motion-reduce:animate-none" : ""}`} />
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div
+            aria-live="polite"
+            aria-atomic="true"
+            className={`min-h-[1.5rem] text-sm font-semibold leading-6 text-slate-900 transition-all duration-200 ease-out motion-reduce:transition-none ${phraseVisible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"}`}
+          >
+            {item.label}
+          </div>
+          <p className="mt-1 hidden text-xs leading-5 text-slate-500 lg:block">{item.sublabel}</p>
+        </div>
+
+        <div className="hidden sm:block">
+          <div className="h-2 w-16 overflow-hidden rounded-full bg-slate-200">
+            <div className="h-full w-1/2 rounded-full bg-[#1B29FF] animate-pulse motion-reduce:animate-none" />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CloudControlPanel() {
   const [step, setStep] = useState<Step>(1);
   const [shellView, setShellView] = useState<ShellView>("workers");
@@ -1123,6 +1343,8 @@ export function CloudControlPanel() {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
+  const [dismissedDesktopPromptWorkerId, setDismissedDesktopPromptWorkerId] = useState<string | null>(null);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -1248,6 +1470,13 @@ export function CloudControlPanel() {
   const canOpenWorker = selectedStatusMeta.bucket === "ready" && Boolean(primaryAppUrl);
   const canStartInOpenwork = selectedStatusMeta.bucket === "ready" && Boolean(openworkDeepLink);
   const canStartHere = selectedStatusMeta.bucket === "ready" && Boolean(browserStartUrl);
+  const showStartupSequence = launchBusy || (Boolean(primaryWorker) && selectedStatusMeta.bucket !== "ready");
+  const showDesktopStartupModal =
+    isDesktopViewport &&
+    Boolean(primaryWorker) &&
+    selectedStatusMeta.bucket !== "ready" &&
+    dismissedDesktopPromptWorkerId !== primaryWorker?.workerId;
+  const showInlineStartupSequence = showStartupSequence && !showDesktopStartupModal;
   const effectiveCheckoutUrl = BILLING_DISABLED_FOR_EXPERIMENT ? null : (checkoutUrl ?? billingSummary?.checkoutUrl ?? null);
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
@@ -1269,6 +1498,37 @@ export function CloudControlPanel() {
       return next.slice(0, 10);
     });
   }
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const handleChange = () => setIsDesktopViewport(mediaQuery.matches);
+
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  useEffect(() => {
+    if (!primaryWorker || selectedStatusMeta.bucket === "ready") {
+      setDismissedDesktopPromptWorkerId(null);
+    }
+  }, [primaryWorker?.workerId, selectedStatusMeta.bucket]);
+
+  useEffect(() => {
+    if (!showDesktopStartupModal || !primaryWorker) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setDismissedDesktopPromptWorkerId(primaryWorker.workerId);
+    }, 90_000);
+
+    return () => window.clearTimeout(timeout);
+  }, [primaryWorker, showDesktopStartupModal]);
 
   async function withResolvedOpenworkCredentials(candidate: WorkerLaunch, options: { quiet?: boolean } = {}) {
     const existingConnectUrl = candidate.openworkUrl?.trim() ?? "";
@@ -2650,8 +2910,8 @@ export function CloudControlPanel() {
         ) : null}
 
         {step === 2 ? (
-          <div className="mx-auto flex w-full max-w-[68rem] flex-col gap-4 px-1 py-1 lg:flex-row lg:items-stretch">
-            <section className="mx-auto flex w-full max-w-[30rem] flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
+          <div className="mx-auto w-full max-w-[40rem] px-1 py-1 lg:max-w-[52rem]">
+            <section className="mx-auto flex w-full flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm md:p-6">
               <div className="space-y-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
@@ -2831,45 +3091,113 @@ export function CloudControlPanel() {
               </div>
 
               <div className="mt-6 space-y-3">
-                <p className="text-xs leading-5 text-slate-500">{launchStatus}</p>
+                {showInlineStartupSequence ? (
+                  <StartupSequenceRow
+                    active={showInlineStartupSequence}
+                    launchStatus={launchStatus}
+                    latestEvent={events[0] ?? null}
+                    bucket={selectedStatusMeta.bucket}
+                    launchBusy={launchBusy}
+                    workersBusy={workersBusy}
+                  />
+                ) : (
+                  <p className="text-xs leading-5 text-slate-500">{launchStatus}</p>
+                )}
               </div>
             </section>
+          </div>
+        ) : null}
 
-            <aside className="hidden w-full max-w-[22rem] flex-col rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
-              {primaryWorker && selectedStatusMeta.bucket === "ready" ? (
-                <>
+        {showDesktopStartupModal ? (
+          <div
+            className="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/10 p-5 backdrop-blur-[2px] lg:flex"
+            onClick={() => {
+              if (primaryWorker) {
+                setDismissedDesktopPromptWorkerId(primaryWorker.workerId);
+              }
+            }}
+          >
+            <div
+              className="relative w-[min(94vw,86rem)] overflow-hidden rounded-[36px] border border-slate-200 bg-white/95 shadow-[0_32px_100px_rgba(15,23,42,0.2)] backdrop-blur-xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <button
+                type="button"
+                aria-label="Close download prompt"
+                onClick={() => {
+                  if (primaryWorker) {
+                    setDismissedDesktopPromptWorkerId(primaryWorker.workerId);
+                  }
+                }}
+                className="absolute right-5 top-5 z-10 inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:border-slate-300 hover:text-slate-800"
+              >
+                ×
+              </button>
+              <div className="grid gap-8 p-8 lg:grid-cols-[minmax(0,0.92fr)_minmax(25rem,1.08fr)] lg:items-center xl:p-10">
+                <div className="min-w-0 self-center text-center">
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Desktop</p>
-                  <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">Your worker is ready.</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Use the buttons in overview to open the worker. This panel only stays around for download help while the worker is starting.
+                  <h3 className="mt-2 text-[2.35rem] font-semibold leading-[1.05] tracking-tight text-slate-900">Download OpenWork</h3>
+                  <p className="mt-3 text-[1.35rem] font-medium leading-tight tracking-tight text-slate-700">
+                    while we finish setting up your ai worker
                   </p>
-                </>
-              ) : (
-                <>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Desktop</p>
-                  <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">Download OpenWork while this starts.</h3>
-                  <p className="mt-2 text-sm leading-6 text-slate-600">
-                    We will enable the desktop launch options as soon as the worker is available.
+                  <p className="mx-auto mt-4 max-w-[34rem] text-justify text-[1.05rem] leading-8 text-slate-600">
+                    Cloud setup usually takes about 2 minutes. Download the desktop app now, or take a quick coffee
+                    break while we finish getting everything ready.
                   </p>
-                  <a
-                    href={OPENWORK_DOWNLOAD_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-6 block w-full rounded-[16px] bg-slate-900 px-4 py-3 text-center text-sm font-semibold text-white transition hover:bg-slate-800"
-                  >
-                    Download OpenWork
-                  </a>
-                  <a
-                    href={OPENWORK_DOWNLOAD_FALLBACK_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-3 text-sm font-semibold text-[#1B29FF] transition hover:text-[#151FDA]"
-                  >
-                    That didn&apos;t work?
-                  </a>
-                </>
-              )}
-            </aside>
+
+                  <div className="mx-auto mt-6 max-w-[34rem] text-left">
+                    <StartupSequenceRow
+                      active={showDesktopStartupModal}
+                      launchStatus={launchStatus}
+                      latestEvent={events[0] ?? null}
+                      bucket={selectedStatusMeta.bucket}
+                      launchBusy={launchBusy}
+                      workersBusy={workersBusy}
+                    />
+                  </div>
+
+                  <div className="mx-auto mt-6 max-w-[34rem] rounded-[22px] border border-slate-200 bg-slate-50 p-4 text-left">
+                    <p className="text-sm font-semibold text-slate-900">While OpenWork Cloud gets everything ready:</p>
+                    <div className="mt-4 space-y-2 text-sm text-slate-600">
+                      <p>1. Keep this tab open while OpenWork Cloud prepares the worker.</p>
+                      <p>2. Download the desktop app if you want to jump in the moment the worker is ready.</p>
+                    </div>
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-center gap-4">
+                    <a
+                      href={OPENWORK_DOWNLOAD_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={() => {
+                        if (primaryWorker) {
+                          setDismissedDesktopPromptWorkerId(primaryWorker.workerId);
+                        }
+                      }}
+                      className="inline-flex rounded-[16px] bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+                    >
+                      Download OpenWork
+                    </a>
+                    <a
+                      href={OPENWORK_DOWNLOAD_FALLBACK_URL}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-sm font-semibold text-[#1B29FF] transition hover:text-[#151FDA]"
+                    >
+                      That didn&apos;t work?
+                    </a>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <img
+                    src="/startup-mobile-preview.png"
+                    alt="OpenWork app preview"
+                    className="block max-h-[78vh] w-auto max-w-full rounded-[18px] object-contain shadow-[0_30px_90px_rgba(15,23,42,0.2)]"
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         ) : null}
 

@@ -23,15 +23,17 @@ Frontend for `app.openwork.software`.
 
 To run the local `app.openwork.software` flow against a local Den service and MySQL:
 
-1. Validate the launcher script:
+1. Create a repo-root `.env.local` from the example and set a local auth secret:
+   `cp .env.local.example .env.local`
+2. Validate the launcher script:
    `bash -n scripts/dev-web-local.sh`
-2. Validate the local MySQL compose file:
+3. Validate the local MySQL compose file:
    `docker compose -f packaging/docker/docker-compose.web-local.yml config`
-3. Start the local stack from the repo root:
+4. Start the local stack from the repo root:
    `pnpm dev:web-local`
-4. Verify Den is healthy:
+5. Verify Den is healthy:
    `curl http://127.0.0.1:8788/health`
-5. Verify the web app is serving:
+6. Verify the web app is serving:
    `curl -I http://127.0.0.1:3005`
 
 What `pnpm dev:web-local` wires automatically:
@@ -40,7 +42,7 @@ What `pnpm dev:web-local` wires automatically:
 - Den on `127.0.0.1:8788`
 - Web on `127.0.0.1:3005`
 - `DEN_API_BASE`, `DEN_AUTH_ORIGIN`, and `DEN_AUTH_FALLBACK_BASE` pointed at the local Den service
-- Den stub provisioner enabled with a local development auth secret and MySQL URL
+- Den stub provisioner enabled with the secret and database URL from repo-root `.env.local`
 
 ### Optional env vars
 
