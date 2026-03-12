@@ -41,11 +41,6 @@ export default function ShareBundlePage(props: BundlePageProps) {
   const [copyState, setCopyState] = useState<"ready" | "copied" | "failed">("ready");
   const [previewCopied, setPreviewCopied] = useState(false);
 
-  const bundleSummary = [
-    { label: "Schema", value: props.schemaVersion || "-" },
-    { label: "Type", value: props.typeLabel || "Package" },
-    { label: "Items", value: props.items?.length || 1 }
-  ];
   const shareUrl = props.shareUrl || "";
   const openInAppUrl = props.openInAppDeepLink || "#";
   const openInWebUrl = props.openInWebAppUrl || "#";
@@ -121,65 +116,26 @@ export default function ShareBundlePage(props: BundlePageProps) {
               <div className="hero-copy">
                 <span className="eyebrow">{props.typeLabel}</span>
                 <h1>
-                  {title} <em>ready</em>
+                  {title}
                 </h1>
                 <p className="hero-body">{description}</p>
-                <div className="hero-proof-strip">
-                  {bundleSummary.map((item) => (
-                    <span className="surface-chip" key={item.label}>
-                      {item.label}: {item.value}
-                    </span>
-                  ))}
+                <div className="button-row">
+                  <a className="button-primary" href={openInAppUrl}>
+                    Open in app
+                  </a>
+                  <a className="button-secondary" href={openInWebUrl} target="_blank" rel="noreferrer">
+                    Open in web app
+                  </a>
                 </div>
                 <p className="hero-note">{props.installHint}</p>
               </div>
 
               <div className="share-cards-grid share-bundle-grid">
                 <article className="package-card share-card surface-soft">
-                  <div className="package-card-header">
-                    <span className="surface-chip">Share link live</span>
-                    <div className="selection-badge">Import ready</div>
-                  </div>
-
-                  <h2 className="simple-app-title">Open this package anywhere</h2>
+                  <h2 className="simple-app-title">Package contents</h2>
                   <p className="simple-app-copy">
-                    Reuse the landing page shell, keep the machine-readable bundle intact, and deep-link straight into a new OpenWork worker.
+                    Everything bundled in this share link.
                   </p>
-
-                  <div className="share-link-bar">
-                    <div className="share-link-bar-main">
-                      <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
-                        <div className="share-link-inline mono">{shareUrl}</div>
-                        <button
-                          className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`}
-                          type="button"
-                          onClick={() => void copyShareUrl()}
-                          title="Copy share link"
-                          aria-label="Copy share link"
-                        >
-                          {copyState === "copied" ? <CheckIcon /> : <CopyIcon />}
-                        </button>
-                      </div>
-
-                      <div className="button-row">
-                        <a className="button-primary" href={openInAppUrl}>
-                          Open in app
-                        </a>
-                        <a className="button-secondary" href={openInWebUrl} target="_blank" rel="noreferrer">
-                          Open in web app
-                        </a>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="summary-grid">
-                    {bundleSummary.map((item) => (
-                      <div className="summary-stat" key={item.label}>
-                        <strong className="summary-stat-value">{item.value}</strong>
-                        <span className="summary-stat-label">{item.label}</span>
-                      </div>
-                    ))}
-                  </div>
 
                   <div className="included-section">
                     <div className="included-section-header">
@@ -223,9 +179,8 @@ export default function ShareBundlePage(props: BundlePageProps) {
                       <span className="preview-eyebrow">Preview</span>
 
                       <div className="preview-header-actions">
-                        {props.previewLabel ? <span className="preview-state">{props.previewLabel}</span> : null}
                         <span className="preview-filename">
-                          <span className={`preview-filename-dot ${toneClass({ tone: props.previewTone })}`} />
+                          <span className="preview-filename-dot dot-pending" />
                           {props.previewFilename || "bundle.json"}
                           <button
                             type="button"

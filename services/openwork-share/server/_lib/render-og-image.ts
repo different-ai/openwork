@@ -111,7 +111,7 @@ function renderPreviewPanel(preview: { filename: string; text: string; tone: str
       <text x="28" y="42" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8">PREVIEW</text>
       <text x="28" y="408" fill="#5f6b7a" font-family="Inter, Arial, sans-serif" font-size="11">${escapeSvgText(truncateLine(preview.label, 44))}</text>
       <text x="28" y="430" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="11">${escapeSvgText(truncateLine(preview.filename, 38))}</text>
-      <rect x="330" y="26" width="10" height="10" rx="5" fill="${toneFill(preview.tone)}" />
+      <rect x="330" y="26" width="10" height="10" rx="5" fill="#94a3b8" />
       <text x="346" y="35" fill="#94a3b8" font-family="JetBrains Mono, Menlo, monospace" font-size="11">${escapeSvgText(truncateLine(preview.filename, 16))}</text>
       ${lines
         .map((line, index) => {
@@ -225,7 +225,7 @@ export function renderRootOgImage(): string {
       tone: "skill",
       text: `# meeting-reminder\n\nA skill that sends a follow-up reminder after a configurable delay.\n\n## Trigger\n\nRuns automatically when a conversation has been idle for the configured duration.\n\n- delay: Duration before triggering\n- channel: Send via email, slack, or in-app`,
     },
-    kicker: "One drop. One share link.",
+    kicker: "",
   });
 }
 
@@ -247,6 +247,6 @@ export function renderBundleOgImage({ id, rawJson }: { id: string; rawJson: stri
       { label: "commands", value: counts.commandCount },
     ],
     preview,
-    kicker: "Open directly in a new worker.",
+    kicker: "",
   });
 }
