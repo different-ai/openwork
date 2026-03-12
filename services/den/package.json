@@ -6,6 +6,7 @@
     "dev": "OPENWORK_DEV_MODE=1 tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
+    "test:e2e:worker-limit": "node scripts/e2e-worker-limit.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "auth:generate": "npx @better-auth/cli@latest generate --config src/auth.ts --output src/db/better-auth.schema.ts --yes"

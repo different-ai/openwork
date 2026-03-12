@@ -159,6 +159,7 @@ const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
+const BILLING_DISABLED_FOR_EXPERIMENT = true;
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -239,6 +240,21 @@ function getSocialCallbackUrl(): string {
 
 function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
+}
+
+function getExperimentBillingSummary(): BillingSummary {
+  return {
+    featureGateEnabled: false,
+    hasActivePlan: false,
+    checkoutRequired: false,
+    checkoutUrl: null,
+    portalUrl: null,
+    price: null,
+    subscription: null,
+    invoices: [],
+    productId: null,
+    benefitId: null
+  };
 }
 
 function GitHubLogo() {
@@ -1088,6 +1104,8 @@ export function CloudControlPanel() {
   const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
+  const ownedWorkerCount = workers.filter((item) => item.isMine).length;
+  const workerLimitReached = Boolean(user && ownedWorkerCount > 0);
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
     activeWorker?.clientToken ?? null,
@@ -1189,7 +1207,7 @@ export function CloudControlPanel() {
 
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
-  const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
+  const effectiveCheckoutUrl = BILLING_DISABLED_FOR_EXPERIMENT ? null : (checkoutUrl ?? billingSummary?.checkoutUrl ?? null);
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
   const runtimeUpgradeCount = runtimeSnapshot?.services.filter((item) => item.upgradeAvailable).length ?? 0;
@@ -1428,6 +1446,14 @@ export function CloudControlPanel() {
   }
 
   async function refreshBilling(options: { includeCheckout?: boolean; quiet?: boolean } = {}) {
+    if (BILLING_DISABLED_FOR_EXPERIMENT) {
+      const summary = getExperimentBillingSummary();
+      setBillingSummary(summary);
+      setCheckoutUrl(null);
+      setBillingError(null);
+      return summary;
+    }
+
     if (!user) {
       setBillingSummary(null);
       if (!options.quiet) {
@@ -1499,6 +1525,13 @@ export function CloudControlPanel() {
   }
 
   async function handleSubscriptionCancellation(cancelAtPeriodEnd: boolean) {
+    if (BILLING_DISABLED_FOR_EXPERIMENT) {
+      setBillingSummary(getExperimentBillingSummary());
+      setCheckoutUrl(null);
+      setBillingError("Billing is disabled for this experiment.");
+      return;
+    }
+
     if (!user || billingSubscriptionBusy) {
       return;
     }
@@ -1647,6 +1680,13 @@ export function CloudControlPanel() {
   }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);
 
   useEffect(() => {
+    if (BILLING_DISABLED_FOR_EXPERIMENT) {
+      setBillingSummary(getExperimentBillingSummary());
+      setBillingError(null);
+      setCheckoutUrl(null);
+      return;
+    }
+
     if (!user) {
       setBillingSummary(null);
       setBillingError(null);
@@ -1657,6 +1697,13 @@ export function CloudControlPanel() {
   }, [user?.id, authToken]);
 
   useEffect(() => {
+    if (BILLING_DISABLED_FOR_EXPERIMENT) {
+      if (shellView !== "workers") {
+        setShellView("workers");
+      }
+      return;
+    }
+
     if (!user || shellView !== "billing") {
       return;
     }
@@ -1701,16 +1748,21 @@ export function CloudControlPanel() {
       return;
     }
 
-    setPaymentReturned(true);
+    // Polar checkout returns are ignored while billing is disabled for this experiment.
+    // TODO(den-free-first-worker): Re-enable the original Polar checkout return flow after the experiment.
+    // setPaymentReturned(true);
+    // setCheckoutUrl(null);
+    // setShellView("billing");
+    // setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
+    // setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
+    // appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
+    // trackPosthogEvent("den_paywall_checkout_returned", {
+    //   source: "polar",
+    //   session_token_present: true
+    // });
     setCheckoutUrl(null);
-    setShellView("billing");
-    setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
-    setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
-    appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
-    trackPosthogEvent("den_paywall_checkout_returned", {
-      source: "polar",
-      session_token_present: true
-    });
+    setShellView("workers");
+    setLaunchStatus("Name your worker and click launch.");
 
     params.delete("customer_session_token");
     const nextQuery = params.toString();
@@ -1723,7 +1775,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    void refreshBilling({ quiet: true });
+    // Billing refresh intentionally disabled for the one-worker experiment.
   }, [paymentReturned, user?.id, authToken]);
 
   useEffect(() => {
@@ -2119,33 +2171,41 @@ export function CloudControlPanel() {
         12000
       );
 
-      if (response.status === 402) {
-        const url = getCheckoutUrl(payload);
-        setCheckoutUrl(url);
-        setShellView("billing");
-        setBillingSummary((current) => {
-          if (!current) {
-            return current;
-          }
-
-          return {
-            ...current,
-            hasActivePlan: false,
-            checkoutRequired: true,
-            checkoutUrl: url ?? current.checkoutUrl
-          };
-        });
-        setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
-        setLaunchError(url ? null : "Checkout URL missing from paywall response.");
-        appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
-        trackPosthogEvent("den_paywall_required", {
-          checkout_url_present: Boolean(url)
-        });
-
-        if (!url) {
-          void refreshBilling({ includeCheckout: true, quiet: true });
-        }
-
+      // TODO(den-free-first-worker): Restore this 402 paywall branch after the one-worker experiment ends.
+      // if (response.status === 402) {
+      //   const url = getCheckoutUrl(payload);
+      //   setCheckoutUrl(url);
+      //   setShellView("billing");
+      //   setBillingSummary((current) => {
+      //     if (!current) {
+      //       return current;
+      //     }
+      //
+      //     return {
+      //       ...current,
+      //       hasActivePlan: false,
+      //       checkoutRequired: true,
+      //       checkoutUrl: url ?? current.checkoutUrl
+      //     };
+      //   });
+      //   setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
+      //   setLaunchError(url ? null : "Checkout URL missing from paywall response.");
+      //   appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
+      //   trackPosthogEvent("den_paywall_required", {
+      //     checkout_url_present: Boolean(url)
+      //   });
+      //
+      //   if (!url) {
+      //     void refreshBilling({ includeCheckout: true, quiet: true });
+      //   }
+      //
+      //   return;
+      // }
+      if (response.status === 409) {
+        const message = getErrorMessage(payload, "You can only create one cloud worker during this experiment.");
+        setLaunchStatus("Worker limit reached.");
+        setLaunchError(message);
+        appendEvent("warning", "Worker limit reached", message);
         return;
       }
 
@@ -2582,7 +2642,8 @@ export function CloudControlPanel() {
                 >
                   Workers
                 </button>
-                <button
+                {/* TODO(den-free-first-worker): Restore Billing nav button after the experiment. */}
+                {/* <button
                   type="button"
                   onClick={() => setShellView("billing")}
                   className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
@@ -2590,7 +2651,7 @@ export function CloudControlPanel() {
                   }`}
                 >
                   Billing
-                </button>
+                </button> */}
               </div>
               <button
                 type="button"
@@ -2602,7 +2663,7 @@ export function CloudControlPanel() {
               </button>
             </div>
 
-            {shellView === "workers" ? (
+            {shellView === "workers" || BILLING_DISABLED_FOR_EXPERIMENT ? (
               <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
                 <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
                   <div>
@@ -2618,13 +2679,14 @@ export function CloudControlPanel() {
                         >
                           Workers
                         </button>
-                        <button
+                        {/* TODO(den-free-first-worker): Restore Billing sidebar button after the experiment. */}
+                        {/* <button
                           type="button"
                           className="w-full rounded-[14px] px-3 py-2.5 text-left text-sm font-medium text-slate-500 transition hover:bg-slate-50"
                           onClick={() => setShellView("billing")}
                         >
                           Billing
-                        </button>
+                        </button> */}
                         <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Settings</span>
                         <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Help Center</span>
                       </nav>
@@ -2803,10 +2865,12 @@ export function CloudControlPanel() {
                         type="button"
                         className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={handleLaunchWorker}
-                        disabled={!user || launchBusy || worker?.status === "provisioning"}
+                        disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
                       >
                         {launchBusy
                           ? "Starting worker..."
+                          : workerLimitReached
+                            ? "Worker limit reached"
                           : worker?.status === "provisioning"
                             ? "Worker is starting..."
                             : `Launch "${workerName || "Cloud Worker"}"`}
@@ -2819,7 +2883,8 @@ export function CloudControlPanel() {
                         </div>
                       ) : null}
 
-                      {effectiveCheckoutUrl ? (
+                      {/* TODO(den-free-first-worker): Restore checkout CTA block when paywall returns. */}
+                      {/* {effectiveCheckoutUrl ? (
                         <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
                           <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
                           <a
@@ -2830,7 +2895,8 @@ export function CloudControlPanel() {
                             Continue to checkout
                           </a>
                         </div>
-                      ) : null}
+                      ) : null} */}
+
                     </div>
                   ) : null}
 
