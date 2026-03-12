@@ -8,7 +8,7 @@ import {
   FileText,
   FolderOpen,
   Globe,
-  KeyRound,
+  Key,
   Loader2,
   MessageCircle,
   Package,
@@ -187,7 +187,7 @@ const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_C
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/";
 const OPENWORK_DOWNLOAD_FALLBACK_URL = "https://openwork.software/download";
 const BILLING_DISABLED_FOR_EXPERIMENT = true;
-const STARTUP_ROTATION_MS = 1900;
+const STARTUP_ROTATION_MS = 2700;
 const STARTUP_SEQUENCE: StartupSequenceItem[] = [
   { Icon: Loader2, label: "Warming Docker", sublabel: "Spinning up the local container stack.", spin: true },
   { Icon: Cpu, label: "Checking engine", sublabel: "Verifying the runtime is responding." },
@@ -198,7 +198,7 @@ const STARTUP_SEQUENCE: StartupSequenceItem[] = [
   { Icon: RefreshCcw, label: "Applying migrations", sublabel: "Aligning the schema before launch.", spin: true },
   { Icon: FileText, label: "Reading config", sublabel: "Loading the worker settings for this session." },
   { Icon: Zap, label: "Starting Den", sublabel: "Booting the OpenWork server layer." },
-  { Icon: KeyRound, label: "Minting tokens", sublabel: "Preparing secure access for the worker." },
+  { Icon: Key, label: "Minting tokens", sublabel: "Preparing secure access for the worker." },
   { Icon: Boxes, label: "Creating worker", sublabel: "Provisioning the worker container." },
   { Icon: RefreshCcw, label: "Spinning runtime", sublabel: "Starting the runtime services.", spin: true },
   { Icon: CheckCircle2, label: "Checking health", sublabel: "Waiting for the worker to report healthy." },
@@ -208,8 +208,12 @@ const STARTUP_SEQUENCE: StartupSequenceItem[] = [
 ];
 const AMBIENT_STARTUP_SEQUENCE: StartupSequenceItem[] = [
   { Icon: RefreshCcw, label: "Scanning logs", sublabel: "Watching the startup output for the next milestone.", spin: true },
+  { Icon: Cpu, label: "Watching engine", sublabel: "Checking that the runtime stays responsive." },
+  { Icon: Globe, label: "Wiring services", sublabel: "Waiting for the internal service paths to settle." },
   { Icon: Terminal, label: "Watching startup", sublabel: "Keeping an eye on the worker while it settles." },
-  { Icon: Boxes, label: "Wiring services", sublabel: "Waiting for the last service checks to pass." }
+  { Icon: FileText, label: "Reading logs", sublabel: "Reviewing the latest startup output." },
+  { Icon: Server, label: "Settling runtime", sublabel: "Waiting for the last service checks to pass." },
+  { Icon: Sparkles, label: "Almost ready", sublabel: "The worker is in the last part of setup." }
 ];
 
 function getEmailDomain(email: string): string {
@@ -1143,19 +1147,19 @@ function getStartupMilestoneIndex({
   }
 
   if (combined.includes("status refreshed") || combined.includes("provisioning update") || workersBusy) {
-    return 12;
-  }
-
-  if (combined.includes("provisioning started")) {
     return 10;
   }
 
+  if (combined.includes("provisioning started")) {
+    return 3;
+  }
+
   if (combined.includes("worker launched") || combined.includes("worker is currently") || bucket === "starting") {
-    return 11;
+    return 6;
   }
 
   if (combined.includes("checking subscription") || combined.includes("launch requested")) {
-    return 1;
+    return 0;
   }
 
   if (launchBusy) {
@@ -3118,7 +3122,7 @@ export function CloudControlPanel() {
             }}
           >
             <div
-              className="relative w-[min(94vw,86rem)] overflow-hidden rounded-[36px] border border-slate-200 bg-white/95 shadow-[0_32px_100px_rgba(15,23,42,0.2)] backdrop-blur-xl"
+              className="relative w-[min(70vw,86rem)] overflow-hidden rounded-[36px] border border-slate-200 bg-white/95 shadow-[0_32px_100px_rgba(15,23,42,0.2)] backdrop-blur-xl"
               onClick={(event) => event.stopPropagation()}
             >
               <button
