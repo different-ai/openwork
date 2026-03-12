@@ -1023,6 +1023,8 @@ body {
   .ow-shell {
     padding-top: 4.4rem;
     padding-bottom: 2.2rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
   }
 
   .ow-brand {
@@ -1058,7 +1060,7 @@ body {
   }
 
   .ow-card-body {
-    padding: 1.25rem 1.05rem;
+    padding: 1.25rem 0.95rem;
   }
 
   .ow-auth-panel {
@@ -1066,9 +1068,9 @@ body {
   }
 
   .ow-auth-panel .ow-inline-row {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.35rem;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.5rem;
   }
 }
 
