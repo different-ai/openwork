@@ -131,7 +131,7 @@ body {
 }
 
 .ow-card-auth {
-  width: min(100%, 56rem);
+  width: min(100%, 28rem);
 }
 
 .ow-card-shell {
@@ -183,7 +183,7 @@ body {
 }
 
 .ow-auth-panel {
-  width: min(100%, 40rem);
+  width: min(100%, 21.875rem);
   margin: 0 auto;
 }
 
@@ -221,6 +221,10 @@ body {
   color: var(--ow-muted);
   font-size: 0.92rem;
   line-height: 1.45;
+}
+
+.ow-subtitle-break {
+  display: none;
 }
 
 .ow-field-block {
@@ -1030,6 +1034,10 @@ body {
     border-radius: 1.45rem;
   }
 
+  .ow-card-auth {
+    width: 100%;
+  }
+
   .ow-card-shell {
     width: calc(100vw - 1rem);
     min-height: calc(100vh - 5.2rem);
@@ -1051,6 +1059,22 @@ body {
 
   .ow-card-body {
     padding: 1.25rem 1.05rem;
+  }
+
+  .ow-auth-panel {
+    width: 100%;
+  }
+
+  .ow-auth-panel .ow-inline-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+}
+
+@media (min-width: 641px) {
+  .ow-subtitle-break {
+    display: block;
   }
 }
 

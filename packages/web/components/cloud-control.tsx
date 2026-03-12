@@ -2373,9 +2373,15 @@ export function CloudControlPanel() {
               <span className="ow-icon-chip">01</span>
               <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
               <p className="ow-subtitle">
-                {authMode === "sign-up"
-                  ? getAuthInfoForMode("sign-up")
-                  : getAuthInfoForMode("sign-in")}
+                {authMode === "sign-up" ? (
+                  <>
+                    Create an account to launch{" "}
+                    <br className="ow-subtitle-break" />
+                    and manage cloud workers.
+                  </>
+                ) : (
+                  getAuthInfoForMode("sign-in")
+                )}
               </p>
             </div>
 
