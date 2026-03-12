@@ -3,7 +3,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import type { HubSkillCard, SkillCard } from "../types";
 
 import Button from "../components/button";
-import { Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Sparkles, Trash2, Upload } from "lucide-solid";
+import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 
@@ -285,6 +285,17 @@ export default function SkillsView(props: SkillsViewProps) {
       setShareError(maskError(e));
     } finally {
       setShareBusy(false);
+    }
+  };
+
+  const copyShareLink = async () => {
+    const url = shareUrl()?.trim();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setToast("Link copied");
+    } catch {
+      setShareError("Failed to copy link");
     }
   };
 
@@ -663,9 +674,9 @@ export default function SkillsView(props: SkillsViewProps) {
                         openShareLink(skill);
                       }}
                       disabled={props.busy}
-                      title="Share link"
+                      title="Share"
                     >
-                      <Link2 size={14} />
+                      <Share2 size={14} />
                     </button>
                     <button
                       type="button"
@@ -1010,17 +1021,18 @@ export default function SkillsView(props: SkillsViewProps) {
                   </div>
                 }
               >
-                <div class="rounded-xl bg-dls-hover border border-dls-border p-3 text-xs text-dls-secondary font-mono break-all">
-                  {shareUrl()}
-                </div>
-                <div class="flex justify-end gap-2">
+                <div class="flex items-start gap-2 rounded-xl bg-dls-hover border border-dls-border p-3">
+                  <div class="min-w-0 flex-1 text-xs text-dls-secondary font-mono break-all">{shareUrl()}</div>
                   <Button
                     variant="outline"
-                    onClick={() => void navigator.clipboard.writeText(shareUrl() ?? "")}
+                    onClick={() => void copyShareLink()}
                     disabled={!shareUrl()}
                   >
+                    <Copy size={14} />
                     Copy link
                   </Button>
+                </div>
+                <div class="flex justify-end gap-2">
                   <Button variant="secondary" onClick={closeShareLink}>
                     Done
                   </Button>
