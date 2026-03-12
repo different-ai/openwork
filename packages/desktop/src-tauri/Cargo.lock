@@ -2780,6 +2780,8 @@ dependencies = [
  "json5",
  "local-ip-address",
  "notify",
+ "objc2",
+ "objc2-foundation",
  "serde",
  "serde_json",
  "tauri",
