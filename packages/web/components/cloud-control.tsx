@@ -1090,7 +1090,7 @@ export function CloudControlPanel() {
     return token;
   });
 
-  const [workerName, setWorkerName] = useState("Founder Ops Pilot");
+  const [workerName, setWorkerName] = useState("Founder Ops");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
@@ -1098,7 +1098,7 @@ export function CloudControlPanel() {
   const [workersError, setWorkersError] = useState<string | null>(null);
   const [launchBusy, setLaunchBusy] = useState(false);
   const [actionBusy, setActionBusy] = useState<"status" | "token" | null>(null);
-  const [launchStatus, setLaunchStatus] = useState("Name your worker and click launch.");
+  const [launchStatus, setLaunchStatus] = useState("Start your worker when you're ready.");
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
@@ -1362,7 +1362,7 @@ export function CloudControlPanel() {
         setWorker(null);
         setTokenFetchedForWorkerId(null);
         setPendingRestoredWorkerId(null);
-        setLaunchStatus("Name your worker and click launch.");
+        setLaunchStatus("Start your worker when you're ready.");
         if (typeof window !== "undefined") {
           window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
         }
@@ -1782,7 +1782,7 @@ export function CloudControlPanel() {
     // });
     setCheckoutUrl(null);
     setShellView("workers");
-    setLaunchStatus("Name your worker and click launch.");
+    setLaunchStatus("Start your worker when you're ready.");
 
     params.delete("customer_session_token");
     const nextQuery = params.toString();
@@ -2151,7 +2151,7 @@ export function CloudControlPanel() {
     setEmail("");
     setPassword("");
     setAuthInfo(getAuthInfoForMode("sign-up"));
-    setLaunchStatus("Name your worker and click launch.");
+    setLaunchStatus("Start your worker when you're ready.");
     setEvents([]);
     resetPosthogUser();
     trackPosthogEvent("den_signout_completed", { method: "manual" });
@@ -2656,13 +2656,11 @@ export function CloudControlPanel() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">OpenWork Cloud</p>
-                    <h2 className="mt-2 break-words text-[1.9rem] font-semibold leading-tight tracking-tight text-slate-900">
-                      {primaryWorker ? primaryWorker.workerName : "Start your worker"}
-                    </h2>
+                    <h2 className="mt-2 break-words text-[1.9rem] font-semibold leading-tight tracking-tight text-slate-900">Overview</h2>
                     <p className="mt-2 text-sm leading-6 text-slate-600">
                       {primaryWorker
-                        ? getWorkerStatusCopy(selectedWorkerStatus)
-                        : "We keep this screen focused on one thing: getting your worker ready to open in the app."}
+                        ? "Open your worker as soon as it is ready."
+                        : "Start your worker first. You can adjust the name before launch if you want to."}
                     </p>
                   </div>
 
@@ -2675,6 +2673,86 @@ export function CloudControlPanel() {
                       </div>
                     </div>
                   ) : null}
+                </div>
+
+                <div className="space-y-3">
+                  {!primaryWorker ? (
+                    <button
+                      type="button"
+                      className="w-full rounded-[18px] bg-[#1B29FF] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleLaunchWorker}
+                      disabled={!user || launchBusy}
+                    >
+                      {launchBusy ? "Starting worker..." : "Start worker"}
+                    </button>
+                  ) : (
+                    <>
+                      {canOpenWorker && primaryAppUrl ? (
+                        <a
+                          href={primaryAppUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block w-full rounded-[18px] bg-[#1B29FF] px-4 py-3 text-center text-base font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA] lg:hidden"
+                        >
+                          Open in app
+                        </a>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full rounded-[18px] bg-slate-200 px-4 py-3 text-base font-semibold text-slate-500 lg:hidden"
+                        >
+                          Open in app
+                        </button>
+                      )}
+
+                      <div className="hidden gap-3 lg:grid">
+                        {canStartInOpenwork && openworkDeepLink ? (
+                          <a
+                            href={openworkDeepLink}
+                            className="block w-full rounded-[18px] bg-[#1B29FF] px-4 py-3 text-center text-base font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA]"
+                          >
+                            Start in OpenWork
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            className="w-full rounded-[18px] bg-slate-200 px-4 py-3 text-base font-semibold text-slate-500"
+                          >
+                            Start in OpenWork
+                          </button>
+                        )}
+
+                        {canStartHere && browserStartUrl ? (
+                          <a
+                            href={browserStartUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block w-full rounded-[18px] border border-slate-300 bg-white px-4 py-3 text-center text-base font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                          >
+                            Start here
+                          </a>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled
+                            className="w-full rounded-[18px] border border-slate-200 bg-slate-100 px-4 py-3 text-base font-semibold text-slate-400"
+                          >
+                            Start here
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  <p className="text-xs leading-5 text-slate-500">
+                    {primaryWorker
+                      ? canOpenWorker
+                        ? "The start button unlocks as soon as the worker is ready."
+                        : "The start button unlocks automatically when the worker is ready."
+                      : "Founder Ops is the default name. Change it before launch if you want to."}
+                  </p>
                 </div>
 
                 {workersBusy ? <p className="text-sm text-slate-500">Checking your worker…</p> : null}
@@ -2698,6 +2776,7 @@ export function CloudControlPanel() {
                   </div>
                 ) : null}
 
+                {/* Preserved for later recovery: the previous status/connection overview card.
                 <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
                   {primaryWorker ? (
                     <>
@@ -2725,44 +2804,34 @@ export function CloudControlPanel() {
                     </>
                   )}
                 </div>
+                */}
+
+                <div className="rounded-[28px] border border-slate-200 bg-slate-50 p-4">
+                  <label className="grid gap-2">
+                    <span className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Worker name</span>
+                    {primaryWorker ? (
+                      <div className="rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-base font-semibold text-slate-900">
+                        {primaryWorker.workerName}
+                      </div>
+                    ) : (
+                      <input
+                        className="min-w-0 rounded-[18px] border border-slate-200 bg-white px-4 py-3 text-base font-semibold text-slate-900 outline-none transition focus:border-[#1B29FF]"
+                        value={workerName}
+                        onChange={(event) => setWorkerName(event.target.value)}
+                        placeholder="Founder Ops"
+                      />
+                    )}
+                  </label>
+                  <p className="mt-3 text-sm leading-6 text-slate-600">
+                    {primaryWorker
+                      ? "This name is already set for the worker you launched."
+                      : "We preset this to Founder Ops. Change it before launch if you want a different label."}
+                  </p>
+                </div>
               </div>
 
               <div className="mt-6 space-y-3">
-                {!primaryWorker ? (
-                  <button
-                    type="button"
-                    className="w-full rounded-[18px] bg-[#1B29FF] px-4 py-3 text-base font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                    onClick={handleLaunchWorker}
-                    disabled={!user || launchBusy}
-                  >
-                    {launchBusy ? "Starting worker..." : "Start worker"}
-                  </button>
-                ) : canOpenWorker && primaryAppUrl ? (
-                  <a
-                    href={primaryAppUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="block w-full rounded-[18px] bg-[#1B29FF] px-4 py-3 text-center text-base font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA] lg:hidden"
-                  >
-                    Open in app
-                  </a>
-                ) : (
-                  <button
-                    type="button"
-                    disabled
-                    className="w-full rounded-[18px] bg-slate-200 px-4 py-3 text-base font-semibold text-slate-500 lg:hidden"
-                  >
-                    Open in app
-                  </button>
-                )}
-
-                <p className="text-xs leading-5 text-slate-500">
-                  {primaryWorker
-                    ? canOpenWorker
-                      ? "The app button unlocks as soon as the worker is ready."
-                      : "The app button unlocks automatically when the worker is ready."
-                    : "We use your saved worker name automatically so you can launch immediately."}
-                </p>
+                <p className="text-xs leading-5 text-slate-500">{launchStatus}</p>
               </div>
             </section>
 
@@ -2772,45 +2841,8 @@ export function CloudControlPanel() {
                   <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Desktop</p>
                   <h3 className="mt-2 text-xl font-semibold tracking-tight text-slate-900">Your worker is ready.</h3>
                   <p className="mt-2 text-sm leading-6 text-slate-600">
-                    Start it directly in OpenWork, or open it here in the browser.
+                    Use the buttons in overview to open the worker. This panel only stays around for download help while the worker is starting.
                   </p>
-                  <div className="mt-6 space-y-3">
-                    {canStartInOpenwork && openworkDeepLink ? (
-                      <a
-                        href={openworkDeepLink}
-                        className="block w-full rounded-[16px] bg-[#1B29FF] px-4 py-3 text-center text-sm font-semibold text-white shadow-[0_14px_30px_rgba(27,41,255,0.22)] transition hover:bg-[#151FDA]"
-                      >
-                        Start in OpenWork
-                      </a>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled
-                        className="w-full rounded-[16px] bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-500"
-                      >
-                        Start in OpenWork
-                      </button>
-                    )}
-
-                    {canStartHere && browserStartUrl ? (
-                      <a
-                        href={browserStartUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="block w-full rounded-[16px] border border-slate-300 bg-white px-4 py-3 text-center text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-                      >
-                        Start here
-                      </a>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled
-                        className="w-full rounded-[16px] border border-slate-200 bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-400"
-                      >
-                        Start here
-                      </button>
-                    )}
-                  </div>
                 </>
               ) : (
                 <>
