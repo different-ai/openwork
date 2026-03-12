@@ -257,6 +257,17 @@ function getExperimentBillingSummary(): BillingSummary {
   };
 }
 
+function getAdditionalWorkerRequestHref(): string {
+  const subject = "requesting an additional worker";
+  const body = [
+    "Hey Ben,",
+    "",
+    "I would like to create an additional worker in order to {INSERT REASON}"
+  ].join("\n");
+
+  return `mailto:ben@openwork.software?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 function GitHubLogo() {
   return (
     <svg viewBox="0 0 16 16" aria-hidden="true" className="ow-social-icon">
@@ -2760,10 +2771,12 @@ export function CloudControlPanel() {
                           type="button"
                           className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
                           onClick={handleLaunchWorker}
-                          disabled={!user || launchBusy || worker?.status === "provisioning"}
+                          disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
                         >
                           {launchBusy
                             ? "Starting worker..."
+                            : workerLimitReached
+                              ? "Worker limit reached"
                             : worker?.status === "provisioning"
                               ? "Worker is starting..."
                               : `Launch "${workerName || "Cloud Worker"}"`}
@@ -2774,6 +2787,15 @@ export function CloudControlPanel() {
                             <p className="text-xs text-slate-600">{launchStatus}</p>
                             {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
                           </div>
+                        ) : null}
+
+                        {workerLimitReached ? (
+                          <a
+                            href={getAdditionalWorkerRequestHref()}
+                            className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                          >
+                            Request an additional worker
+                          </a>
                         ) : null}
 
                         {effectiveCheckoutUrl ? (
@@ -2881,6 +2903,15 @@ export function CloudControlPanel() {
                           <p className="text-xs text-slate-600">{launchStatus}</p>
                           {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
                         </div>
+                      ) : null}
+
+                      {workerLimitReached ? (
+                        <a
+                          href={getAdditionalWorkerRequestHref()}
+                          className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                        >
+                          Request an additional worker
+                        </a>
                       ) : null}
 
                       {/* TODO(den-free-first-worker): Restore checkout CTA block when paywall returns. */}
