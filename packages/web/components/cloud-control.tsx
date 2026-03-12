@@ -158,7 +158,7 @@ const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
-const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "https://app.openwork.software").trim();
+const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -228,7 +228,10 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
 
 function getSocialCallbackUrl(): string {
   try {
-    return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
+    const origin = typeof window !== "undefined"
+      ? window.location.origin
+      : OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software";
+    return new URL("/", origin).toString();
   } catch {
     return "https://app.openwork.software/";
   }
