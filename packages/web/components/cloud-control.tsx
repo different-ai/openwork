@@ -1079,6 +1079,8 @@ export function CloudControlPanel() {
 
   const progressWidth = step === 1 ? "45%" : "100%";
   const isShellStep = step === 2;
+  const defaultAuthInfo = getAuthInfoForMode(authMode);
+  const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const openworkDeepLink = buildOpenworkDeepLink(
@@ -2356,7 +2358,7 @@ export function CloudControlPanel() {
   }
 
   return (
-    <section className={`ow-card${isShellStep ? " ow-card-shell" : ""}`}>
+    <section className={`ow-card${isShellStep ? " ow-card-shell" : " ow-card-auth"}`}>
       {!isShellStep ? (
         <div className="ow-progress-track">
           <span className="ow-progress-fill" style={{ width: progressWidth }} />
@@ -2366,7 +2368,7 @@ export function CloudControlPanel() {
       <div className="ow-card-body">
 
         {step === 1 ? (
-          <div className="ow-stack">
+          <div className="ow-stack ow-auth-panel">
             <div className="ow-heading-block">
               <span className="ow-icon-chip">01</span>
               <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
@@ -2447,10 +2449,12 @@ export function CloudControlPanel() {
               </button>
             </div>
 
-            <div className="ow-note-box">
-              <p>{authInfo}</p>
-              {authError ? <p className="ow-error-text">{authError}</p> : null}
-            </div>
+            {showAuthFeedback ? (
+              <div className="ow-auth-feedback" aria-live="polite">
+                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                {authError ? <p className="ow-error-text">{authError}</p> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

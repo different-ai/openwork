@@ -130,6 +130,10 @@ body {
   overflow: hidden;
 }
 
+.ow-card-auth {
+  width: min(100%, 56rem);
+}
+
 .ow-card-shell {
   width: calc(100vw - 3rem);
   max-width: none;
@@ -176,6 +180,11 @@ body {
 .ow-stack {
   display: grid;
   gap: 0.95rem;
+}
+
+.ow-auth-panel {
+  width: min(100%, 40rem);
+  margin: 0 auto;
 }
 
 .ow-heading-block {
@@ -348,6 +357,14 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
+}
+
+.ow-auth-feedback {
+  display: grid;
+  gap: 0.42rem;
+  text-align: center;
+  color: #475569;
+  font-size: 0.82rem;
 }
 
 .ow-app-shell {
