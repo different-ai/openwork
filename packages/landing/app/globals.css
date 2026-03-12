@@ -216,6 +216,90 @@ hr {
   animation: fade-up 600ms ease both;
 }
 
+.den-carbon-window {
+  background:
+    radial-gradient(circle at top left, rgba(58, 63, 68, 0.35), transparent 34%),
+    linear-gradient(180deg, #1a1c1e 0%, #151718 100%);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    0 26px 70px -34px rgba(15, 23, 42, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.den-carbon-titlebar {
+  background: #1d1f21;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.den-source-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #d3dae2;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  padding: 0.2rem 0.55rem;
+  text-transform: uppercase;
+}
+
+.den-running-dot {
+  animation: den-pulse 1.8s ease-out infinite;
+  box-shadow: 0 0 0 rgba(61, 220, 151, 0.45);
+}
+
+@keyframes den-pulse {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.92);
+    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.4);
+  }
+  55% {
+    opacity: 1;
+    transform: scale(1.08);
+    box-shadow: 0 0 0 10px rgba(61, 220, 151, 0);
+  }
+  100% {
+    opacity: 0.75;
+    transform: scale(0.94);
+    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0);
+  }
+}
+
+@keyframes ow-blob-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.4); opacity: 0.8; }
+}
+
+.ow-status-pill {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: all 0.3s cubic-bezier(0.31, 0.325, 0, 0.92);
+}
+
+.ow-task-chip {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: #334155;
+  box-shadow: 0 12px 28px -24px rgba(15, 23, 42, 0.22);
+  z-index: 10;
+  white-space: nowrap;
+}
+
 @keyframes fade-up {
   from {
     opacity: 0;
@@ -230,6 +314,7 @@ hr {
 @media (prefers-reduced-motion: reduce) {
   .word-cycle span,
   .animate-fade-up,
+  .den-running-dot,
   .doc-button,
   .secondary-button,
   .feature-card {
