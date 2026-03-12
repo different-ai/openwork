@@ -308,6 +308,41 @@ body {
   cursor: not-allowed;
 }
 
+.ow-social-btn {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.68rem;
+  padding: 0.78rem 0.92rem;
+  font-size: 0.92rem;
+}
+
+.ow-social-icon {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+}
+
+.ow-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #64748b;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ow-divider::before,
+.ow-divider::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: #d9e1f2;
+}
+
 .ow-inline-row {
   display: flex;
   align-items: center;

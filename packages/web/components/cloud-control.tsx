@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
+type SocialAuthProvider = "github" | "google";
 type ShellView = "workers" | "billing";
 type WorkerStatusBucket = "ready" | "starting" | "attention" | "other";
 
@@ -115,7 +116,7 @@ type DenSignupTrackPayload = {
   email: string;
   name: string | null;
   userId: string;
-  authMethod: "email" | "github";
+  authMethod: "email" | SocialAuthProvider;
 };
 
 declare global {
@@ -131,7 +132,7 @@ function getAuthInfoForMode(mode: AuthMode): string {
 }
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
-const PENDING_GITHUB_SIGNUP_STORAGE_KEY = "openwork:web:pending-github-signup";
+const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
@@ -204,12 +205,50 @@ async function trackDenSignupInLoops(payload: DenSignupTrackPayload) {
   }
 }
 
-function getGithubCallbackUrl(): string {
+function getSocialCallbackUrl(): string {
   try {
     return new URL("/", OPENWORK_AUTH_CALLBACK_BASE_URL || "https://app.openwork.software").toString();
   } catch {
     return "https://app.openwork.software/";
   }
+}
+
+function getSocialProviderLabel(provider: SocialAuthProvider): string {
+  return provider === "github" ? "GitHub" : "Google";
+}
+
+function GitHubLogo() {
+  return (
+    <svg viewBox="0 0 16 16" aria-hidden="true" className="ow-social-icon">
+      <path
+        fill="currentColor"
+        d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.5 7.5 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+      />
+    </svg>
+  );
+}
+
+function GoogleLogo() {
+  return (
+    <svg viewBox="0 0 18 18" aria-hidden="true" className="ow-social-icon">
+      <path
+        fill="#4285F4"
+        d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.92c1.71-1.57 2.68-3.89 2.68-6.62Z"
+      />
+      <path
+        fill="#34A853"
+        d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.92-2.26c-.81.54-1.84.86-3.04.86-2.34 0-4.31-1.58-5.01-3.7H.96v2.33A9 9 0 0 0 9 18Z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M3.99 10.72A5.41 5.41 0 0 1 3.71 9c0-.6.1-1.18.28-1.72V4.95H.96A9 9 0 0 0 0 9c0 1.45.35 2.82.96 4.05l3.03-2.33Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M9 3.58c1.32 0 2.5.45 3.43 1.33l2.57-2.57C13.46.9 11.43 0 9 0A9 9 0 0 0 .96 4.95l3.03 2.33c.7-2.12 2.67-3.7 5.01-3.7Z"
+      />
+    </svg>
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1342,22 +1381,22 @@ export function CloudControlPanel() {
 
     identifyPosthogUser(user);
 
-    const pendingSignup = window.sessionStorage.getItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
-    if (!pendingSignup) {
+    const pendingSocialSignup = window.sessionStorage.getItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
+    if (pendingSocialSignup !== "github" && pendingSocialSignup !== "google") {
       return;
     }
 
-    window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+    window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
     trackPosthogEvent("den_signup_completed", {
       mode: "sign-up",
-      method: "github",
+      method: pendingSocialSignup,
       email_domain: getEmailDomain(user.email)
     });
     void trackDenSignupInLoops({
       email: user.email,
       name: user.name,
       userId: user.id,
-      authMethod: "github"
+      authMethod: pendingSocialSignup
     });
   }, [user?.id]);
 
@@ -1607,44 +1646,44 @@ export function CloudControlPanel() {
     }
   }
 
-  async function handleGitHubSignIn() {
+  async function handleSocialSignIn(provider: SocialAuthProvider) {
     if (authBusy || typeof window === "undefined") {
       return;
     }
 
-    const shouldTrackGithubSignup = authMode === "sign-up";
-    if (shouldTrackGithubSignup) {
-      window.sessionStorage.setItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY, "1");
+    const shouldTrackSocialSignup = authMode === "sign-up";
+    if (shouldTrackSocialSignup) {
+      window.sessionStorage.setItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY, provider);
     }
 
     setAuthBusy(true);
     setAuthError(null);
-    setAuthInfo("Redirecting to GitHub...");
+    setAuthInfo(`Redirecting to ${getSocialProviderLabel(provider)}...`);
     trackPosthogEvent("den_auth_submitted", {
       mode: authMode,
-      method: "github"
+      method: provider
     });
 
     try {
-      const callbackURL = getGithubCallbackUrl();
+      const callbackURL = getSocialCallbackUrl();
       const { response, payload } = await requestJson("/api/auth/sign-in/social", {
         method: "POST",
         body: JSON.stringify({
-          provider: "github",
+          provider,
           callbackURL,
           errorCallbackURL: callbackURL
         })
       });
 
       if (!response.ok) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
         }
         setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError(getErrorMessage(payload, `GitHub sign-in failed with ${response.status}.`));
+        setAuthError(getErrorMessage(payload, `${getSocialProviderLabel(provider)} sign-in failed with ${response.status}.`));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
-          method: "github",
+          method: provider,
           status: response.status
         });
         setAuthBusy(false);
@@ -1656,14 +1695,14 @@ export function CloudControlPanel() {
       const redirectUrl = payloadUrl || headerUrl;
 
       if (!redirectUrl) {
-        if (shouldTrackGithubSignup) {
-          window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+        if (shouldTrackSocialSignup) {
+          window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
         }
         setAuthInfo(getAuthInfoForMode(authMode));
-        setAuthError("GitHub sign-in did not return a redirect URL.");
+        setAuthError(`${getSocialProviderLabel(provider)} sign-in did not return a redirect URL.`);
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
-          method: "github",
+          method: provider,
           reason: "missing_redirect_url"
         });
         setAuthBusy(false);
@@ -1672,19 +1711,19 @@ export function CloudControlPanel() {
 
       trackPosthogEvent("den_auth_redirected", {
         mode: authMode,
-        method: "github"
+        method: provider
       });
       window.location.assign(redirectUrl);
     } catch (error) {
-      if (shouldTrackGithubSignup) {
-        window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      if (shouldTrackSocialSignup) {
+        window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       }
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthInfo(getAuthInfoForMode(authMode));
       setAuthError(message);
       trackPosthogEvent("den_auth_failed", {
         mode: authMode,
-        method: "github",
+        method: provider,
         reason: "network_error"
       });
       setAuthBusy(false);
@@ -1745,7 +1784,7 @@ export function CloudControlPanel() {
 
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(LAST_WORKER_STORAGE_KEY);
-      window.sessionStorage.removeItem(PENDING_GITHUB_SIGNUP_STORAGE_KEY);
+      window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
     }
   }
 
@@ -2141,6 +2180,30 @@ export function CloudControlPanel() {
             </div>
 
             <form className="ow-stack" onSubmit={handleAuthSubmit}>
+              <button
+                type="button"
+                className="ow-btn-secondary ow-social-btn"
+                onClick={() => void handleSocialSignIn("github")}
+                disabled={authBusy}
+              >
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </button>
+
+              <button
+                type="button"
+                className="ow-btn-secondary ow-social-btn"
+                onClick={() => void handleSocialSignIn("google")}
+                disabled={authBusy}
+              >
+                <GoogleLogo />
+                <span>Continue with Google</span>
+              </button>
+
+              <div className="ow-divider" aria-hidden="true">
+                <span>or</span>
+              </div>
+
               <label className="ow-field-block">
                 <span className="ow-field-label">Email</span>
                 <input
@@ -2167,10 +2230,6 @@ export function CloudControlPanel() {
 
               <button type="submit" className="ow-btn-primary" disabled={authBusy}>
                 {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-              </button>
-
-              <button type="button" className="ow-btn-secondary w-full" onClick={() => void handleGitHubSignIn()} disabled={authBusy}>
-                Continue with GitHub
               </button>
             </form>
 
