@@ -535,12 +535,16 @@ export function createSessionStore(options: {
     const statusCode = firstNumberField(records, ["statusCode", "status"]);
     const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
     const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
+    const detailLine = (rawMessage ?? responseBody ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean) ?? null;
     const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
     const effectiveStatus = statusCode ?? inferred;
     const providerLabel = formatProviderLabel(providerID);
     const authFailure = errorName === "ProviderAuthError" || effectiveStatus === 401 || effectiveStatus === 403;
 
-    return (() => {
+    const heading = (() => {
       if (authFailure) return `${providerLabel ?? "Provider"} authentication failed`;
       if (effectiveStatus === 413) return "Context too large";
       if (effectiveStatus === 429) return providerLabel ? `${providerLabel} rate limit exceeded` : "Rate limit exceeded";
@@ -548,6 +552,15 @@ export function createSessionStore(options: {
       if (providerLabel && errorName === "APIError") return `${providerLabel} request failed`;
       return formatSessionError(errorObj).split(/\r?\n/)[0] ?? "Unknown error";
     })();
+
+    const isGenericHeading =
+      !heading ||
+      /^unknown error$/i.test(heading) ||
+      /^api error(?:\s*\(\d+\))?$/i.test(heading) ||
+      /^provider request failed$/i.test(heading);
+
+    if (isGenericHeading && detailLine) return detailLine;
+    return heading;
   };
 
   const appendSessionErrorTurn = (
