@@ -13,24 +13,27 @@ export default function WorkspaceSwitchOverlay(props: {
 
   const workspaceName = createMemo(() => {
     if (!props.workspace) return "";
+    let name: string | undefined;
     if (props.workspace.workspaceType === "remote" && props.workspace.remoteType === "openwork") {
-      return (
+      name =
         props.workspace.openworkWorkspaceName?.trim() ||
         props.workspace.displayName?.trim() ||
         props.workspace.name?.trim() ||
         props.workspace.openworkHostUrl?.trim() ||
         props.workspace.baseUrl?.trim() ||
-        props.workspace.path?.trim() ||
-        ""
-      );
+        props.workspace.path?.trim();
+    } else {
+      name =
+        props.workspace.displayName?.trim() ||
+        props.workspace.name?.trim() ||
+        props.workspace.baseUrl?.trim() ||
+        props.workspace.path?.trim();
     }
-    return (
-      props.workspace.displayName?.trim() ||
-      props.workspace.name?.trim() ||
-      props.workspace.baseUrl?.trim() ||
-      props.workspace.path?.trim() ||
-      ""
-    );
+    // Translate default "Starter" name
+    if (name === "Starter") {
+      return translate("dashboard.starter_workspace");
+    }
+    return name ?? "";
   });
 
   const title = createMemo(() => {

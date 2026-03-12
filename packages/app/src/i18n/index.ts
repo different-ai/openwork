@@ -1,18 +1,19 @@
 import { createSignal, createRoot } from "solid-js";
 import en from "./locales/en";
 import zh from "./locales/zh";
+import th from "./locales/th";
 import { LANGUAGE_PREF_KEY } from "../app/constants";
 
 /**
- * Supported languages - only en and zh for initial PR
+ * Supported languages
  */
-export type Language = "en" | "zh";
+export type Language = "en" | "zh" | "th";
 export type Locale = Language;
 
 /**
  * All supported languages - single source of truth
  */
-export const LANGUAGES: Language[] = ["en", "zh"];
+export const LANGUAGES: Language[] = ["en", "zh", "th"];
 
 /**
  * Language options for UI - single source of truth
@@ -20,6 +21,7 @@ export const LANGUAGES: Language[] = ["en", "zh"];
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
   { value: "zh" as Language, label: "简体中文", nativeName: "简体中文" },
+  { value: "th" as Language, label: "ภาษาไทย", nativeName: "ภาษาไทย" },
 ] as const;
 
 /**
@@ -28,6 +30,7 @@ export const LANGUAGE_OPTIONS = [
 const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en,
   zh,
+  th,
 };
 
 /**
@@ -79,23 +82,29 @@ export const setLocale = (newLocale: Language) => {
  *
  * @param key - Translation key
  * @param localeOverride - Optional locale override (defaults to current locale)
+ * @param params - Optional parameter map for placeholder replacement (e.g. {name})
  * @returns Translated string or fallback
  */
-export const t = (key: string, localeOverride?: Language): string => {
+export const t = (key: string, localeOverride?: Language, params?: Record<string, string | number>): string => {
   const loc = localeOverride ?? locale();
+  let result = key;
 
   // Try target language first
   if (TRANSLATIONS[loc]?.[key]) {
-    return TRANSLATIONS[loc][key];
+    result = TRANSLATIONS[loc][key];
+  } else if (loc !== "en" && TRANSLATIONS.en?.[key]) {
+    // Fallback to English
+    result = TRANSLATIONS.en[key];
   }
 
-  // Fallback to English
-  if (loc !== "en" && TRANSLATIONS.en?.[key]) {
-    return TRANSLATIONS.en[key];
+  // Replace parameters if provided
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, "g"), String(v));
+    }
   }
 
-  // Final fallback to key itself (prevents raw keys from showing in UI)
-  return key;
+  return result;
 };
 
 /**

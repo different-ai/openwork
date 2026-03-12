@@ -1,5 +1,8 @@
 import { For, Show, createMemo, createSignal } from "solid-js";
 import { Paperclip } from "lucide-solid";
+import { currentLocale, t } from "../../../i18n";
+
+const tr = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
 
 export type ArtifactsPanelProps = {
   files: string[];
@@ -98,7 +101,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
   return (
     <div id={props.id}>
       <div class="flex items-center justify-between px-2 mb-3">
-        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">Artifacts</span>
+        <span class="text-[11px] font-semibold uppercase tracking-wider text-gray-10">{tr("context.artifacts_label")}</span>
         <Show when={normalizedArtifacts().length > 0}>
           <span class="text-[11px] font-medium bg-gray-4/60 text-gray-10 px-1.5 rounded">
             {normalizedArtifacts().length}
@@ -109,7 +112,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
       <div class="space-y-1">
         <Show
           when={visibleArtifacts().length > 0}
-          fallback={<div class="text-xs text-gray-10 px-2 py-1">No artifacts yet.</div>}
+          fallback={<div class="text-xs text-gray-10 px-2 py-1">{tr("context.no_artifacts")}</div>}
         >
           <For each={visibleArtifacts()}>
             {(artifact) => {
@@ -131,12 +134,12 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                       <div class="truncate text-xs font-medium text-gray-11">{base()}</div>
                       <Show when={md()}>
                         <span class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-mono text-gray-10">
-                          MD
+                          {tr("context.markdown_badge")}
                         </span>
                       </Show>
                       <Show when={img()}>
                         <span class="shrink-0 rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-mono text-gray-10">
-                          IMG
+                          {tr("context.image_badge")}
                         </span>
                       </Show>
                     </div>
@@ -150,7 +153,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                         type="button"
                         class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
                         onClick={() => props.onOpenInObsidian?.(artifact.path)}
-                        title="Open in Obsidian"
+                        title={tr("context.open_in_obsidian")}
                       >
                         Obsidian
                       </button>
@@ -160,9 +163,9 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
                         type="button"
                         class="rounded-md border border-gray-6 bg-gray-2 px-1.5 py-0.5 text-[10px] font-medium text-gray-10 hover:text-gray-12 hover:border-gray-7 transition-colors"
                         onClick={() => props.onRevealArtifact?.(artifact.path)}
-                        title={img() ? "Reveal image in Finder" : "Reveal file in Finder"}
+                        title={img() ? tr("context.reveal_image_in_finder") : tr("context.reveal_file_in_finder")}
                       >
-                        Reveal
+                        {tr("context.reveal_button")}
                       </button>
                     </Show>
                   </div>
@@ -178,7 +181,7 @@ export default function ArtifactsPanel(props: ArtifactsPanelProps) {
             class="w-full mt-1 rounded-lg px-2 py-1.5 text-xs text-gray-10 hover:text-gray-11 hover:bg-gray-3 transition-colors"
             onClick={() => setShowAll((prev) => !prev)}
           >
-            {showAll() ? "Show fewer" : `Show ${hiddenCount()} more`}
+            {showAll() ? tr("context.show_fewer") : tr("context.show_more", { count: hiddenCount() })}
           </button>
         </Show>
       </div>

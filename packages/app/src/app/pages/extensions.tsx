@@ -5,6 +5,7 @@ import { Box, Cpu } from "lucide-solid";
 import Button from "../components/button";
 import McpView, { type McpViewProps } from "./mcp";
 import PluginsView, { type PluginsViewProps } from "./plugins";
+import { currentLocale, t } from "../../i18n";
 
 export type ExtensionsSection = "all" | "mcp" | "plugins";
 
@@ -16,6 +17,7 @@ export type ExtensionsViewProps = McpViewProps &
   };
 
 export default function ExtensionsView(props: ExtensionsViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
   const [section, setSection] = createSignal<ExtensionsSection>(props.initialSection ?? "all");
 
   createEffect(
@@ -59,16 +61,16 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
     <section class="space-y-6 animate-in fade-in duration-300">
       <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div class="space-y-1">
-          <h2 class="text-3xl font-bold text-dls-text">Extensions</h2>
+          <h2 class="text-3xl font-bold text-dls-text">{translate("extensions.title")}</h2>
           <p class="text-sm text-dls-secondary mt-1.5">
-            Apps (MCP) and OpenCode plugins live in one place.
+            {translate("extensions.subtitle")}
           </p>
           <div class="mt-3 flex flex-wrap items-center gap-2">
             <Show when={connectedAppsCount() > 0}>
               <div class="inline-flex items-center gap-2 rounded-full bg-green-3 px-3 py-1">
                 <div class="w-2 h-2 rounded-full bg-green-9" />
                 <span class="text-xs font-medium text-green-11">
-                  {connectedAppsCount()} app{connectedAppsCount() === 1 ? "" : "s"} connected
+                  {connectedAppsCount()} {connectedAppsCount() === 1 ? translate("extensions.app_connected") : translate("extensions.apps_connected")}
                 </span>
               </div>
             </Show>
@@ -76,7 +78,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               <div class="inline-flex items-center gap-2 rounded-full bg-gray-3 px-3 py-1">
                 <Cpu size={14} class="text-gray-11" />
                 <span class="text-xs font-medium text-gray-11">
-                  {pluginCount()} plugin{pluginCount() === 1 ? "" : "s"}
+                  {pluginCount()} {pluginCount() === 1 ? translate("extensions.plugin_count") : translate("extensions.plugins_count")}
                 </span>
               </div>
             </Show>
@@ -91,7 +93,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               aria-pressed={section() === "all"}
               onClick={() => selectSection("all")}
             >
-              All
+              {translate("extensions.filter_all")}
             </button>
             <button
               type="button"
@@ -100,7 +102,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => selectSection("mcp")}
             >
               <Box size={14} />
-              Apps
+              {translate("extensions.filter_apps")}
             </button>
             <button
               type="button"
@@ -109,11 +111,11 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
               onClick={() => selectSection("plugins")}
             >
               <Cpu size={14} />
-              Plugins
+              {translate("extensions.filter_plugins")}
             </button>
           </div>
           <Button variant="ghost" onClick={refreshAll}>
-            Refresh
+            {translate("common.refresh")}
           </Button>
         </div>
       </div>
@@ -122,7 +124,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Box size={16} class="text-gray-11" />
-            <span>Apps (MCP)</span>
+            <span>{translate("extensions.apps_label")}</span>
           </div>
           <McpView
             showHeader={false}
@@ -152,7 +154,7 @@ export default function ExtensionsView(props: ExtensionsViewProps) {
         <div class="space-y-4">
           <div class="flex items-center gap-2 text-sm font-medium text-gray-12">
             <Cpu size={16} class="text-gray-11" />
-            <span>Plugins (OpenCode)</span>
+            <span>{translate("extensions.plugins_label")}</span>
           </div>
           <PluginsView
             busy={props.busy}

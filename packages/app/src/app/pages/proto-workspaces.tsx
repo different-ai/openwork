@@ -14,6 +14,10 @@ import type { WorkspaceInfo } from "../lib/tauri";
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
 import WorkspaceChip from "../components/workspace-chip";
+import { currentLocale, t } from "../../i18n";
+
+// Translation helper
+const tr = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
 
 type ProtoView = "onboarding" | "dashboard" | "session";
 
@@ -54,7 +58,7 @@ const workspaces: WorkspaceInfo[] = [
 const sessions: SessionProto[] = [
   {
     id: "s-01",
-    title: "Reconcile vendor overages",
+    get title() { return tr("proto.reconcile_vendor_overages"); },
     slug: "rv",
     workspaceId: "ws-01",
     updated: "2m ago",
@@ -62,7 +66,7 @@ const sessions: SessionProto[] = [
   },
   {
     id: "s-02",
-    title: "Generate QA report",
+    get title() { return tr("proto.generate_qa_report"); },
     slug: "qr",
     workspaceId: "ws-02",
     updated: "28m ago",
@@ -70,7 +74,7 @@ const sessions: SessionProto[] = [
   },
   {
     id: "s-03",
-    title: "Sync policy checklist",
+    get title() { return tr("proto.sync_policy_checklist"); },
     slug: "pc",
     workspaceId: "ws-01",
     updated: "2h ago",
@@ -276,7 +280,7 @@ export default function ProtoWorkspacesView() {
                       <div class="w-full md:w-[320px]">
                         <div class="flex items-center gap-2 rounded-2xl border border-gray-6/60 bg-gray-2/50 px-4 py-3">
                           <input
-                            placeholder="Draft a task to run..."
+                            placeholder={tr("proto.draft_task_placeholder")}
                             class="flex-1 bg-transparent border-none p-0 text-sm text-dls-text placeholder:text-dls-secondary focus:ring-0"
                           />
                           <button class="rounded-xl bg-gray-12 px-3 py-1.5 text-xs font-semibold text-gray-1">Run</button>
@@ -435,7 +439,7 @@ export default function ProtoWorkspacesView() {
             <div class="border-t border-gray-6 bg-gray-1 px-6 py-4">
               <div class="max-w-2xl mx-auto flex items-center gap-2 rounded-2xl border border-gray-6/60 bg-gray-2/40 px-4 py-3">
                 <input
-                  placeholder="Describe a task..."
+                  placeholder={tr("proto.describe_task_placeholder")}
                   class="flex-1 bg-transparent text-sm text-dls-text placeholder:text-dls-secondary focus:outline-none"
                 />
                 <button class="rounded-xl bg-gray-12 px-3 py-1.5 text-xs font-semibold text-gray-1">Send</button>

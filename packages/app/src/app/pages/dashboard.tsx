@@ -53,6 +53,7 @@ import ProviderAuthModal, { type ProviderOAuthStartResult } from "../components/
 import ShareWorkspaceModal from "../components/share-workspace-modal";
 import WorkspaceSessionList from "../components/session/workspace-session-list";
 import {
+  ArrowLeft,
   Box,
   ChevronDown,
   ChevronRight,
@@ -67,6 +68,10 @@ import {
   Zap,
 } from "lucide-solid";
 import type { Language } from "../../i18n";
+import { t, currentLocale } from "../../i18n";
+
+// Translation helper
+const tr = (key: string, params?: Record<string, string | number>) => t(key, currentLocale(), params);
 
 export type DashboardViewProps = {
   tab: DashboardTab;
@@ -161,7 +166,6 @@ export type DashboardViewProps = {
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
   activeWorkspaceRoot: string;
-  isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
   refreshHubSkills: (options?: { force?: boolean }) => void;
   refreshPlugins: (scopeOverride?: PluginScope) => void;
@@ -296,7 +300,6 @@ export type DashboardViewProps = {
   cleanupOpenworkDockerContainers: () => void;
   dockerCleanupBusy: boolean;
   dockerCleanupResult: string | null;
-  resetAppConfigDefaults: () => Promise<{ ok: boolean; message: string }>;
   notionStatus: "disconnected" | "connecting" | "connected" | "error";
   notionStatusDetail: string | null;
   notionError: string | null;
@@ -332,41 +335,49 @@ type SkillsSetBundleV1 = {
 };
 
 export default function DashboardView(props: DashboardViewProps) {
+  const translate = (key: string) => t(key, currentLocale());
+  
   const title = createMemo(() => {
     switch (props.tab) {
       case "scheduled":
-        return "Automations";
+        return translate("dashboard.automations");
       case "skills":
-        return "Skills";
+        return translate("dashboard.skills");
       case "plugins":
-        return "Extensions";
+        return translate("dashboard.extensions");
       case "mcp":
-        return "Extensions";
+        return translate("dashboard.extensions");
       case "identities":
-        return "Messaging";
+        return translate("dashboard.messaging");
       case "config":
-        return "Advanced";
+        return translate("dashboard.advanced");
       case "settings":
-        return "Settings";
+        return translate("dashboard.settings");
       default:
-        return "Automations";
+        return translate("dashboard.automations");
     }
   });
 
-  const workspaceLabel = (workspace: WorkspaceInfo) =>
-    workspace.displayName?.trim() ||
-    workspace.openworkWorkspaceName?.trim() ||
-    workspace.name?.trim() ||
-    workspace.path?.trim() ||
-    "Worker";
+  const workspaceLabel = (workspace: WorkspaceInfo) => {
+    const name = workspace.displayName?.trim() ||
+      workspace.openworkWorkspaceName?.trim() ||
+      workspace.name?.trim() ||
+      workspace.path?.trim() ||
+      translate("dashboard.worker");
+    // Translate default "Starter" name
+    if (name === "Starter") {
+      return translate("dashboard.starter_workspace");
+    }
+    return name;
+  };
   const workspaceKindLabel = (workspace: WorkspaceInfo) =>
     workspace.workspaceType === "remote"
       ? workspace.sandboxBackend === "docker" ||
         Boolean(workspace.sandboxRunId?.trim()) ||
         Boolean(workspace.sandboxContainerName?.trim())
-        ? "Sandbox"
-        : "Remote"
-      : "Local";
+        ? translate("dashboard.sandbox")
+        : translate("dashboard.remote")
+      : translate("dashboard.local_engine");
 
   const openSessionFromList = (workspaceId: string, sessionId: string) => {
     // Route-driven selection: navigate first and let the route effect own selectSession.
@@ -402,7 +413,7 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const handleProviderAuthSelect = async (providerId: string): Promise<ProviderOAuthStartResult> => {
     if (providerAuthActionBusy()) {
-      throw new Error("Provider auth is already in progress.");
+      throw new Error(tr("error.provider_auth_in_progress"));
     }
     setProviderAuthActionBusy(true);
     try {
@@ -508,8 +519,12 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   const openSettings = (tab: SettingsTab = "general") => {
-    props.setSettingsTab(tab);
-    props.setTab("settings");
+    if (props.tab === "settings" && props.settingsTab === tab) {
+      props.setTab("scheduled");
+    } else {
+      props.setSettingsTab(tab);
+      props.setTab("settings");
+    }
   };
 
   const openConfig = () => {
@@ -646,30 +661,30 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: translate("dashboard.invite_link_label"),
           value: inviteUrl,
           secret: true,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
-          hint: "One link that prefills worker URL and token.",
+          placeholder: !isTauriRuntime() ? translate("dashboard.desktop_required") : translate("dashboard.starting_server"),
+          hint: translate("dashboard.invite_link_hint"),
         },
         {
-          label: "OpenWork worker URL",
+          label: translate("dashboard.openwork_worker_url"),
           value: url,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          placeholder: !isTauriRuntime() ? translate("dashboard.desktop_required") : translate("dashboard.starting_server"),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
+            ? translate("dashboard.worker_url_hint_mobile")
             : hostUrl
-              ? "Worker URL is resolving; host URL shown as fallback."
+              ? translate("dashboard.worker_url_hint_resolving")
               : undefined,
         },
         {
-          label: "Access token",
+          label: translate("dashboard.access_token"),
           value: token,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          placeholder: isTauriRuntime() ? "-" : translate("dashboard.desktop_required"),
           hint: mountedUrl
-            ? "Use on phones or laptops connecting to this worker."
-            : "Use on phones or laptops connecting to this host.",
+            ? translate("dashboard.access_token_hint_mobile")
+            : translate("dashboard.access_token_hint_host"),
         },
       ];
     }
@@ -687,21 +702,21 @@ export default function DashboardView(props: DashboardViewProps) {
       });
       return [
         {
-          label: "OpenWork invite link",
+          label: translate("dashboard.invite_link_label"),
           value: inviteUrl,
           secret: true,
-          hint: "One link that prefills worker URL and token.",
+          hint: translate("dashboard.invite_link_hint"),
         },
         {
-          label: "OpenWork worker URL",
+          label: translate("dashboard.openwork_host_label"),
           value: url,
         },
         {
-          label: "Access token",
+          label: translate("dashboard.openwork_host_token_label"),
           value: token,
           secret: true,
-          placeholder: token ? undefined : "Set token in Advanced",
-          hint: "This token grants access to the worker on that host.",
+          placeholder: token ? undefined : translate("dashboard.advanced"),
+          hint: translate("dashboard.openwork_host_token_hint"),
         },
       ];
     }
@@ -710,11 +725,11 @@ export default function DashboardView(props: DashboardViewProps) {
     const directory = ws.directory?.trim() || "";
     return [
       {
-        label: "OpenCode base URL",
+        label: translate("dashboard.opencode_base_url_label"),
         value: baseUrl,
       },
       {
-        label: "Directory",
+        label: translate("dashboard.directory_label"),
         value: directory,
         placeholder: "(auto)",
       },
@@ -725,28 +740,28 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return null;
     if (ws.workspaceType === "local" && props.engineInfo?.runtime === "direct") {
-      return "Engine runtime is set to Direct. Switching local workers can restart the host and disconnect clients. The token may change after a restart.";
+      return translate("dashboard.share_engine_runtime_warning");
     }
     return null;
   });
 
   const shareServiceDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Select a worker first.";
+    if (!ws) return translate("dashboard.share_select_worker");
     if (ws.workspaceType === "remote" && ws.remoteType !== "openwork") {
-      return "Share service links are available for OpenWork workers.";
+      return translate("dashboard.share_remote_openwork_only");
     }
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        return "Local OpenWork host is not ready yet.";
+        return translate("dashboard.share_host_not_ready");
       }
     } else {
       const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
       const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
-      if (!hostUrl) return "Missing OpenWork host URL.";
-      if (!token) return "Missing OpenWork token.";
+      if (!hostUrl) return translate("dashboard.share_missing_host_url");
+      if (!token) return translate("dashboard.share_missing_token");
     }
     return null;
   });
@@ -758,14 +773,14 @@ export default function DashboardView(props: DashboardViewProps) {
   }> => {
     const ws = shareWorkspace();
     if (!ws) {
-      throw new Error("Select a worker first.");
+      throw new Error(tr("error.select_worker_first"));
     }
 
     if (ws.workspaceType !== "remote") {
       const baseUrl = props.openworkServerHostInfo?.baseUrl?.trim() ?? "";
       const token = props.openworkServerHostInfo?.clientToken?.trim() ?? "";
       if (!baseUrl || !token) {
-        throw new Error("Local OpenWork host is not ready yet.");
+        throw new Error(tr("error.local_host_not_ready"));
       }
       const client = createOpenworkServerClient({ baseUrl, token });
 
@@ -780,20 +795,20 @@ export default function DashboardView(props: DashboardViewProps) {
       }
 
       if (!workspaceId) {
-        throw new Error("Could not resolve this worker on the local OpenWork host.");
+        throw new Error(translate("dashboard.error_resolve_local_host"));
       }
 
       return { client, workspaceId, workspace: ws };
     }
 
     if (ws.remoteType !== "openwork") {
-      throw new Error("Share service links are available for OpenWork workers.");
+      throw new Error(translate("dashboard.share_remote_openwork_only"));
     }
 
     const hostUrl = ws.openworkHostUrl?.trim() || ws.baseUrl?.trim() || "";
     const token = ws.openworkToken?.trim() || props.openworkServerSettings.token?.trim() || "";
     if (!hostUrl || !token) {
-      throw new Error("OpenWork host URL and token are required.");
+      throw new Error(translate("dashboard.error_openwork_required"));
     }
 
     const client = createOpenworkServerClient({ baseUrl: hostUrl, token });
@@ -820,7 +835,7 @@ export default function DashboardView(props: DashboardViewProps) {
     }
 
     if (!workspaceId) {
-      throw new Error("Could not resolve this worker on the OpenWork host.");
+      throw new Error(translate("dashboard.error_resolve_remote_host"));
     }
 
     return { client, workspaceId, workspace: ws };
@@ -838,8 +853,8 @@ export default function DashboardView(props: DashboardViewProps) {
       const payload: WorkspaceProfileBundleV1 = {
         schemaVersion: 1,
         type: "workspace-profile",
-        name: `${workspaceLabel(workspace)} profile`,
-        description: "Full OpenWork workspace profile with config, MCP setup, commands, and skills.",
+        name: `${workspaceLabel(workspace)} ${translate("dashboard.profile_name_suffix")}`,
+        description: translate("dashboard.profile_description"),
         workspace: exported,
       };
 
@@ -856,7 +871,7 @@ export default function DashboardView(props: DashboardViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareWorkspaceProfileError(error instanceof Error ? error.message : "Failed to publish workspace profile");
+      setShareWorkspaceProfileError(error instanceof Error ? error.message : translate("dashboard.error_publish_profile"));
     } finally {
       setShareWorkspaceProfileBusy(false);
     }
@@ -873,14 +888,14 @@ export default function DashboardView(props: DashboardViewProps) {
       const exported = await client.exportWorkspace(workspaceId);
       const skills = Array.isArray(exported.skills) ? exported.skills : [];
       if (!skills.length) {
-        throw new Error("No skills found in this workspace.");
+        throw new Error(translate("dashboard.error_no_skills"));
       }
 
       const payload: SkillsSetBundleV1 = {
         schemaVersion: 1,
         type: "skills-set",
-        name: `${workspaceLabel(workspace)} skills`,
-        description: "Complete skills set from an OpenWork workspace.",
+        name: `${workspaceLabel(workspace)} ${translate("dashboard.skills_name_suffix")}`,
+        description: translate("dashboard.skills_description"),
         skills: skills.map((skill) => ({
           name: skill.name,
           description: skill.description,
@@ -906,7 +921,7 @@ export default function DashboardView(props: DashboardViewProps) {
         // ignore
       }
     } catch (error) {
-      setShareSkillsSetError(error instanceof Error ? error.message : "Failed to publish skills set");
+      setShareSkillsSetError(error instanceof Error ? error.message : translate("dashboard.error_publish_skills"));
     } finally {
       setShareSkillsSetBusy(false);
     }
@@ -914,10 +929,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const exportDisabledReason = createMemo(() => {
     const ws = shareWorkspace();
-    if (!ws) return "Export is available for local workers in the desktop app.";
-    if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
-    if (!isTauriRuntime()) return "Export is available in the desktop app.";
-    if (props.exportWorkspaceBusy) return "Export is already running.";
+    if (!ws) return translate("dashboard.export_desktop_hint");
+    if (ws.workspaceType === "remote") return translate("dashboard.export_local_only_hint");
+    if (!isTauriRuntime()) return translate("dashboard.export_desktop_hint");
+    if (props.exportWorkspaceBusy) return translate("dashboard.export_running");
     return null;
   });
 
@@ -938,13 +953,13 @@ export default function DashboardView(props: DashboardViewProps) {
   const updatePillLabel = createMemo(() => {
     const state = props.updateStatus?.state;
     if (state === "ready") {
-      return props.anyActiveRuns ? "Update ready" : "Install update";
+      return props.anyActiveRuns ? translate("dashboard.update_ready") : translate("dashboard.install_update");
     }
     if (state === "downloading") {
       const percent = updateDownloadPercent();
-      return percent == null ? "Downloading" : `Downloading ${percent}%`;
+      return percent == null ? translate("dashboard.downloading") : translate("dashboard.downloading_percent").replace("{percent}", String(percent));
     }
-    return "Update available";
+    return translate("dashboard.update_available");
   });
 
   const updatePillButtonTone = createMemo(() => {
@@ -998,11 +1013,11 @@ export default function DashboardView(props: DashboardViewProps) {
     const state = props.updateStatus?.state;
     if (state === "ready") {
       return props.anyActiveRuns
-        ? `Update ready ${version}. Stop active runs to restart.`
-        : `Restart to apply update ${version}`;
+        ? translate("dashboard.update_ready_title").replace("{version}", version)
+        : translate("dashboard.install_update_title").replace("{version}", version);
     }
-    if (state === "downloading") return `Downloading update ${version}`;
-    return `Update available ${version}`;
+    if (state === "downloading") return translate("dashboard.downloading_update_title").replace("{version}", version);
+    return translate("dashboard.update_available_title").replace("{version}", version);
   });
 
   const handleUpdatePillClick = () => {
@@ -1103,7 +1118,7 @@ export default function DashboardView(props: DashboardViewProps) {
               </button>
             </Show>
             <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
-              {props.activeWorkspaceDisplay.name}
+              {workspaceLabel(props.activeWorkspaceDisplay)}
             </div>
             <h1 class="text-lg font-medium">{title()}</h1>
             <Show when={props.developerMode}>
@@ -1113,7 +1128,6 @@ export default function DashboardView(props: DashboardViewProps) {
               <span class="text-xs text-dls-secondary">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-2" />
         </header>
 
         <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
@@ -1143,7 +1157,7 @@ export default function DashboardView(props: DashboardViewProps) {
             </Match>
             <Match when={props.tab === "skills"}>
               <SkillsView
-                workspaceName={props.activeWorkspaceDisplay.name}
+                workspaceName={workspaceLabel(props.activeWorkspaceDisplay)}
                 busy={props.busy}
                 canInstallSkillCreator={props.canInstallSkillCreator}
                 canUseDesktopTools={props.canUseDesktopTools}
@@ -1172,7 +1186,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 setDashboardTab={props.setTab}
                 busy={props.busy}
                 activeWorkspaceRoot={props.activeWorkspaceRoot}
-                isRemoteWorkspace={props.isRemoteWorkspace}
                 refreshMcpServers={props.refreshMcpServers}
                 mcpServers={props.mcpServers}
                 mcpStatus={props.mcpStatus}
@@ -1206,6 +1219,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 refreshPlugins={props.refreshPlugins}
                 addPlugin={props.addPlugin}
                 removePlugin={props.removePlugin}
+                isRemoteWorkspace={props.activeWorkspaceDisplay?.workspaceType === "remote"}
               />
             </Match>
 
@@ -1270,7 +1284,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   openworkServerCapabilities={props.openworkServerCapabilities}
                   openworkServerDiagnostics={props.openworkServerDiagnostics}
                   openworkServerWorkspaceId={props.openworkServerWorkspaceId}
-                  activeWorkspaceRoot={props.activeWorkspaceRoot}
                   openworkAuditEntries={props.openworkAuditEntries}
                   openworkAuditStatus={props.openworkAuditStatus}
                   openworkAuditError={props.openworkAuditError}
@@ -1337,7 +1350,6 @@ export default function DashboardView(props: DashboardViewProps) {
                   cleanupOpenworkDockerContainers={props.cleanupOpenworkDockerContainers}
                   dockerCleanupBusy={props.dockerCleanupBusy}
                   dockerCleanupResult={props.dockerCleanupResult}
-                  resetAppConfigDefaults={props.resetAppConfigDefaults}
                   notionStatus={props.notionStatus}
                   notionStatusDetail={props.notionStatusDetail}
                   notionError={props.notionError}
@@ -1361,7 +1373,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.repairOpencodeCache}
                     disabled={props.cacheRepairBusy || !props.developerMode}
                   >
-                    {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
+                    {props.cacheRepairBusy ? translate("dashboard.repairing_cache") : translate("dashboard.repair_cache")}
                   </Button>
                   <Button
                     variant="outline"
@@ -1369,7 +1381,7 @@ export default function DashboardView(props: DashboardViewProps) {
                     onClick={props.stopHost}
                     disabled={props.busy}
                   >
-                    Retry
+                    {translate("dashboard.retry")}
                   </Button>
                   <Show when={props.cacheRepairResult}>
                     <span class="text-xs text-red-12/80">
@@ -1449,7 +1461,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("scheduled")}
             >
               <History size={18} />
-              Automations
+              {translate("dashboard.automations")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1458,7 +1470,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("skills")}
             >
               <Zap size={18} />
-              Skills
+              {translate("dashboard.skills")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1467,7 +1479,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("mcp")}
             >
               <Box size={18} />
-              Extensions
+              {translate("dashboard.extensions")}
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1476,7 +1488,7 @@ export default function DashboardView(props: DashboardViewProps) {
               onClick={() => props.setTab("identities")}
             >
               <MessageCircle size={18} />
-              IDs
+              {translate("dashboard.messaging")}
             </button>
             <Show when={props.developerMode}>
               <button
@@ -1486,7 +1498,7 @@ export default function DashboardView(props: DashboardViewProps) {
                 onClick={() => props.setTab("config")}
               >
                 <SlidersHorizontal size={18} />
-                Advanced
+                {translate("dashboard.advanced")}
               </button>
             </Show>
           </div>
@@ -1495,11 +1507,11 @@ export default function DashboardView(props: DashboardViewProps) {
 
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
-          {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("skills", "Skills", <Zap size={18} />)}
-          {navItem("mcp", "Extensions", <Box size={18} />)}
-          {navItem("identities", "Messaging", <MessageCircle size={18} />)}
-          <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
+          {navItem("scheduled", translate("dashboard.automations"), <History size={18} />)}
+          {navItem("skills", translate("dashboard.skills"), <Zap size={18} />)}
+          {navItem("mcp", translate("dashboard.extensions"), <Box size={18} />)}
+          {navItem("identities", translate("dashboard.messaging"), <MessageCircle size={18} />)}
+          <Show when={props.developerMode}>{navItem("config", translate("dashboard.advanced"), <SlidersHorizontal size={18} />)}</Show>
         </div>
       </aside>
 

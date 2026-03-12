@@ -1,12 +1,15 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
 import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
 
+import { currentLocale, t } from "../../i18n";
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
 import type { McpStatusMap } from "../types";
 import { getOpenCodeRouterStatus } from "../lib/tauri";
 
 import Button from "./button";
+
+const tr = (key: string) => t(key, currentLocale());
 
 type StatusBarProps = {
   clientConnected: boolean;
@@ -41,6 +44,13 @@ export default function StatusBar(props: StatusBarProps) {
     }
   });
 
+  const unifiedStatusMeta = createMemo(() => {
+    const allGreen =
+      props.clientConnected && props.openworkServerStatus === "connected";
+    return allGreen
+      ? { dot: "bg-green-9", text: "text-green-11", label: tr("status.ready") }
+      : { dot: "bg-red-9", text: "text-red-11", label: tr("status.unavailable") };
+  });
   const messagingMeta = createMemo(() => {
     const status = opencodeRouterStatus();
     if (!status) {
@@ -79,7 +89,7 @@ export default function StatusBar(props: StatusBarProps) {
   const proTips = createMemo<ProTip[]>(() => [
     {
       id: "slack",
-      label: "Connect Slack",
+      label: tr("tip.connect_slack"),
       enabled: () => {
         const status = opencodeRouterStatus();
         return Boolean(status && (status.slack.items?.length ?? 0) === 0);
@@ -88,7 +98,7 @@ export default function StatusBar(props: StatusBarProps) {
     },
     {
       id: "telegram",
-      label: "Connect Telegram",
+      label: tr("tip.connect_telegram"),
       enabled: () => {
         const status = opencodeRouterStatus();
         return Boolean(status && (status.telegram.items?.length ?? 0) === 0);
@@ -97,13 +107,13 @@ export default function StatusBar(props: StatusBarProps) {
     },
     {
       id: "notion",
-      label: "Connect Notion MCP",
+      label: tr("tip.connect_notion"),
       enabled: () => notionStatus() !== "connected",
       action: () => runAction(props.onOpenMcp),
     },
     {
       id: "providers",
-      label: "Use your own models (OpenRouter, Anthropic, OpenAI)",
+      label: tr("tip.use_own_models"),
       enabled: () => props.clientConnected && providerConnectedCount() === 0,
       action: () => runAction(props.onOpenProviders),
     },
@@ -222,7 +232,9 @@ export default function StatusBar(props: StatusBarProps) {
               title={activeTip()?.label}
               aria-label={activeTip()?.label}
             >
-              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">Tip</span>
+              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">
+                {tr("tip.label")}
+              </span>
               <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
             </button>
           </Show>
@@ -230,7 +242,7 @@ export default function StatusBar(props: StatusBarProps) {
             variant="ghost"
             class="h-7 px-2.5 py-0 text-xs"
             onClick={props.onOpenSettings}
-            title="Settings"
+            title={tr("settings.title")}
           >
             <Settings class="w-4 h-4" />
             <Show when={props.developerMode}>
