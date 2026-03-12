@@ -20,12 +20,13 @@
           {
             "group": "Foundations",
             "pages": [
-              "introduction",
-              "openwork",
-              "orbita-layout-style",
-              "opencode-router",
-              "cli"
-            ]
+            "introduction",
+            "openwork",
+            "orbita-layout-style",
+            "opencode-router",
+            "cli",
+            "worker-runtime-upgrades"
+          ]
           },
           {
             "group": "Agent Playbooks",

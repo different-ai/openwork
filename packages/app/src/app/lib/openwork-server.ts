@@ -50,6 +50,38 @@ export type OpenworkServerDiagnostics = {
   tokenSource: { client: string; host: string };
 };
 
+export type OpenworkRuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+
+export type OpenworkRuntimeServiceSnapshot = {
+  name: OpenworkRuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  targetVersion: string | null;
+  actualVersion: string | null;
+  upgradeAvailable: boolean;
+};
+
+export type OpenworkRuntimeSnapshot = {
+  ok: boolean;
+  orchestrator?: {
+    version: string;
+    startedAt: number;
+  };
+  worker?: {
+    workspace: string;
+    sandboxMode: string;
+  };
+  upgrade?: {
+    status: "idle" | "running" | "failed";
+    startedAt: number | null;
+    finishedAt: number | null;
+    error: string | null;
+    operationId: string | null;
+    services: OpenworkRuntimeServiceName[];
+  };
+  services: OpenworkRuntimeServiceSnapshot[];
+};
+
 export type OpenworkServerSettings = {
   urlOverride?: string;
   portOverride?: number;
@@ -1173,6 +1205,8 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
     token,
     health: () =>
       requestJson<{ ok: boolean; version: string; uptimeMs: number }>(baseUrl, "/health", { token, hostToken, timeoutMs: timeouts.health }),
+    runtimeVersions: () =>
+      requestJson<OpenworkRuntimeSnapshot>(baseUrl, "/runtime/versions", { token, hostToken, timeoutMs: timeouts.status }),
     status: () => requestJson<OpenworkServerDiagnostics>(baseUrl, "/status", { token, hostToken, timeoutMs: timeouts.status }),
     capabilities: () => requestJson<OpenworkServerCapabilities>(baseUrl, "/capabilities", { token, hostToken, timeoutMs: timeouts.capabilities }),
     opencodeRouterHealth: () =>

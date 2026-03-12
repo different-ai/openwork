@@ -167,6 +167,28 @@ type BinaryDiagnostics = {
   actualVersion?: string;
 };
 
+type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+
+type RuntimeServiceSnapshot = {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  source?: BinarySource;
+  path?: string;
+  targetVersion?: string;
+  actualVersion?: string;
+  upgradeAvailable: boolean;
+};
+
+type RuntimeUpgradeState = {
+  status: "idle" | "running" | "failed";
+  startedAt: number | null;
+  finishedAt: number | null;
+  error: string | null;
+  operationId: string | null;
+  services: RuntimeServiceName[];
+};
+
 type SidecarDiagnostics = {
   dir: string;
   baseUrl: string;
@@ -2775,6 +2797,8 @@ async function startOpenworkServer(options: {
   opencodePassword?: string;
   opencodeRouterHealthPort?: number;
   opencodeRouterDataDir?: string;
+  controlBaseUrl?: string;
+  controlToken?: string;
   logger: Logger;
   runId: string;
   logFormat: LogFormat;
@@ -2843,6 +2867,8 @@ async function startOpenworkServer(options: {
       ...(options.opencodeDirectory ? { OPENWORK_OPENCODE_DIRECTORY: options.opencodeDirectory } : {}),
       ...(options.opencodeUsername ? { OPENWORK_OPENCODE_USERNAME: options.opencodeUsername } : {}),
       ...(options.opencodePassword ? { OPENWORK_OPENCODE_PASSWORD: options.opencodePassword } : {}),
+      ...(options.controlBaseUrl ? { OPENWORK_CONTROL_BASE_URL: options.controlBaseUrl } : {}),
+      ...(options.controlToken ? { OPENWORK_CONTROL_TOKEN: options.controlToken } : {}),
     },
   });
 
@@ -3516,6 +3542,32 @@ async function verifyOpenworkServer(input: {
   await fetchJson(`${input.baseUrl}/approvals`, { headers: hostHeaders });
 
   return actualVersion;
+}
+
+async function installGlobalPackages(packages: string[]): Promise<void> {
+  if (!packages.length) return;
+  await captureCommandOutput("npm", ["install", "-g", ...packages], { timeoutMs: 5 * 60_000 });
+}
+
+function buildRuntimeServiceSnapshot(input: {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  binary?: ResolvedBinary | null;
+  actualVersion?: string;
+}): RuntimeServiceSnapshot {
+  const targetVersion = input.binary?.expectedVersion;
+  const actualVersion = input.actualVersion;
+  return {
+    name: input.name,
+    enabled: input.enabled,
+    running: input.enabled ? input.running : false,
+    source: input.binary?.source,
+    path: input.binary?.bin,
+    targetVersion,
+    actualVersion,
+    upgradeAvailable: Boolean(input.enabled && targetVersion && actualVersion && targetVersion !== actualVersion),
+  };
 }
 
 async function runChecks(input: {
@@ -4295,7 +4347,7 @@ async function runRouterDaemon(args: ParsedArgs) {
     `opencode hot reload: ${opencodeHotReload.enabled ? "on" : "off"} (debounce=${opencodeHotReload.debounceMs}ms cooldown=${opencodeHotReload.cooldownMs}ms)`,
   );
   logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
-  const opencodeBinary = await resolveOpencodeBin({
+  let opencodeBinary = await resolveOpencodeBin({
     explicit: opencodeBin,
     manifest,
     allowExternal,
@@ -5194,7 +5246,7 @@ async function runStart(args: ParsedArgs) {
     `opencode hot reload: ${opencodeHotReload.enabled ? "on" : "off"} (debounce=${opencodeHotReload.debounceMs}ms cooldown=${opencodeHotReload.cooldownMs}ms)`,
   );
   logVerbose(`allow external: ${allowExternal ? "true" : "false"}`);
-  const opencodeBinary = await resolveOpencodeBin({
+  let opencodeBinary = await resolveOpencodeBin({
     explicit: explicitOpencodeBin,
     manifest,
     allowExternal,
@@ -5229,14 +5281,14 @@ async function runStart(args: ParsedArgs) {
     false,
     "OPENWORK_OPENCODE_ROUTER_REQUIRED",
   );
-  const openworkServerBinary = await resolveOpenworkServerBin({
+  let openworkServerBinary = await resolveOpenworkServerBin({
     explicit: explicitOpenworkServerBin,
     manifest,
     allowExternal,
     sidecar,
     source: sidecarSource,
   });
-  const opencodeRouterBinary = opencodeRouterEnabled
+  let opencodeRouterBinary = opencodeRouterEnabled
     ? await resolveOpenCodeRouterBin({
         explicit: explicitOpenCodeRouterBin,
         manifest,
@@ -5299,8 +5351,251 @@ async function runStart(args: ParsedArgs) {
   let sandboxStop: ((name: string) => Promise<void>) | null = null;
   let sandboxStopCommand: string | null = null;
   let sandboxCleanup: (() => Promise<void>) | null = null;
+  let opencodeChild: ChildProcess | null = null;
+  let openworkChild: ChildProcess | null = null;
+  let opencodeRouterChild: ChildProcess | null = null;
+  let controlServer: ReturnType<typeof createHttpServer> | null = null;
+  const controlPort = await resolvePort(undefined, "127.0.0.1");
+  const controlToken = randomUUID();
+  const controlBaseUrl = `http://127.0.0.1:${controlPort}`;
+  let opencodeActualVersion: string | undefined;
+  let openworkActualVersion: string | undefined;
   const startedAt = Date.now();
   let opencodeRouterHealthInterval: NodeJS.Timeout | null = null;
+  const restartingServices = new Set<string>();
+  const runtimeUpgradeState: RuntimeUpgradeState = {
+    status: "idle",
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+    operationId: null,
+    services: [],
+  };
+  const removeChildHandle = (name: string) => {
+    const index = children.findIndex((handle) => handle.name === name);
+    if (index >= 0) children.splice(index, 1);
+  };
+  const getRuntimeSnapshot = () => {
+    const services = [
+      buildRuntimeServiceSnapshot({
+        name: "openwork-server",
+        enabled: true,
+        running: Boolean(openworkChild && isProcessAlive(openworkChild.pid)),
+        binary: openworkServerBinary,
+        actualVersion: openworkActualVersion,
+      }),
+      buildRuntimeServiceSnapshot({
+        name: "opencode",
+        enabled: true,
+        running: Boolean(opencodeChild && isProcessAlive(opencodeChild.pid)),
+        binary: opencodeBinary,
+        actualVersion: opencodeActualVersion,
+      }),
+      buildRuntimeServiceSnapshot({
+        name: "opencode-router",
+        enabled: Boolean(opencodeRouterEnabled && opencodeRouterBinary),
+        running: Boolean(opencodeRouterChild && isProcessAlive(opencodeRouterChild.pid)),
+        binary: opencodeRouterBinary,
+        actualVersion: opencodeRouterActualVersion,
+      }),
+    ];
+    return {
+      ok: true,
+      orchestrator: {
+        version: cliVersion,
+        startedAt,
+      },
+      worker: {
+        workspace: resolvedWorkspace,
+        sandboxMode,
+      },
+      upgrade: {
+        ...runtimeUpgradeState,
+      },
+      services,
+    };
+  };
+  const restartOpencode = async () => {
+    if (sandboxMode !== "none") {
+      throw new Error("Runtime upgrade is not supported while sandbox mode is enabled");
+    }
+    if (opencodeChild) {
+      restartingServices.add("opencode");
+      removeChildHandle("opencode");
+      await stopChild(opencodeChild);
+      opencodeChild = null;
+    }
+    opencodeActualVersion = await verifyOpencodeVersion(opencodeBinary);
+    const child = await startOpencode({
+      bin: opencodeBinary.bin,
+      workspace: resolvedWorkspace,
+      stateLayout: opencodeStateLayout,
+      hotReload: opencodeHotReload,
+      bindHost: opencodeBindHost,
+      port: opencodePort,
+      username: opencodeUsername,
+      password: opencodePassword,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+      logger,
+      runId,
+      logFormat,
+      opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
+    });
+    opencodeChild = child;
+    children.push({ name: "opencode", child });
+    logger.info("Process spawned", { pid: child.pid ?? 0, cause: "runtime-upgrade" }, "opencode");
+    child.on("exit", (code, signal) => handleExit("opencode", code, signal));
+    child.on("error", (error) => handleSpawnError("opencode", error));
+    await waitForOpencodeHealthy(
+      createOpencodeClient({
+        baseUrl: opencodeBaseUrl,
+        directory: resolvedWorkspace,
+        headers: opencodeUsername && opencodePassword ? { Authorization: `Basic ${encodeBasicAuth(opencodeUsername, opencodePassword)}` } : undefined,
+      }),
+    );
+  };
+  const restartOpenworkServer = async () => {
+    if (sandboxMode !== "none") {
+      throw new Error("Runtime upgrade is not supported while sandbox mode is enabled");
+    }
+    if (openworkChild) {
+      restartingServices.add("openwork-server");
+      removeChildHandle("openwork-server");
+      await stopChild(openworkChild);
+      openworkChild = null;
+    }
+    const child = await startOpenworkServer({
+      bin: openworkServerBinary.bin,
+      host: openworkHost,
+      port: openworkPort,
+      workspace: resolvedWorkspace,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      approvalMode: approvalMode === "auto" ? "auto" : "manual",
+      approvalTimeoutMs,
+      readOnly,
+      corsOrigins: corsOrigins.length ? corsOrigins : ["*"],
+      opencodeBaseUrl: opencodeConnectUrl,
+      opencodeDirectory: resolvedWorkspace,
+      opencodeUsername,
+      opencodePassword,
+      opencodeRouterHealthPort: opencodeRouterChild ? opencodeRouterHealthPort : undefined,
+      opencodeRouterDataDir: opencodeRouterChild ? (opencodeRouterDataDir ?? undefined) : undefined,
+      logger,
+      runId,
+      logFormat,
+      controlBaseUrl,
+      controlToken,
+    });
+    openworkChild = child;
+    children.push({ name: "openwork-server", child });
+    logger.info("Process spawned", { pid: child.pid ?? 0, cause: "runtime-upgrade" }, "openwork-server");
+    child.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+    child.on("error", (error) => handleSpawnError("openwork-server", error));
+    await waitForHealthy(openworkBaseUrl);
+    openworkActualVersion = await verifyOpenworkServer({
+      baseUrl: openworkBaseUrl,
+      token: openworkToken,
+      hostToken: openworkHostToken,
+      expectedVersion: openworkServerBinary.expectedVersion,
+      expectedWorkspace: resolvedWorkspace,
+      expectedOpencodeBaseUrl: opencodeConnectUrl,
+      expectedOpencodeDirectory: resolvedWorkspace,
+      expectedOpencodeUsername: opencodeUsername,
+      expectedOpencodePassword: opencodePassword,
+    });
+  };
+  const restartOpenCodeRouter = async () => {
+    if (!opencodeRouterEnabled || !opencodeRouterBinary || sandboxMode !== "none") {
+      return;
+    }
+    if (opencodeRouterChild) {
+      restartingServices.add("opencode-router");
+      removeChildHandle("opencode-router");
+      await stopChild(opencodeRouterChild);
+      opencodeRouterChild = null;
+    }
+    opencodeRouterActualVersion = await verifyOpenCodeRouterVersion(opencodeRouterBinary);
+    opencodeRouterChild = await startOpenCodeRouter({
+      bin: opencodeRouterBinary.bin,
+      workspace: resolvedWorkspace,
+      opencodeUrl: opencodeConnectUrl,
+      opencodeUsername,
+      opencodePassword,
+      opencodeRouterHealthPort,
+      opencodeRouterDataDir: opencodeRouterDataDir ?? undefined,
+      logger,
+      runId,
+      logFormat,
+    });
+    children.push({ name: "opencode-router", child: opencodeRouterChild });
+    opencodeRouterChild.on("exit", (code, signal) => handleExit("opencode-router", code, signal));
+    opencodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
+    await waitForOpenCodeRouterHealthy(`http://127.0.0.1:${opencodeRouterHealthPort}`, 10_000, 400);
+  };
+  const performRuntimeUpgrade = async (services: RuntimeServiceName[]) => {
+    const opId = randomUUID();
+    runtimeUpgradeState.status = "running";
+    runtimeUpgradeState.startedAt = Date.now();
+    runtimeUpgradeState.finishedAt = null;
+    runtimeUpgradeState.error = null;
+    runtimeUpgradeState.operationId = opId;
+    runtimeUpgradeState.services = services;
+    try {
+      if (sandboxMode !== "none") {
+        throw new Error("Runtime upgrade is only supported for non-sandbox workers");
+      }
+      if (services.includes("openwork-server") && openworkServerBinary.source === "external" && openworkServerBinary.expectedVersion) {
+        await installGlobalPackages([`openwork-server@${openworkServerBinary.expectedVersion}`]);
+      }
+      if (services.includes("opencode-router") && opencodeRouterBinary?.source === "external" && opencodeRouterBinary.expectedVersion) {
+        await installGlobalPackages([`opencode-router@${opencodeRouterBinary.expectedVersion}`]);
+      }
+      if (services.includes("openwork-server")) {
+        openworkServerBinary = await resolveOpenworkServerBin({
+          explicit: explicitOpenworkServerBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: sidecarSource,
+        });
+      }
+      if (services.includes("opencode")) {
+        opencodeBinary = await resolveOpencodeBin({
+          explicit: explicitOpencodeBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: opencodeSource,
+        });
+      }
+      if (services.includes("opencode-router") && opencodeRouterEnabled) {
+        opencodeRouterBinary = await resolveOpenCodeRouterBin({
+          explicit: explicitOpenCodeRouterBin,
+          manifest,
+          allowExternal,
+          sidecar,
+          source: sidecarSource,
+        });
+      }
+      if (services.includes("opencode")) {
+        await restartOpencode();
+      }
+      if (services.includes("opencode-router")) {
+        await restartOpenCodeRouter();
+      }
+      if (services.includes("openwork-server") || services.includes("opencode")) {
+        await restartOpenworkServer();
+      }
+      runtimeUpgradeState.status = "idle";
+      runtimeUpgradeState.finishedAt = Date.now();
+    } catch (error) {
+      runtimeUpgradeState.status = "failed";
+      runtimeUpgradeState.finishedAt = Date.now();
+      runtimeUpgradeState.error = error instanceof Error ? error.message : String(error);
+      logger.error("Runtime upgrade failed", { error: runtimeUpgradeState.error, services }, "openwork-orchestrator");
+    }
+  };
   const shutdown = async () => {
     if (shuttingDown) return;
     shuttingDown = true;
@@ -5309,6 +5604,10 @@ async function runStart(args: ParsedArgs) {
     if (opencodeRouterHealthInterval) {
       clearInterval(opencodeRouterHealthInterval);
       opencodeRouterHealthInterval = null;
+    }
+    if (controlServer) {
+      await new Promise<void>((resolve) => controlServer?.close(() => resolve()));
+      controlServer = null;
     }
     logger.info(
       "Shutting down",
@@ -5510,6 +5809,10 @@ async function runStart(args: ParsedArgs) {
 
   const handleExit = (name: string, code: number | null, signal: NodeJS.Signals | null) => {
     if (shuttingDown || detached) return;
+    if (restartingServices.has(name)) {
+      restartingServices.delete(name);
+      return;
+    }
     const reason = code !== null ? `code ${code}` : signal ? `signal ${signal}` : "unknown";
     const services =
       name === "sandbox"
@@ -5530,10 +5833,59 @@ async function runStart(args: ParsedArgs) {
   };
 
   try {
-    const opencodeActualVersion =
-      sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
-    let openworkActualVersion: string | undefined;
+    opencodeActualVersion = sandboxMode !== "none" ? opencodeBinary.expectedVersion : await verifyOpencodeVersion(opencodeBinary);
     let opencodeClient: ReturnType<typeof createOpencodeClient>;
+
+    controlServer = createHttpServer(async (req, res) => {
+      const method = req.method ?? "GET";
+      const url = new URL(req.url ?? "/", controlBaseUrl);
+      res.setHeader("Content-Type", "application/json");
+      const authHeader = req.headers.authorization ?? "";
+      if (authHeader !== `Bearer ${controlToken}`) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/runtime/versions") {
+        res.statusCode = 200;
+        res.end(JSON.stringify(getRuntimeSnapshot()));
+        return;
+      }
+      if (method === "POST" && url.pathname === "/runtime/upgrade") {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        let body: { services?: RuntimeServiceName[] } | null = null;
+        try {
+          body = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString("utf8")) as { services?: RuntimeServiceName[] }) : null;
+        } catch {
+          body = null;
+        }
+        const requested = Array.isArray(body?.services) ? body.services : ["openwork-server", "opencode"];
+        const services = Array.from(new Set(requested.filter((item): item is RuntimeServiceName => item === "openwork-server" || item === "opencode" || item === "opencode-router")));
+        if (!services.length) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ ok: false, error: "invalid_services" }));
+          return;
+        }
+        if (runtimeUpgradeState.status === "running") {
+          res.statusCode = 409;
+          res.end(JSON.stringify({ ok: false, error: "upgrade_in_progress", upgrade: runtimeUpgradeState }));
+          return;
+        }
+        res.statusCode = 202;
+        res.end(JSON.stringify({ ok: true, started: true, services, upgrade: { ...runtimeUpgradeState, status: "running" } }));
+        void performRuntimeUpgrade(services);
+        return;
+      }
+      res.statusCode = 404;
+      res.end(JSON.stringify({ ok: false, error: "not_found" }));
+    });
+    await new Promise<void>((resolve, reject) => {
+      controlServer?.once("error", reject);
+      controlServer?.listen(controlPort, "127.0.0.1", () => resolve());
+    });
 
     if (sandboxMode !== "none") {
       const containerName = `openwork-orchestrator-${runId.replace(/[^a-zA-Z0-9_.-]+/g, "-").slice(0, 24)}`;
@@ -5688,7 +6040,7 @@ async function runStart(args: ParsedArgs) {
       }
       logVerbose(`openwork-server version: ${openworkActualVersion ?? "unknown"}`);
     } else {
-      const opencodeChild = await startOpencode({
+      const startedOpencodeChild = await startOpencode({
         bin: opencodeBinary.bin,
         workspace: resolvedWorkspace,
         stateLayout: opencodeStateLayout,
@@ -5703,15 +6055,16 @@ async function runStart(args: ParsedArgs) {
         logFormat,
         opencodeRouterHealthPort: opencodeRouterEnabled ? opencodeRouterHealthPort : undefined,
       });
-      children.push({ name: "opencode", child: opencodeChild });
+      opencodeChild = startedOpencodeChild;
+      children.push({ name: "opencode", child: startedOpencodeChild });
       tui?.updateService("opencode", {
         status: "running",
-        pid: opencodeChild.pid ?? undefined,
+        pid: startedOpencodeChild.pid ?? undefined,
         port: opencodePort,
       });
-      logger.info("Process spawned", { pid: opencodeChild.pid ?? 0 }, "opencode");
-      opencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
-      opencodeChild.on("error", (error) => handleSpawnError("opencode", error));
+      logger.info("Process spawned", { pid: startedOpencodeChild.pid ?? 0 }, "opencode");
+      startedOpencodeChild.on("exit", (code, signal) => handleExit("opencode", code, signal));
+      startedOpencodeChild.on("error", (error) => handleSpawnError("opencode", error));
 
       const authHeaders: Record<string, string> = {};
       if (opencodeUsername && opencodePassword) {
@@ -5728,7 +6081,6 @@ async function runStart(args: ParsedArgs) {
       logger.info("Healthy", { url: opencodeBaseUrl }, "opencode");
       tui?.updateService("opencode", { status: "healthy" });
 
-      let opencodeRouterChild: ChildProcess | null = null;
       let opencodeRouterReady = false;
       if (opencodeRouterEnabled) {
         if (!opencodeRouterBinary) {
@@ -5738,7 +6090,7 @@ async function runStart(args: ParsedArgs) {
         logVerbose(`opencodeRouter version: ${opencodeRouterActualVersion ?? "unknown"}`);
 
         try {
-          opencodeRouterChild = await startOpenCodeRouter({
+          const startedOpenCodeRouterChild = await startOpenCodeRouter({
             bin: opencodeRouterBinary.bin,
             workspace: resolvedWorkspace,
             opencodeUrl: opencodeConnectUrl,
@@ -5750,14 +6102,19 @@ async function runStart(args: ParsedArgs) {
             runId,
             logFormat,
           });
-          children.push({ name: "opencode-router", child: opencodeRouterChild });
+          opencodeRouterChild = startedOpenCodeRouterChild;
+          children.push({ name: "opencode-router", child: startedOpenCodeRouterChild });
           tui?.updateService("router", {
             status: "running",
-            pid: opencodeRouterChild.pid ?? undefined,
+            pid: startedOpenCodeRouterChild.pid ?? undefined,
             port: opencodeRouterHealthPort,
           });
-          logger.info("Process spawned", { pid: opencodeRouterChild.pid ?? 0 }, "opencode-router");
-          opencodeRouterChild.on("exit", (code, signal) => {
+          logger.info("Process spawned", { pid: startedOpenCodeRouterChild.pid ?? 0 }, "opencode-router");
+          startedOpenCodeRouterChild.on("exit", (code, signal) => {
+            if (restartingServices.has("opencode-router")) {
+              restartingServices.delete("opencode-router");
+              return;
+            }
             if (opencodeRouterRequired) {
               handleExit("opencode-router", code, signal);
               return;
@@ -5766,7 +6123,7 @@ async function runStart(args: ParsedArgs) {
             tui?.updateService("router", { status: "stopped", message: reason });
             logger.warn("Process exited, continuing without opencodeRouter", { reason, code, signal }, "opencode-router");
           });
-          opencodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
+          startedOpenCodeRouterChild.on("error", (error) => handleSpawnError("opencode-router", error));
 
           const healthBaseUrl = `http://127.0.0.1:${opencodeRouterHealthPort}`;
           logger.info("Waiting for health", { url: healthBaseUrl }, "opencode-router");
@@ -5794,7 +6151,7 @@ async function runStart(args: ParsedArgs) {
         }
       }
 
-      const openworkChild = await startOpenworkServer({
+      const startedOpenworkChild = await startOpenworkServer({
         bin: openworkServerBinary.bin,
         host: openworkHost,
         port: openworkPort,
@@ -5814,16 +6171,19 @@ async function runStart(args: ParsedArgs) {
         logger,
         runId,
         logFormat,
+        controlBaseUrl,
+        controlToken,
       });
-      children.push({ name: "openwork-server", child: openworkChild });
+      openworkChild = startedOpenworkChild;
+      children.push({ name: "openwork-server", child: startedOpenworkChild });
       tui?.updateService("openwork-server", {
         status: "running",
-        pid: openworkChild.pid ?? undefined,
+        pid: startedOpenworkChild.pid ?? undefined,
         port: openworkPort,
       });
-      logger.info("Process spawned", { pid: openworkChild.pid ?? 0 }, "openwork-server");
-      openworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
-      openworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
+      logger.info("Process spawned", { pid: startedOpenworkChild.pid ?? 0 }, "openwork-server");
+      startedOpenworkChild.on("exit", (code, signal) => handleExit("openwork-server", code, signal));
+      startedOpenworkChild.on("error", (error) => handleSpawnError("openwork-server", error));
 
       logger.info("Waiting for health", { url: openworkBaseUrl }, "openwork-server");
       await waitForHealthy(openworkBaseUrl);

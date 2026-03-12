@@ -95,6 +95,27 @@ type WorkerListItem = {
   createdAt: string | null;
 };
 
+type RuntimeServiceName = "openwork-server" | "opencode" | "opencode-router";
+
+type WorkerRuntimeService = {
+  name: RuntimeServiceName;
+  enabled: boolean;
+  running: boolean;
+  targetVersion: string | null;
+  actualVersion: string | null;
+  upgradeAvailable: boolean;
+};
+
+type WorkerRuntimeSnapshot = {
+  services: WorkerRuntimeService[];
+  upgrade: {
+    status: "idle" | "running" | "failed";
+    startedAt: string | null;
+    finishedAt: string | null;
+    error: string | null;
+  };
+};
+
 type EventLevel = "info" | "success" | "warning" | "error";
 
 type LaunchEvent = {
@@ -411,6 +432,55 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   }
 
   return { clientToken, hostToken, openworkUrl, workspaceId };
+}
+
+function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
+  if (!isRecord(payload) || !Array.isArray(payload.services)) {
+    return null;
+  }
+
+  const services = payload.services
+    .map((value) => {
+      if (!isRecord(value) || typeof value.name !== "string") {
+        return null;
+      }
+
+      return {
+        name: value.name as RuntimeServiceName,
+        enabled: value.enabled === true,
+        running: value.running === true,
+        targetVersion: typeof value.targetVersion === "string" ? value.targetVersion : null,
+        actualVersion: typeof value.actualVersion === "string" ? value.actualVersion : null,
+        upgradeAvailable: value.upgradeAvailable === true
+      };
+    })
+    .filter((item): item is WorkerRuntimeService => item !== null);
+
+  const upgrade = isRecord(payload.upgrade) ? payload.upgrade : null;
+
+  return {
+    services,
+    upgrade: {
+      status:
+        upgrade?.status === "running" || upgrade?.status === "failed" || upgrade?.status === "idle"
+          ? upgrade.status
+          : "idle",
+      startedAt: typeof upgrade?.startedAt === "number" ? new Date(upgrade.startedAt).toISOString() : null,
+      finishedAt: typeof upgrade?.finishedAt === "number" ? new Date(upgrade.finishedAt).toISOString() : null,
+      error: typeof upgrade?.error === "string" ? upgrade.error : null
+    }
+  };
+}
+
+function getRuntimeServiceLabel(name: RuntimeServiceName): string {
+  switch (name) {
+    case "openwork-server":
+      return "OpenWork server";
+    case "opencode":
+      return "OpenCode";
+    case "opencode-router":
+      return "OpenCode Router";
+  }
 }
 
 function getBillingPrice(value: unknown): BillingPrice | null {
@@ -955,6 +1025,10 @@ export function CloudControlPanel() {
   const [showLaunchForm, setShowLaunchForm] = useState(false);
   const [openAccordion, setOpenAccordion] = useState<"connect" | "actions" | "advanced" | null>(null);
   const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
+  const [runtimeSnapshot, setRuntimeSnapshot] = useState<WorkerRuntimeSnapshot | null>(null);
+  const [runtimeBusy, setRuntimeBusy] = useState(false);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -1005,6 +1079,7 @@ export function CloudControlPanel() {
   const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
+  const runtimeUpgradeCount = runtimeSnapshot?.services.filter((item) => item.upgradeAvailable).length ?? 0;
 
   function appendEvent(level: EventLevel, label: string, detail: string) {
     setEvents((current) => {
@@ -1119,6 +1194,105 @@ export function CloudControlPanel() {
       setWorkersError(message);
     } finally {
       setWorkersBusy(false);
+    }
+  }
+
+  async function refreshRuntime(workerId?: string, options: { quiet?: boolean } = {}) {
+    const targetWorkerId = workerId ?? activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId) {
+      setRuntimeSnapshot(null);
+      if (!options.quiet) {
+        setRuntimeError("Select a worker to inspect runtime versions.");
+      }
+      return null;
+    }
+
+    setRuntimeBusy(true);
+    if (!options.quiet) {
+      setRuntimeError(null);
+    }
+
+    try {
+      const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(targetWorkerId)}/runtime`, {
+        method: "GET",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      }, 12000);
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Runtime check failed with ${response.status}.`);
+        if (!options.quiet) {
+          setRuntimeError(message);
+        }
+        return null;
+      }
+
+      const snapshot = getWorkerRuntimeSnapshot(payload);
+      if (!snapshot) {
+        if (!options.quiet) {
+          setRuntimeError("Runtime details were missing from the worker response.");
+        }
+        return null;
+      }
+
+      setRuntimeSnapshot(snapshot);
+      return snapshot;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      if (!options.quiet) {
+        setRuntimeError(message);
+      }
+      return null;
+    } finally {
+      setRuntimeBusy(false);
+    }
+  }
+
+  async function handleRuntimeUpgrade() {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId || runtimeUpgradeBusy) {
+      return;
+    }
+
+    setRuntimeUpgradeBusy(true);
+    setRuntimeError(null);
+
+    try {
+      const { response, payload } = await requestJson(`/v1/workers/${encodeURIComponent(targetWorkerId)}/runtime/upgrade`, {
+        method: "POST",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+        body: JSON.stringify({ services: ["openwork-server", "opencode"] })
+      }, 12000);
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, `Runtime upgrade failed with ${response.status}.`);
+        setRuntimeError(message);
+        appendEvent("error", "Runtime upgrade failed", message);
+        return;
+      }
+
+      appendEvent("info", "Runtime upgrade started", activeWorker?.workerName ?? selectedWorker?.workerName ?? targetWorkerId);
+      setRuntimeSnapshot((current) => current
+        ? {
+            ...current,
+            upgrade: {
+              ...current.upgrade,
+              status: "running",
+              startedAt: new Date().toISOString(),
+              finishedAt: null,
+              error: null
+            }
+          }
+        : current);
+
+      window.setTimeout(() => {
+        void refreshRuntime(targetWorkerId, { quiet: true });
+      }, 4000);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setRuntimeError(message);
+      appendEvent("error", "Runtime upgrade failed", message);
+    } finally {
+      setRuntimeUpgradeBusy(false);
     }
   }
 
@@ -1316,6 +1490,30 @@ export function CloudControlPanel() {
 
     void refreshWorkers();
   }, [user?.id, authToken]);
+
+  useEffect(() => {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!user || !targetWorkerId) {
+      setRuntimeSnapshot(null);
+      setRuntimeError(null);
+      return;
+    }
+
+    void refreshRuntime(targetWorkerId, { quiet: true });
+  }, [user?.id, authToken, activeWorker?.workerId, selectedWorker?.workerId]);
+
+  useEffect(() => {
+    const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
+    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running") {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      void refreshRuntime(targetWorkerId, { quiet: true });
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);
 
   useEffect(() => {
     if (!user) {
@@ -2436,7 +2634,7 @@ export function CloudControlPanel() {
                           </h2>
                           <p className="mb-6 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
 
-                          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                             <div className="rounded-[20px] border border-slate-100 bg-white p-4">
                               <p className="text-sm font-medium text-slate-500">Status</p>
                               <p className="mt-2 text-2xl font-bold text-slate-900">{selectedStatusMeta.label}</p>
@@ -2445,6 +2643,79 @@ export function CloudControlPanel() {
                               <p className="text-sm font-medium text-slate-500">Connection</p>
                               <p className="mt-2 text-2xl font-bold text-slate-900">{openworkDeepLink ? "Ready" : "Preparing"}</p>
                             </div>
+                            <div className="rounded-[20px] border border-slate-100 bg-white p-4">
+                              <p className="text-sm font-medium text-slate-500">Runtime</p>
+                              <p className="mt-2 text-2xl font-bold text-slate-900">
+                                {runtimeBusy ? "Checking" : runtimeUpgradeCount > 0 ? `${runtimeUpgradeCount} update${runtimeUpgradeCount === 1 ? "" : "s"}` : "Current"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
+                          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                            <div>
+                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Worker runtime</h3>
+                              <p className="text-sm text-slate-500">Compare installed runtime versions with the versions this worker should be running.</p>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <button
+                                type="button"
+                                className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void refreshRuntime(selectedWorker.workerId)}
+                                disabled={runtimeBusy || runtimeUpgradeBusy}
+                              >
+                                {runtimeBusy ? "Checking..." : "Refresh runtime"}
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-[12px] bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-50"
+                                onClick={() => void handleRuntimeUpgrade()}
+                                disabled={runtimeUpgradeBusy || runtimeBusy || selectedStatusMeta.bucket !== "ready"}
+                              >
+                                {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
+                              </button>
+                            </div>
+                          </div>
+
+                          {runtimeError ? (
+                            <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div>
+                          ) : null}
+
+                          {runtimeSnapshot?.upgrade.status === "failed" && runtimeSnapshot.upgrade.error ? (
+                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                              Last upgrade failed: {runtimeSnapshot.upgrade.error}
+                            </div>
+                          ) : null}
+
+                          {runtimeUpgradeCount > 0 ? (
+                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                              This worker has {runtimeUpgradeCount} runtime component{runtimeUpgradeCount === 1 ? "" : "s"} behind the target version.
+                            </div>
+                          ) : null}
+
+                          <div className="space-y-3">
+                            {(runtimeSnapshot?.services ?? []).map((service) => (
+                              <div key={service.name} className="flex flex-col gap-3 rounded-[18px] border border-slate-100 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                                <div>
+                                  <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
+                                  <p className="text-xs text-slate-500">
+                                    Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
+                                  <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
+                                  </span>
+                                  <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
+                                    {service.upgradeAvailable ? "Upgrade available" : "Current"}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            {!runtimeSnapshot && !runtimeBusy ? (
+                              <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
+                            ) : null}
                           </div>
                         </div>
 
