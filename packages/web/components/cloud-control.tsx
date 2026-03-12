@@ -2375,9 +2375,8 @@ export function CloudControlPanel() {
               <p className="ow-subtitle">
                 {authMode === "sign-up" ? (
                   <>
-                    Create an account to launch{" "}
-                    <br className="ow-subtitle-break" />
-                    and manage cloud workers.
+                    <span className="ow-subtitle-line">Create an account to launch</span>
+                    <span className="ow-subtitle-line">and manage cloud workers.</span>
                   </>
                 ) : (
                   getAuthInfoForMode("sign-in")

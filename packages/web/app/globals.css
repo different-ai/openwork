@@ -223,8 +223,8 @@ body {
   line-height: 1.45;
 }
 
-.ow-subtitle-break {
-  display: none;
+.ow-subtitle-line {
+  display: block;
 }
 
 .ow-field-block {
@@ -1069,12 +1069,6 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 0.35rem;
-  }
-}
-
-@media (min-width: 641px) {
-  .ow-subtitle-break {
-    display: block;
   }
 }
 
