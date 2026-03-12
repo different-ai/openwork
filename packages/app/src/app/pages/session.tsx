@@ -264,6 +264,7 @@ type StarterTemplate = {
   name: string;
   description: string;
   body: string;
+  seedFiles?: Array<{ path: string; content: string }>;
 };
 
 const buildStarterTemplate = (
@@ -275,6 +276,7 @@ const buildStarterTemplate = (
     name: parsed?.data?.name?.trim() || defaults.name,
     description: parsed?.data?.description?.trim() || defaults.description,
     body: (parsed?.body ?? source).trim() || defaults.body,
+    seedFiles: Array.isArray(parsed?.data?.seedFiles) ? parsed.data.seedFiles : undefined,
   };
 };
 
@@ -2964,6 +2966,21 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const handleStarterQuickstart = async (template: StarterTemplate) => {
+    if (template.seedFiles && template.seedFiles.length > 0) {
+      try {
+        const client = props.openworkServerClient;
+        const workspaceId = props.openworkServerWorkspaceId?.trim();
+        if (client && workspaceId && props.openworkServerStatus === "connected") {
+          for (const sf of template.seedFiles) {
+            const file = new File([sf.content], sf.path, { type: "text/plain" });
+            await client.uploadInbox(workspaceId, file, { path: sf.path });
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to seed template files", err);
+      }
+    }
+
     const name = template.name;
     const slashCommand = `/${name}`;
     try {
@@ -3676,11 +3693,11 @@ export default function SessionView(props: SessionViewProps) {
             </Show>
             <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState()}>
               <div class="py-14 px-4 md:px-6">
-                <div class="mx-auto max-w-4xl rounded-[28px] border border-dls-border bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(245,247,250,0.92))] p-6 text-center shadow-sm md:p-8">
-                  <div class="inline-flex items-center rounded-full border border-dls-border bg-dls-hover px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-dls-secondary">
+                <div class="mx-auto max-w-4xl text-center">
+                  <div class="inline-flex items-center rounded-full border border-dls-border bg-dls-hover px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-dls-secondary shadow-sm">
                     Starter tasks
                   </div>
-                  <div class="mx-auto mt-4 flex h-16 w-16 items-center justify-center rounded-3xl border border-dls-border bg-dls-hover text-dls-secondary">
+                  <div class="mx-auto mt-4 flex h-14 w-14 items-center justify-center rounded-[20px] border border-dls-border bg-dls-hover text-dls-secondary shadow-sm">
                     <Zap size={22} />
                   </div>
                   <div class="mt-5 space-y-2">
@@ -3691,10 +3708,10 @@ export default function SessionView(props: SessionViewProps) {
                     </p>
                   </div>
 
-                  <div class="mt-8 grid gap-3 text-left md:grid-cols-3">
+                  <div class="mt-10 grid gap-4 text-left md:grid-cols-3">
                     <button
                       type="button"
-                      class="group rounded-3xl border border-dls-border bg-dls-hover/80 p-4 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-dls-active"
+                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(SORT_INBOX_CSV_TEMPLATE);
                       }}
@@ -3715,7 +3732,7 @@ export default function SessionView(props: SessionViewProps) {
 
                     <button
                       type="button"
-                      class="group rounded-3xl border border-dls-border bg-dls-hover/80 p-4 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-dls-active"
+                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(BUILD_THREE_PENGUINS_SITE_TEMPLATE);
                       }}
@@ -3736,7 +3753,7 @@ export default function SessionView(props: SessionViewProps) {
 
                     <button
                       type="button"
-                      class="group rounded-3xl border border-dls-border bg-dls-hover/80 p-4 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:bg-dls-active"
+                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(SCRAPE_OPENWORK_COM_TEMPLATE);
                       }}

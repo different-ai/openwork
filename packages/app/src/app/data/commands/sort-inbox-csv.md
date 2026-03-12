@@ -1,14 +1,14 @@
 ---
 name: sort-inbox-csv
 description: Create or sort a CSV file in the worker inbox
+seedFiles:
+  - path: "contacts.csv"
+    content: |
+      Name,Email,Role
+      Zack,zack@example.com,Admin
+      Alice,alice@example.com,User
+      Bob,bob@example.com,Editor
+      Charlie,charlie@example.com,User
 ---
 
-Open the worker inbox at `.opencode/openwork/inbox/` inside this workspace.
-
-Goal: open a CSV file and reorder its rows in alphabetical order.
-
-Requirements:
-1. If there is no CSV file in `.opencode/openwork/inbox/`, create a small sample CSV there first.
-2. Open the CSV file from the inbox, sort the rows alphabetically by the first data column unless the file clearly suggests a better key, and save the updated CSV back into the inbox.
-3. Keep the result easy to inspect and tell me exactly which file you used.
-4. Finish by showing the final row order and the saved inbox path.
+Open the `contacts.csv` file in `.opencode/openwork/inbox`, sort it alphabetically by the first column, and save the result.
