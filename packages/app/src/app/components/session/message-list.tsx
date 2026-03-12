@@ -225,6 +225,7 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
 
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
+  const [expandedSyntheticErrorIds, setExpandedSyntheticErrorIds] = createSignal<Set<string>>(new Set());
   let previousMessagePartCountById = new Map<string, number>();
   let copyTimeout: number | undefined;
   const isAttachmentPart = (part: Part) => {
@@ -250,6 +251,15 @@ export default function MessageList(props: MessageListProps) {
       window.clearTimeout(copyTimeout);
     }
   });
+
+  const toggleSyntheticErrorExpanded = (messageId: string) => {
+    setExpandedSyntheticErrorIds((current) => {
+      const next = new Set(current);
+      if (next.has(messageId)) next.delete(messageId);
+      else next.add(messageId);
+      return next;
+    });
+  };
 
   const handleCopy = async (text: string, id: string) => {
     try {
@@ -965,6 +975,7 @@ export default function MessageList(props: MessageListProps) {
               messageText.split(/\r?\n/, 1)[0] ||
               "Request failed";
             const fullText = syntheticInfo.syntheticErrorFullText?.trim() || messageText;
+            const expanded = () => expandedSyntheticErrorIds().has(block.messageId);
 
             return (
               <div
@@ -974,21 +985,28 @@ export default function MessageList(props: MessageListProps) {
                 style={blockPerfStyle(blockIndex)}
               >
                 <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
-                  <details class="max-w-full rounded-[18px] border border-red-7/20 bg-red-1/35 text-red-12 shadow-sm [&_summary::-webkit-details-marker]:hidden">
-                    <summary
-                      class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] leading-5"
+                  <div class="max-w-full rounded-[18px] border border-red-7/20 bg-red-1/35 text-red-12 shadow-sm">
+                    <button
+                      type="button"
+                      class="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] leading-5"
+                      aria-expanded={expanded()}
+                      onClick={() => toggleSyntheticErrorExpanded(block.messageId)}
                       role="alert"
                     >
                       <CircleAlert size={14} class="mt-0.5 shrink-0" />
                       <div class="min-w-0 flex-1 truncate">{summaryText}</div>
-                      <ChevronDown size={14} class="shrink-0 opacity-70 transition-transform group-open:rotate-180" />
-                    </summary>
-                    <div class="border-t border-red-7/15 px-3 pb-3 pt-2">
-                      <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-red-12/95">
-                        {fullText}
-                      </pre>
-                    </div>
-                  </details>
+                      <Show when={expanded()} fallback={<ChevronRight size={14} class="shrink-0 opacity-70" />}>
+                        <ChevronDown size={14} class="shrink-0 opacity-70" />
+                      </Show>
+                    </button>
+                    <Show when={expanded()}>
+                      <div class="border-t border-red-7/15 px-3 pb-3 pt-2">
+                        <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-red-12/95">
+                          {fullText}
+                        </pre>
+                      </div>
+                    </Show>
+                  </div>
                 </div>
               </div>
             );
