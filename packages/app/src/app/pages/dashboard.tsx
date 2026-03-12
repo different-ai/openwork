@@ -31,8 +31,6 @@ import {
 } from "../lib/openwork-server";
 import type {
   OpenworkAuditEntry,
-  OpenworkSoulHeartbeatEntry,
-  OpenworkSoulStatus,
   OpenworkServerClient,
   OpenworkServerCapabilities,
   OpenworkServerDiagnostics,
@@ -46,7 +44,6 @@ import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "
 import Button from "../components/button";
 import ExtensionsView from "./extensions";
 import ScheduledTasksView from "./scheduled";
-import SoulView from "./soul";
 import ConfigView from "./config";
 import SettingsView from "./settings";
 import SkillsView from "./skills";
@@ -61,7 +58,6 @@ import {
   ChevronRight,
   Circle,
   History,
-  HeartPulse,
   Loader2,
   MessageCircle,
   MoreHorizontal,
@@ -164,14 +160,6 @@ export type DashboardViewProps = {
   scheduledJobsUpdatedAt: number | null;
   refreshScheduledJobs: (options?: { force?: boolean }) => void;
   deleteScheduledJob: (name: string) => Promise<void> | void;
-  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
-  activeSoulStatus: OpenworkSoulStatus | null;
-  activeSoulHeartbeats: OpenworkSoulHeartbeatEntry[];
-  soulStatusBusy: boolean;
-  soulHeartbeatsBusy: boolean;
-  soulError: string | null;
-  refreshSoulData: (options?: { force?: boolean }) => void;
-  runSoulPrompt: (prompt: string) => void;
   activeWorkspaceRoot: string;
   isRemoteWorkspace: boolean;
   refreshSkills: (options?: { force?: boolean }) => void;
@@ -348,8 +336,6 @@ export default function DashboardView(props: DashboardViewProps) {
     switch (props.tab) {
       case "scheduled":
         return "Automations";
-      case "soul":
-        return "Soul";
       case "skills":
         return "Skills";
       case "plugins":
@@ -486,9 +472,6 @@ export default function DashboardView(props: DashboardViewProps) {
         if (currentTab === "scheduled" && !cancelled) {
           await props.refreshScheduledJobs();
         }
-        if (currentTab === "soul" && !cancelled) {
-          await props.refreshSoulData();
-        }
       } catch {
         // Ignore errors during navigation
       } finally {
@@ -505,13 +488,6 @@ export default function DashboardView(props: DashboardViewProps) {
       setRefreshInProgress(false);
     });
   });
-
-  const soulModeEnabled = createMemo(() => {
-    const status = props.soulStatusByWorkspaceId[props.activeWorkspaceId];
-    return Boolean(status?.enabled ?? props.activeSoulStatus?.enabled);
-  });
-
-  const soulNavIconClass = () => (soulModeEnabled() ? "soul-nav-icon-active" : "");
 
   const navItem = (t: DashboardTab, label: string, icon: any) => {
     const active = () => props.tab === t || (t === "mcp" && props.tab === "plugins");
@@ -538,17 +514,6 @@ export default function DashboardView(props: DashboardViewProps) {
 
   const openConfig = () => {
     props.setTab(props.developerMode ? "config" : "identities");
-  };
-
-  const openSoulForWorkspace = (workspaceId?: string) => {
-    const id = (workspaceId ?? props.activeWorkspaceId).trim();
-    if (!id) return;
-    void (async () => {
-      if (id !== props.activeWorkspaceId) {
-        await Promise.resolve(props.activateWorkspace(id));
-      }
-      props.setTab("soul");
-    })();
   };
 
   const revealWorkspaceInFinder = async (workspaceId: string) => {
@@ -1088,13 +1053,11 @@ export default function DashboardView(props: DashboardViewProps) {
             workspaceConnectionStateById={props.workspaceConnectionStateById}
             newTaskDisabled={props.newTaskDisabled}
             importingWorkspaceConfig={props.importingWorkspaceConfig}
-            soulStatusByWorkspaceId={props.soulStatusByWorkspaceId}
             onActivateWorkspace={props.activateWorkspace}
             onOpenSession={openSessionFromList}
             onCreateTaskInWorkspace={createTaskInWorkspace}
             onOpenRenameWorkspace={props.openRenameWorkspace}
             onShareWorkspace={(workspaceId) => setShareWorkspaceId(workspaceId)}
-            onOpenSoul={openSoulForWorkspace}
             onRevealWorkspace={revealWorkspaceInFinder}
             onRecoverWorkspace={props.recoverWorkspace}
             onTestWorkspaceConnection={props.testWorkspaceConnection}
@@ -1142,12 +1105,6 @@ export default function DashboardView(props: DashboardViewProps) {
             <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
               {props.activeWorkspaceDisplay.name}
             </div>
-            <Show when={props.activeSoulStatus?.enabled}>
-              <div class="inline-flex items-center gap-1 rounded-full border border-rose-7/40 bg-rose-3/40 px-2 py-1 text-[11px] text-rose-11">
-                <HeartPulse size={11} />
-                Soul on
-              </div>
-            </Show>
             <h1 class="text-lg font-medium">{title()}</h1>
             <Show when={props.developerMode}>
               <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
@@ -1182,20 +1139,6 @@ export default function DashboardView(props: DashboardViewProps) {
                 reloadWorkspaceEngine={props.reloadWorkspaceEngine}
                 reloadBusy={props.reloadBusy}
                 canReloadWorkspace={props.canReloadWorkspace}
-              />
-            </Match>
-            <Match when={props.tab === "soul"}>
-              <SoulView
-                workspaceName={props.activeWorkspaceDisplay.name}
-                workspaceRoot={props.activeWorkspaceRoot}
-                status={props.activeSoulStatus}
-                heartbeats={props.activeSoulHeartbeats}
-                loading={props.soulStatusBusy}
-                loadingHeartbeats={props.soulHeartbeatsBusy}
-                error={props.soulError}
-                newTaskDisabled={props.newTaskDisabled}
-                refresh={props.refreshSoulData}
-                runSoulPrompt={props.runSoulPrompt}
               />
             </Match>
             <Match when={props.tab === "skills"}>
@@ -1498,7 +1441,7 @@ export default function DashboardView(props: DashboardViewProps) {
           mcpStatuses={props.mcpStatuses}
         />
         <nav class="md:hidden border-t border-dls-border bg-dls-surface">
-          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-6" : "grid-cols-5"}`}>
+          <div class={`mx-auto max-w-5xl px-4 py-3 grid gap-2 ${props.developerMode ? "grid-cols-5" : "grid-cols-4"}`}>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
                 props.tab === "scheduled" ? "text-gray-12" : "text-gray-10"
@@ -1507,15 +1450,6 @@ export default function DashboardView(props: DashboardViewProps) {
             >
               <History size={18} />
               Automations
-            </button>
-            <button
-              class={`flex flex-col items-center gap-1 text-xs ${
-                props.tab === "soul" ? "text-gray-12" : "text-gray-10"
-              }`}
-              onClick={() => props.setTab("soul")}
-            >
-              <HeartPulse size={18} class={soulNavIconClass()} />
-              Soul
             </button>
             <button
               class={`flex flex-col items-center gap-1 text-xs ${
@@ -1562,7 +1496,6 @@ export default function DashboardView(props: DashboardViewProps) {
       <aside class="w-56 hidden md:flex flex-col bg-dls-sidebar border-l border-dls-border p-4">
         <div class="space-y-1 pt-2">
           {navItem("scheduled", "Automations", <History size={18} />)}
-          {navItem("soul", "Soul", <HeartPulse size={18} class={soulNavIconClass()} />)}
           {navItem("skills", "Skills", <Zap size={18} />)}
           {navItem("mcp", "Extensions", <Box size={18} />)}
           {navItem("identities", "Messaging", <MessageCircle size={18} />)}
