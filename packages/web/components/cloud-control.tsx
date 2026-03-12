@@ -1784,13 +1784,17 @@ export function CloudControlPanel() {
   }, [user, checkoutUrl]);
 
   useEffect(() => {
+    if (step !== 2) {
+      return;
+    }
+
     if (workers.length > 0) {
       return;
     }
 
     setMobileWorkersExpanded(false);
-    setShowLaunchForm(false);
-  }, [workers.length]);
+    setShowLaunchForm(pendingRestoredWorkerId === null);
+  }, [pendingRestoredWorkerId, step, workers.length]);
 
   useEffect(() => {
     if (!user || !worker) {
