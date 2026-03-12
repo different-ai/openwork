@@ -50,7 +50,8 @@ type StoreState = {
 
 type SessionErrorTurn = {
   id: string;
-  text: string;
+  summary: string;
+  fullText: string;
   afterMessageID: string | null;
   time: number;
 };
@@ -107,9 +108,14 @@ const createSyntheticSessionErrorMessage = (
     providerID: "",
     mode: "",
     agent: "",
+    syntheticErrorSummary: errorTurn.summary,
+    syntheticErrorFullText: errorTurn.fullText,
     path: { cwd: "", root: "" },
     cost: 0,
     tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  } as PlaceholderAssistantMessage & {
+    syntheticErrorSummary: string;
+    syntheticErrorFullText: string;
   },
   parts: [
     {
@@ -117,7 +123,7 @@ const createSyntheticSessionErrorMessage = (
       sessionID,
       messageID: errorTurn.id,
       type: "text",
-      text: errorTurn.text,
+      text: errorTurn.fullText,
     } as Part,
   ],
 });
@@ -522,28 +528,19 @@ export function createSessionStore(options: {
       .join(" ");
   };
 
-  const combineErrorDetail = (primary: string | null, secondary: string | null) => {
-    if (primary && secondary) {
-      if (primary === secondary) return primary;
-      if (secondary.startsWith(primary)) return secondary;
-      return `${primary}: ${secondary}`;
-    }
-    return primary ?? secondary ?? null;
-  };
-
-  const formatInlineSessionError = (errorObj: Record<string, unknown>) => {
+  const summarizeInlineSessionError = (errorObj: Record<string, unknown>) => {
     const records = getNestedRecords(errorObj);
     const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
-    const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
-    const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
     const providerID = firstStringField(records, ["providerID", "providerId", "provider"]);
     const statusCode = firstNumberField(records, ["statusCode", "status"]);
+    const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
+    const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
     const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
     const effectiveStatus = statusCode ?? inferred;
     const providerLabel = formatProviderLabel(providerID);
     const authFailure = errorName === "ProviderAuthError" || effectiveStatus === 401 || effectiveStatus === 403;
 
-    const heading = (() => {
+    return (() => {
       if (authFailure) return `${providerLabel ?? "Provider"} authentication failed`;
       if (effectiveStatus === 413) return "Context too large";
       if (effectiveStatus === 429) return providerLabel ? `${providerLabel} rate limit exceeded` : "Rate limit exceeded";
@@ -551,26 +548,15 @@ export function createSessionStore(options: {
       if (providerLabel && errorName === "APIError") return `${providerLabel} request failed`;
       return formatSessionError(errorObj).split(/\r?\n/)[0] ?? "Unknown error";
     })();
-
-    const detail = combineErrorDetail(rawMessage, responseBody);
-    return [heading, detail].filter((line, index, list) => line && list.indexOf(line) === index).join("\n");
   };
 
-  const sanitizeInlineSessionError = (message: string) =>
-    message
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((line) => !/^retryable\s*:/i.test(line))
-      .map((line) =>
-        line
-          .replace(/\b(Bearer\s+)[A-Za-z0-9._~-]+/gi, "$1[redacted]")
-          .replace(/\b((?:api[_-]?key|token|authorization|secret)\s*[:=]\s*)\S+/gi, "$1[redacted]"))
-      .join("\n");
-
-  const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
-    const text = message ? sanitizeInlineSessionError(message) : "";
-    if (!sessionID || !text) return;
+  const appendSessionErrorTurn = (
+    sessionID: string,
+    error: { summary?: string | null; fullText?: string | null } | string | null,
+  ) => {
+    const fullText = typeof error === "string" ? error.trim() : error?.fullText?.trim() ?? "";
+    const summary = typeof error === "string" ? error.trim().split(/\r?\n/, 1)[0] ?? "" : error?.summary?.trim() ?? "";
+    if (!sessionID || !fullText) return;
 
     const list = store.messages[sessionID] ?? [];
     const lastMessage = list.length > 0 ? list[list.length - 1] : null;
@@ -579,13 +565,19 @@ export function createSessionStore(options: {
     setStore("sessionErrorTurns", sessionID, (current) => {
       const existing = current ?? [];
       const previous = existing[existing.length - 1];
-      if (previous && previous.text === text && previous.afterMessageID === afterMessageID) {
+      if (
+        previous &&
+        previous.summary === summary &&
+        previous.fullText === fullText &&
+        previous.afterMessageID === afterMessageID
+      ) {
         return existing;
       }
 
       return existing.concat({
         id: `${SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX}${sessionID}:${Date.now()}:${existing.length}`,
-        text,
+        summary: summary || (fullText.split(/\r?\n/, 1)[0] ?? "Request failed"),
+        fullText,
         afterMessageID,
         time: Date.now(),
       });
@@ -1243,7 +1235,10 @@ export function createSessionStore(options: {
             return;
           }
           if (sessionID) {
-            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatInlineSessionError(errorObj)));
+            appendSessionErrorTurn(sessionID, {
+              summary: summarizeInlineSessionError(errorObj),
+              fullText: addOpencodeCacheHint(formatSessionError(errorObj)),
+            });
           } else {
             options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
           }

@@ -954,10 +954,17 @@ export default function MessageList(props: MessageListProps) {
           if (isSyntheticSessionError) {
             const messageText = block.renderableParts
               .map((part) => partToText(part))
-              .join(" ")
-              .replace(/\s*\n+\s*/g, " ")
-              .replace(/\s{2,}/g, " ")
+              .join("\n")
               .trim();
+            const syntheticInfo = block.message.info as {
+              syntheticErrorSummary?: string;
+              syntheticErrorFullText?: string;
+            };
+            const summaryText =
+              syntheticInfo.syntheticErrorSummary?.trim() ||
+              messageText.split(/\r?\n/, 1)[0] ||
+              "Request failed";
+            const fullText = syntheticInfo.syntheticErrorFullText?.trim() || messageText;
 
             return (
               <div
@@ -967,13 +974,21 @@ export default function MessageList(props: MessageListProps) {
                 style={blockPerfStyle(blockIndex)}
               >
                 <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
-                  <div
-                    class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
-                    role="alert"
-                  >
-                    <CircleAlert size={14} class="mt-0.5 shrink-0" />
-                    <div class="min-w-0 break-words">{messageText}</div>
-                  </div>
+                  <details class="max-w-full rounded-[18px] border border-red-7/20 bg-red-1/35 text-red-12 shadow-sm [&_summary::-webkit-details-marker]:hidden">
+                    <summary
+                      class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-[13px] leading-5"
+                      role="alert"
+                    >
+                      <CircleAlert size={14} class="mt-0.5 shrink-0" />
+                      <div class="min-w-0 flex-1 truncate">{summaryText}</div>
+                      <ChevronDown size={14} class="shrink-0 opacity-70 transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div class="border-t border-red-7/15 px-3 pb-3 pt-2">
+                      <pre class="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-red-12/95">
+                        {fullText}
+                      </pre>
+                    </div>
+                  </details>
                 </div>
               </div>
             );
