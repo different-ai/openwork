@@ -1255,6 +1255,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   baseUrl={props.baseUrl}
                   headerStatus={props.headerStatus}
                   busy={props.busy}
+                  clientConnected={props.clientConnected}
                   settingsTab={props.settingsTab}
                   setSettingsTab={props.setSettingsTab}
                   providers={props.providers}
