@@ -42,15 +42,13 @@ export function DenHero(props: DenHeroProps) {
         <div className="mt-8 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:gap-5">
           <a
             href={props.getStartedHref}
-            target="_blank"
-            rel="noreferrer"
             className="doc-button min-w-[290px] justify-center px-8 text-[1.08rem] font-semibold"
           >
             Deploy your first worker
           </a>
           <div className="flex flex-col text-[0.98rem] text-gray-500 sm:max-w-[14rem]">
             <span className="font-semibold text-gray-700">$50/mo per worker</span>
-            <span>Cancel anytime</span>
+            <span>Free for a limited time</span>
           </div>
         </div>
 
