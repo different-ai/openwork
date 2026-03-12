@@ -31,6 +31,8 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_GOOGLE_CLIENT_ID: ${{ secrets.DEN_GOOGLE_CLIENT_ID }}
+          DEN_GOOGLE_CLIENT_SECRET: ${{ secrets.DEN_GOOGLE_CLIENT_SECRET }}
           POLAR_ACCESS_TOKEN: ${{ secrets.POLAR_ACCESS_TOKEN }}
           POLAR_PRODUCT_ID: ${{ secrets.POLAR_PRODUCT_ID }}
           POLAR_BENEFIT_ID: ${{ secrets.POLAR_BENEFIT_ID }}
@@ -73,6 +75,16 @@ jobs:
             missing=1
           fi
 
+          if [ -n "$DEN_GOOGLE_CLIENT_ID" ] && [ -z "$DEN_GOOGLE_CLIENT_SECRET" ]; then
+            echo "::error::Missing required secret: DEN_GOOGLE_CLIENT_SECRET (required when DEN_GOOGLE_CLIENT_ID is set)"
+            missing=1
+          fi
+
+          if [ -n "$DEN_GOOGLE_CLIENT_SECRET" ] && [ -z "$DEN_GOOGLE_CLIENT_ID" ]; then
+            echo "::error::Missing required secret: DEN_GOOGLE_CLIENT_ID (required when DEN_GOOGLE_CLIENT_SECRET is set)"
+            missing=1
+          fi
+
           if [ "$missing" -ne 0 ]; then
             exit 1
           fi
@@ -86,6 +98,8 @@ jobs:
           DEN_BETTER_AUTH_SECRET: ${{ secrets.DEN_BETTER_AUTH_SECRET }}
           DEN_GITHUB_CLIENT_ID: ${{ secrets.DEN_GITHUB_CLIENT_ID }}
           DEN_GITHUB_CLIENT_SECRET: ${{ secrets.DEN_GITHUB_CLIENT_SECRET }}
+          DEN_GOOGLE_CLIENT_ID: ${{ secrets.DEN_GOOGLE_CLIENT_ID }}
+          DEN_GOOGLE_CLIENT_SECRET: ${{ secrets.DEN_GOOGLE_CLIENT_SECRET }}
           DEN_BETTER_AUTH_URL: ${{ vars.DEN_BETTER_AUTH_URL }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
@@ -135,11 +149,18 @@ jobs:
           polar_benefit_id = os.environ.get("POLAR_BENEFIT_ID") or ""
           github_client_id = os.environ.get("DEN_GITHUB_CLIENT_ID") or ""
           github_client_secret = os.environ.get("DEN_GITHUB_CLIENT_SECRET") or ""
+          google_client_id = os.environ.get("DEN_GOOGLE_CLIENT_ID") or ""
+          google_client_secret = os.environ.get("DEN_GOOGLE_CLIENT_SECRET") or ""
           better_auth_url = os.environ.get("DEN_BETTER_AUTH_URL") or "https://app.openwork.software"
 
           if bool(github_client_id) != bool(github_client_secret):
               raise RuntimeError(
                   "DEN_GITHUB_CLIENT_ID and DEN_GITHUB_CLIENT_SECRET must either both be set or both be empty"
+              )
+
+          if bool(google_client_id) != bool(google_client_secret):
+              raise RuntimeError(
+                  "DEN_GOOGLE_CLIENT_ID and DEN_GOOGLE_CLIENT_SECRET must either both be set or both be empty"
               )
 
           def validate_redirect_url(name: str, value: str):
@@ -222,6 +243,8 @@ jobs:
               {"key": "BETTER_AUTH_URL", "value": better_auth_url},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
+              {"key": "GOOGLE_CLIENT_ID", "value": google_client_id},
+              {"key": "GOOGLE_CLIENT_SECRET", "value": google_client_secret},
               {"key": "CORS_ORIGINS", "value": cors_origins},
               {"key": "PROVISIONER_MODE", "value": "render"},
               {"key": "RENDER_API_BASE", "value": "https://api.render.com/v1"},
