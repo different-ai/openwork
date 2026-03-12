@@ -1,42 +1,49 @@
 ---
-title: "Introduction"
-description: "OpenWork for agents, operators, and teams"
+title: "Start here"
+description: "Pick the right OpenWork path fast"
 ---
 
-OpenWork helps you run agentic workflows with clear control over workers, skills, automations, and messaging surfaces.
-
-Use this docs set to deploy OpenWork quickly, onboard teammates, and keep work predictable.
-
-<Card
-  title="Create an OpenWork instance"
-  icon="rocket"
-  href="/create-openwork-instance"
-  horizontal
->
-  Agent-friendly playbook for launching an instance with desktop or CLI.
-</Card>
-
-## Start paths
+OpenWork has two common entry points. Pick the one that matches how you want to use the product.
 
 <CardGroup cols={2}>
+  <Card title="Technical" icon="terminal" href="/technical">
+    Choose between a desktop-hosted app/server and a CLI-hosted server, then set up sharing.
+  </Card>
+  <Card title="Non-technical" icon="users" href="/non-technical">
+    Start with example tasks, desktop-first onboarding, and the simplest way to share with teammates.
+  </Card>
+</CardGroup>
+
+---
+
+## Choose a path
+
+### Pick Technical if
+
+You are deciding how to run OpenWork, how to host the server inside the desktop app or via CLI, or how teammates should connect.
+
+### Pick Non-technical if
+
+You want example tasks, desktop-first onboarding, and plain-language guidance on what OpenWork can do.
+
+---
+
+## Share clearly
+
+Every share flow starts with a worker.
+
+- Use `OpenWork invite link` for the fastest teammate onboarding.
+- Use `OpenWork worker URL` + `Access token` when you want a manual connect flow.
+- Keep the `host token` private for owner actions.
+
+<CardGroup cols={3}>
   <Card title="Quickstart" icon="zap" href="/quickstart">
-    Get from install to first worker in minutes.
+    Install the app and run your first worker.
   </Card>
-  <Card title="CLI" icon="terminal" href="/cli">
-    Run OpenWork with `openwork-orchestrator`, `openwork-server`, and
-    `opencode-router`.
+  <Card title="Share a worker" icon="share-2" href="/tutorials/share-worker-invite-link">
+    Prefill URL and token with one invite link.
   </Card>
-  <Card title="OpenCode Router" icon="message-square" href="/opencode-router">
-    Route Slack and Telegram messages to the right workspace directory.
-  </Card>
-  <Card title="Orbita UI Style" icon="layout" href="/orbita-layout-style">
-    Session-surface layout, typography, and interaction baseline.
-  </Card>
-  <Card
-    title="Worker isolation"
-    icon="shield"
-    href="/tutorials/worker-isolation"
-  >
-    Avoid the shared-context chaos by separating workers by domain.
+  <Card title="What is OpenWork" icon="compass" href="/openwork">
+    Learn the app, server, and worker model.
   </Card>
 </CardGroup>
