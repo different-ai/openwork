@@ -512,12 +512,56 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
+  const formatProviderLabel = (providerID: string | null) => {
+    const value = providerID?.trim();
+    if (!value) return null;
+    return value
+      .split(/[^a-z0-9]+/i)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  };
+
+  const combineErrorDetail = (primary: string | null, secondary: string | null) => {
+    if (primary && secondary) {
+      if (primary === secondary) return primary;
+      if (secondary.startsWith(primary)) return secondary;
+      return `${primary}: ${secondary}`;
+    }
+    return primary ?? secondary ?? null;
+  };
+
+  const formatInlineSessionError = (errorObj: Record<string, unknown>) => {
+    const records = getNestedRecords(errorObj);
+    const errorName = typeof errorObj.name === "string" ? errorObj.name : "UnknownError";
+    const rawMessage = firstStringField(records, ["message", "detail", "reason"]);
+    const responseBody = firstStringField(records, ["responseBody", "body", "response"]);
+    const providerID = firstStringField(records, ["providerID", "providerId", "provider"]);
+    const statusCode = firstNumberField(records, ["statusCode", "status"]);
+    const inferred = inferHttpStatus(rawMessage) ?? inferHttpStatus(responseBody);
+    const effectiveStatus = statusCode ?? inferred;
+    const providerLabel = formatProviderLabel(providerID);
+    const authFailure = errorName === "ProviderAuthError" || effectiveStatus === 401 || effectiveStatus === 403;
+
+    const heading = (() => {
+      if (authFailure) return `${providerLabel ?? "Provider"} authentication failed`;
+      if (effectiveStatus === 413) return "Context too large";
+      if (effectiveStatus === 429) return providerLabel ? `${providerLabel} rate limit exceeded` : "Rate limit exceeded";
+      if (errorName === "MessageOutputLengthError") return "Output length limit exceeded";
+      if (providerLabel && errorName === "APIError") return `${providerLabel} request failed`;
+      return formatSessionError(errorObj).split(/\r?\n/)[0] ?? "Unknown error";
+    })();
+
+    const detail = combineErrorDetail(rawMessage, responseBody);
+    return [heading, detail].filter((line, index, list) => line && list.indexOf(line) === index).join("\n");
+  };
+
   const sanitizeInlineSessionError = (message: string) =>
     message
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .filter((line) => !/^response\s*:/i.test(line))
+      .filter((line) => !/^retryable\s*:/i.test(line))
       .map((line) =>
         line
           .replace(/\b(Bearer\s+)[A-Za-z0-9._~-]+/gi, "$1[redacted]")
@@ -1199,7 +1243,7 @@ export function createSessionStore(options: {
             return;
           }
           if (sessionID) {
-            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatSessionError(errorObj)));
+            appendSessionErrorTurn(sessionID, addOpencodeCacheHint(formatInlineSessionError(errorObj)));
           } else {
             options.setError(addOpencodeCacheHint(formatSessionError(errorObj)));
           }
