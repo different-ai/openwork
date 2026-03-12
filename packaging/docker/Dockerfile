@@ -1,6 +1,6 @@
 FROM node:22-bookworm-slim
 
-ARG OPENWORK_ORCHESTRATOR_VERSION=0.11.22
+ARG OPENWORK_ORCHESTRATOR_VERSION=0.11.142
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -25,6 +25,9 @@ EXPOSE 8787
 
 # Optional: opencode-router health (only relevant if you enable the router).
 EXPOSE 3005
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=15s --retries=12 \
+  CMD curl -sf http://localhost:8787/health >/dev/null || exit 1
 
 VOLUME ["/workspace", "/data"]
 

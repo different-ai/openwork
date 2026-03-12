@@ -1,0 +1,14 @@
+.git
+.github
+.opencode
+_worktrees
+tmp
+vendor
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/target
+**/.DS_Store
+*.log

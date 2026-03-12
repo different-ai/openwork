@@ -3134,6 +3134,7 @@ async function writeSandboxEntrypoint(options: {
 
   const script = [
     "set -eu",
+    "log() { printf '[openwork-sandbox] %s\\n' \"$1\"; }",
     `export HOME=${shQuote("/persist")}`,
     "export XDG_CONFIG_HOME=\"$HOME/.config\"",
     "export XDG_CACHE_HOME=\"$HOME/.cache\"",
@@ -3146,8 +3147,12 @@ async function writeSandboxEntrypoint(options: {
     `export OPENCODE_DIRECTORY=${shQuote(workspaceDir)}`,
     `export OPENCODE_CONFIG_DIR=${shQuote(opencodeConfigDir)}`,
     `mkdir -p ${shQuote(opencodeConfigDir)}`,
+    `log ${shQuote(`workspace ${workspaceDir}`)}`,
+    `log ${shQuote(`opencode config ${opencodeConfigDir}`)}`,
+    `if [ -d ${shQuote(hostOpencodeConfigDir)} ]; then log ${shQuote("importing host opencode config")}; fi`,
     `if [ -d ${shQuote(hostOpencodeConfigDir)} ]; then cp -R ${shQuote(`${hostOpencodeConfigDir}/.`)} ${shQuote(opencodeConfigDir)} 2>/dev/null || true; fi`,
     "mkdir -p \"$XDG_DATA_HOME/opencode\"",
+    `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then log ${shQuote("importing host opencode auth/data")}; fi`,
     `if [ -d ${shQuote(hostOpencodeDataDir)} ]; then cp ${shQuote(`${hostOpencodeDataDir}/auth.json`)} \"$XDG_DATA_HOME/opencode/auth.json\" 2>/dev/null || true; cp ${shQuote(`${hostOpencodeDataDir}/mcp-auth.json`)} \"$XDG_DATA_HOME/opencode/mcp-auth.json\" 2>/dev/null || true; fi`,
     `export OPENCODE_URL=${shQuote(`http://127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `export OPENCODE_CLIENT=openwork-orchestrator`,
@@ -3169,10 +3174,15 @@ async function writeSandboxEntrypoint(options: {
     "  if [ -n \"$opencode_pid\" ]; then kill \"$opencode_pid\" 2>/dev/null || true; fi",
     "}",
     "trap cleanup INT TERM",
+    `log ${shQuote(`starting opencode on 127.0.0.1:${SANDBOX_INTERNAL_OPENCODE_PORT}`)}`,
     `${shQuote(opencodeBin)} serve --hostname 127.0.0.1 --port ${shQuote(String(SANDBOX_INTERNAL_OPENCODE_PORT))} ${opencodeCors} &`,
     "opencode_pid=$!",
+    options.openwork.opencodeRouterEnabled
+      ? `log ${shQuote(`starting opencode-router with health port ${SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT}`)}`
+      : "",
     options.openwork.opencodeRouterEnabled ? `${shQuote(opencodeRouterBin)} serve ${shQuote(workspaceDir)} &` : "",
     options.openwork.opencodeRouterEnabled ? "opencodeRouter_pid=$!" : "",
+    `log ${shQuote(`starting openwork-server on 0.0.0.0:${SANDBOX_INTERNAL_OPENWORK_PORT}`)}`,
     `exec ${shQuote(openworkBin)} --host 0.0.0.0 --port ${shQuote(String(SANDBOX_INTERNAL_OPENWORK_PORT))}` +
       ` --token ${shQuote(options.openwork.token)} --host-token ${shQuote(options.openwork.hostToken)}` +
       ` --workspace ${shQuote(workspaceDir)}` +

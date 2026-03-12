@@ -1,0 +1,32 @@
+FROM node:22-bookworm-slim
+
+ARG PNPM_VERSION=10.27.0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV BUN_INSTALL=/root/.bun
+ENV PATH=/root/.bun/bin:$PATH
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    unzip \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://bun.sh/install | bash
+
+COPY . /app
+
+RUN corepack enable \
+  && corepack prepare "pnpm@${PNPM_VERSION}" --activate \
+  && pnpm install --frozen-lockfile --network-concurrency 1 --child-concurrency 1 \
+  && pnpm --filter openwork-server build:bin \
+  && pnpm --filter opencode-router build:bin
+
+RUN mkdir -p /runtime /workspace
+
+EXPOSE 8787 5173

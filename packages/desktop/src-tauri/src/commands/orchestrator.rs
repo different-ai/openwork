@@ -3,6 +3,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::HashSet;
 use std::env;
+use std::fs;
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -593,6 +594,49 @@ fn docker_container_state(container_name: &str) -> Result<Option<String>, String
     ))
 }
 
+fn command_debug_from_error(error: String) -> SandboxDoctorCommandDebug {
+    SandboxDoctorCommandDebug {
+        status: -1,
+        stdout: String::new(),
+        stderr: truncate_for_report(&error),
+    }
+}
+
+fn docker_inspect_debug(container_name: &str) -> SandboxDoctorCommandDebug {
+    match run_docker_command_detailed(&["inspect", container_name], Duration::from_secs(4)) {
+        Ok(result) => to_command_debug(result),
+        Err(err) => command_debug_from_error(err),
+    }
+}
+
+fn docker_logs_debug(container_name: &str) -> SandboxDoctorCommandDebug {
+    match run_docker_command_detailed(
+        &["logs", "--tail", "200", container_name],
+        Duration::from_secs(4),
+    ) {
+        Ok(result) => to_command_debug(result),
+        Err(err) => command_debug_from_error(err),
+    }
+}
+
+fn command_debug_preview(command: &SandboxDoctorCommandDebug) -> serde_json::Value {
+    json!({
+        "status": command.status,
+        "stdout": truncate_for_debug(&command.stdout),
+        "stderr": truncate_for_debug(&command.stderr),
+    })
+}
+
+fn write_sandbox_timeout_diagnostics(run_id: &str, payload: &serde_json::Value) -> Option<String> {
+    let data_dir = PathBuf::from(resolve_orchestrator_data_dir());
+    let diagnostics_dir = data_dir.join("sandbox-debug");
+    fs::create_dir_all(&diagnostics_dir).ok()?;
+    let diagnostics_path = diagnostics_dir.join(format!("timeout-{run_id}.json"));
+    let body = serde_json::to_vec_pretty(payload).ok()?;
+    fs::write(&diagnostics_path, body).ok()?;
+    Some(diagnostics_path.to_string_lossy().to_string())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OrchestratorWorkspaceResponse {
@@ -714,23 +758,22 @@ fn format_sandbox_start_timeout_error(
     last_error: Option<&str>,
     container_state: Option<&str>,
     container_probe_error: Option<&str>,
+    diagnostics_path: Option<&str>,
 ) -> String {
     let mut details = vec![
         format!("stage=openwork.healthcheck"),
         format!("elapsed_ms={elapsed_ms}"),
         format!("url={openwork_url}"),
-        format!(
-            "last_error={}",
-            last_error.unwrap_or("none")
-        ),
-        format!(
-            "container_state={}",
-            container_state.unwrap_or("unknown")
-        ),
+        format!("last_error={}", last_error.unwrap_or("none")),
+        format!("container_state={}", container_state.unwrap_or("unknown")),
     ];
 
     if let Some(probe_error) = container_probe_error {
         details.push(format!("container_probe_error={probe_error}"));
+    }
+
+    if let Some(path) = diagnostics_path {
+        details.push(format!("diagnostics_path={path}"));
     }
 
     format!(
@@ -1014,12 +1057,46 @@ pub fn orchestrator_start_detached(
 
     if start.elapsed() >= Duration::from_millis(health_timeout_ms) {
         let elapsed_ms = start.elapsed().as_millis() as u64;
+        let mut diagnostics_path: Option<String> = None;
+        if wants_docker_sandbox {
+            if let Some(name) = sandbox_container_name.as_deref() {
+                let docker_inspect = docker_inspect_debug(name);
+                let docker_logs = docker_logs_debug(name);
+                let diagnostics_payload = json!({
+                    "runId": sandbox_run_id,
+                    "containerName": name,
+                    "openworkUrl": openwork_url,
+                    "elapsedMs": elapsed_ms,
+                    "lastError": last_error,
+                    "containerState": last_container_state,
+                    "containerProbeError": last_container_probe_error,
+                    "dockerInspect": docker_inspect,
+                    "dockerLogs": docker_logs,
+                });
+                diagnostics_path =
+                    write_sandbox_timeout_diagnostics(&sandbox_run_id, &diagnostics_payload);
+                emit_sandbox_progress(
+                    &app,
+                    &sandbox_run_id,
+                    "docker.diagnostics",
+                    "Collected Docker timeout diagnostics.",
+                    json!({
+                        "containerName": name,
+                        "elapsedMs": elapsed_ms,
+                        "diagnosticsPath": diagnostics_path,
+                        "dockerInspect": command_debug_preview(&docker_inspect),
+                        "dockerLogs": command_debug_preview(&docker_logs),
+                    }),
+                );
+            }
+        }
         let message = format_sandbox_start_timeout_error(
             elapsed_ms,
             &openwork_url,
             last_error.as_deref(),
             last_container_state.as_deref(),
             last_container_probe_error.as_deref(),
+            diagnostics_path.as_deref(),
         );
         emit_sandbox_progress(
             &app,
@@ -1032,6 +1109,7 @@ pub fn orchestrator_start_detached(
                 "openworkUrl": openwork_url,
                 "containerState": last_container_state,
                 "containerProbeError": last_container_probe_error,
+                "diagnosticsPath": diagnostics_path,
             }),
         );
         eprintln!(

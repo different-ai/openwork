@@ -1646,6 +1646,40 @@ export function createWorkspaceStore(options: {
               }
             }
 
+            if (stage === "docker.diagnostics") {
+              setSandboxStep("sandbox", { status: "active", detail: "Collecting Docker diagnostics" });
+              const diagnosticsPath = String(payload.payload?.diagnosticsPath ?? "").trim();
+              if (diagnosticsPath) {
+                pushSandboxCreateLog(`Docker diagnostics: ${diagnosticsPath}`);
+              }
+
+              const inspect = payload.payload?.dockerInspect as
+                | { status?: number; stdout?: string; stderr?: string }
+                | undefined;
+              if (inspect) {
+                if (typeof inspect.status === "number") {
+                  pushSandboxCreateLog(`docker inspect exit=${inspect.status}`);
+                }
+                const stdout = String(inspect.stdout ?? "").trim();
+                const stderr = String(inspect.stderr ?? "").trim();
+                if (stdout) pushSandboxCreateLog(`docker inspect: ${stdout}`);
+                if (stderr) pushSandboxCreateLog(`docker inspect stderr: ${stderr}`);
+              }
+
+              const logs = payload.payload?.dockerLogs as
+                | { status?: number; stdout?: string; stderr?: string }
+                | undefined;
+              if (logs) {
+                if (typeof logs.status === "number") {
+                  pushSandboxCreateLog(`docker logs exit=${logs.status}`);
+                }
+                const stdout = String(logs.stdout ?? "").trim();
+                const stderr = String(logs.stderr ?? "").trim();
+                if (stdout) pushSandboxCreateLog(`docker logs: ${stdout}`);
+                if (stderr) pushSandboxCreateLog(`docker logs stderr: ${stderr}`);
+              }
+            }
+
             if (stage === "openwork.waiting") {
               const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
               const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
