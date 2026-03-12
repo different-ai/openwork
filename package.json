@@ -18,6 +18,7 @@
     "build:ui": "pnpm --filter @openwork/app build",
     "build:web": "pnpm --filter @openwork-ee/den-web build",
     "preview": "pnpm --filter @openwork/app preview",
+    "preflight": "node scripts/preflight.mjs",
     "typecheck": "pnpm --filter @openwork/app typecheck",
     "test:health": "pnpm --filter @openwork/app test:health",
     "test:sessions": "pnpm --filter @openwork/app test:sessions",

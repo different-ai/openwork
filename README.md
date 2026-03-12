@@ -168,12 +168,13 @@ You can still edit `opencode.json` manually; OpenWork uses the same format as th
 ## Useful Commands
 
 ```bash
-pnpm dev
-pnpm dev:ui
-pnpm typecheck
-pnpm build
-pnpm build:ui
-pnpm test:e2e
+pnpm dev           # Start desktop app
+pnpm dev:ui        # Start web UI only
+pnpm preflight     # Check development environment
+pnpm typecheck     # TypeScript type checking
+pnpm build         # Build all packages
+pnpm build:ui      # Build web UI
+pnpm test:e2e      # Run e2e tests
 ```
 
 ## Troubleshooting
