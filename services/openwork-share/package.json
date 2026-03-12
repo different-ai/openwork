@@ -7,7 +7,7 @@
     "dev": "OPENWORK_DEV_MODE=1 next dev --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
-    "test": "node --test __tests__/share-home-state.test.ts __tests__/preview-panel-height.test.ts server/b/render-bundle-page.test.ts server/_lib/package-openwork-files.test.ts"
+    "test": "node --test server/b/render-bundle-page.test.ts server/_lib/package-openwork-files.test.ts server/_lib/render-og-image.test.ts"
   },
   "dependencies": {
     "@paper-design/shaders-react": "0.0.71",

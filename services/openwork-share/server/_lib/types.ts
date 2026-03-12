@@ -1,4 +1,4 @@
-import type { PreviewItem } from "../../components/share-home-types.ts";
+import type { ItemTone, PreviewItem } from "../../components/share-home-types.ts";
 
 export interface RequestLike {
   headers: Record<string, string>;
@@ -128,5 +128,9 @@ export interface BundlePageProps {
   typeLabel?: string;
   schemaVersion?: string;
   items?: PreviewItem[];
+  previewFilename?: string;
+  previewText?: string;
+  previewLabel?: string;
+  previewTone?: ItemTone;
   metadataRows?: { label: string; value: string }[];
 }

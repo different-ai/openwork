@@ -1,5 +1,6 @@
 import {
   buildBundleNarrative,
+  buildBundlePreview,
   buildBundleUrls,
   buildOgImageUrl,
   buildOpenInAppUrls,
@@ -54,6 +55,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
     const counts = getBundleCounts(bundle);
     const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
     const typeLabel = humanizeType(bundle.type);
+    const preview = buildBundlePreview(bundle);
     const title = bundle.name || `OpenWork ${typeLabel}`;
     const description = bundle.description || buildBundleNarrative(bundle);
     const installHint =
@@ -80,6 +82,10 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       typeLabel,
       schemaVersion,
       items: collectBundleItems(bundle, 8),
+      previewFilename: preview.filename,
+      previewText: preview.text,
+      previewLabel: preview.label,
+      previewTone: preview.tone,
       metadataRows: buildMetadataRows(normalizedId, bundle, counts, schemaVersion)
     };
   } catch {
