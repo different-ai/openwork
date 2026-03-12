@@ -14,7 +14,6 @@ import type {
   PlaceholderAssistantMessage,
   ReloadReason,
   ReloadTrigger,
-  SessionErrorTurn,
   TodoItem,
 } from "../types";
 import {
@@ -47,6 +46,13 @@ type StoreState = {
   pendingPermissions: PendingPermission[];
   pendingQuestions: PendingQuestion[];
   events: OpencodeEvent[];
+};
+
+type SessionErrorTurn = {
+  id: string;
+  text: string;
+  afterMessageID: string | null;
+  time: number;
 };
 
 const sortById = <T extends { id: string }>(list: T[]) =>
@@ -86,6 +92,68 @@ const createPlaceholderMessage = (part: Part): PlaceholderAssistantMessage => ({
   cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
 });
+
+const createSyntheticSessionErrorMessage = (
+  sessionID: string,
+  errorTurn: SessionErrorTurn,
+): MessageWithParts => ({
+  info: {
+    id: errorTurn.id,
+    sessionID,
+    role: "assistant",
+    time: { created: errorTurn.time, completed: errorTurn.time },
+    parentID: errorTurn.afterMessageID ?? "",
+    modelID: "",
+    providerID: "",
+    mode: "",
+    agent: "",
+    path: { cwd: "", root: "" },
+    cost: 0,
+    tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+  },
+  parts: [
+    {
+      id: `${errorTurn.id}:text`,
+      sessionID,
+      messageID: errorTurn.id,
+      type: "text",
+      text: errorTurn.text,
+    } as Part,
+  ],
+});
+
+const messageIdFromInfo = (message: MessageWithParts) => {
+  const id = (message.info as { id?: string | number }).id;
+  if (typeof id === "string") return id;
+  if (typeof id === "number") return String(id);
+  return "";
+};
+
+const insertSyntheticSessionErrors = (
+  list: MessageWithParts[],
+  sessionID: string | null,
+  errorTurns: SessionErrorTurn[],
+) => {
+  if (!sessionID || errorTurns.length === 0) return list;
+
+  const next = list.slice();
+  errorTurns.forEach((errorTurn) => {
+    if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
+    const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
+    const anchorIndex = errorTurn.afterMessageID
+      ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
+      : -1;
+
+    if (anchorIndex === -1) {
+      next.push(syntheticMessage);
+      return;
+    }
+
+    next.splice(anchorIndex + 1, 0, syntheticMessage);
+  });
+
+  return next;
+};
 
 const upsertSession = (list: Session[], next: Session) => {
   const index = list.findIndex((session) => session.id === next.id);
@@ -444,8 +512,20 @@ export function createSessionStore(options: {
     options.setError(addOpencodeCacheHint(message));
   };
 
+  const sanitizeInlineSessionError = (message: string) =>
+    message
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((line) => !/^response\s*:/i.test(line))
+      .map((line) =>
+        line
+          .replace(/\b(Bearer\s+)[A-Za-z0-9._~-]+/gi, "$1[redacted]")
+          .replace(/\b((?:api[_-]?key|token|authorization|secret)\s*[:=]\s*)\S+/gi, "$1[redacted]"))
+      .join("\n");
+
   const appendSessionErrorTurn = (sessionID: string, message: string | null) => {
-    const text = message?.trim() ?? "";
+    const text = message ? sanitizeInlineSessionError(message) : "";
     if (!sessionID || !text) return;
 
     const list = store.messages[sessionID] ?? [];
@@ -613,6 +693,17 @@ export function createSessionStore(options: {
     if (!id) return [];
     const list = store.messages[id] ?? [];
     return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+  });
+
+  const displayMessages = createMemo<MessageWithParts[]>(() => {
+    const sessionID = options.selectedSessionId();
+    if (!sessionID) return [];
+    const revert = selectedSession()?.revert?.messageID ?? null;
+    const visible = !revert ? messages() : messages().filter((message) => {
+      const id = messageIdFromInfo(message);
+      return Boolean(id) && id < revert;
+    });
+    return insertSyntheticSessionErrors(visible, sessionID, store.sessionErrorTurns[sessionID] ?? []);
   });
 
   const todos = createMemo<TodoItem[]>(() => {
@@ -1465,15 +1556,11 @@ export function createSessionStore(options: {
 
   return {
     sessions,
-    sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
-    selectedSessionErrorTurns: createMemo(() => {
-      const sessionID = options.selectedSessionId();
-      return sessionID ? store.sessionErrorTurns[sessionID] ?? [] : [];
-    }),
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
     messages,
+    displayMessages,
     todos,
     pendingPermissions,
     permissionReplyBusy,

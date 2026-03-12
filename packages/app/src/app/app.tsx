@@ -63,12 +63,10 @@ import {
 } from "./constants";
 import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
 import { mapConfigProvidersToList } from "./utils/providers";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   DashboardTab,
   MessageWithParts,
-  PlaceholderAssistantMessage,
   StartupPreference,
   EngineRuntime,
   ModelOption,
@@ -91,7 +89,6 @@ import type {
   ComposerDraft,
   ComposerPart,
   ProviderListItem,
-  SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
@@ -1665,65 +1662,6 @@ export default function App() {
     return "";
   };
 
-  const createSyntheticSessionErrorMessage = (
-    sessionID: string,
-    errorTurn: SessionErrorTurn,
-  ): MessageWithParts => {
-    const info: PlaceholderAssistantMessage = {
-      id: errorTurn.id,
-      sessionID,
-      role: "assistant",
-      time: { created: errorTurn.time, completed: errorTurn.time },
-      parentID: errorTurn.afterMessageID ?? "",
-      modelID: "",
-      providerID: "",
-      mode: "",
-      agent: "",
-      path: { cwd: "", root: "" },
-      cost: 0,
-      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-    };
-
-    return {
-      info,
-      parts: [
-        {
-          id: `${errorTurn.id}:text`,
-          sessionID,
-          messageID: errorTurn.id,
-          type: "text",
-          text: errorTurn.text,
-        } as Part,
-      ],
-    };
-  };
-
-  const insertSyntheticSessionErrors = (
-    list: MessageWithParts[],
-    sessionID: string | null,
-    errorTurns: SessionErrorTurn[],
-  ) => {
-    if (!sessionID || errorTurns.length === 0) return list;
-
-    const next = list.slice();
-    errorTurns.forEach((errorTurn) => {
-      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
-      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
-      const anchorIndex = errorTurn.afterMessageID
-        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
-        : -1;
-
-      if (anchorIndex === -1) {
-        next.push(syntheticMessage);
-        return;
-      }
-
-      next.splice(anchorIndex + 1, 0, syntheticMessage);
-    });
-
-    return next;
-  };
-
   const upsertLocalSession = (next: Session | null | undefined) => {
     const id = (next as { id?: string } | null)?.id ?? "";
     if (!id) return;
@@ -1739,23 +1677,7 @@ export default function App() {
     setSessions(copy);
   };
 
-  // OpenCode keeps reverted messages in the log and uses `session.revert.messageID`
-  // as the visibility boundary. OpenWork mirrors that behavior by filtering the
-  // displayed transcript.
-  const visibleMessages = createMemo(() => {
-    const sessionID = selectedSessionId();
-    const errorTurns = sessionStore.selectedSessionErrorTurns();
-    const list = messages().filter((message) => {
-      const id = messageIdFromInfo(message);
-      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
-    });
-    const revert = selectedSession()?.revert?.messageID ?? null;
-    const visible = !revert ? list : list.filter((message) => {
-      const id = messageIdFromInfo(message);
-      return Boolean(id) && id < revert;
-    });
-    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
-  });
+  const visibleMessages = createMemo(() => sessionStore.displayMessages());
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
     const text = message.parts
