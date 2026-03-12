@@ -2,10 +2,10 @@
 
 import { LandingBackground } from "./landing-background";
 import { DenCapabilityCarousel } from "./den-capability-carousel";
-import { DenComparisonAnimation } from "./den-comparison-animation";
 import { DenHero } from "./den-hero";
 import { DenHowItWorks } from "./den-how-it-works";
 import { DenSupportGrid } from "./den-support-grid";
+import { DenValueSection } from "./den-value-section";
 import { SiteFooter } from "./site-footer";
 import { SiteNav } from "./site-nav";
 
@@ -87,52 +87,7 @@ export function LandingDen(props: Props) {
 
           <DenSupportGrid />
 
-          <section>
-            <div className="landing-shell rounded-[2rem] p-7 md:p-8">
-              <div className="grid gap-6 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
-                <div>
-                  <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">
-                    Pricing
-                  </div>
-                  <p className="text-[1.95rem] font-medium leading-[1.1] tracking-tight text-[#011627]">
-                    $50/month per worker.
-                  </p>
-                </div>
-
-                <p className="max-w-2xl text-[16px] leading-8 text-gray-600">
-                  Your team&apos;s repetitive tasks cost $2,000–4,000/mo in engineer
-                  time. A Den worker costs $50 and doesn&apos;t get bored by Thursday.
-                </p>
-
-                <div className="flex flex-col items-start gap-3 lg:items-end">
-                  <a
-                    href={props.getStartedHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="doc-button"
-                  >
-                    Deploy your first worker
-                  </a>
-                  <div className="text-sm text-gray-500">No credit card to start</div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section className="landing-shell rounded-[2rem] p-7 md:p-8">
-            <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">
-              Why Den feels different
-            </div>
-            <h3 className="mb-4 max-w-2xl text-[2rem] font-medium leading-tight tracking-tight text-[#011627]">
-              The gap is not model quality. It&apos;s whether the work can keep moving without you.
-            </h3>
-            <p className="mb-8 max-w-3xl text-[16px] leading-8 text-gray-600">
-              Local chat tools are great when you want to stay in the loop. Den is for
-              the work that should keep moving after you close the tab. This animation
-              makes that tradeoff explicit without adding more copy.
-            </p>
-            <DenComparisonAnimation />
-          </section>
+          <DenValueSection getStartedHref={props.getStartedHref} />
 
           <SiteFooter />
         </div>
