@@ -24,14 +24,16 @@ export function DenCapabilityCarousel() {
   const repeatedItems = [...capabilityItems, ...capabilityItems];
 
   return (
-    <section className="landing-shell overflow-hidden rounded-[2rem] py-7 md:py-8">
-      <div className="mb-6 px-7 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500 md:px-8">
+    <section className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden py-3 md:py-4">
+      <div className="content-max-width mb-5 px-6 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500 md:px-8">
         What you get
       </div>
 
       <div className="relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#f6f9fc] via-[#f6f9fc]/90 to-transparent md:w-28" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#f6f9fc] via-[#f6f9fc]/90 to-transparent md:w-28" />
         <motion.div
-          className="flex w-max gap-3 px-7 md:gap-4 md:px-8"
+          className="flex w-max items-center gap-8 px-6 md:gap-12 md:px-8"
           animate={reduceMotion ? undefined : { x: ["0%", "-50%"] }}
           transition={
             reduceMotion
@@ -45,12 +47,12 @@ export function DenCapabilityCarousel() {
             return (
               <div
                 key={`${item.label}-${index}`}
-                className="flex min-w-[260px] items-center gap-4 rounded-[1.5rem] border border-slate-200/70 bg-white/75 px-5 py-5 text-slate-700 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.18)]"
+                className="flex shrink-0 items-center gap-3 text-slate-700"
               >
-                <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-slate-100 bg-white text-[#1b29ff] shadow-sm">
-                  <Icon size={18} strokeWidth={2.2} />
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white/55 text-[#1b29ff] shadow-[0_10px_24px_-20px_rgba(15,23,42,0.4)] ring-1 ring-white/70 backdrop-blur-sm">
+                  <Icon size={17} strokeWidth={2.2} />
                 </span>
-                <span className="text-[1.1rem] font-medium tracking-tight text-[#011627]">
+                <span className="text-[1rem] font-medium tracking-tight text-[#011627] md:text-[1.08rem]">
                   {item.label}
                 </span>
               </div>

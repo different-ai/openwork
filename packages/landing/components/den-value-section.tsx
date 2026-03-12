@@ -1,164 +1,115 @@
 "use client";
 
+import { ArrowRight, CheckCircle2 } from "lucide-react";
+
 type DenValueSectionProps = {
   getStartedHref: string;
 };
 
-const costCards = [
-  {
-    label: "Human repetitive work",
-    value: "$2,000–4,000/mo",
-    detail: "Salary cost, queue handoffs, and follow-up overhead.",
-    accent:
-      "border-[#f3d7da] bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,245,246,0.98))] text-slate-600",
-  },
-  {
-    label: "Den worker",
-    value: "$50/mo",
-    detail: "Always-on execution with reporting and guardrails built in.",
-    accent:
-      "border-[#1b29ff]/15 bg-[linear-gradient(180deg,rgba(250,252,255,0.96),rgba(238,244,255,0.96))] text-[#011627]",
-  },
-];
-
-// const comparisonRows = [
-//   {
-//     label: "What happens all day",
-//     human: "Context switching, triage, reminders, and cleanup.",
-//     den: "Executes the queue, follows instructions, and reports back.",
-//   },
-//   {
-//     label: "How work gets dropped",
-//     human: "It waits behind meetings, priorities, and handoffs.",
-//     den: "It stays on until the task is done or escalated.",
-//   },
-//   {
-//     label: "Best use of human time",
-//     human: "Burned on repetitive follow-up and status checks.",
-//     den: "Reserved for judgment, review, and decisions.",
-//   },
-// ];
-
 export function DenValueSection(props: DenValueSectionProps) {
   return (
-    <section className="landing-shell rounded-[2rem] bg-[radial-gradient(circle_at_top_right,rgba(27,41,255,0.07),transparent_26%),linear-gradient(180deg,rgba(255,255,255,0.92),rgba(247,250,253,0.96))] p-7 md:p-8">
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,0.72fr)_minmax(0,1.28fr)] xl:items-start">
-        <div className="max-w-[25rem]">
+    <section className="landing-shell rounded-[2.1rem] bg-[radial-gradient(circle_at_top_right,rgba(27,41,255,0.08),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,250,252,0.98))] p-7 md:p-9">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] xl:items-start">
+        <div className="max-w-[28rem]">
           <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">
             Pricing
           </div>
-          <p className="text-[2.35rem] font-medium leading-[1.02] tracking-tight text-[#011627] md:text-[2.7rem]">
+          <p className="text-[2.35rem] font-medium leading-[1.02] tracking-tight text-[#011627] md:text-[2.8rem]">
             Replace repetitive work with a $50 worker.
           </p>
-          <p className="mt-4 text-[16px] leading-7 text-gray-600">
-            Den is cheap enough to own the repetitive queue. Your team stays on review
-            and decisions while the worker handles the follow-through.
+          <p className="mt-4 text-[16px] leading-7 text-[#5f6b7a]">
+            Den is priced like a utility, not a headcount bet. Keep your team on
+            the critical decisions and let the worker own the repetitive queue.
           </p>
         </div>
 
-        <div className="rounded-[1.75rem] border border-slate-200/85 bg-[linear-gradient(180deg,rgba(255,255,255,0.9),rgba(245,248,252,0.96))] p-5 shadow-[0_28px_60px_-42px_rgba(15,23,42,0.22)] md:p-6">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4656ff]">
-                Human vs worker
-              </div>
-              <p className="mt-2 text-[15px] leading-6 text-gray-600">
-                The real comparison is not software vs software. It is repetitive human
-                labor vs an always-on Den worker.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 border-t border-slate-200/85 pt-5">
-            <div className="grid gap-4 md:grid-cols-2 md:items-stretch">
-              <div
-                className={`rounded-[1.35rem] border px-5 py-5 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.18)] ${costCards[0].accent}`}
-              >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#a15460]">
-                  {costCards[0].label}
+        <div className="rounded-[2rem] border border-[#dce2f4] bg-[rgba(255,255,255,0.94)] p-4 shadow-[0_24px_70px_-28px_rgba(15,23,42,0.18)] md:p-5">
+          <div className="grid gap-3 md:grid-cols-2 md:items-stretch">
+            <article className="flex h-full flex-col rounded-[1.5rem] border border-[#e2e8f0] bg-[linear-gradient(180deg,#ffffff,#f8fafc)] px-4 py-4 shadow-[0_10px_26px_-22px_rgba(15,23,42,0.22)] md:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-[#64748b]">
+                  Human repetitive work
                 </div>
-                <div className="mt-2 text-[1.95rem] font-medium leading-none tracking-tight text-[#011627]">
-                  {costCards[0].value}
-                </div>
-                <div className="mt-3 text-[14px] leading-6 text-gray-500">
-                  {costCards[0].detail}
+                <div className="invisible inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ring-1 ring-transparent">
+                  <CheckCircle2 size={12} strokeWidth={2.4} />
+                  Recommended
                 </div>
               </div>
-
-              <div
-                className={`rounded-[1.35rem] border px-5 py-5 shadow-[0_18px_40px_-28px_rgba(15,23,42,0.18)] ${costCards[1].accent} ring-1 ring-[#1b29ff]/8`}
-              >
-                <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#4656ff]">
-                  {costCards[1].label}
+              <div className="mt-3">
+                <div className="whitespace-nowrap text-[1.95rem] font-medium leading-[0.95] tracking-tight text-[#0f172a] md:text-[2.15rem]">
+                  $2k-4k/mo
                 </div>
-                <div className="mt-2 text-[1.95rem] font-medium leading-none tracking-tight">
-                  {costCards[1].value}
+              </div>
+              <div className="mt-4 space-y-3 text-[12px] leading-6 text-[#64748b] md:text-[13px]">
+                <div className="flex items-start gap-2">
+                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#cbd5e1]" />
+                  <span>Best when the work needs constant human judgment.</span>
                 </div>
-                <div className="mt-3 text-[14px] leading-6 text-gray-500">
-                  {costCards[1].detail}
+                <div className="flex items-start gap-2">
+                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#cbd5e1]" />
+                  <span>Expensive for follow-through and reminders.</span>
                 </div>
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="mt-auto pt-5">
                 <a
                   href="mailto:ben@openwork.software?subject=We%20want%20to%20hire%20you"
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex min-h-11 w-full flex-col items-center justify-center rounded-full border border-slate-300 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(246,248,251,0.98))] px-5 py-2 text-center text-sm font-semibold text-slate-700 transition hover:bg-[linear-gradient(180deg,rgba(255,255,255,1),rgba(240,244,248,1))]"
+                  className="inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[#cbd5e1] bg-white px-4 py-2 text-center text-sm font-semibold text-[#334155] shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition hover:bg-[#f8fafc]"
                 >
-                  <span>Hire a human automator</span>
-                  <span className="text-[11px] font-medium text-slate-500">*Offer limited to SF</span>
+                  Hire a human automator
                 </a>
+                <p className="mt-2 text-center text-[11px] font-medium text-[#64748b]">
+                  Limited offer to SF teams
+                </p>
+              </div>
+            </article>
+
+            <article className="relative flex h-full flex-col rounded-[1.5rem] border border-[#c7d2fe] bg-[linear-gradient(180deg,rgba(245,247,255,0.98),rgba(237,242,255,0.98))] px-4 py-4 shadow-[0_18px_40px_-28px_rgba(27,41,255,0.28)] ring-1 ring-[#1b29ff]/10 md:px-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-[0.18em] text-[#1b29ff]">
+                  Den worker
+                </div>
+                <div className="inline-flex items-center gap-1 rounded-full bg-white/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[#1b29ff] ring-1 ring-[#1b29ff]/10">
+                  <CheckCircle2 size={12} strokeWidth={2.4} />
+                  Recommended
+                </div>
+              </div>
+              <div className="mt-3">
+                <div className="text-[2rem] font-medium leading-[0.95] tracking-tight text-[#0f172a] md:text-[2.15rem]">
+                  $50/mo
+                </div>
+              </div>
+              <div className="mt-4 space-y-3 text-[12px] leading-6 text-[#42526a] md:text-[13px]">
+                <div className="flex items-start gap-2">
+                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#1b29ff]" />
+                  <span>Handles repetitive work continuously instead of in bursts.</span>
+                </div>
+                <div className="flex items-start gap-2">
+                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#1b29ff]" />
+                  <span>Keeps humans focused on approvals and exceptions.</span>
+                </div>
               </div>
 
-              <div className="flex">
+              <div className="mt-auto pt-5">
                 <a
                   href={props.getStartedHref}
                   target="_blank"
                   rel="noreferrer"
-                  className="doc-button w-full justify-center"
+                  className="inline-flex min-h-10 w-full items-center justify-center gap-2 rounded-xl border border-[#1b29ff]/25 bg-[linear-gradient(135deg,#1b29ff_0%,#2639ff_58%,#1a2bd0_100%)] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(27,41,255,0.2)] transition hover:-translate-y-px"
                 >
                   Start with one worker
+                  <ArrowRight size={16} strokeWidth={2.3} />
                 </a>
+                <p className="mt-2 text-center text-[11px] font-medium text-[#64748b]">
+                  Same setup. Lower cost.
+                </p>
               </div>
-            </div>
+            </article>
           </div>
-
-          {/* <div className="mt-4 rounded-[1.35rem] border border-slate-200/85 bg-white/70 p-4 md:p-5">
-            <div className="grid gap-3">
-              {comparisonRows.map(row => (
-                <div
-                  key={row.label}
-                  className="grid gap-3 rounded-[1.15rem] border border-slate-200/80 bg-white/80 p-4 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1fr)_minmax(0,1fr)] md:items-start"
-                >
-                  <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
-                    {row.label}
-                  </div>
-                  <div className="text-[14px] leading-6 text-gray-600">{row.human}</div>
-                  <div className="text-[14px] leading-6 text-[#011627]">{row.den}</div>
-                </div>
-              ))}
-            </div> */}
-          </div>
-
         </div>
-
-      {/* <div className="mt-8 rounded-[1.75rem] border border-slate-200/80 bg-white/72 p-5 shadow-[0_24px_50px_-42px_rgba(15,23,42,0.18)] md:p-6">
-        <div className="mb-6 max-w-3xl">
-          <div className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500">
-            In practice
-          </div>
-          <h3 className="mb-4 text-[2rem] font-medium leading-tight tracking-tight text-[#011627]">
-            The value shows up after you close the tab.
-          </h3>
-          <p className="text-[16px] leading-8 text-gray-600">
-            Human follow-up stalls between approvals. Den keeps moving through the queue
-            and reports back when the work is ready for review.
-          </p>
-        </div>
-
-        <DenComparisonAnimation />
-      </div> */}
+      </div>
     </section>
   );
 }
