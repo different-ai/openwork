@@ -1,10 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, ChevronRight, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
-import type { MessageGroup, MessageWithParts, StepGroupMode } from "../../types";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageGroup, type MessageWithParts, type StepGroupMode } from "../../types";
 import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
@@ -948,6 +948,37 @@ export default function MessageList(props: MessageListProps) {
           }
 
           const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+          const isSyntheticSessionError =
+            !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+
+          if (isSyntheticSessionError) {
+            const messageText = block.renderableParts
+              .map((part) => partToText(part))
+              .join(" ")
+              .replace(/\s*\n+\s*/g, " ")
+              .replace(/\s{2,}/g, " ")
+              .trim();
+
+            return (
+              <div
+                class="flex group justify-start"
+                data-message-role="assistant"
+                data-message-id={block.messageId}
+                style={blockPerfStyle(blockIndex)}
+              >
+                <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
+                  <div
+                    class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
+                    role="alert"
+                  >
+                    <CircleAlert size={14} class="mt-0.5 shrink-0" />
+                    <div class="min-w-0 break-words">{messageText}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
           return (
             <div
               class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
