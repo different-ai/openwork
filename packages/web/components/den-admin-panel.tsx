@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
-type BillingFilter = "all" | "paid" | "unpaid" | "unavailable";
 type WorkerFilter = "all" | "with-workers" | "without-workers";
+type BillingFilter = "all" | "paid" | "unpaid" | "unavailable";
 
 type AdminBillingStatus = {
   status: "paid" | "unpaid" | "unavailable";
@@ -19,7 +19,6 @@ type AdminBillingStatus = {
 type AdminEntry = {
   email: string;
   note: string | null;
-  createdAt: string | null;
 };
 
 type AdminSummary = {
@@ -32,10 +31,11 @@ type AdminSummary = {
   localWorkers: number;
   usersWithWorkers: number;
   usersWithoutWorkers: number;
-  paidUsers: number;
-  unpaidUsers: number;
-  billingUnavailableUsers: number;
+  paidUsers: number | null;
+  unpaidUsers: number | null;
+  billingUnavailableUsers: number | null;
   adminCount: number;
+  billingLoaded: boolean;
 };
 
 type AdminUser = {
@@ -52,7 +52,7 @@ type AdminUser = {
   cloudWorkerCount: number;
   localWorkerCount: number;
   latestWorkerCreatedAt: string | null;
-  billing: AdminBillingStatus;
+  billing: AdminBillingStatus | null;
 };
 
 type AdminPayload = {
@@ -67,16 +67,6 @@ type AdminPayload = {
   generatedAt: string | null;
 };
 
-const DEFAULT_BILLING_STATUS: AdminBillingStatus = {
-  status: "unavailable",
-  featureGateEnabled: false,
-  subscriptionId: null,
-  subscriptionStatus: null,
-  currentPeriodEnd: null,
-  source: "unavailable",
-  note: "Billing lookup unavailable."
-};
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -89,17 +79,21 @@ function toNumberValue(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-function parseBillingStatus(value: unknown): AdminBillingStatus {
+function toNullableNumberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function parseBillingStatus(value: unknown): AdminBillingStatus | null {
   if (!isRecord(value)) {
-    return DEFAULT_BILLING_STATUS;
+    return null;
   }
 
   const status = value.status === "paid" || value.status === "unpaid" || value.status === "unavailable"
     ? value.status
-    : DEFAULT_BILLING_STATUS.status;
+    : "unavailable";
   const source = value.source === "benefit" || value.source === "subscription" || value.source === "unavailable"
     ? value.source
-    : DEFAULT_BILLING_STATUS.source;
+    : "unavailable";
 
   return {
     status,
@@ -157,8 +151,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
 
       return {
         email: value.email,
-        note: toStringValue(value.note),
-        createdAt: toStringValue(value.createdAt)
+        note: toStringValue(value.note)
       };
     })
     .filter((value): value is AdminEntry => value !== null);
@@ -180,19 +173,46 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
       localWorkers: toNumberValue(summary.localWorkers),
       usersWithWorkers: toNumberValue(summary.usersWithWorkers),
       usersWithoutWorkers: toNumberValue(summary.usersWithoutWorkers),
-      paidUsers: toNumberValue(summary.paidUsers),
-      unpaidUsers: toNumberValue(summary.unpaidUsers),
-      billingUnavailableUsers: toNumberValue(summary.billingUnavailableUsers),
-      adminCount: toNumberValue(summary.adminCount)
+      paidUsers: toNullableNumberValue(summary.paidUsers),
+      unpaidUsers: toNullableNumberValue(summary.unpaidUsers),
+      billingUnavailableUsers: toNullableNumberValue(summary.billingUnavailableUsers),
+      adminCount: toNumberValue(summary.adminCount),
+      billingLoaded: summary.billingLoaded === true
     },
     users,
     generatedAt: toStringValue(payload.generatedAt)
   };
 }
 
+function getFriendlyHtmlError(value: string): string | null {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const lower = normalized.toLowerCase();
+
+  if (!lower) {
+    return null;
+  }
+
+  if (lower.includes("cannot get /v1/admin/overview")) {
+    return "The Den admin API is not live on the upstream service yet. The backend deploy likely failed or is still rolling out.";
+  }
+
+  if (lower.startsWith("<!doctype") || lower.startsWith("<html")) {
+    return "The upstream Den service returned HTML instead of JSON. This usually means the admin backend route is stale or unavailable.";
+  }
+
+  return null;
+}
+
 function getErrorMessage(payload: unknown, fallback: string): string {
-  if (typeof payload === "string" && payload.trim()) {
-    return payload.trim();
+  if (typeof payload === "string") {
+    const friendly = getFriendlyHtmlError(payload);
+    if (friendly) {
+      return friendly;
+    }
+
+    if (payload.trim()) {
+      return payload.trim();
+    }
   }
 
   if (!isRecord(payload)) {
@@ -204,7 +224,8 @@ function getErrorMessage(payload: unknown, fallback: string): string {
   }
 
   if (typeof payload.error === "string" && payload.error.trim()) {
-    return payload.error.trim();
+    const friendly = getFriendlyHtmlError(payload.error);
+    return friendly ?? payload.error.trim();
   }
 
   return fallback;
@@ -235,12 +256,12 @@ async function requestJson(path: string) {
 
 function formatDateTime(value: string | null): string {
   if (!value) {
-    return "Not available";
+    return "-";
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "Not available";
+    return "-";
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -251,12 +272,12 @@ function formatDateTime(value: string | null): string {
 
 function formatRelativeTime(value: string | null): string {
   if (!value) {
-    return "No recent activity";
+    return "No activity";
   }
 
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
-    return "No recent activity";
+    return "No activity";
   }
 
   const diffMs = Date.now() - date.getTime();
@@ -283,8 +304,7 @@ function formatRelativeTime(value: string | null): string {
     return `${diffMonths}mo ago`;
   }
 
-  const diffYears = Math.floor(diffMonths / 12);
-  return `${diffYears}y ago`;
+  return `${Math.floor(diffMonths / 12)}y ago`;
 }
 
 function formatProvider(provider: string): string {
@@ -293,6 +313,22 @@ function formatProvider(provider: string): string {
     .filter(Boolean)
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
     .join(" ");
+}
+
+function formatBillingStatus(value: AdminBillingStatus | null): string {
+  if (!value) {
+    return "Not loaded";
+  }
+
+  if (value.status === "paid") {
+    return "Paid";
+  }
+
+  if (value.status === "unpaid") {
+    return "Unpaid";
+  }
+
+  return "Unavailable";
 }
 
 function formatSubscriptionStatus(value: string | null): string {
@@ -307,38 +343,45 @@ function formatSubscriptionStatus(value: string | null): string {
     .join(" ");
 }
 
-function StatusBadge({ status }: { status: AdminBillingStatus["status"] }) {
+function StatCard({ label, value, detail }: { label: string; value: string; detail: string }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-slate-950">{value}</p>
+      <p className="mt-1 text-sm leading-6 text-slate-500">{detail}</p>
+    </div>
+  );
+}
+
+function MetaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">{label}</p>
+      <p className="mt-1 text-sm text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+function BillingPill({ billing }: { billing: AdminBillingStatus | null }) {
+  if (!billing) {
+    return (
+      <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">
+        Not loaded
+      </span>
+    );
+  }
+
   const palette =
-    status === "paid"
+    billing.status === "paid"
       ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-      : status === "unpaid"
+      : billing.status === "unpaid"
         ? "border-amber-200 bg-amber-50 text-amber-700"
         : "border-slate-200 bg-slate-100 text-slate-600";
-  const label = status === "paid" ? "Paid" : status === "unpaid" ? "Unpaid" : "Unavailable";
 
   return (
-    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.18em] ${palette}`}>
-      {label}
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] ${palette}`}>
+      {formatBillingStatus(billing)}
     </span>
-  );
-}
-
-function MetricCard({ label, value, detail }: { label: string; value: string; detail: string }) {
-  return (
-    <div className="rounded-[1.3rem] border border-slate-200/80 bg-white/85 p-4 shadow-[0_8px_30px_rgba(15,23,42,0.05)]">
-      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
-      <p className="mt-2 font-mono text-[1.7rem] font-semibold tracking-[-0.04em] text-slate-900">{value}</p>
-      <p className="mt-2 text-sm leading-6 text-slate-500">{detail}</p>
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 rounded-xl border border-slate-200/80 bg-slate-50/90 px-3 py-2.5">
-      <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</p>
-      <p className="text-sm font-medium text-slate-800">{value}</p>
-    </div>
   );
 }
 
@@ -348,16 +391,18 @@ export function DenAdminPanel() {
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
-  const [billingFilter, setBillingFilter] = useState<BillingFilter>("all");
   const [workerFilter, setWorkerFilter] = useState<WorkerFilter>("all");
+  const [billingFilter, setBillingFilter] = useState<BillingFilter>("all");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [includeBilling, setIncludeBilling] = useState(false);
 
-  const loadOverview = useCallback(async () => {
+  const loadOverview = useCallback(async (loadBilling: boolean) => {
     setRefreshing(true);
     setError(null);
 
     try {
-      const { response, payload: nextPayload } = await requestJson("/v1/admin/overview");
+      const suffix = loadBilling ? "?includeBilling=1" : "";
+      const { response, payload: nextPayload } = await requestJson(`/v1/admin/overview${suffix}`);
 
       if (response.status === 401) {
         setAccessState("signed-out");
@@ -386,6 +431,7 @@ export function DenAdminPanel() {
         return;
       }
 
+      setIncludeBilling(parsed.summary.billingLoaded);
       setAccessState("ready");
       setPayload(parsed);
     } catch (nextError) {
@@ -398,7 +444,7 @@ export function DenAdminPanel() {
   }, []);
 
   useEffect(() => {
-    void loadOverview();
+    void loadOverview(false);
   }, [loadOverview]);
 
   const filteredUsers = useMemo(() => {
@@ -408,16 +454,18 @@ export function DenAdminPanel() {
 
     const normalizedQuery = query.trim().toLowerCase();
     return payload.users.filter((user) => {
-      if (billingFilter !== "all" && user.billing.status !== billingFilter) {
-        return false;
-      }
-
       if (workerFilter === "with-workers" && user.workerCount === 0) {
         return false;
       }
 
       if (workerFilter === "without-workers" && user.workerCount > 0) {
         return false;
+      }
+
+      if (payload.summary.billingLoaded && billingFilter !== "all") {
+        if (!user.billing || user.billing.status !== billingFilter) {
+          return false;
+        }
       }
 
       if (!normalizedQuery) {
@@ -440,65 +488,55 @@ export function DenAdminPanel() {
         return current;
       }
 
-      return filteredUsers[0]?.id ?? payload.users[0]?.id ?? null;
+      return filteredUsers[0]?.id ?? null;
     });
   }, [filteredUsers, payload]);
 
   const selectedUser = useMemo(() => {
-    if (!payload) {
-      return null;
-    }
-
-    return payload.users.find((user) => user.id === selectedUserId) ?? filteredUsers[0] ?? null;
-  }, [filteredUsers, payload, selectedUserId]);
+    return filteredUsers.find((user) => user.id === selectedUserId) ?? filteredUsers[0] ?? null;
+  }, [filteredUsers, selectedUserId]);
 
   if (accessState === "loading") {
     return (
-      <section className="relative z-10 w-full max-w-[92rem] rounded-[2rem] border border-slate-200/80 bg-white/80 p-10 shadow-[0_20px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-        <div className="grid gap-3">
-          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-slate-500">Internal tool</p>
-          <h1 className="font-mono text-[2rem] font-semibold tracking-[-0.05em] text-slate-900">Loading Den backoffice...</h1>
-          <p className="max-w-2xl text-sm leading-7 text-slate-500">Checking your session, loading the admin allowlist, and compiling the latest signup, worker, and billing snapshot.</p>
-        </div>
+      <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+        <p className="text-sm text-slate-500">Loading Den admin...</p>
       </section>
     );
   }
 
   if (accessState === "signed-out" || accessState === "forbidden" || accessState === "error") {
     const title = accessState === "signed-out"
-      ? "Sign in first"
+      ? "Sign in required"
       : accessState === "forbidden"
         ? "Admin access required"
         : "Backoffice unavailable";
     const message = accessState === "signed-out"
-      ? "Use the main Den page to sign in, then come back here with a whitelisted admin account."
+      ? "Use the main Den page to sign in, then return with a whitelisted admin account."
       : accessState === "forbidden"
-        ? "Your current session is valid, but the email on it is not present in the Den admin allowlist."
+        ? "Your session is valid, but the email on it is not present in the Den admin allowlist."
         : error ?? "The backoffice request failed before the dashboard could load.";
 
     return (
-      <section className="relative z-10 w-full max-w-[56rem] rounded-[2rem] border border-slate-200/80 bg-white/85 p-8 shadow-[0_20px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-        <div className="grid gap-4">
-          <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-slate-500">Internal tool</p>
-          <h1 className="font-mono text-[2rem] font-semibold tracking-[-0.05em] text-slate-900">{title}</h1>
-          <p className="max-w-2xl text-sm leading-7 text-slate-500">{message}</p>
-          <div className="flex flex-wrap gap-3 pt-2">
-            <a
-              href="/"
-              className="inline-flex items-center justify-center rounded-full border border-[#1B29FF]/20 bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(27,41,255,0.22)]"
-            >
-              Open sign-in page
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                void loadOverview();
-              }}
-              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-            >
-              Retry
-            </button>
-          </div>
+      <section className="mx-auto w-full max-w-4xl rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
+        <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-950">{title}</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-600">{message}</p>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <a
+            href="/"
+            className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white"
+          >
+            Open sign-in page
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              void loadOverview(includeBilling);
+            }}
+            className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+          >
+            Retry
+          </button>
         </div>
       </section>
     );
@@ -508,278 +546,199 @@ export function DenAdminPanel() {
     return null;
   }
 
-  const metrics = [
-    {
-      label: "Users",
-      value: String(payload.summary.totalUsers),
-      detail: `${payload.summary.recentUsers7d} new in the last 7 days`
-    },
-    {
-      label: "Verified",
-      value: String(payload.summary.verifiedUsers),
-      detail: `${payload.summary.totalUsers - payload.summary.verifiedUsers} still unverified`
-    },
-    {
-      label: "Worker creators",
-      value: String(payload.summary.usersWithWorkers),
-      detail: `${payload.summary.usersWithoutWorkers} users have not created a worker yet`
-    },
-    {
-      label: "Workers",
-      value: String(payload.summary.totalWorkers),
-      detail: `${payload.summary.cloudWorkers} cloud / ${payload.summary.localWorkers} local`
-    },
-    {
-      label: "Paid",
-      value: String(payload.summary.paidUsers),
-      detail: `${payload.summary.unpaidUsers} unpaid, ${payload.summary.billingUnavailableUsers} unavailable`
-    },
-    {
-      label: "Admins",
-      value: String(payload.summary.adminCount),
-      detail: `Seeded allowlist currently grants ${payload.summary.adminCount} internal operators access`
-    }
-  ];
+  const billingDetail = payload.summary.billingLoaded
+    ? `${payload.summary.paidUsers ?? 0} paid / ${payload.summary.unpaidUsers ?? 0} unpaid`
+    : "Load billing only when you need it";
 
   return (
-    <section className="relative z-10 w-full max-w-[92rem] rounded-[2rem] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.92),rgba(248,250,252,0.96))] shadow-[0_20px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl">
-      <div className="border-b border-slate-200/80 px-6 py-6 sm:px-8">
-        <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
-          <div className="grid gap-3">
-            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.24em] text-slate-500">Internal tool</p>
-            <div className="grid gap-2">
-              <h1 className="font-mono text-[2rem] font-semibold tracking-[-0.06em] text-slate-950 sm:text-[2.4rem]">Den backoffice</h1>
-              <p className="max-w-3xl text-sm leading-7 text-slate-500 sm:text-[0.96rem]">
-                Audit signups, operator access, worker creation, and billing coverage from a single internal surface.
-              </p>
-            </div>
+    <section className="mx-auto w-full max-w-6xl rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-200 px-6 py-6 sm:px-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Den admin</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-950">User backoffice</h1>
+            <p className="mt-2 max-w-3xl text-sm leading-7 text-slate-600">
+              Lightweight internal view for signups, worker creation, and on-demand billing checks.
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            <div className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600">
-              Viewing as <span className="font-semibold text-slate-900">{payload.viewer.email ?? payload.viewer.id}</span>
+            <div className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-600">
+              {payload.viewer.email ?? payload.viewer.id}
             </div>
             <button
               type="button"
               onClick={() => {
-                void loadOverview();
+                void loadOverview(includeBilling);
               }}
-              className="inline-flex items-center justify-center rounded-full border border-[#1B29FF]/20 bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white shadow-[0_12px_28px_rgba(27,41,255,0.22)] disabled:cursor-not-allowed disabled:opacity-60"
               disabled={refreshing}
+              className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {refreshing ? "Refreshing..." : "Refresh snapshot"}
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-          {metrics.map((metric) => (
-            <MetricCard key={metric.label} label={metric.label} value={metric.value} detail={metric.detail} />
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+          <StatCard label="Users" value={String(payload.summary.totalUsers)} detail={`${payload.summary.recentUsers7d} new in 7d`} />
+          <StatCard label="Verified" value={String(payload.summary.verifiedUsers)} detail={`${payload.summary.totalUsers - payload.summary.verifiedUsers} still unverified`} />
+          <StatCard label="Worker creators" value={String(payload.summary.usersWithWorkers)} detail={`${payload.summary.usersWithoutWorkers} without workers`} />
+          <StatCard label="Workers" value={String(payload.summary.totalWorkers)} detail={`${payload.summary.cloudWorkers} cloud / ${payload.summary.localWorkers} local`} />
+          <StatCard label="Billing" value={payload.summary.billingLoaded ? String(payload.summary.paidUsers ?? 0) : "On demand"} detail={billingDetail} />
+          <StatCard label="Admins" value={String(payload.summary.adminCount)} detail="Whitelisted operator accounts" />
+        </div>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          {payload.admins.map((admin) => (
+            <span key={admin.email} className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700">
+              {admin.email}
+            </span>
           ))}
         </div>
       </div>
 
-      <div className="grid gap-6 px-6 py-6 sm:px-8 xl:grid-cols-[23rem_minmax(0,1fr)] xl:items-start">
-        <div className="grid gap-4 xl:sticky xl:top-6">
-          <section className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-5 shadow-[0_10px_34px_rgba(15,23,42,0.05)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Selected user</p>
-                <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-950">
-                  {selectedUser?.name?.trim() || selectedUser?.email || "No user selected"}
-                </h2>
-                <p className="mt-1 text-sm text-slate-500">{selectedUser?.email ?? "Adjust filters to select a user."}</p>
-              </div>
-
-              {selectedUser ? <StatusBadge status={selectedUser.billing.status} /> : null}
-            </div>
-
-            {selectedUser ? (
-              <div className="mt-5 grid gap-3">
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <DetailRow label="Signed up" value={formatDateTime(selectedUser.createdAt)} />
-                  <DetailRow label="Last seen" value={selectedUser.lastSeenAt ? `${formatDateTime(selectedUser.lastSeenAt)} (${formatRelativeTime(selectedUser.lastSeenAt)})` : "No sessions yet"} />
-                  <DetailRow label="Sessions" value={String(selectedUser.sessionCount)} />
-                  <DetailRow label="Email status" value={selectedUser.emailVerified ? "Verified" : "Not verified"} />
-                </div>
-
-                <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/90 p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Worker footprint</p>
-                    <p className="text-sm font-semibold text-slate-900">{selectedUser.workerCount} total</p>
-                  </div>
-                  <div className="mt-4 grid grid-cols-3 gap-3">
-                    <DetailRow label="Cloud" value={String(selectedUser.cloudWorkerCount)} />
-                    <DetailRow label="Local" value={String(selectedUser.localWorkerCount)} />
-                    <DetailRow label="Latest" value={selectedUser.latestWorkerCreatedAt ? formatRelativeTime(selectedUser.latestWorkerCreatedAt) : "Never"} />
-                  </div>
-                </div>
-
-                <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/90 p-4">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Billing signal</p>
-                  <div className="mt-3 grid gap-3">
-                    <DetailRow label="Status" value={selectedUser.billing.status === "paid" ? "Paid" : selectedUser.billing.status === "unpaid" ? "Unpaid" : "Unavailable"} />
-                    <DetailRow label="Subscription" value={formatSubscriptionStatus(selectedUser.billing.subscriptionStatus)} />
-                    <DetailRow label="Current period end" value={formatDateTime(selectedUser.billing.currentPeriodEnd)} />
-                    <DetailRow label="Signal source" value={selectedUser.billing.source === "benefit" ? "Benefit lookup" : selectedUser.billing.source === "subscription" ? "Subscription lookup" : "Unavailable"} />
-                    <p className="rounded-xl border border-slate-200/80 bg-white px-3 py-3 text-sm leading-6 text-slate-600">
-                      {selectedUser.billing.note ?? "No billing note returned."}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/90 p-4">
-                  <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Auth providers</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {selectedUser.authProviders.length > 0 ? selectedUser.authProviders.map((provider) => (
-                      <span key={provider} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700">
-                        {formatProvider(provider)}
-                      </span>
-                    )) : (
-                      <span className="text-sm text-slate-500">No provider records yet.</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="mt-4 text-sm leading-7 text-slate-500">No users match the current filters.</p>
-            )}
-          </section>
-
-          <section className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-5 shadow-[0_10px_34px_rgba(15,23,42,0.05)]">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Admin allowlist</p>
-                <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-950">Seeded internal operators</h2>
-              </div>
-              <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
-                {payload.admins.length}
-              </div>
-            </div>
-
-            <div className="mt-4 grid gap-3">
-              {payload.admins.map((admin) => (
-                <div key={admin.email} className="rounded-[1.1rem] border border-slate-200/80 bg-slate-50/80 px-3 py-3">
-                  <p className="font-medium text-slate-900">{admin.email}</p>
-                  <p className="mt-1 text-sm text-slate-500">{admin.note ?? "Seeded admin entry"}</p>
-                </div>
-              ))}
-            </div>
-
-            <p className="mt-4 text-xs leading-6 text-slate-500">
-              Snapshot generated {formatDateTime(payload.generatedAt)}.
-            </p>
-          </section>
-        </div>
-
-        <section className="rounded-[1.5rem] border border-slate-200/80 bg-white/90 p-5 shadow-[0_10px_34px_rgba(15,23,42,0.05)]">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-slate-500">User explorer</p>
-              <h2 className="mt-2 text-lg font-semibold tracking-[-0.03em] text-slate-950">Inspect every signup and segment by worker or payment status</h2>
-            </div>
-            <div className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
-              {filteredUsers.length} of {payload.users.length} shown
-            </div>
-          </div>
-
-          <div className="mt-5 grid gap-3 lg:grid-cols-[minmax(0,1fr)_10rem_12rem]">
+      <div className="px-6 py-6 sm:px-8">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_13rem_13rem]">
             <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Search</span>
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Search users</span>
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by email, name, id, or provider"
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#1B29FF] focus:ring-4 focus:ring-[#1B29FF]/10"
+                placeholder="Email, name, user id, provider"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
               />
             </label>
 
             <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Billing</span>
-              <select
-                value={billingFilter}
-                onChange={(event) => setBillingFilter(event.target.value as BillingFilter)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#1B29FF] focus:ring-4 focus:ring-[#1B29FF]/10"
-              >
-                <option value="all">All</option>
-                <option value="paid">Paid</option>
-                <option value="unpaid">Unpaid</option>
-                <option value="unavailable">Unavailable</option>
-              </select>
-            </label>
-
-            <label className="grid gap-2">
-              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-500">Workers</span>
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Workers</span>
               <select
                 value={workerFilter}
                 onChange={(event) => setWorkerFilter(event.target.value as WorkerFilter)}
-                className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-[#1B29FF] focus:ring-4 focus:ring-[#1B29FF]/10"
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
               >
                 <option value="all">All users</option>
                 <option value="with-workers">With workers</option>
                 <option value="without-workers">Without workers</option>
               </select>
             </label>
+
+            <label className="grid gap-2">
+              <span className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-500">Billing</span>
+              <select
+                value={billingFilter}
+                onChange={(event) => setBillingFilter(event.target.value as BillingFilter)}
+                disabled={!payload.summary.billingLoaded}
+                className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-slate-400 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                <option value="all">All users</option>
+                <option value="paid">Paid</option>
+                <option value="unpaid">Unpaid</option>
+                <option value="unavailable">Unavailable</option>
+              </select>
+            </label>
           </div>
 
-          <div className="mt-5 grid gap-3">
-            {filteredUsers.length > 0 ? filteredUsers.map((user) => {
-              const isSelected = user.id === selectedUser?.id;
-              return (
-                <button
-                  key={user.id}
-                  type="button"
-                  onClick={() => setSelectedUserId(user.id)}
-                  className={`rounded-[1.25rem] border p-4 text-left transition ${isSelected ? "border-[#1B29FF]/30 bg-[#1B29FF]/[0.04] shadow-[0_12px_34px_rgba(27,41,255,0.10)]" : "border-slate-200/80 bg-slate-50/50 hover:border-slate-300 hover:bg-white"}`}
-                >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-base font-semibold tracking-[-0.02em] text-slate-950">{user.name?.trim() || user.email}</p>
-                        {user.emailVerified ? (
-                          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.16em] text-emerald-700">
-                            Verified
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {user.authProviders.length > 0 ? user.authProviders.map((provider) => (
-                          <span key={`${user.id}-${provider}`} className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold text-slate-600">
-                            {formatProvider(provider)}
-                          </span>
-                        )) : (
-                          <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold text-slate-500">
-                            No providers recorded
-                          </span>
-                        )}
-                      </div>
-                    </div>
+          {!payload.summary.billingLoaded ? (
+            <button
+              type="button"
+              onClick={() => {
+                void loadOverview(true);
+              }}
+              disabled={refreshing}
+              className="inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Load billing statuses
+            </button>
+          ) : (
+            <p className="text-sm text-slate-500">Billing loaded for {payload.summary.totalUsers} users.</p>
+          )}
+        </div>
 
-                    <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-                      <StatusBadge status={user.billing.status} />
-                      <span className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-slate-600">
-                        {user.workerCount} workers
-                      </span>
+        <div className="mt-6 grid gap-3">
+          {filteredUsers.length > 0 ? filteredUsers.map((user) => {
+            const isSelected = user.id === selectedUser?.id;
+
+            return (
+              <button
+                key={user.id}
+                type="button"
+                onClick={() => setSelectedUserId(user.id)}
+                className={`rounded-2xl border px-4 py-4 text-left transition ${isSelected ? "border-slate-900 bg-slate-50" : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/70"}`}
+              >
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-base font-semibold text-slate-950">{user.name?.trim() || user.email}</p>
+                      {user.emailVerified ? (
+                        <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.66rem] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+                          Verified
+                        </span>
+                      ) : null}
                     </div>
+                    <p className="mt-1 truncate text-sm text-slate-500">{user.email}</p>
                   </div>
 
-                  <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <DetailRow label="Signed up" value={formatDateTime(user.createdAt)} />
-                    <DetailRow label="Last seen" value={user.lastSeenAt ? formatRelativeTime(user.lastSeenAt) : "No sessions yet"} />
-                    <DetailRow label="Sessions" value={String(user.sessionCount)} />
-                    <DetailRow label="Billing detail" value={formatSubscriptionStatus(user.billing.subscriptionStatus)} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <BillingPill billing={user.billing} />
+                    <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-slate-600">
+                      {user.workerCount} workers
+                    </span>
                   </div>
-                </button>
-              );
-            }) : (
-              <div className="rounded-[1.25rem] border border-dashed border-slate-300 bg-slate-50/70 px-5 py-10 text-center">
-                <p className="text-base font-semibold text-slate-900">No users match the current filters</p>
-                <p className="mt-2 text-sm leading-7 text-slate-500">Try clearing search terms or broadening the billing and worker filters.</p>
-              </div>
-            )}
-          </div>
-        </section>
+                </div>
+
+                <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetaCell label="Signed up" value={formatDateTime(user.createdAt)} />
+                  <MetaCell label="Last seen" value={user.lastSeenAt ? `${formatRelativeTime(user.lastSeenAt)} · ${formatDateTime(user.lastSeenAt)}` : "No sessions yet"} />
+                  <MetaCell label="Sessions" value={String(user.sessionCount)} />
+                  <MetaCell label="Workers" value={`${user.cloudWorkerCount} cloud / ${user.localWorkerCount} local`} />
+                </div>
+
+                {isSelected ? (
+                  <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 lg:grid-cols-2">
+                    <div className="grid gap-4">
+                      <MetaCell label="Auth providers" value={user.authProviders.length > 0 ? user.authProviders.map(formatProvider).join(", ") : "No provider records"} />
+                      <MetaCell label="Latest worker" value={user.latestWorkerCreatedAt ? `${formatRelativeTime(user.latestWorkerCreatedAt)} · ${formatDateTime(user.latestWorkerCreatedAt)}` : "No workers created"} />
+                    </div>
+
+                    <div className="grid gap-4">
+                      {user.billing ? (
+                        <>
+                          <MetaCell label="Subscription" value={formatSubscriptionStatus(user.billing.subscriptionStatus)} />
+                          <MetaCell label="Billing note" value={user.billing.note ?? "No billing note returned."} />
+                        </>
+                      ) : (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                          <p className="text-sm leading-7 text-slate-600">
+                            Billing is intentionally loaded on demand to keep the admin page fast.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void loadOverview(true);
+                            }}
+                            disabled={refreshing}
+                            className="mt-3 inline-flex items-center justify-center rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            Load billing statuses
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+              </button>
+            );
+          }) : (
+            <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-5 py-10 text-center">
+              <p className="text-base font-semibold text-slate-950">No users match the current filters</p>
+              <p className="mt-2 text-sm leading-7 text-slate-500">Try broadening search or relaxing the worker and billing filters.</p>
+            </div>
+          )}
+        </div>
+
+        <p className="mt-6 text-xs leading-6 text-slate-500">Snapshot generated {formatDateTime(payload.generatedAt)}.</p>
       </div>
     </section>
   );

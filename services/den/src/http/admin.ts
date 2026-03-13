@@ -47,6 +47,19 @@ function normalizeProvider(providerId: string) {
   return normalized
 }
 
+function parseBooleanQuery(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => parseBooleanQuery(entry))
+  }
+
+  if (typeof value !== "string") {
+    return false
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized === "1" || normalized === "true" || normalized === "yes"
+}
+
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>) {
   if (items.length === 0) {
     return [] as R[]
@@ -103,6 +116,7 @@ export const adminRouter = express.Router()
 adminRouter.get("/overview", asyncRoute(async (req, res) => {
   const session = await requireAdminSession(req, res)
   if (!session) return
+  const includeBilling = parseBooleanQuery(req.query.includeBilling)
 
   const [admins, users, workerStatsRows, sessionStatsRows, accountRows] = await Promise.all([
     db
@@ -181,17 +195,6 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     providersByUser.set(row.userId, existing)
   }
 
-  const billingRows = await mapWithConcurrency(users, 4, async (user) => ({
-    userId: user.id,
-    billing: await getCloudWorkerAdminBillingStatus({
-      userId: user.id,
-      email: user.email,
-      name: user.name ?? user.email,
-    }),
-  }))
-
-  const billingByUser = new Map(billingRows.map((row) => [row.userId, row.billing]))
-
   const defaultBilling = {
     status: "unavailable" as const,
     featureGateEnabled: false,
@@ -201,6 +204,19 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     source: "unavailable" as const,
     note: "Billing lookup unavailable.",
   }
+
+  const billingRows = includeBilling
+    ? await mapWithConcurrency(users, 4, async (user) => ({
+        userId: user.id,
+        billing: await getCloudWorkerAdminBillingStatus({
+          userId: user.id,
+          email: user.email,
+          name: user.name ?? user.email,
+        }),
+      }))
+    : []
+
+  const billingByUser = new Map(billingRows.map((row) => [row.userId, row.billing]))
 
   const userRows = users.map((user) => {
     const workerStats = workerStatsByUser.get(user.id) ?? {
@@ -229,7 +245,7 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
       cloudWorkerCount: workerStats.cloudWorkerCount,
       localWorkerCount: workerStats.localWorkerCount,
       latestWorkerCreatedAt: workerStats.latestWorkerCreatedAt,
-      billing: billingByUser.get(user.id) ?? defaultBilling,
+      billing: includeBilling ? billingByUser.get(user.id) ?? defaultBilling : null,
     }
   })
 
@@ -248,12 +264,14 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
         accumulator.usersWithWorkers += 1
       }
 
-      if (user.billing.status === "paid") {
-        accumulator.paidUsers += 1
-      } else if (user.billing.status === "unpaid") {
-        accumulator.unpaidUsers += 1
-      } else {
-        accumulator.billingUnavailableUsers += 1
+      if (includeBilling && user.billing) {
+        if (user.billing.status === "paid") {
+          accumulator.paidUsers += 1
+        } else if (user.billing.status === "unpaid") {
+          accumulator.unpaidUsers += 1
+        } else {
+          accumulator.billingUnavailableUsers += 1
+        }
       }
 
       if (isWithinDays(user.createdAt, 7)) {
@@ -291,6 +309,10 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     summary: {
       ...summary,
       adminCount: admins.length,
+      billingLoaded: includeBilling,
+      paidUsers: includeBilling ? summary.paidUsers : null,
+      unpaidUsers: includeBilling ? summary.unpaidUsers : null,
+      billingUnavailableUsers: includeBilling ? summary.billingUnavailableUsers : null,
       usersWithoutWorkers: summary.totalUsers - summary.usersWithWorkers,
     },
     users: userRows,

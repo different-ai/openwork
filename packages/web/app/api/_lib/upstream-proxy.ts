@@ -61,9 +61,29 @@ function isLikelyHtmlBody(body: ArrayBuffer): boolean {
   return preview.startsWith("<!doctype") || preview.startsWith("<html") || preview.includes("<body");
 }
 
-function shouldFallbackToAuthBase(response: Response, body: ArrayBuffer): boolean {
+function isLikelyCannotGetBody(body: ArrayBuffer): boolean {
+  if (body.byteLength === 0) {
+    return false;
+  }
+
+  const preview = new TextDecoder().decode(body.slice(0, 256)).trim().toLowerCase();
+  return preview.includes("cannot get ");
+}
+
+function isAdminTargetPath(targetPath: string): boolean {
+  return targetPath === "v1/admin" || targetPath.startsWith("v1/admin/");
+}
+
+function shouldFallbackToAuthBase(response: Response, body: ArrayBuffer, targetPath: string): boolean {
   if (response.status === 502 || response.status === 503 || response.status === 504) {
     return true;
+  }
+
+  if (response.status === 404 && isAdminTargetPath(targetPath)) {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    if (contentType.includes("text/html") || isLikelyHtmlBody(body) || isLikelyCannotGetBody(body)) {
+      return true;
+    }
   }
 
   if (response.status < 500) {
@@ -224,7 +244,7 @@ export async function proxyUpstream(
     return buildUpstreamErrorResponse(502, "Upstream request failed.");
   }
 
-  if (apiBase !== authFallbackBase && shouldFallbackToAuthBase(upstream, body)) {
+  if (apiBase !== authFallbackBase && shouldFallbackToAuthBase(upstream, body, targetPath)) {
     try {
       const fallback = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
       upstream = fallback.response;
