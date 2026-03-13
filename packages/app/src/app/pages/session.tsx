@@ -41,6 +41,7 @@ import {
   History,
   ListTodo,
   Loader2,
+  Menu,
   MessageCircle,
   Maximize2,
   Minimize2,
@@ -3301,9 +3302,15 @@ export default function SessionView(props: SessionViewProps) {
   ) => (
     <button
       type="button"
-      class={`h-9 w-full rounded-lg text-[13px] font-medium transition-colors ${
-        active ? "bg-gray-4 text-gray-12" : "text-gray-11 hover:text-gray-12 hover:bg-gray-3"
-      } ${rightSidebarExpanded() ? "flex items-center gap-2.5 px-3 justify-start" : "flex items-center justify-center px-0"}`}
+      class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
+        active
+          ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+          : "border-transparent text-gray-10 hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+      } ${
+        rightSidebarExpanded()
+          ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
+          : "flex h-12 items-center justify-center rounded-[16px] px-0"
+      }`}
       onClick={onClick}
       title={label}
       aria-label={label}
@@ -3314,9 +3321,10 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   return (
-    <div class="flex h-screen w-full bg-dls-sidebar text-gray-12 font-sans overflow-hidden">
+    <div class="h-screen w-full overflow-hidden bg-dls-sidebar p-3 md:p-4 text-gray-12 font-sans">
+      <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
-        class="relative hidden lg:flex shrink-0 flex-col bg-dls-sidebar border-r border-gray-6/70 p-3 pt-5"
+        class="relative hidden lg:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
         style={{
           width: `${leftSidebarWidth()}px`,
           "min-width": `${leftSidebarWidth()}px`,
@@ -3375,7 +3383,7 @@ export default function SessionView(props: SessionViewProps) {
           />
         </div>
         <div
-          class="absolute right-0 top-0 hidden h-full w-2 translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
+          class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 lg:block"
           onPointerDown={startLeftSidebarResize}
           title="Resize workspace column"
           aria-label="Resize workspace column"
@@ -3383,9 +3391,9 @@ export default function SessionView(props: SessionViewProps) {
 
       </aside>
 
-      <main class="flex-1 flex flex-col overflow-hidden bg-gray-1">
-        <header class="h-14 border-b border-gray-5 flex items-center justify-between px-6 bg-gray-1 z-10 shrink-0">
-          <div class="flex items-center gap-3 min-w-0">
+      <main class="min-w-0 flex-1 flex flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
+        <header class="z-10 flex h-12 shrink-0 items-center justify-between border-b border-dls-border bg-dls-surface px-4 md:px-6">
+          <div class="flex min-w-0 items-center gap-3">
             <Show when={showUpdatePill()}>
               <button
                 type="button"
@@ -3414,26 +3422,33 @@ export default function SessionView(props: SessionViewProps) {
               </button>
             </Show>
 
-            <h1 class="text-[13.5px] font-medium text-gray-11 truncate">
+            <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
+              {showWorkspaceSetupEmptyState()
+                ? "Worker"
+                : props.activeWorkspaceDisplay.workspaceType === "remote"
+                  ? "Remote worker"
+                  : "Worker"}
+            </span>
+            <h1 class="truncate text-[15px] font-semibold text-dls-text">
               {showWorkspaceSetupEmptyState()
                 ? "Create or connect a worker"
                 : (selectedSessionTitle() || "New session")}
             </h1>
             <Show when={props.developerMode}>
-              <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
+              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary">· {props.busyHint}</span>
+              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.busyHint}</span>
             </Show>
           </div>
 
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-1.5 text-gray-10">
             <button
               type="button"
-              class={`h-9 px-2.5 flex items-center justify-center rounded-lg text-[11px] font-mono transition-colors ${
+              class={`hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors sm:flex ${
                 commandPaletteOpen()
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
+                  ? "bg-gray-2 text-dls-text"
+                  : "text-gray-10 hover:bg-gray-2/70 hover:text-dls-text"
               }`}
               onClick={(event) => {
                 event.preventDefault();
@@ -3447,14 +3462,16 @@ export default function SessionView(props: SessionViewProps) {
               title="Quick actions (Ctrl/Cmd+K)"
               aria-label="Quick actions"
             >
-              Cmd+K
+              <Menu size={15} />
+              <span>Menu</span>
+              <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">Cmd+K</span>
             </button>
             <button
               type="button"
-              class={`h-9 w-9 flex items-center justify-center rounded-lg transition-colors ${
+              class={`flex h-9 w-9 items-center justify-center rounded-md transition-colors ${
                 searchOpen()
-                  ? "bg-gray-4 text-gray-12"
-                  : "text-gray-10 hover:text-gray-12 hover:bg-gray-3"
+                  ? "bg-gray-2 text-dls-text"
+                  : "text-gray-10 hover:bg-gray-2/70 hover:text-dls-text"
               }`}
               onClick={() => {
                 if (searchOpen()) {
@@ -3468,9 +3485,10 @@ export default function SessionView(props: SessionViewProps) {
             >
               <Search size={16} />
             </button>
+            <div class="hidden h-4 w-px bg-dls-border sm:block" />
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
               onClick={undoLastMessage}
               disabled={!canUndoLastMessage() || historyActionBusy() !== null}
               title="Undo last message"
@@ -3479,10 +3497,11 @@ export default function SessionView(props: SessionViewProps) {
               <Show when={historyActionBusy() === "undo"} fallback={<Undo2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
               </Show>
+              <span class="hidden lg:inline">Revert</span>
             </button>
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
               onClick={redoLastMessage}
               disabled={!canRedoLastMessage() || historyActionBusy() !== null}
               title="Redo last reverted message"
@@ -3491,10 +3510,12 @@ export default function SessionView(props: SessionViewProps) {
               <Show when={historyActionBusy() === "redo"} fallback={<Redo2 size={16} />}>
                 <Loader2 size={16} class="animate-spin" />
               </Show>
+              <span class="hidden lg:inline">Redo</span>
             </button>
+            <div class="hidden h-4 w-px bg-dls-border sm:block" />
             <button
               type="button"
-              class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
               onClick={compactSessionHistory}
               disabled={!canCompactSession() || historyActionBusy() !== null}
               title="Compact session context"
@@ -3507,7 +3528,7 @@ export default function SessionView(props: SessionViewProps) {
             <div ref={(el) => (sessionMenuRef = el)} class="relative">
               <button
                 type="button"
-                class="h-9 w-9 flex items-center justify-center rounded-lg text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={!props.selectedSessionId}
                 title={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
                 aria-label={props.selectedSessionId ? "Session actions" : "Select a session to manage it"}
@@ -3522,12 +3543,12 @@ export default function SessionView(props: SessionViewProps) {
 
               <Show when={sessionMenuOpen() && props.selectedSessionId}>
                 <div
-                  class="absolute right-0 top-[calc(100%+4px)] z-20 w-52 rounded-lg border border-gray-6 bg-gray-1 shadow-lg p-1"
+                  class="absolute right-0 top-[calc(100%+6px)] z-20 w-52 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
                   onClick={(event) => event.stopPropagation()}
                 >
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 disabled:opacity-60"
+                    class="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2 disabled:opacity-60"
                     onClick={() => {
                       setSessionMenuOpen(false);
                       void compactSessionHistory();
@@ -3538,14 +3559,14 @@ export default function SessionView(props: SessionViewProps) {
                   </button>
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
+                    class="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2"
                     onClick={openRenameModal}
                   >
                     Rename session
                   </button>
                   <button
                     type="button"
-                    class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3 text-red-11"
+                    class="w-full rounded-xl px-3 py-2 text-left text-sm text-red-11 transition-colors hover:bg-red-1/40"
                     onClick={openDeleteSessionModal}
                   >
                     Delete session
@@ -3557,8 +3578,8 @@ export default function SessionView(props: SessionViewProps) {
         </header>
 
         <Show when={searchOpen()}>
-          <div class="border-b border-gray-5 bg-gray-2/70 px-6 py-2">
-            <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-xl border border-gray-6 bg-gray-1 px-3 py-2">
+          <div class="border-b border-dls-border bg-dls-sidebar/70 px-4 py-2 md:px-6">
+            <div class="mx-auto flex w-full max-w-[800px] items-center gap-2 rounded-[16px] border border-dls-border bg-dls-surface px-3 py-2 shadow-[var(--dls-card-shadow)]">
               <Search size={14} class="text-gray-9" />
               <input
                 ref={(el) => (searchInputEl = el)}
@@ -3586,7 +3607,7 @@ export default function SessionView(props: SessionViewProps) {
               <span class="text-[11px] text-gray-10 tabular-nums">{activeSearchPositionLabel()}</span>
               <button
                 type="button"
-                class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
+                class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(-1)}
                 aria-label="Previous match"
@@ -3595,7 +3616,7 @@ export default function SessionView(props: SessionViewProps) {
               </button>
               <button
                 type="button"
-                class="rounded-md border border-gray-6 px-2 py-1 text-[11px] text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors disabled:opacity-60"
+                class="rounded-md border border-dls-border px-2 py-1 text-[11px] text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12 disabled:opacity-60"
                 disabled={searchHits().length === 0}
                 onClick={() => moveSearchHit(1)}
                 aria-label="Next match"
@@ -3604,7 +3625,7 @@ export default function SessionView(props: SessionViewProps) {
               </button>
               <button
                 type="button"
-                class="h-7 w-7 flex items-center justify-center rounded-md text-gray-10 hover:text-gray-12 hover:bg-gray-3 transition-colors"
+                class="flex h-7 w-7 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2 hover:text-gray-12"
                 onClick={closeSearch}
                 aria-label="Close search"
               >
@@ -3662,19 +3683,19 @@ export default function SessionView(props: SessionViewProps) {
         </Show>
 
         <div class="flex-1 flex overflow-hidden">
-          <div class="flex-1 min-w-0 relative overflow-hidden bg-gray-1">
+          <div class="relative min-w-0 flex-1 overflow-hidden bg-dls-surface">
             <div
-              class={`h-full overflow-y-auto px-8 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-12 pb-56"} scroll-smooth bg-gray-1 ${initialAnchorPending() ? "invisible" : "visible"}`}
+              class={`h-full overflow-y-auto px-4 sm:px-6 lg:px-10 ${showWorkspaceSetupEmptyState() ? "pt-20 pb-20" : "pt-10 pb-60"} scroll-smooth bg-dls-surface ${initialAnchorPending() ? "invisible" : "visible"}`}
               style={{ contain: "layout paint style" }}
               ref={(el) => {
                 chatContainerEl = el;
                 setIsChatContainerReady(Boolean(el));
               }}
             >
-              <div class="max-w-[650px] mx-auto w-full">
+              <div class="mx-auto w-full max-w-[800px]">
             <Show when={showWorkspaceSetupEmptyState()}>
-              <div class="mx-auto max-w-xl rounded-3xl border border-gray-6 bg-gray-2/60 p-8 text-center shadow-sm">
-                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-gray-6 bg-gray-1 text-gray-11">
+              <div class="mx-auto max-w-xl rounded-[24px] border border-dls-border bg-dls-sidebar p-8 text-center shadow-[var(--dls-card-shadow)]">
+                <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-gray-11">
                   <HardDrive size={24} />
                 </div>
                 <h3 class="text-2xl font-semibold text-gray-12">Set up your first worker</h3>
@@ -3684,14 +3705,14 @@ export default function SessionView(props: SessionViewProps) {
                 <div class="mt-6 grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-12 px-4 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
+                    class="rounded-full border border-gray-7 bg-gray-12 px-5 py-3 text-sm font-semibold text-gray-1 transition-colors hover:bg-gray-11"
                     onClick={props.openCreateWorkspace}
                   >
                     Create local worker
                   </button>
                   <button
                     type="button"
-                    class="rounded-2xl border border-gray-7 bg-gray-1 px-4 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-3"
+                    class="rounded-full border border-dls-border bg-dls-surface px-5 py-3 text-sm font-semibold text-gray-12 transition-colors hover:bg-gray-2"
                     onClick={props.openCreateRemoteWorkspace}
                   >
                     Connect remote worker
@@ -3798,10 +3819,10 @@ export default function SessionView(props: SessionViewProps) {
 
             <Show when={props.messages.length > 0 && !nearBottom()}>
               <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
-                <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-gray-6 bg-gray-1/95 p-1 shadow-lg shadow-gray-12/5 backdrop-blur-md">
+                <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
                   <button
                     type="button"
-                    class="rounded-full px-3 py-1.5 text-xs text-gray-11 hover:bg-gray-3 transition-colors"
+                    class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
                     onClick={() => jumpToLatest("smooth")}
                   >
                     Jump to latest
@@ -3814,11 +3835,11 @@ export default function SessionView(props: SessionViewProps) {
         </div>
 
       <Show when={todoCount() > 0}>
-        <div class="mx-auto w-full max-w-[68ch] px-4">
-          <div class="rounded-t-xl border border-b-0 border-gray-6/70 bg-gray-1/70 shadow-sm shadow-gray-12/5">
+        <div class="mx-auto w-full max-w-[800px] px-4">
+          <div class="rounded-t-[20px] border border-b-0 border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]">
             <button
               type="button"
-              class="w-full flex items-center justify-between px-4 py-2.5 text-xs text-gray-9 hover:bg-gray-2/50 transition-colors rounded-t-xl"
+              class="flex w-full items-center justify-between rounded-t-[20px] px-4 py-3 text-xs text-gray-9 transition-colors hover:bg-gray-2/50"
               onClick={() => setTodoExpanded((prev) => !prev)}
             >
               <div class="flex items-center gap-2">
@@ -3831,7 +3852,7 @@ export default function SessionView(props: SessionViewProps) {
               />
             </button>
             <Show when={todoExpanded()}>
-              <div class="px-4 pb-3 space-y-2.5 max-h-60 overflow-auto border-t border-gray-6/50">
+              <div class="max-h-60 overflow-auto border-t border-dls-border px-4 pb-3 space-y-2.5">
                 <For each={todoList()}>
                   {(todo, index) => {
                     const done = () => todo.status === "completed";
@@ -3937,7 +3958,7 @@ export default function SessionView(props: SessionViewProps) {
       </main>
 
       <aside
-        class="flex shrink-0 flex-col overflow-hidden bg-dls-sidebar border-l border-gray-6/70 p-3 transition-[width] duration-200"
+        class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
         style={{
           width: `${rightSidebarWidth()}px`,
           "min-width": `${rightSidebarWidth()}px`,
@@ -3946,7 +3967,7 @@ export default function SessionView(props: SessionViewProps) {
         <div class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}>
           <button
             type="button"
-            class="flex h-9 w-9 items-center justify-center rounded-lg text-gray-10 transition-colors hover:bg-gray-3 hover:text-gray-12"
+            class="flex h-10 w-10 items-center justify-center rounded-[16px] text-gray-10 transition-colors hover:bg-dls-surface hover:text-dls-text"
             onClick={toggleRightSidebar}
             title={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
             aria-label={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
@@ -4005,24 +4026,29 @@ export default function SessionView(props: SessionViewProps) {
           </div>
 
           <Show when={rightSidebarExpanded()}>
-            <InboxPanel
-              id="sidebar-inbox"
-              client={props.openworkServerClient}
-              workspaceId={props.openworkServerWorkspaceId}
-              onToast={(message) => setToastMessage(message)}
-            />
+            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+              <InboxPanel
+                id="sidebar-inbox"
+                client={props.openworkServerClient}
+                workspaceId={props.openworkServerWorkspaceId}
+                onToast={(message) => setToastMessage(message)}
+              />
+            </div>
 
-            <ArtifactsPanel
-              id="sidebar-artifacts"
-              files={touchedFiles()}
-              workspaceRoot={props.activeWorkspaceRoot}
-              onRevealArtifact={revealArtifact}
-              onOpenInObsidian={openArtifactInObsidian}
-              obsidianAvailable={obsidianAvailable()}
-            />
+            <div class="rounded-[20px] border border-dls-border bg-dls-surface p-3 shadow-[var(--dls-card-shadow)]">
+              <ArtifactsPanel
+                id="sidebar-artifacts"
+                files={touchedFiles()}
+                workspaceRoot={props.activeWorkspaceRoot}
+                onRevealArtifact={revealArtifact}
+                onOpenInObsidian={openArtifactInObsidian}
+                obsidianAvailable={obsidianAvailable()}
+              />
+            </div>
           </Show>
         </div>
       </aside>
+      </div>
 
       <Show when={commandPaletteOpen()}>
         <div

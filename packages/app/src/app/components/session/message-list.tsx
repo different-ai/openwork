@@ -932,8 +932,8 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                      : "max-w-[650px] text-[15px] leading-6 text-gray-12 group"
+                      ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
+                      : "max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -989,20 +989,20 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-[80%] px-5 py-3 rounded-[24px] bg-gray-3 text-gray-12 text-[14px] leading-relaxed font-medium"
-                    : "max-w-[650px] text-[15px] leading-[1.65] text-gray-12 antialiased group"
+                    ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
+                    : "max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>
                   <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
                     <For each={attachmentsForMessage(block.message)}>
                       {(attachment) => (
-                        <div class="flex items-center gap-2 rounded-2xl border border-gray-6 bg-gray-1/70 px-3 py-2 text-xs text-gray-11">
+                        <div class="flex items-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3 py-2 text-xs text-gray-11 shadow-[var(--dls-card-shadow)]">
                           <Show
                             when={isImageAttachment(attachment.mime)}
                             fallback={<File size={14} class="text-gray-9" />}
                           >
-                            <div class="h-12 w-12 rounded-xl bg-gray-2 overflow-hidden border border-gray-6">
+                            <div class="h-12 w-12 overflow-hidden rounded-xl border border-dls-border bg-dls-sidebar">
                               <img
                                 src={attachment.url}
                                 alt={attachment.filename}

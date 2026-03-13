@@ -502,11 +502,15 @@ export default function DashboardView(props: DashboardViewProps) {
     return (
       <button
         type="button"
-        class={`w-full h-10 flex items-center rounded-lg text-sm font-medium transition-colors ${
+        class={`w-full border text-[13px] font-medium transition-[background-color,border-color,box-shadow,color] ${
           active()
-            ? "bg-dls-active text-dls-text"
-            : "text-dls-secondary hover:text-dls-text hover:bg-dls-hover"
-        } ${rightSidebarExpanded() ? "justify-start gap-3 px-3" : "justify-center px-0"}`}
+            ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+            : "border-transparent text-dls-secondary hover:border-dls-border hover:bg-dls-surface hover:text-dls-text"
+        } ${
+          rightSidebarExpanded()
+            ? "flex min-h-11 items-center justify-start gap-2.5 rounded-[16px] px-3.5"
+            : "flex h-12 items-center justify-center rounded-[16px] px-0"
+        }`}
         onClick={() => props.setTab(t)}
         title={label}
         aria-label={label}
@@ -1025,9 +1029,10 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   return (
-    <div class="flex h-screen w-full bg-dls-surface text-dls-text font-sans overflow-hidden">
+    <div class="h-screen w-full overflow-hidden bg-dls-sidebar p-3 md:p-4 text-dls-text font-sans">
+      <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
-        class="relative hidden md:flex shrink-0 flex-col bg-dls-sidebar border-r border-dls-border p-4"
+        class="relative hidden md:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
         style={{
           width: `${leftSidebarWidth()}px`,
           "min-width": `${leftSidebarWidth()}px`,
@@ -1085,7 +1090,7 @@ export default function DashboardView(props: DashboardViewProps) {
           />
         </div>
         <div
-          class="absolute right-0 top-0 hidden h-full w-2 translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-gray-6/40 md:block"
+          class="absolute right-0 top-3 hidden h-[calc(100%-24px)] w-2 translate-x-1/2 cursor-col-resize rounded-full bg-transparent transition-colors hover:bg-gray-6/40 md:block"
           onPointerDown={startLeftSidebarResize}
           title="Resize workspace column"
           aria-label="Resize workspace column"
@@ -1093,10 +1098,10 @@ export default function DashboardView(props: DashboardViewProps) {
 
       </aside>
 
-      <main class="flex-1 flex flex-col overflow-hidden bg-dls-surface">
+      <main class="min-w-0 flex-1 flex flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-surface shadow-[var(--dls-shell-shadow)]">
         <div class="flex-1 overflow-y-auto">
-        <header class="h-14 flex items-center justify-between px-6 md:px-10 border-b border-dls-border sticky top-0 bg-dls-surface z-10">
-          <div class="flex items-center gap-3">
+        <header class="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-dls-border bg-dls-surface px-4 md:px-6">
+          <div class="flex min-w-0 items-center gap-3">
             <Show when={showUpdatePill()}>
               <button
                 type="button"
@@ -1124,21 +1129,24 @@ export default function DashboardView(props: DashboardViewProps) {
                 </Show>
               </button>
             </Show>
-            <div class="px-3 py-1.5 rounded-xl bg-dls-hover text-xs text-dls-secondary font-medium">
+            <span class="shrink-0 rounded-md bg-dls-hover px-2 py-1 text-[11px] font-medium text-dls-secondary">
+              {props.activeWorkspaceDisplay.workspaceType === "remote" ? "Remote worker" : "Worker"}
+            </span>
+            <h1 class="truncate text-[15px] font-semibold text-dls-text">{title()}</h1>
+            <span class="hidden truncate text-[13px] text-dls-secondary lg:inline">
               {props.activeWorkspaceDisplay.name}
-            </div>
-            <h1 class="text-lg font-medium">{title()}</h1>
+            </span>
             <Show when={props.developerMode}>
-              <span class="text-xs text-dls-secondary">{props.headerStatus}</span>
+              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.headerStatus}</span>
             </Show>
             <Show when={props.busyHint}>
-              <span class="text-xs text-dls-secondary">{props.busyHint}</span>
+              <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.busyHint}</span>
             </Show>
           </div>
           <div class="flex items-center gap-2" />
         </header>
 
-        <div class="p-6 md:p-10 max-w-5xl mx-auto space-y-10">
+        <div class="mx-auto w-full max-w-[1100px] space-y-10 p-6 md:p-10">
           <Switch>
             <Match when={props.tab === "scheduled"}>
               <ScheduledTasksView
@@ -1522,7 +1530,7 @@ export default function DashboardView(props: DashboardViewProps) {
       </main>
 
       <aside
-        class="flex shrink-0 flex-col overflow-hidden bg-dls-sidebar border-l border-dls-border p-3 transition-[width] duration-200"
+        class="flex shrink-0 flex-col overflow-hidden rounded-[24px] border border-dls-border bg-dls-sidebar p-3 transition-[width] duration-200"
         style={{
           width: `${rightSidebarWidth()}px`,
           "min-width": `${rightSidebarWidth()}px`,
@@ -1531,7 +1539,7 @@ export default function DashboardView(props: DashboardViewProps) {
         <div class={`flex items-center pb-3 ${rightSidebarExpanded() ? "justify-end" : "justify-center"}`}>
           <button
             type="button"
-            class="flex h-9 w-9 items-center justify-center rounded-lg text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+            class="flex h-10 w-10 items-center justify-center rounded-[16px] text-dls-secondary transition-colors hover:bg-dls-surface hover:text-dls-text"
             onClick={toggleRightSidebar}
             title={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
             aria-label={rightSidebarExpanded() ? "Collapse sidebar" : "Expand sidebar"}
@@ -1549,6 +1557,7 @@ export default function DashboardView(props: DashboardViewProps) {
           <Show when={props.developerMode}>{navItem("config", "Advanced", <SlidersHorizontal size={18} />)}</Show>
         </div>
       </aside>
+      </div>
 
     </div>
   );
