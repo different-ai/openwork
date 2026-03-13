@@ -276,40 +276,25 @@ jobs:
               {"key": "POLAR_RETURN_URL", "value": polar_return_url},
           ]
 
-          def trigger_deploy() -> str:
-              _, deploy = request("POST", f"/services/{service_id}/deploys", {})
-              deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
-              if not deploy_id:
-                  raise RuntimeError(f"Unexpected deploy response: {deploy}")
-              return deploy_id
-
-          def wait_for_deploy(deploy_id: str) -> str:
-              terminal = {"live", "update_failed", "build_failed", "canceled"}
-              started = time.time()
-
-              while time.time() - started < 1800:
-                  _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
-                  latest = deploys[0]["deploy"] if deploys else None
-                  if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
-                      return latest.get("status") or "unknown"
-                  time.sleep(10)
-
-              raise RuntimeError(f"Timed out waiting for deploy {deploy_id}")
-
           request("PUT", f"/services/{service_id}/env-vars", env_vars)
+          _, deploy = request("POST", f"/services/{service_id}/deploys", {})
+          deploy_id = deploy.get("id") or (deploy.get("deploy") or {}).get("id")
+          if not deploy_id:
+              raise RuntimeError(f"Unexpected deploy response: {deploy}")
 
-          max_attempts = 2
-          for attempt in range(1, max_attempts + 1):
-              deploy_id = trigger_deploy()
-              status = wait_for_deploy(deploy_id)
-              if status == "live":
+          terminal = {"live", "update_failed", "build_failed", "canceled"}
+          started = time.time()
+
+          while time.time() - started < 1800:
+              _, deploys = request("GET", f"/services/{service_id}/deploys?limit=1")
+              latest = deploys[0]["deploy"] if deploys else None
+              if latest and latest.get("id") == deploy_id and latest.get("status") in terminal:
+                  status = latest.get("status")
+                  if status != "live":
+                      raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
                   print(f"Render deploy {deploy_id} is live at {service_url}")
                   break
-
-              if status == "update_failed" and attempt < max_attempts:
-                  print(f"Render deploy {deploy_id} ended with update_failed; retrying once in 15 seconds...")
-                  time.sleep(15)
-                  continue
-
-              raise RuntimeError(f"Render deploy {deploy_id} ended with {status}")
+              time.sleep(10)
+          else:
+              raise RuntimeError(f"Timed out waiting for deploy {deploy_id}")
           PY
