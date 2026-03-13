@@ -32,7 +32,7 @@ export function DenCapabilityCarousel() {
         What you get
       </div>
 
-      <div className="relative overflow-hidden">
+      <div className="relative overflow-hidden py-2">
         <div className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-[#f6f9fc] via-[#f6f9fc]/90 to-transparent md:w-28" />
         <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-[#f6f9fc] via-[#f6f9fc]/90 to-transparent md:w-28" />
         <motion.div
