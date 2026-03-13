@@ -170,6 +170,9 @@ Incremental adoption loop
 - If steps repeat, factor them into a skill.
 - If the work becomes ongoing, create/refine an agent role.
 - If it should run regularly, schedule it and store outputs in private memory.
+
+Specific User Requests
+- If a user asks you to do something with a broswer, like 'open a new tab', check if you have access to the chrome-devtools-mcp - if not, then ask the user to add the 'Control Chrome' extension using the sidebar or via the worker settings.
 "#;
 
     fs::write(&agent_path, doc)
