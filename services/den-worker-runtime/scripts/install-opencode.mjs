@@ -58,10 +58,7 @@ function resolveOpencodeVersion() {
 
   const orchestratorPkg = readJson(resolveOrchestratorPackageJson());
   const version = String(orchestratorPkg.opencodeVersion ?? "").trim();
-  if (!version) {
-    throw new Error("openwork-orchestrator package is missing opencodeVersion");
-  }
-  return version;
+  return version || null;
 }
 
 function resolveAssetName() {
@@ -153,19 +150,22 @@ function findBinary(searchRoot) {
 }
 
 const version = resolveOpencodeVersion();
+const versionLabel = version ?? "latest";
 
 if (
   existsSync(outputPath) &&
   existsSync(versionStampPath) &&
-  readFileSync(versionStampPath, "utf8").trim() === version
+  readFileSync(versionStampPath, "utf8").trim() === versionLabel
 ) {
-  console.log(`[den-worker-runtime] opencode ${version} already bundled at ${outputPath}`);
+  console.log(`[den-worker-runtime] opencode ${versionLabel} already bundled at ${outputPath}`);
   process.exit(0);
 }
 
 const assetName = resolveAssetName();
 const downloadUrl = process.env.OPENWORK_OPENCODE_DOWNLOAD_URL?.trim()
-  || `https://github.com/anomalyco/opencode/releases/download/v${version}/${assetName}`;
+  || (version
+    ? `https://github.com/anomalyco/opencode/releases/download/v${version}/${assetName}`
+    : `https://github.com/anomalyco/opencode/releases/latest/download/${assetName}`);
 const tempDir = mkdtempSync(join(tmpdir(), "den-worker-opencode-"));
 const archivePath = join(tempDir, assetName);
 const extractDir = join(tempDir, "extract");
@@ -174,7 +174,7 @@ mkdirSync(extractDir, { recursive: true });
 mkdirSync(outputDir, { recursive: true });
 
 try {
-  console.log(`[den-worker-runtime] downloading opencode ${version} from ${downloadUrl}`);
+  console.log(`[den-worker-runtime] downloading opencode ${versionLabel} from ${downloadUrl}`);
   await downloadWithRetries(downloadUrl, archivePath);
   extractArchive(archivePath, extractDir);
   const extractedBinary = findBinary(extractDir);
@@ -182,8 +182,8 @@ try {
   if (process.platform !== "win32") {
     chmodSync(outputPath, 0o755);
   }
-  writeFileSync(versionStampPath, `${version}\n`, "utf8");
-  console.log(`[den-worker-runtime] bundled opencode ${version} at ${outputPath}`);
+  writeFileSync(versionStampPath, `${versionLabel}\n`, "utf8");
+  console.log(`[den-worker-runtime] bundled opencode ${versionLabel} at ${outputPath}`);
 } finally {
   rmSync(tempDir, { recursive: true, force: true });
 }

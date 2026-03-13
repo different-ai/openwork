@@ -255,7 +255,6 @@ jobs:
               {"key": "RENDER_WORKER_ROOT_DIR", "value": "services/den-worker-runtime"},
               {"key": "RENDER_WORKER_PLAN", "value": worker_plan},
               {"key": "RENDER_WORKER_REGION", "value": "oregon"},
-              {"key": "RENDER_WORKER_OPENWORK_VERSION", "value": openwork_version},
               {"key": "RENDER_WORKER_NAME_PREFIX", "value": "den-worker-openwork"},
               {"key": "RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX", "value": worker_public_domain_suffix},
               {"key": "RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS", "value": custom_domain_ready_timeout_ms},
@@ -275,6 +274,9 @@ jobs:
               {"key": "POLAR_SUCCESS_URL", "value": polar_success_url},
               {"key": "POLAR_RETURN_URL", "value": polar_return_url},
           ]
+
+          if openwork_version:
+              env_vars.append({"key": "RENDER_WORKER_OPENWORK_VERSION", "value": openwork_version})
 
           request("PUT", f"/services/{service_id}/env-vars", env_vars)
           _, deploy = request("POST", f"/services/{service_id}/deploys", {})
