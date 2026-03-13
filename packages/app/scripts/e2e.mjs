@@ -37,7 +37,7 @@ function step(name, fn) {
       results.steps[idx] = {
         name,
         status: "error",
-        error: e instanceof Error ? e.message : String(e),
+        error: e instanceof Error ? e.message : JSON.stringify(e),
       };
       throw e;
     });
@@ -150,7 +150,7 @@ try {
 
   console.log(JSON.stringify(results, null, 2));
 } catch (e) {
-  const message = e instanceof Error ? e.message : String(e);
+  const message = e instanceof Error ? e.message : JSON.stringify(e);
   results.ok = false;
   results.error = message;
   results.stderr = server.getStderr();

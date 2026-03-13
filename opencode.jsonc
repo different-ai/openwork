@@ -12,7 +12,7 @@
   "plugin": [
     "opencode-scheduler"
   ],
-  "skills": [
-    ".opencode/skills/pdf-reading/SKILL.md"
-  ]
+  "skills": {
+    "paths": [".opencode/skills/pdf-reading/SKILL.md"]
+  }
 }
