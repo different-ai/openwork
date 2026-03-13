@@ -7,6 +7,7 @@
   color-scheme: light;
   --dls-surface: #ffffff;
   --dls-sidebar: #f9fafb;
+  --dls-app-bg: #ffffff;
   --dls-border: #f3f4f6;
   --dls-accent: #011627;
   --dls-accent-hover: #000000;
@@ -25,6 +26,7 @@
   color-scheme: dark;
   --dls-surface: #121212;
   --dls-sidebar: #1a1a1a;
+  --dls-app-bg: #161616;
   --dls-border: #262626;
   --dls-accent: #3b82f6;
   --dls-accent-hover: #2563eb;

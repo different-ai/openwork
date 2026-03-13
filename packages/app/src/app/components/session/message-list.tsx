@@ -702,16 +702,16 @@ export default function MessageList(props: MessageListProps) {
           if (block.kind === "steps-cluster") {
             return (
               <div
-                class={`flex group ${block.isUser ? "justify-center" : "justify-start"}`.trim()}
+                class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
                 data-message-role={block.isUser ? "user" : "assistant"}
                 data-message-id={block.messageIds[0] ?? ""}
                 style={blockPerfStyle(blockIndex)}
               >
                 <div
-                  class={`w-full relative ${
+                  class={`${
                     block.isUser
-                      ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-center text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
-                      : "max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
+                      ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+                      : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
                   } ${searchOutlineClass}`}
                 >
                   <StepsContainer
@@ -759,16 +759,16 @@ export default function MessageList(props: MessageListProps) {
 
           return (
             <div
-              class={`flex group ${block.isUser ? "justify-center" : "justify-start"}`.trim()}
+              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
               style={blockPerfStyle(blockIndex)}
             >
               <div
-                class={`w-full relative ${
+                class={`${
                   block.isUser
-                    ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-center text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
-                    : "max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
+                    ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+                    : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
                 } ${searchOutlineClass}`}
               >
                 <Show when={attachmentsForMessage(block.message).length > 0}>

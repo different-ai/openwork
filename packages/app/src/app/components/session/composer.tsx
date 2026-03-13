@@ -1543,7 +1543,6 @@ export default function Composer(props: ComposerProps) {
       style={{ contain: "layout style" }}
     >
       <div class="max-w-[800px] mx-auto">
-        <div class="mb-3 px-1 text-[13px] text-gray-9">Describe your task</div>
         <div
           class={`bg-dls-surface border border-dls-border rounded-[24px] overflow-visible transition-all relative group/input ${mentionOpen() || slashOpen() ? "rounded-t-[18px] border-t-transparent" : "shadow-[var(--dls-shell-shadow)]"
             }`}
