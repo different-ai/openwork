@@ -22,6 +22,7 @@
     "test:fs-engine": "pnpm --filter @different-ai/openwork-ui test:fs-engine",
     "test:e2e": "pnpm --filter @different-ai/openwork-ui test:e2e",
     "test:openwrk": "pnpm --filter openwrk test:router",
+    "check:pr-artifacts": "bash scripts/check-no-local-pr-artifacts.sh",
     "bump:patch": "pnpm --filter @different-ai/openwork-ui bump:patch",
     "bump:minor": "pnpm --filter @different-ai/openwork-ui bump:minor",
     "bump:major": "pnpm --filter @different-ai/openwork-ui bump:major",

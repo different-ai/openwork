@@ -5,6 +5,7 @@ out/
 dist/
 packages/*/dist/
 tmp/
+artifacts/
 
 # Local git worktrees
 _worktrees/

@@ -46,8 +46,8 @@ When the user asks to create a new feature, follow this exact procedure:
 3. Implement the feature.
 4. Start the OpenWork dev stack via Docker (from the OpenWork repo root): `packaging/docker/dev-up.sh`.
 5. Use Chrome MCP to fully test the feature: `.opencode/skills/openwork-docker-chrome-mcp/SKILL.md`.
-6. Take screenshots and put them in the repo.
-7. Refer to these screenshots in the PR (only if relevant in the UI).
+6. Capture screenshots/videos under `tmp/verification/` or another local temp path. Do not commit them into this repo.
+7. When working from OpenWork Factory / the enterprise superproject, publish PR evidence with the Factory Supabase workflow before referencing it in the PR. If that workflow is unavailable, say so explicitly instead of adding local proof files to git.
 8. Always test the flow you just implemented.
 
 If you cannot complete steps 4-8 (Docker, Chrome MCP, missing credentials, or environment limitations), you must say so explicitly and include:
@@ -64,6 +64,8 @@ To maximize merge speed, include evidence of the end-to-end flow:
 
 * Ideally: attach a short video/screen recording showing the flow running successfully.
 * Otherwise: screenshots are acceptable, but video is preferred.
+
+Local proof files under `artifacts/` or `tmp/verification/` are not acceptable PR evidence. Keep them temporary and publish canonical Supabase URLs through the Factory evidence workflow when that environment is available.
 
 If you cannot run tests or capture the video, say so explicitly and explain why, and include the exact commands/steps for the reviewer to reproduce.
 
