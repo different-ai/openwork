@@ -1,6 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { Check, ChevronRight, Copy, Link2, LogOut, Plus, RefreshCw, Settings } from "lucide-react";
+import { OpenWorkBrand } from "./openwork-brand";
 
 type Step = 1 | 2;
 type AuthMode = "sign-in" | "sign-up";
@@ -1154,18 +1156,9 @@ export function CloudControlPanel() {
   ) => {
     const meta = getWorkerStatusMeta(item.status);
     const isActive = workerLookupId === item.workerId;
-    const statusPill =
+    const dotTone =
       meta.bucket === "ready"
-        ? "bg-[#E8F5E9] text-[#2E7D32]"
-        : meta.bucket === "starting"
-          ? "bg-amber-100 text-amber-700"
-          : meta.bucket === "attention"
-            ? "bg-rose-100 text-rose-700"
-            : "bg-slate-100 text-slate-500";
-
-    const statusDot =
-      meta.bucket === "ready"
-        ? "bg-[#2E7D32]"
+        ? "bg-emerald-500"
         : meta.bucket === "starting"
           ? "bg-amber-500"
           : meta.bucket === "attention"
@@ -1177,27 +1170,18 @@ export function CloudControlPanel() {
         key={item.workerId}
         type="button"
         onClick={() => selectWorker(item, { collapseMobile: options.collapseMobile })}
-        className={`w-full rounded-[20px] border ${options.dense ? "p-3" : "p-4"} text-left transition-all ${
-          isActive
-            ? "border-[#1B29FF] bg-[#1B29FF]/[0.03] ring-1 ring-[#1B29FF]/30"
-            : "border-slate-100 bg-white hover:border-slate-300"
+        className={`flex w-full items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition ${
+          isActive ? "bg-white shadow-sm" : "text-slate-600 hover:bg-white/70"
         }`}
       >
-        <div className="mb-1 flex items-center justify-between gap-2">
-          <span className={`truncate pr-2 text-sm font-semibold ${isActive ? "text-[#1B29FF]" : "text-slate-700"}`}>
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotTone}`} />
+        <div className="min-w-0 flex-1">
+          <p className={`truncate text-sm ${isActive ? "font-semibold text-slate-900" : "font-medium text-slate-700"}`}>
             {item.workerName}
-          </span>
-          {item.isMine ? (
-            <span className="shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Yours
-            </span>
-          ) : null}
-        </div>
-        <div className="mt-3 flex items-center justify-end">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${statusPill}`}>
-            <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
-            {meta.label}
-          </span>
+          </p>
+          <p className="mt-0.5 text-xs text-slate-400">
+            {item.isMine ? "Your worker" : meta.label}
+          </p>
         </div>
       </button>
     );
@@ -2522,987 +2506,369 @@ export function CloudControlPanel() {
   }
 
   return (
-    <section className={`ow-card${isShellStep ? " ow-card-shell" : " ow-card-auth"}`}>
-      {!isShellStep ? (
-        <div className="ow-progress-track">
-          <span className="ow-progress-fill" style={{ width: progressWidth }} />
-        </div>
-      ) : null}
-
-      <div className="ow-card-body">
-
-        {step === 1 ? (
-          <div className="ow-stack ow-auth-panel">
-            <div className="ow-heading-block">
-              <span className="ow-icon-chip">01</span>
-              <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
-              <p className="ow-subtitle">
-                {authMode === "sign-up" ? (
-                  <>
-                    <span className="ow-subtitle-line">Create an account to launch</span>
-                    <span className="ow-subtitle-line">and manage cloud workers.</span>
-                  </>
-                ) : (
-                  getAuthInfoForMode("sign-in")
-                )}
-              </p>
-            </div>
-
-            <form className="ow-stack" onSubmit={handleAuthSubmit}>
-              <button
-                type="button"
-                className="ow-btn-secondary ow-social-btn"
-                onClick={() => void handleSocialSignIn("github")}
-                disabled={authBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </button>
-
-              <button
-                type="button"
-                className="ow-btn-secondary ow-social-btn"
-                onClick={() => void handleSocialSignIn("google")}
-                disabled={authBusy}
-              >
-                <GoogleLogo />
-                <span>Continue with Google</span>
-              </button>
-
-              <div className="ow-divider" aria-hidden="true">
-                <span>or</span>
-              </div>
-
-              <label className="ow-field-block">
-                <span className="ow-field-label">Email</span>
-                <input
-                  className="ow-input"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  required
-                />
-              </label>
-
-              <label className="ow-field-block">
-                <span className="ow-field-label">Password</span>
-                <input
-                  className="ow-input"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                />
-              </label>
-
-              <button type="submit" className="ow-btn-primary" disabled={authBusy}>
-                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-              </button>
-            </form>
-
-            <div className="ow-inline-row">
-              <p className="ow-caption">{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
-              <button
-                type="button"
-                className="ow-link"
-                onClick={() => {
-                  const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
-                  setAuthMode(nextMode);
-                  setAuthInfo(getAuthInfoForMode(nextMode));
-                  setAuthError(null);
-                }}
-              >
-                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
-              </button>
-            </div>
-
-            {showAuthFeedback ? (
-              <div className="ow-auth-feedback" aria-live="polite">
-                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
-                {authError ? <p className="ow-error-text">{authError}</p> : null}
-              </div>
-            ) : null}
+    <div className="flex min-h-screen bg-[#f9fafb] px-4 py-4 text-[#111827] md:px-6 md:py-6">
+      {step === 1 ? (
+        <div className="m-auto w-full max-w-[420px] rounded-[24px] border border-gray-100 bg-white p-8 shadow-sm">
+          <div className="mb-8 flex justify-center">
+            <OpenWorkBrand
+              className="inline-flex"
+              labelClassName="text-[1.2rem] font-semibold tracking-tight text-[#011627] lowercase"
+              markClassName="h-8 w-auto text-[#011627]"
+            />
           </div>
-        ) : null}
 
-        {step === 2 ? (
-          <div className="flex h-full flex-col gap-3">
-            <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
-              <div className="flex gap-2">
+          <div className="mb-6 text-center">
+            <h1 className="text-[1.6rem] font-semibold tracking-tight text-[#111827]">
+              {authMode === "sign-up" ? "Get started" : "Welcome back"}
+            </h1>
+            <p className="mt-2 text-sm text-gray-500">
+              {authMode === "sign-up"
+                ? "Create an account to set up and manage your workers."
+                : "Sign in to keep setting up your workers."}
+            </p>
+          </div>
+
+          <form className="flex flex-col gap-4" onSubmit={handleAuthSubmit}>
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-2 rounded-[12px] border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              onClick={() => void handleSocialSignIn("github")}
+              disabled={authBusy}
+            >
+              <GitHubLogo />
+              <span>Continue with GitHub</span>
+            </button>
+
+            <button
+              type="button"
+              className="flex w-full items-center justify-center gap-2 rounded-[12px] border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50"
+              onClick={() => void handleSocialSignIn("google")}
+              disabled={authBusy}
+            >
+              <GoogleLogo />
+              <span>Continue with Google</span>
+            </button>
+
+            <div className="my-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <div className="h-px flex-1 bg-gray-200" />
+              <span>or</span>
+              <div className="h-px flex-1 bg-gray-200" />
+            </div>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Email</span>
+              <input
+                className="rounded-[12px] border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#011627] focus:ring-1 focus:ring-[#011627]/20"
+                type="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Password</span>
+              <input
+                className="rounded-[12px] border border-gray-200 bg-white px-3 py-2.5 text-sm outline-none transition focus:border-[#011627] focus:ring-1 focus:ring-[#011627]/20"
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                required
+              />
+            </label>
+
+            <button
+              type="submit"
+              className="mt-2 w-full rounded-[12px] bg-[#011627] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0a1f33] disabled:opacity-70"
+              disabled={authBusy}
+            >
+              {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              className="text-sm font-medium text-gray-500 hover:text-gray-900"
+              onClick={() => {
+                const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
+                setAuthMode(nextMode);
+                setAuthInfo(getAuthInfoForMode(nextMode));
+                setAuthError(null);
+              }}
+            >
+              {authMode === "sign-in" ? "Need an account? Sign up" : "Already have an account? Sign in"}
+            </button>
+          </div>
+
+          {showAuthFeedback ? (
+            <div className="mt-4 text-center text-sm" aria-live="polite">
+              {authInfo !== defaultAuthInfo ? <p className="text-gray-600">{authInfo}</p> : null}
+              {authError ? <p className="mt-1 font-medium text-red-600">{authError}</p> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mx-auto flex h-[calc(100vh-2rem)] w-full max-w-[1180px] gap-4">
+          <aside className="hidden w-[280px] shrink-0 rounded-[24px] bg-[#f3f4f6] p-3 lg:flex lg:flex-col">
+            <div className="px-2 py-2">
+              <OpenWorkBrand
+                className="inline-flex"
+                labelClassName="text-[1rem] font-semibold tracking-tight text-[#011627] lowercase"
+                markClassName="h-6 w-auto text-[#011627]"
+              />
+            </div>
+
+            <div className="mt-4 flex-1 overflow-y-auto">
+              <div className="mb-2 px-2 text-xs font-semibold uppercase tracking-wider text-slate-400">Workers</div>
+              <div className="space-y-1">{filteredWorkers.map((item) => renderWorkerRow(item))}</div>
+              {workers.length === 0 && !workersBusy ? (
+                <p className="px-2 py-2 text-sm text-slate-500">No workers yet.</p>
+              ) : null}
+            </div>
+
+            <div className="mt-3 border-t border-white/60 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowLaunchForm(true)}
+                className={`flex w-full items-center gap-2 rounded-[14px] px-3 py-2.5 text-sm font-medium transition ${showLaunchForm ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-800"}`}
+              >
+                <Plus size={14} />
+                <span>New worker</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSignOut()}
+                className="mt-1 flex w-full items-center gap-2 rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-500 transition hover:bg-white/70 hover:text-slate-800"
+              >
+                <LogOut size={14} />
+                <span>Log out</span>
+              </button>
+            </div>
+          </aside>
+
+          <main className="flex min-w-0 flex-1 flex-col rounded-[24px] border border-gray-100 bg-white shadow-sm">
+            <div className="border-b border-gray-100 px-5 py-4 lg:hidden">
+              <div className="flex items-center justify-between gap-3">
+                <OpenWorkBrand
+                  className="inline-flex"
+                  labelClassName="text-[1rem] font-semibold tracking-tight text-[#011627] lowercase"
+                  markClassName="h-6 w-auto text-[#011627]"
+                />
                 <button
                   type="button"
-                  onClick={() => setShellView("workers")}
-                  className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
-                    shellView === "workers" ? "bg-[#1B29FF]/10 text-[#1B29FF]" : "text-slate-600 hover:bg-slate-100"
-                  }`}
+                  onClick={() => setShowLaunchForm(true)}
+                  className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 transition hover:bg-gray-50"
                 >
-                  Workers
+                  <Plus size={14} />
+                  New
                 </button>
-                {/* TODO(den-free-first-worker): Restore Billing nav button after the experiment. */}
-                {/* <button
-                  type="button"
-                  onClick={() => setShellView("billing")}
-                  className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
-                    shellView === "billing" ? "bg-[#1B29FF]/10 text-[#1B29FF]" : "text-slate-600 hover:bg-slate-100"
-                  }`}
-                >
-                  Billing
-                </button> */}
+              </div>
+              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                {filteredWorkers.map((item) => renderWorkerRow(item, { collapseMobile: true, dense: true }))}
+              </div>
+              {workers.length === 0 && !workersBusy ? <p className="mt-3 text-sm text-slate-500">No workers yet.</p> : null}
+            </div>
+
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Workers setup</p>
+                <h1 className="mt-1 text-lg font-semibold tracking-tight text-slate-900">
+                  {showLaunchForm || !selectedWorker ? "Set up a worker" : selectedWorker.workerName}
+                </h1>
               </div>
               <button
                 type="button"
-                className="rounded-[12px] border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-                onClick={() => void handleSignOut()}
-                disabled={authBusy}
+                onClick={() => void refreshWorkers({ keepSelection: true })}
+                className="inline-flex items-center gap-2 rounded-full border border-gray-200 px-3 py-2 text-xs font-semibold uppercase tracking-wider text-slate-500 transition hover:bg-gray-50 disabled:opacity-50"
+                disabled={workersBusy}
               >
-                {authBusy ? "Signing out..." : "Log out"}
+                <RefreshCw size={14} className={workersBusy ? "animate-spin" : ""} />
+                Refresh
               </button>
             </div>
 
-            {shellView === "workers" || BILLING_DISABLED_FOR_EXPERIMENT ? (
-              <div className="flex h-full min-h-0 flex-col gap-4 lg:flex-row">
-                <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between rounded-[32px] border border-slate-200 bg-white p-5 shadow-sm lg:flex">
-                  <div>
-                    <div className="mb-6">
-                      <div className="mb-3 flex items-center gap-2 px-2 text-xs font-medium uppercase tracking-[0.08em] text-slate-400">
-                        <span>Menu</span>
-                      </div>
-                      <nav className="space-y-1">
-                        <button
-                          type="button"
-                          className="w-full rounded-[14px] bg-[#1B29FF]/10 px-3 py-2.5 text-left text-sm font-medium text-[#1B29FF] transition"
-                          onClick={() => setShellView("workers")}
-                        >
-                          Workers
-                        </button>
-                        {/* TODO(den-free-first-worker): Restore Billing sidebar button after the experiment. */}
-                        {/* <button
-                          type="button"
-                          className="w-full rounded-[14px] px-3 py-2.5 text-left text-sm font-medium text-slate-500 transition hover:bg-slate-50"
-                          onClick={() => setShellView("billing")}
-                        >
-                          Billing
-                        </button> */}
-                        <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Settings</span>
-                        <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Help Center</span>
-                      </nav>
-                    </div>
-                  </div>
+            <div className="flex-1 overflow-y-auto p-6 md:p-8">
+              <div className="mx-auto flex h-full w-full max-w-[640px] flex-col">
+                {showLaunchForm || !selectedWorker ? (
+                  <div className="my-auto">
+                    <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Launch a new worker</h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                      Give it a name and we will prepare a fresh cloud runtime for you.
+                    </p>
 
-                  <div className="rounded-[22px] border border-slate-200 bg-[#F8F9FA] p-4">
-                    <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-400">Signed in</p>
-                    <p className="mt-1 break-all text-sm font-medium text-slate-700">{(user?.email ?? email) || "account"}</p>
-                    <button
-                      type="button"
-                      className="mt-4 w-full rounded-[12px] bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => void handleSignOut()}
-                      disabled={authBusy}
-                    >
-                      {authBusy ? "Signing out..." : "Log out"}
-                    </button>
-                  </div>
-                </aside>
-
-                <section className="flex flex-col gap-3 lg:hidden">
-                  <div className="rounded-[28px] border border-slate-200 bg-white p-4 shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-base font-semibold tracking-tight text-slate-900">Workers</h2>
-                        <p className="mt-1 text-xs text-slate-500">
-                          {workers.length > 0
-                            ? mobileWorkersExpanded
-                              ? `Showing ${filteredWorkers.length} of ${workers.length}`
-                              : mobilePreviewWorker
-                                ? "Selected worker stays pinned here."
-                                : "Choose a worker to see its details."
-                            : "No workers yet."}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          className="rounded-full bg-[#1B29FF] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#151FDA]"
-                          onClick={() => {
-                            setShowLaunchForm((current) => !current);
-                            setMobileWorkersExpanded(true);
-                          }}
-                        >
-                          {showLaunchForm ? "Close" : "New"}
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-full border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
-                          onClick={() => setMobileWorkersExpanded((current) => !current)}
-                          disabled={!mobilePreviewWorker && filteredWorkers.length === 0}
-                        >
-                          {mobileWorkersExpanded ? "Collapse" : `Show all${filteredWorkers.length > 1 ? ` (${filteredWorkers.length})` : ""}`}
-                        </button>
-                      </div>
-                    </div>
-
-                    {showLaunchForm ? (
-                      <div className="mt-4 rounded-[20px] border border-slate-200 bg-slate-50 p-4">
-                        <label className="mb-3 block">
-                          <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Worker Name</span>
-                          <input
-                            className="w-full rounded-[12px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#1B29FF] focus:ring-2 focus:ring-[#1B29FF]/15"
-                            value={workerName}
-                            onChange={(event) => setWorkerName(event.target.value)}
-                            maxLength={80}
-                          />
-                        </label>
-
-                        <button
-                          type="button"
-                          className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={handleLaunchWorker}
-                          disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
-                        >
-                          {launchBusy
-                            ? "Starting worker..."
-                            : workerLimitReached
-                              ? "Worker limit reached"
-                            : worker?.status === "provisioning"
-                              ? "Worker is starting..."
-                              : `Launch "${workerName || "Cloud Worker"}"`}
-                        </button>
-
-                        {(launchStatus || launchError) && showLaunchForm ? (
-                          <div className="mt-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2">
-                            <p className="text-xs text-slate-600">{launchStatus}</p>
-                            {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
-                          </div>
-                        ) : null}
-
-                        {workerLimitReached ? (
-                          <a
-                            href={getAdditionalWorkerRequestHref()}
-                            className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-                          >
-                            Request an additional worker
-                          </a>
-                        ) : null}
-
-                        {effectiveCheckoutUrl ? (
-                          <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
-                            <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
-                            <a
-                              href={effectiveCheckoutUrl}
-                              rel="noreferrer"
-                              className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
-                            >
-                              Continue to checkout
-                            </a>
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-
-                    {mobileWorkersExpanded || showLaunchForm ? (
-                      <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+                    <div className="mt-8 rounded-[20px] border border-gray-100 bg-[#fafafa] p-5">
+                      <label className="flex flex-col gap-2">
+                        <span className="text-sm font-medium text-slate-700">Worker name</span>
                         <input
-                          className="min-w-[170px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#1B29FF]"
-                          value={workerQuery}
-                          onChange={(event) => setWorkerQuery(event.target.value)}
-                          placeholder="Search..."
-                          aria-label="Search workers"
-                        />
-                        <select
-                          className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none"
-                          value={workerStatusFilter}
-                          onChange={(event) => setWorkerStatusFilter(event.target.value as WorkerStatusBucket | "all")}
-                        >
-                          <option value="all">All</option>
-                          <option value="ready">Ready</option>
-                          <option value="starting">Starting</option>
-                          <option value="attention">Attention</option>
-                        </select>
-                      </div>
-                    ) : null}
-
-                    {workersBusy ? <p className="mt-3 text-xs text-slate-500">Loading workers...</p> : null}
-                    {workersError ? <p className="mt-3 text-xs font-medium text-rose-600">{workersError}</p> : null}
-
-                    <div className="mt-4 space-y-3">
-                      {mobilePreviewWorker ? renderWorkerRow(mobilePreviewWorker, { collapseMobile: true, dense: true }) : null}
-
-                      {mobileWorkersExpanded ? (
-                        <div className="space-y-3 border-t border-slate-100 pt-3">
-                          {filteredWorkers
-                            .filter((item) => item.workerId !== mobilePreviewWorker?.workerId)
-                            .map((item) => renderWorkerRow(item, { collapseMobile: true, dense: true }))}
-                          {workers.length > 0 && filteredWorkers.length === 0 ? (
-                            <p className="text-xs text-slate-500">No workers match this filter.</p>
-                          ) : null}
-                        </div>
-                      ) : null}
-
-                      {workers.length === 0 && !workersBusy ? (
-                        <p className="text-xs text-slate-500">No workers yet. Create one to get started.</p>
-                      ) : null}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="hidden h-full w-full shrink-0 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:w-[340px] lg:flex">
-                  <div className="mb-6 flex items-center justify-between">
-                    <h2 className="text-xl font-semibold tracking-tight text-slate-900">Workers</h2>
-                    <button
-                      type="button"
-                      className="rounded-full bg-[#1B29FF] p-2.5 text-white transition hover:bg-[#151FDA]"
-                      onClick={() => setShowLaunchForm((current) => !current)}
-                    >
-                      {showLaunchForm ? "-" : "+"}
-                    </button>
-                  </div>
-
-                  {showLaunchForm ? (
-                    <div className="mb-5 rounded-[20px] border border-slate-200 bg-slate-50 p-4">
-                      <label className="mb-3 block">
-                        <span className="mb-1 block text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Worker Name</span>
-                        <input
-                          className="w-full rounded-[12px] border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-[#1B29FF] focus:ring-2 focus:ring-[#1B29FF]/15"
+                          className="w-full rounded-[12px] border border-gray-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[#011627] focus:ring-1 focus:ring-[#011627]/20"
                           value={workerName}
                           onChange={(event) => setWorkerName(event.target.value)}
+                          placeholder="Browser Operator"
                           maxLength={80}
                         />
                       </label>
 
                       <button
                         type="button"
-                        className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="mt-4 w-full rounded-[12px] bg-[#011627] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0a1f33] disabled:opacity-50"
                         onClick={handleLaunchWorker}
-                        disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
+                        disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached || !workerName.trim()}
                       >
                         {launchBusy
-                          ? "Starting worker..."
+                          ? "Creating worker..."
                           : workerLimitReached
                             ? "Worker limit reached"
-                          : worker?.status === "provisioning"
-                            ? "Worker is starting..."
-                            : `Launch "${workerName || "Cloud Worker"}"`}
+                            : worker?.status === "provisioning"
+                              ? "Worker is starting..."
+                              : "Launch worker"}
                       </button>
 
                       {(launchStatus || launchError) && showLaunchForm ? (
-                        <div className="mt-3 rounded-[12px] border border-slate-200 bg-white px-3 py-2">
-                          <p className="text-xs text-slate-600">{launchStatus}</p>
-                          {launchError ? <p className="mt-1 text-xs font-medium text-rose-600">{launchError}</p> : null}
+                        <div className="mt-4 rounded-[12px] bg-white px-4 py-3 text-sm">
+                          {launchStatus ? <p className="text-slate-600">{launchStatus}</p> : null}
+                          {launchError ? <p className="mt-1 font-medium text-rose-600">{launchError}</p> : null}
                         </div>
                       ) : null}
 
                       {workerLimitReached ? (
                         <a
                           href={getAdditionalWorkerRequestHref()}
-                          className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
+                          className="mt-3 inline-flex text-sm font-medium text-slate-600 underline underline-offset-4 hover:text-slate-900"
                         >
-                          Request an additional worker
+                          Need another worker?
                         </a>
                       ) : null}
-
-                      {/* TODO(den-free-first-worker): Restore checkout CTA block when paywall returns. */}
-                      {/* {effectiveCheckoutUrl ? (
-                        <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
-                          <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
-                          <a
-                            href={effectiveCheckoutUrl}
-                            rel="noreferrer"
-                            className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
-                          >
-                            Continue to checkout
-                          </a>
-                        </div>
-                      ) : null} */}
-
                     </div>
-                  ) : null}
-
-                  <div className="mb-5 flex gap-2 overflow-x-auto pb-1">
-                    <input
-                      className="min-w-[170px] rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-[#1B29FF]"
-                      value={workerQuery}
-                      onChange={(event) => setWorkerQuery(event.target.value)}
-                      placeholder="Search..."
-                      aria-label="Search workers"
-                    />
-                    <select
-                      className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 outline-none"
-                      value={workerStatusFilter}
-                      onChange={(event) => setWorkerStatusFilter(event.target.value as WorkerStatusBucket | "all")}
-                    >
-                      <option value="all">All</option>
-                      <option value="ready">Ready</option>
-                      <option value="starting">Starting</option>
-                      <option value="attention">Attention</option>
-                    </select>
                   </div>
-
-                  {workersBusy ? <p className="mb-2 text-xs text-slate-500">Loading workers...</p> : null}
-                  {workersError ? <p className="mb-2 text-xs font-medium text-rose-600">{workersError}</p> : null}
-
-                  <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-                    {filteredWorkers.map((item) => renderWorkerRow(item))}
-                  </div>
-
-                  {workers.length > 0 && filteredWorkers.length === 0 ? (
-                    <p className="mt-3 text-xs text-slate-500">No workers match this filter.</p>
-                  ) : null}
-
-                  {workers.length === 0 && !workersBusy ? (
-                    <p className="mt-3 text-xs text-slate-500">No workers yet. Create one to get started.</p>
-                  ) : null}
-                </section>
-
-                <section className="flex h-full min-h-0 min-w-0 flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-                  {selectedWorker ? (
-                    <>
-                      <div className="mb-2 px-1">
-                        <h1 className="mb-1 text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
+                ) : (
+                  <div className="flex h-full flex-col">
+                    <div className="rounded-[20px] border border-gray-100 bg-[#fafafa] p-5">
+                      <div className="flex items-center gap-3">
+                        <span className={`h-2.5 w-2.5 rounded-full ${selectedStatusMeta.bucket === "ready" ? "bg-emerald-500" : selectedStatusMeta.bucket === "starting" ? "bg-amber-500" : selectedStatusMeta.bucket === "attention" ? "bg-rose-500" : "bg-slate-400"}`} />
+                        <h2 className="text-xl font-semibold tracking-tight text-slate-900">{selectedWorker.workerName}</h2>
                       </div>
+                      <p className="mt-2 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
+                    </div>
 
-                      <div className="min-h-0 flex-1 space-y-6 overflow-y-auto pb-2">
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <div className="mb-2 flex items-start justify-between gap-4">
-                            <h2 className="text-3xl font-bold tracking-tight text-slate-900">
-                              {activeWorker?.workerName ?? selectedWorker.workerName}
-                            </h2>
-                            {openworkAppConnectUrl ? (
-                              <a
-                                href={openworkAppConnectUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className={`shrink-0 rounded-[16px] px-6 py-3 text-base font-semibold shadow-md shadow-[#1B29FF]/25 transition ${
-                                  selectedStatusMeta.bucket === "ready"
-                                    ? "bg-[#1B29FF] text-white hover:bg-[#151FDA]"
-                                    : "pointer-events-none cursor-not-allowed bg-slate-200 text-slate-500 shadow-none"
-                                }`}
-                                aria-disabled={selectedStatusMeta.bucket !== "ready"}
-                              >
-                                Open in Web
-                              </a>
-                            ) : null}
-                          </div>
-                          <p className="mb-6 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
-                        </div>
-
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <div className="mb-5 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                            <div>
-                              <h3 className="text-lg font-bold tracking-tight text-slate-900">Worker runtime</h3>
-                              <p className="text-sm text-slate-500">Compare installed runtime versions with the versions this worker should be running.</p>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-[12px] border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => void refreshRuntime(selectedWorker.workerId)}
-                                disabled={runtimeBusy || runtimeUpgradeBusy}
-                              >
-                                {runtimeBusy ? "Checking..." : "Refresh runtime"}
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-[12px] bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-50"
-                                onClick={() => void handleRuntimeUpgrade()}
-                                disabled={runtimeUpgradeBusy || runtimeBusy || selectedStatusMeta.bucket !== "ready"}
-                              >
-                                {runtimeUpgradeBusy || runtimeSnapshot?.upgrade.status === "running" ? "Upgrading..." : "Upgrade runtime"}
-                              </button>
-                            </div>
-                          </div>
-
-                          {runtimeError ? (
-                            <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{runtimeError}</div>
-                          ) : null}
-
-                          {runtimeSnapshot?.upgrade.status === "failed" && runtimeSnapshot.upgrade.error ? (
-                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                              Last upgrade failed: {runtimeSnapshot.upgrade.error}
-                            </div>
-                          ) : null}
-
-                          {runtimeUpgradeCount > 0 ? (
-                            <div className="mb-4 rounded-[14px] border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                              This worker has {runtimeUpgradeCount} runtime component{runtimeUpgradeCount === 1 ? "" : "s"} behind the target version.
-                            </div>
-                          ) : null}
-
-                          <div className="space-y-3">
-                            {(runtimeSnapshot?.services ?? []).map((service) => (
-                              <div key={service.name} className="flex flex-col gap-3 rounded-[18px] border border-slate-100 bg-slate-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
-                                <div>
-                                  <p className="text-sm font-semibold text-slate-900">{getRuntimeServiceLabel(service.name)}</p>
-                                  <p className="text-xs text-slate-500">
-                                    Installed {service.actualVersion ?? "unknown"} · Target {service.targetVersion ?? "unknown"}
-                                  </p>
-                                </div>
-                                <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide">
-                                  <span className={`rounded-full px-2.5 py-1 ${service.running ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600"}`}>
-                                    {service.running ? "Running" : service.enabled ? "Stopped" : "Disabled"}
-                                  </span>
-                                  <span className={`rounded-full px-2.5 py-1 ${service.upgradeAvailable ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>
-                                    {service.upgradeAvailable ? "Upgrade available" : "Current"}
-                                  </span>
-                                </div>
+                    {selectedStatusMeta.bucket === "ready" ? (
+                      <div className="mt-8 flex flex-col gap-8">
+                        <section>
+                          <h3 className="text-sm font-semibold text-slate-900">Connect</h3>
+                          <p className="mt-1 text-sm text-slate-500">Use this link to open the worker.</p>
+                          <div className="mt-3 rounded-[16px] border border-gray-100 bg-[#fafafa] p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="flex min-w-0 items-center gap-3">
+                                <Link2 size={16} className="shrink-0 text-slate-400" />
+                                <span className="truncate font-mono text-sm text-slate-600">{openworkConnectUrl ?? "Preparing..."}</span>
                               </div>
-                            ))}
-                            {!runtimeSnapshot && !runtimeBusy ? (
-                              <p className="text-sm text-slate-500">Runtime details appear after the worker is reachable.</p>
-                            ) : null}
+                              <button
+                                type="button"
+                                onClick={() => void copyToClipboard("openwork-url", openworkConnectUrl)}
+                                disabled={!openworkConnectUrl}
+                                className="rounded-md border border-gray-200 bg-white p-2 text-slate-500 transition hover:bg-gray-50 disabled:opacity-50"
+                              >
+                                {copiedField === "openwork-url" ? <Check size={14} className="text-emerald-600" /> : <Copy size={14} />}
+                              </button>
+                            </div>
                           </div>
-                        </div>
+                        </section>
 
-                        <div className="rounded-[28px] border border-slate-100 bg-white p-6">
-                          <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                            <div>
-                              <div>
-                                <h3 className="text-lg font-bold tracking-tight text-slate-900">Connection Details</h3>
-                                <p className="text-sm text-slate-500">Access and manage your worker instance.</p>
+                        <section>
+                          <h3 className="text-sm font-semibold text-slate-900">Access token</h3>
+                          <p className="mt-1 text-sm text-slate-500">Only fetch this if you need it.</p>
+                          <div className="mt-3 rounded-[16px] border border-gray-100 bg-[#fafafa] p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <span className="font-mono text-sm text-slate-600">
+                                {activeWorker?.clientToken ? "********************************" : "Not loaded yet"}
+                              </span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={handleGenerateKey}
+                                  disabled={actionBusy !== null}
+                                  className="rounded-[10px] border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                  {actionBusy === "token" ? "Refreshing..." : "Fetch token"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void copyToClipboard("access-token", activeWorker?.clientToken ?? null)}
+                                  disabled={!activeWorker?.clientToken}
+                                  className="rounded-[10px] bg-[#011627] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#0a1f33] disabled:opacity-50"
+                                >
+                                  {copiedField === "access-token" ? "Copied" : "Copy"}
+                                </button>
                               </div>
                             </div>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                              <button
-                                type="button"
-                                className="rounded-[14px] bg-[#1B29FF] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-[#1B29FF]/25 transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                                onClick={() => {
-                                  if (!openworkDeepLink) {
-                                    return;
-                                  }
-                                  window.location.href = openworkDeepLink;
-                                }}
-                                disabled={!openworkDeepLink || selectedStatusMeta.bucket !== "ready"}
-                              >
-                                {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
-                              </button>
-                            </div>
                           </div>
+                        </section>
 
-                          <div className="rounded-[14px] border border-slate-100 bg-slate-50 px-4 py-3">
-                            <p className="text-sm text-slate-600">
-                              {openworkDeepLink
-                                ? openworkAppConnectUrl
-                                  ? "You are all set. Open in OpenWork or Open in Web to start working."
-                                  : "You are all set. Open in OpenWork to start working."
-                                : "We are still preparing your connection. The button will unlock when ready."}
-                            </p>
-                          </div>
+                        {openworkAppConnectUrl ? (
+                          <a
+                            href={openworkAppConnectUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex w-full items-center justify-center gap-2 rounded-[12px] bg-[#011627] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#0a1f33]"
+                          >
+                            Open in web
+                            <ChevronRight size={16} />
+                          </a>
+                        ) : null}
 
+                        <div className="border-t border-gray-100 pt-8">
                           <button
                             type="button"
-                            className="mt-4 text-sm font-semibold text-[#1B29FF] transition hover:text-[#151FDA]"
-                            onClick={() =>
-                              setShowAdvancedOptions((current) => {
-                                if (current) {
-                                  setOpenAccordion(null);
-                                }
-                                return !current;
-                              })
-                            }
+                            className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-400 transition hover:text-slate-600"
+                            onClick={() => setShowAdvancedOptions((current) => !current)}
                           >
-                            {showAdvancedOptions ? "Hide advanced options" : "Need manual setup? Show advanced options"}
+                            <Settings size={14} />
+                            {showAdvancedOptions ? "Hide advanced details" : "Show advanced details"}
                           </button>
 
                           {showAdvancedOptions ? (
-                            <div className="mt-4 space-y-4">
-                              <div>
-                                <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">Connection URL</label>
-                                <div className="flex items-center gap-2 rounded-[14px] border border-slate-200 bg-[#F8F9FA] p-1.5">
-                                  <input
-                                    type="text"
-                                    readOnly
-                                    value={openworkConnectUrl ?? "Connection URL is still preparing..."}
-                                    className="w-full flex-1 bg-transparent px-3 py-2 font-mono text-xs text-slate-600 outline-none"
-                                    onClick={(event) => event.currentTarget.select()}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="rounded-xl border border-transparent bg-white px-3 py-2 text-xs font-medium text-slate-500 transition hover:border-slate-200 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                                    disabled={!openworkConnectUrl}
-                                    onClick={() => void copyToClipboard("openwork-url", openworkConnectUrl)}
-                                  >
-                                    {copiedField === "openwork-url" ? "Copied" : "Copy"}
-                                  </button>
-                                </div>
-                                {!openworkDeepLink || !openworkConnectUrl || (!hasWorkspaceScopedUrl && openworkConnectUrl) ? (
-                                  <p className="mt-2 text-xs text-slate-500">
-                                    {!openworkDeepLink
-                                      ? "Getting connection details ready..."
-                                      : !openworkConnectUrl
-                                        ? "Keep this page open for a moment."
-                                        : "Finishing your workspace URL..."}
-                                  </p>
-                                ) : null}
+                            <div className="mt-4 rounded-[16px] border border-gray-100 bg-[#fafafa] p-4">
+                              <div className="space-y-3">
+                                {events.slice(0, 5).map((entry) => (
+                                  <div key={entry.id} className="border-l-2 border-gray-200 pl-3">
+                                    <p className="text-sm font-medium text-slate-900">{entry.label}</p>
+                                    <p className="mt-0.5 text-xs text-slate-500">{entry.detail}</p>
+                                  </div>
+                                ))}
                               </div>
 
-                              <div className="overflow-hidden rounded-[20px] border border-slate-100">
-                                <div className="border-b border-slate-100">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOpenAccordion((current) => (current === "connect" ? null : "connect"))}
-                                    className="flex w-full items-center justify-between p-4 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="text-sm font-semibold text-slate-800">Manual connect details</span>
-                                    <span className="text-sm text-slate-400">{openAccordion === "connect" ? "v" : ">"}</span>
-                                  </button>
-                                  {openAccordion === "connect" ? (
-                                    <div className="space-y-3 px-4 pb-4">
-                                      <CredentialRow
-                                        label="OpenWork worker URL"
-                                        value={openworkConnectUrl}
-                                        placeholder="URL appears once ready"
-                                        canCopy={Boolean(openworkConnectUrl)}
-                                        copied={copiedField === "manual-openwork-url"}
-                                        onCopy={() => void copyToClipboard("manual-openwork-url", openworkConnectUrl)}
-                                      />
-
-                                      <CredentialRow
-                                        label="Access token"
-                                        value={activeWorker?.clientToken ?? null}
-                                        placeholder="Use Worker actions to refresh"
-                                        canCopy={Boolean(activeWorker?.clientToken)}
-                                        copied={copiedField === "access-token"}
-                                        onCopy={() => void copyToClipboard("access-token", activeWorker?.clientToken ?? null)}
-                                      />
-                                    </div>
-                                  ) : null}
-                                </div>
-
-                                <div className="border-b border-slate-100">
-                                  <button
-                                    type="button"
-                                    onClick={() => setOpenAccordion((current) => (current === "actions" ? null : "actions"))}
-                                    className="flex w-full items-center justify-between p-4 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="text-sm font-semibold text-slate-800">Worker actions</span>
-                                    <span className="text-sm text-slate-400">{openAccordion === "actions" ? "v" : ">"}</span>
-                                  </button>
-                                  {openAccordion === "actions" ? (
-                                    <div className="flex flex-wrap gap-2 px-4 pb-4">
-                                      <button
-                                        type="button"
-                                        className="rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                        onClick={() => void refreshWorkers({ keepSelection: true })}
-                                        disabled={workersBusy || actionBusy !== null}
-                                      >
-                                        {workersBusy ? "Refreshing..." : "Refresh list"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                        onClick={() => void handleCheckStatus({ workerId: selectedWorker.workerId })}
-                                        disabled={actionBusy !== null}
-                                      >
-                                        {actionBusy === "status" ? "Checking..." : "Check status"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-[10px] border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                                        onClick={handleGenerateKey}
-                                        disabled={actionBusy !== null}
-                                      >
-                                        {actionBusy === "token" ? "Fetching..." : "Refresh token"}
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                                        onClick={() => void handleDeleteWorker(selectedWorker.workerId)}
-                                        disabled={deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
-                                      >
-                                        {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
-                                      </button>
-                                    </div>
-                                  ) : null}
-                                </div>
-
-                                <div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setOpenAccordion((current) => (current === "advanced" ? null : "advanced"))}
-                                    className="flex w-full items-center justify-between p-4 text-left transition hover:bg-slate-50"
-                                  >
-                                    <span className="text-sm font-semibold text-slate-800">Advanced details</span>
-                                    <span className="text-sm text-slate-400">{openAccordion === "advanced" ? "v" : ">"}</span>
-                                  </button>
-                                  {openAccordion === "advanced" ? (
-                                    <div className="space-y-3 px-4 pb-4">
-                                      <CredentialRow
-                                        label="Worker host URL"
-                                        value={activeWorker?.instanceUrl ?? null}
-                                        placeholder="Host URL"
-                                        canCopy={Boolean(activeWorker?.instanceUrl)}
-                                        copied={copiedField === "worker-host-url"}
-                                        onCopy={() => void copyToClipboard("worker-host-url", activeWorker?.instanceUrl ?? null)}
-                                      />
-
-                                      <CredentialRow
-                                        label="Worker ID"
-                                        value={(activeWorker?.workerId ?? workerLookupId) || null}
-                                        placeholder="Worker ID"
-                                        canCopy={Boolean(activeWorker?.workerId || workerLookupId)}
-                                        copied={copiedField === "worker-id"}
-                                        onCopy={() => void copyToClipboard("worker-id", (activeWorker?.workerId ?? workerLookupId) || null)}
-                                      />
-
-                                      {events.length > 0 ? (
-                                        <div className="rounded-[12px] border border-slate-200 bg-slate-50 p-3">
-                                          <p className="mb-2 text-xs font-bold uppercase tracking-[0.08em] text-slate-500">Recent activity</p>
-                                          <ul className="space-y-2">
-                                            {events.map((entry) => (
-                                              <li key={entry.id} className="rounded-[10px] border border-slate-100 bg-white px-3 py-2">
-                                                <div className="flex items-center justify-between gap-2 text-xs font-semibold text-slate-700">
-                                                  <span>{entry.label}</span>
-                                                  <span className="font-mono text-[10px] text-slate-500">{new Date(entry.at).toLocaleTimeString()}</span>
-                                                </div>
-                                                <p className="mt-1 text-xs text-slate-600">{entry.detail}</p>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      ) : null}
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
+                              <button
+                                type="button"
+                                className="mt-4 rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:opacity-50"
+                                onClick={() => void handleDeleteWorker(selectedWorker.workerId)}
+                                disabled={deleteBusyWorkerId !== null}
+                              >
+                                {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
+                              </button>
                             </div>
                           ) : null}
                         </div>
                       </div>
-                    </>
-                  ) : (
-                    <div className="flex min-h-[360px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-slate-50">
-                      <div className="px-6 text-center">
-                        <p className="text-lg font-semibold text-slate-900">Select a worker</p>
-                        <p className="mt-1 text-sm text-slate-500">Pick a worker from the list to see details and connect.</p>
+                    ) : (
+                      <div className="my-auto rounded-[24px] border border-dashed border-gray-200 bg-[#fafafa] px-6 py-14 text-center">
+                        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-gray-100 bg-white shadow-sm">
+                          <RefreshCw size={18} className="animate-spin text-slate-400" />
+                        </div>
+                        <h3 className="mt-4 text-base font-semibold text-slate-900">Still setting things up</h3>
+                        <p className="mt-2 text-sm text-slate-500">
+                          We will show connection details here as soon as this worker is ready.
+                        </p>
                       </div>
-                    </div>
-                  )}
-                </section>
+                    )}
+                  </div>
+                )}
               </div>
-            ) : (
-              <section className="flex h-full flex-1 flex-col rounded-[32px] border border-slate-200 bg-white p-6 shadow-sm md:p-8">
-                <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h2 className="text-2xl font-bold tracking-tight text-slate-900">Billing</h2>
-                    <p className="mt-1 text-sm text-slate-500">Check plan status and manage checkout for cloud workers.</p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="rounded-[12px] border border-slate-200 px-3 py-2 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                      onClick={() => void refreshBilling()}
-                      disabled={billingBusy || billingCheckoutBusy || billingSubscriptionBusy}
-                    >
-                      {billingBusy ? "Refreshing..." : "Refresh"}
-                    </button>
-                    <button
-                      type="button"
-                      className="rounded-[12px] bg-slate-900 px-3 py-2 text-sm font-semibold text-white transition hover:bg-slate-800"
-                      onClick={() => setShellView("workers")}
-                    >
-                      Back to workers
-                    </button>
-                  </div>
-                </div>
-
-                {billingError ? (
-                  <div className="mb-4 rounded-[14px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    {billingError}
-                  </div>
-                ) : null}
-
-                {billingBusy && !billingSummary ? <p className="text-sm text-slate-500">Loading billing status...</p> : null}
-
-                {!user ? (
-                  <div className="rounded-[16px] border border-slate-200 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">Sign in required</p>
-                    <p className="mt-1 text-sm text-slate-600">Sign in to view subscription details, manage cancellation, and access invoices.</p>
-                  </div>
-                ) : billingSummary ? (
-                  <div className="space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Plan status</p>
-                        <p className="mt-2 text-lg font-semibold text-slate-900">
-                          {!billingSummary.featureGateEnabled
-                            ? "Billing disabled"
-                            : billingSummary.hasActivePlan
-                              ? "Active plan"
-                              : "Payment required"}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-600">
-                          {!billingSummary.featureGateEnabled
-                            ? "Cloud billing gates are disabled in this environment."
-                            : billingSummary.hasActivePlan
-                              ? "Your account can launch cloud workers right now."
-                              : "Complete checkout to unlock cloud worker launches."}
-                        </p>
-                        <p className="mt-2 text-sm font-semibold text-slate-900">
-                          {billingPrice && billingPrice.amount !== null
-                            ? `You are paying ${formatMoneyMinor(billingPrice.amount, billingPrice.currency)} ${formatRecurringInterval(billingPrice.recurringInterval, billingPrice.recurringIntervalCount)}.`
-                            : "Current plan amount is unavailable."}
-                        </p>
-                      </div>
-
-                      <div className="rounded-[18px] border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Account</p>
-                        <p className="mt-2 break-all text-sm font-semibold text-slate-900">{(user?.email ?? email) || "account"}</p>
-                        <p className="mt-2 text-xs text-slate-500">
-                          Product: {billingSummary.productId ? shortValue(billingSummary.productId) : "Not configured"}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          Benefit: {billingSummary.benefitId ? shortValue(billingSummary.benefitId) : "Not configured"}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Subscription</p>
-                        {billingSubscription ? (
-                          <>
-                            <p className="mt-2 text-base font-semibold text-slate-900">{formatSubscriptionStatus(billingSubscription.status)}</p>
-                            <p className="mt-1 text-sm text-slate-600">
-                              {formatMoneyMinor(billingSubscription.amount, billingSubscription.currency)} {formatRecurringInterval(billingSubscription.recurringInterval, billingSubscription.recurringIntervalCount)}
-                            </p>
-                            <p className="mt-2 text-xs text-slate-500">
-                              {billingSubscription.cancelAtPeriodEnd
-                                ? `Cancels on ${formatIsoDate(billingSubscription.currentPeriodEnd)}`
-                                : `Renews on ${formatIsoDate(billingSubscription.currentPeriodEnd)}`}
-                            </p>
-                          </>
-                        ) : (
-                          <p className="mt-2 text-sm text-slate-600">No active subscription found.</p>
-                        )}
-                      </div>
-
-                      <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Manage subscription</p>
-                        {billingSummary.portalUrl ? (
-                          <a
-                            href={billingSummary.portalUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="mt-2 inline-flex rounded-[10px] border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-                          >
-                            Open billing portal
-                          </a>
-                        ) : (
-                          <button
-                            type="button"
-                            className="mt-2 inline-flex rounded-[10px] border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                            onClick={() => void refreshBilling({ quiet: true })}
-                            disabled={billingBusy || billingCheckoutBusy || billingSubscriptionBusy}
-                          >
-                            Refresh portal link
-                          </button>
-                        )}
-
-                        {billingSubscription ? (
-                          <button
-                            type="button"
-                            className={`mt-2 inline-flex rounded-[10px] px-3 py-2 text-xs font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                              billingSubscription.cancelAtPeriodEnd ? "bg-slate-700 hover:bg-slate-800" : "bg-rose-600 hover:bg-rose-700"
-                            }`}
-                            onClick={() => void handleSubscriptionCancellation(!billingSubscription.cancelAtPeriodEnd)}
-                            disabled={billingSubscriptionBusy || billingBusy || billingCheckoutBusy}
-                          >
-                            {billingSubscriptionBusy
-                              ? "Updating..."
-                              : billingSubscription.cancelAtPeriodEnd
-                                ? "Resume auto-renew"
-                                : "Cancel at period end"}
-                          </button>
-                        ) : null}
-
-                        <p className="mt-2 text-xs text-slate-500">You can also cancel from the billing portal at any time.</p>
-                      </div>
-                    </div>
-
-                    {effectiveCheckoutUrl ? (
-                      <div className="rounded-[16px] border border-amber-200 bg-amber-50 p-4">
-                        <p className="text-sm font-semibold text-amber-800">Checkout available</p>
-                        <p className="mt-1 text-sm text-amber-700">Use this link to finish billing setup, then return here.</p>
-                        <a
-                          href={effectiveCheckoutUrl}
-                          rel="noreferrer"
-                          className="mt-2 inline-flex rounded-[10px] border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-100"
-                        >
-                          Continue to checkout
-                        </a>
-                      </div>
-                    ) : null}
-
-                    {billingSummary.featureGateEnabled && !billingSummary.hasActivePlan && !effectiveCheckoutUrl ? (
-                      <div className="rounded-[16px] border border-slate-200 bg-white p-4">
-                        <p className="text-sm font-semibold text-slate-900">Need a checkout link?</p>
-                        <p className="mt-1 text-sm text-slate-600">Generate a fresh checkout session for this account.</p>
-                        <button
-                          type="button"
-                          className="mt-3 rounded-[10px] bg-[#1B29FF] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => void refreshBilling({ includeCheckout: true })}
-                          disabled={billingCheckoutBusy || billingBusy}
-                        >
-                          {billingCheckoutBusy ? "Generating checkout..." : "Generate checkout link"}
-                        </button>
-                      </div>
-                    ) : null}
-
-                    <div className="rounded-[18px] border border-slate-200 bg-white p-4">
-                      <div className="mb-3 flex items-center justify-between gap-2">
-                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Invoices</p>
-                        <button
-                          type="button"
-                          className="rounded-[10px] border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={() => void refreshBilling({ quiet: true })}
-                          disabled={billingBusy || billingCheckoutBusy || billingSubscriptionBusy}
-                        >
-                          Refresh invoices
-                        </button>
-                      </div>
-
-                      {billingSummary.invoices.length > 0 ? (
-                        <ul className="space-y-2">
-                          {billingSummary.invoices.map((invoice) => (
-                            <li key={invoice.id} className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-slate-100 bg-slate-50 px-3 py-2.5">
-                              <div>
-                                <p className="text-sm font-semibold text-slate-900">{invoice.invoiceNumber ?? shortValue(invoice.id)}</p>
-                                <p className="text-xs text-slate-600">
-                                  {formatIsoDate(invoice.createdAt)} · {formatMoneyMinor(invoice.totalAmount, invoice.currency)} · {formatSubscriptionStatus(invoice.status)}
-                                </p>
-                              </div>
-
-                              {invoice.invoiceUrl ? (
-                                <a
-                                  href={invoice.invoiceUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="rounded-[10px] border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-                                >
-                                  Download invoice
-                                </a>
-                              ) : (
-                                <span className="text-xs font-medium text-slate-500">Not available yet</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-sm text-slate-600">No invoices yet. When charges post, invoices appear here.</p>
-                      )}
-                    </div>
-                  </div>
-                ) : !billingBusy ? (
-                  <p className="text-sm text-slate-600">No billing details available yet. Click refresh to retry.</p>
-                ) : null}
-              </section>
-            )}
-          </div>
-        ) : null}
-
-      </div>
-    </section>
+            </div>
+          </main>
+        </div>
+      )}
+    </div>
   );
 }
