@@ -19,6 +19,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       searchParams: request.nextUrl.searchParams
     });
     const responseHeaders = new Headers({
+      "Access-Control-Allow-Origin": "*",
       Vary: "Accept",
       "Cache-Control": "public, max-age=3600",
       "Content-Type": blob.contentType || "application/json"

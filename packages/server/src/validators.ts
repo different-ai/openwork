@@ -11,7 +11,10 @@ export function validateSkillName(name: string): void {
 }
 
 export function validateDescription(description: string | undefined): void {
-  if (!description || description.length < 1 || description.length > 1024) {
+  if (description == null || description.length === 0) {
+    return;
+  }
+  if (description.length > 1024) {
     throw new ApiError(422, "invalid_description", "Description must be 1-1024 characters");
   }
 }
