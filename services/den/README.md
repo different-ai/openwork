@@ -46,7 +46,7 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `RENDER_WORKER_ROOT_DIR` render `rootDir` for worker services
 - `RENDER_WORKER_PLAN` Render plan for worker services
 - `RENDER_WORKER_REGION` Render region for worker services
-- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers
+- `RENDER_WORKER_OPENWORK_VERSION` `openwork-orchestrator` npm version installed in workers; the worker build uses its `opencodeVersion` metadata to bundle a matching `opencode` binary into the Render deploy
 - `RENDER_WORKER_NAME_PREFIX` service name prefix
 - `RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` optional domain suffix for worker custom URLs (e.g. `openwork.studio` -> `<worker-id>.openwork.studio`)
 - `RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` max time to wait for vanity URL health before falling back to Render URL
@@ -119,7 +119,7 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 Optional GitHub Actions variable:
 
 - `DEN_RENDER_WORKER_PLAN` (defaults to `standard`)
-- `DEN_RENDER_WORKER_OPENWORK_VERSION` (defaults to `0.11.113`)
+- `DEN_RENDER_WORKER_OPENWORK_VERSION` pins the `openwork-orchestrator` npm version installed in workers; the worker build bundles the matching `opencode` release asset into the Render image
 - `DEN_CORS_ORIGINS` (defaults to `https://app.openwork.software,https://api.openwork.software,<render-service-url>`)
 - `DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX` (defaults to `openwork.studio`)
 - `DEN_RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS` (defaults to `240000`)

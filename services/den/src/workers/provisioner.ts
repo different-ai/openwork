@@ -245,9 +245,16 @@ async function provisionWorkerOnRender(
   const serviceName = slug(
     `${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`,
   ).slice(0, 62);
+  const orchestratorPackage = env.render.workerOpenworkVersion?.trim()
+    ? `openwork-orchestrator@${env.render.workerOpenworkVersion.trim()}`
+    : "openwork-orchestrator";
+  const buildCommand = [
+    `npm install -g ${orchestratorPackage}`,
+    "node ./scripts/install-opencode.mjs",
+  ].join(" && ");
   const startCommand = [
     "mkdir -p /tmp/workspace",
-    "attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); openwork serve --workspace /tmp/workspace --openwork-host 0.0.0.0 --openwork-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-opencode-router --verbose && exit 0; echo \"openwork serve failed (attempt $attempt); retrying in 3s\"; sleep 3; done; exit 1",
+    "attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); openwork serve --workspace /tmp/workspace --openwork-host 0.0.0.0 --openwork-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --allow-external --opencode-source external --opencode-bin ./bin/opencode --no-opencode-router --verbose && exit 0; echo \"openwork serve failed (attempt $attempt); retrying in 3s\"; sleep 3; done; exit 1",
   ].join(" && ");
 
   const payload = {
@@ -269,7 +276,7 @@ async function provisionWorkerOnRender(
       region: env.render.workerRegion,
       healthCheckPath: "/health",
       envSpecificDetails: {
-        buildCommand: `npm install -g openwork-orchestrator`,
+        buildCommand,
         startCommand,
       },
     },
