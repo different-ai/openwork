@@ -187,7 +187,7 @@ export default function WorkspaceSessionList(props: Props) {
                   <div
                     role="button"
                     tabIndex={0}
-                    class={`w-full flex items-center justify-between rounded-[20px] border px-4 py-3.5 text-left transition-[background-color,border-color,box-shadow] ${
+                    class={`w-full flex items-center justify-between rounded-[20px] border px-4 py-3 text-left transition-[background-color,border-color,box-shadow] ${
                       props.activeWorkspaceId === workspace().id
                         ? "border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]"
                         : "border-transparent text-gray-12 hover:bg-gray-2/70"
@@ -209,15 +209,15 @@ export default function WorkspaceSessionList(props: Props) {
                         class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
                         style={{ "background-color": workspaceSwatchColor(workspace().id || workspaceLabel(workspace())) }}
                       />
-                      <span class="truncate text-[16px] font-medium text-dls-text">{workspaceLabel(workspace())}</span>
+                      <div class="min-w-0">
+                        <div class="truncate text-[16px] font-medium text-dls-text">{workspaceLabel(workspace())}</div>
+                        <div class={`mt-0.5 truncate text-[13px] ${statusTone()}`}>{statusLabel()}</div>
+                      </div>
                     </div>
 
-                    <div class="ml-4 flex shrink-0 items-center gap-2">
+                    <div class="ml-4 flex shrink-0 items-center gap-1.5">
                       <Show when={group.status === "loading" || isConnecting()}>
                         <Loader2 size={14} class="animate-spin text-gray-9" />
-                      </Show>
-                      <Show when={!(group.status === "loading" || isConnecting())}>
-                        <span class={`text-[14px] ${statusTone()}`}>{statusLabel()}</span>
                       </Show>
 
                       <div class="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
