@@ -218,26 +218,28 @@ hr {
 
 .den-carbon-window {
   background:
-    radial-gradient(circle at top left, rgba(58, 63, 68, 0.35), transparent 34%),
-    linear-gradient(180deg, #1a1c1e 0%, #151718 100%);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.95), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(226, 232, 240, 0.8), transparent 38%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98) 0%, rgba(248, 250, 252, 0.96) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.18);
   box-shadow:
-    0 26px 70px -34px rgba(15, 23, 42, 0.55),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    0 24px 60px -32px rgba(15, 23, 42, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(22px);
 }
 
 .den-carbon-titlebar {
-  background: #1d1f21;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
 }
 
 .den-source-pill {
   display: inline-flex;
   align-items: center;
   border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.04);
-  color: #d3dae2;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(248, 250, 252, 0.92);
+  color: #64748b;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -247,24 +249,24 @@ hr {
 
 .den-running-dot {
   animation: den-pulse 1.8s ease-out infinite;
-  box-shadow: 0 0 0 rgba(61, 220, 151, 0.45);
+  box-shadow: 0 0 0 rgba(34, 197, 94, 0.38);
 }
 
 @keyframes den-pulse {
   0% {
     opacity: 0.7;
     transform: scale(0.92);
-    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.4);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.34);
   }
   55% {
     opacity: 1;
     transform: scale(1.08);
-    box-shadow: 0 0 0 10px rgba(61, 220, 151, 0);
+    box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
   }
   100% {
     opacity: 0.75;
     transform: scale(0.94);
-    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0);
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
   }
 }
 

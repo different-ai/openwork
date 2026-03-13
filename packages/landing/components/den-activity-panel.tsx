@@ -55,9 +55,9 @@ const baseActivityEntries = [
 ];
 
 const toneStyles = {
-  success: { bg: "bg-[#3ddc97]", shadow: "0 0 0 7px rgba(61,220,151,0.12)" },
-  warning: { bg: "bg-[#f6b54f]", shadow: "0 0 0 7px rgba(246,181,79,0.12)" },
-  critical: { bg: "bg-[#ff6b6b]", shadow: "0 0 0 7px rgba(255,107,107,0.12)" },
+  success: { bg: "bg-[#22c55e]", shadow: "0 0 0 7px rgba(34,197,94,0.18)" },
+  warning: { bg: "bg-[#f59e0b]", shadow: "0 0 0 7px rgba(245,158,11,0.18)" },
+  critical: { bg: "bg-[#ef4444]", shadow: "0 0 0 7px rgba(239,68,68,0.16)" },
 } as const;
 
 export function DenActivityPanel() {
@@ -108,24 +108,24 @@ export function DenActivityPanel() {
           <span className="h-3 w-3 rounded-full bg-[#ffbd2e]" />
           <span className="h-3 w-3 rounded-full bg-[#27c93f]" />
         </div>
-        <div className="absolute left-1/2 -translate-x-1/2 text-[12px] font-medium tracking-[0.08em] text-[#b6bbc2]">
+        <div className="absolute left-1/2 -translate-x-1/2 text-[12px] font-medium tracking-[0.08em] text-[#64748b]">
           ops-worker-01
         </div>
       </div>
 
       <div className="space-y-3.5 px-4 py-4 md:px-4 md:py-4">
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#d8dee4]">
+        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[#64748b]">
           <span className={`h-2 w-2 rounded-full bg-[#3ddc97] ${reduceMotion ? "" : "den-running-dot"}`} />
           RUNNING
         </div>
 
-        <div className="relative space-y-3 pl-8 before:absolute before:bottom-2 before:left-[9px] before:top-1 before:w-px before:bg-white/10 before:content-['']">
+        <div className="relative space-y-3 pl-8 before:absolute before:bottom-2 before:left-[9px] before:top-1 before:w-px before:bg-[#cbd5e1] before:content-['']">
           <motion.div layout className="relative flex flex-col gap-3">
             {items.map(entry => (
               <motion.div
                 layout
                 key={entry.id}
-                className="relative"
+                className="relative rounded-[1rem] bg-white/55 px-3 py-2.5 shadow-[0_14px_30px_-26px_rgba(15,23,42,0.35)]"
                 initial={reduceMotion ? false : { opacity: 0, scale: 0.9, y: 15 }}
                 animate={reduceMotion ? undefined : { opacity: 1, scale: 1, y: 0 }}
                 transition={
@@ -139,10 +139,10 @@ export function DenActivityPanel() {
                   style={{ boxShadow: toneStyles[entry.tone].shadow }}
                 />
                 <div className="mb-1.5 flex items-center gap-2">
-                  <span className="mono text-[11px] text-[#8a939f]">{entry.time}</span>
+                  <span className="mono text-[11px] text-[#94a3b8]">{entry.time}</span>
                   <span className="den-source-pill">{entry.source}</span>
                 </div>
-                <div className="space-y-0.5 text-[12px] leading-[1.55] text-[#eef2f6] md:text-[12.5px]">
+                <div className="space-y-0.5 text-[12px] leading-[1.55] text-[#0f172a] md:text-[12.5px]">
                   {entry.lines.map(line => (
                     <div key={line}>{line}</div>
                   ))}
