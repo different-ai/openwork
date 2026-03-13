@@ -1,4 +1,5 @@
 import { env } from "../env.js"
+import { assertRenderConfig, listRenderServices, renderRequest, type RenderDeploy, type RenderService } from "./render-api.js"
 import { customDomainForWorker, ensureVercelDnsRecord } from "./vanity-domain.js"
 
 export type ProvisionInput = {
@@ -13,26 +14,6 @@ export type ProvisionedInstance = {
   url: string
   status: "provisioning" | "healthy"
   region?: string
-}
-
-type RenderService = {
-  id: string
-  name?: string
-  slug?: string
-  serviceDetails?: {
-    url?: string
-    region?: string
-  }
-}
-
-type RenderServiceListRow = {
-  cursor?: string
-  service?: RenderService
-}
-
-type RenderDeploy = {
-  id: string
-  status: string
 }
 
 const terminalDeployStates = new Set(["live", "update_failed", "build_failed", "canceled"])
@@ -56,32 +37,6 @@ const hostFromUrl = (value: string | null | undefined) => {
   } catch {
     return ""
   }
-}
-
-async function renderRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set("Authorization", `Bearer ${env.render.apiKey}`)
-  headers.set("Accept", "application/json")
-
-  if (init.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json")
-  }
-
-  const response = await fetch(`${env.render.apiBase}${path}`, {
-    ...init,
-    headers,
-  })
-  const text = await response.text()
-
-  if (!response.ok) {
-    throw new Error(`Render API ${path} failed (${response.status}): ${text.slice(0, 400)}`)
-  }
-
-  if (!text) {
-    return null as T
-  }
-
-  return JSON.parse(text) as T
 }
 
 async function waitForDeployLive(serviceId: string) {
@@ -124,34 +79,6 @@ async function waitForHealth(url: string, timeoutMs = env.render.healthcheckTime
   throw new Error(`Timed out waiting for worker health endpoint ${healthUrl}`)
 }
 
-async function listRenderServices(limit = 200) {
-  const rows: RenderService[] = []
-  let cursor: string | undefined
-
-  while (rows.length < limit) {
-    const query = new URLSearchParams({ limit: "100" })
-    if (cursor) {
-      query.set("cursor", cursor)
-    }
-
-    const page = await renderRequest<RenderServiceListRow[]>(`/services?${query.toString()}`)
-    if (page.length === 0) {
-      break
-    }
-
-    rows.push(...page.map((entry) => entry.service).filter((entry): entry is RenderService => Boolean(entry?.id)))
-
-    const nextCursor = page[page.length - 1]?.cursor
-    if (!nextCursor || nextCursor === cursor) {
-      break
-    }
-
-    cursor = nextCursor
-  }
-
-  return rows.slice(0, limit)
-}
-
 async function attachRenderCustomDomain(serviceId: string, workerId: string, renderUrl: string) {
   const hostname = customDomainForWorker(workerId, env.render.workerPublicDomainSuffix)
   if (!hostname) {
@@ -186,15 +113,6 @@ async function attachRenderCustomDomain(serviceId: string, workerId: string, ren
     const message = error instanceof Error ? error.message : "unknown_error"
     console.warn(`[provisioner] custom domain attach failed for ${serviceId}: ${message}`)
     return null
-  }
-}
-
-function assertRenderConfig() {
-  if (!env.render.apiKey) {
-    throw new Error("RENDER_API_KEY is required for render provisioner")
-  }
-  if (!env.render.ownerId) {
-    throw new Error("RENDER_OWNER_ID is required for render provisioner")
   }
 }
 

@@ -12,6 +12,7 @@ import { AuditEventTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceT
 import { env } from "../env.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
 import { ensureDefaultOrg } from "../orgs.js"
+import { buildOrgWorkerAnalytics } from "../workers/analytics.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
 
@@ -547,6 +548,64 @@ workersRouter.get("/billing", asyncRoute(async (req, res) => {
   //     benefitId: env.polar.benefitId,
   //   },
   // })
+}))
+
+workersRouter.get("/analytics", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.json({
+      analytics: {
+        generatedAt: new Date().toISOString(),
+        orgId: null,
+        summary: {
+          workers: {
+            total: 0,
+            local: 0,
+            cloud: 0,
+            byStatus: {
+              provisioning: 0,
+              healthy: 0,
+              failed: 0,
+              stopped: 0,
+            },
+            createdLast24h: 0,
+            staleProvisioningCount: 0,
+            cloudWithoutInstanceCount: 0,
+          },
+          render: {
+            enabled: false,
+            note: "No org is linked to this session yet.",
+            error: null,
+            serviceCount: 0,
+            matchedCloudWorkerCount: 0,
+            missingCloudWorkerCount: 0,
+            stateCounts: {
+              missing: 0,
+              live: 0,
+              provisioning: 0,
+              failed: 0,
+              unknown: 0,
+            },
+            latestDeployStatusCounts: {},
+            matchMethodCounts: {
+              env_var: 0,
+              instance_url: 0,
+              worker_id_prefix: 0,
+            },
+          },
+        },
+        workers: [],
+      },
+    })
+    return
+  }
+
+  res.json({
+    analytics: await buildOrgWorkerAnalytics(orgId),
+  })
 }))
 
 workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {

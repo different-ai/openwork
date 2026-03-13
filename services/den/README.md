@@ -72,6 +72,9 @@ pnpm db:migrate
 - `GET /` demo web app (sign-up + auth + worker launch)
 - `GET /v1/me`
 - `GET /v1/workers` (list recent workers for signed-in user/org)
+- `GET /v1/workers/analytics`
+  - Returns an org-scoped analytics snapshot built from Den DB state plus best-effort live Render state.
+  - Includes worker counts, stale provisioning signals, and matched Render deploy states for the current org's cloud workers.
 - `POST /v1/workers`
   - Cloud launches return `202` quickly with worker `status=provisioning` and continue provisioning asynchronously.
   - Returns `402 payment_required` with Polar checkout URL when paywall is enabled and entitlement is missing.
