@@ -30,6 +30,28 @@ Route fresh leads and qualify them.`,
   assert.equal(result.items[0]?.kind, "Skill");
 });
 
+test("packageOpenworkFiles rewrites shared skill frontmatter to the normalized bundle name", () => {
+  const result = packageOpenworkFiles({
+    files: [
+      {
+        path: ".opencode/skills/sales-inbound/SKILL.md",
+        content: `---
+name: Sales Inbound
+description: Handle inbound sales leads.
+---
+
+# Sales Inbound
+
+Route fresh leads and qualify them.`,
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "skill");
+  assert.equal(result.bundle.name, "sales-inbound");
+  assert.match((result.bundle as { content: string }).content, /^---\nname: sales-inbound\n/m);
+});
+
 test("packageOpenworkFiles builds a workspace profile with agents and MCP config", () => {
   const result = packageOpenworkFiles({
     files: [

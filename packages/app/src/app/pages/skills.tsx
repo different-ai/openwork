@@ -384,6 +384,9 @@ export default function SkillsView(props: SkillsViewProps) {
     setInstallLinkBundle(null);
     try {
       const url = new URL(raw);
+      if (!url.searchParams.has("format")) {
+        url.searchParams.set("format", "json");
+      }
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 15_000);
       try {

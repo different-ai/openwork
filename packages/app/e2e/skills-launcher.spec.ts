@@ -3,7 +3,20 @@ import { expect, test } from "@playwright/test";
 const bundleUrl = "https://share.openwork.software/b/test-skill";
 
 test.beforeEach(async ({ page }) => {
-  await page.route(bundleUrl, async (route) => {
+  await page.route("**/b/test-skill*", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get("format") !== "json") {
+      await route.fulfill({
+        status: 404,
+        headers: {
+          "content-type": "application/json",
+          "access-control-allow-origin": "*",
+        },
+        body: JSON.stringify({ message: "Not found" }),
+      });
+      return;
+    }
+
     await route.fulfill({
       status: 200,
       headers: {

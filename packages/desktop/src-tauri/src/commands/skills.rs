@@ -378,7 +378,9 @@ fn extract_description(raw: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::extract_description;
+    use super::{extract_description, write_local_skill};
+    use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn extract_description_truncates_multibyte_text_without_panicking() {
@@ -398,6 +400,33 @@ mod tests {
         let description = extract_description(raw).expect("description should be present");
 
         assert_eq!(description, "Short description");
+    }
+
+    #[test]
+    fn write_local_skill_creates_missing_project_skill() {
+        let project_dir = std::env::temp_dir().join(format!("openwork-skill-write-{}", Uuid::new_v4()));
+        fs::create_dir_all(&project_dir).expect("project dir");
+
+        let result = write_local_skill(
+            project_dir.to_string_lossy().to_string(),
+            "shared-skill".to_string(),
+            "# Shared skill".to_string(),
+        )
+        .expect("write should return exec result");
+
+        let skill_path = project_dir
+            .join(".opencode")
+            .join("skills")
+            .join("shared-skill")
+            .join("SKILL.md");
+
+        assert!(result.ok);
+        assert_eq!(
+            fs::read_to_string(&skill_path).expect("skill file"),
+            "# Shared skill\n"
+        );
+
+        fs::remove_dir_all(&project_dir).expect("cleanup temp project");
     }
 }
 
@@ -485,14 +514,17 @@ pub fn write_local_skill(
         }
     }
 
-    let Some(path) = target else {
-        return Ok(ExecResult {
-            ok: false,
-            status: 1,
-            stdout: String::new(),
-            stderr: "Skill not found".to_string(),
-        });
+    let path = match target {
+        Some(path) => path,
+        None => ensure_project_skill_root(project_dir)?
+            .join(&name)
+            .join("SKILL.md"),
     };
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create {}: {e}", parent.display()))?;
+    }
 
     let next = if content.ends_with('\n') {
         content
