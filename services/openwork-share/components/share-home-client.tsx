@@ -20,17 +20,43 @@ function toneClass(item: PreviewItem | null): string {
   return "dot-skill";
 }
 
-function buildPlaceholderItem(pasteValue: string, entries: File[]): PreviewItem {
-  if (entries.length) {
+function buildPredictedPreviewItem(pasteValue: string, entries: File[]): PreviewItem | null {
+  if (entries.length > 1) {
     return {
-      name: entries.length === 1 ? entries[0].name : `${entries.length} files`,
+      name: `${entries.length} files`,
       kind: "Config", meta: "Analyzing...", tone: "config",
     };
   }
-  const isJson = pasteValue.trimStart().startsWith("{") || pasteValue.trimStart().startsWith("[");
+
+  if (entries.length === 1) {
+    const entry = entries[0] as File & { relativePath?: string; webkitRelativePath?: string };
+    const normalizedName = (entry.relativePath || entry.webkitRelativePath || entry.name).toLowerCase();
+
+    if (normalizedName.endsWith("/skill.md") || normalizedName === "skill.md") {
+      return { name: entry.name, kind: "Skill", meta: "Analyzing...", tone: "skill" };
+    }
+    if (normalizedName.endsWith("/agents.md") || normalizedName === "agents.md") {
+      return { name: entry.name, kind: "Agent", meta: "Analyzing...", tone: "agent" };
+    }
+    if (normalizedName.includes("mcp")) {
+      return { name: entry.name, kind: "MCP", meta: "Analyzing...", tone: "mcp" };
+    }
+    return { name: entry.name, kind: "Config", meta: "Analyzing...", tone: "config" };
+  }
+
+  const trimmed = pasteValue.trimStart();
+  if (!trimmed) return null;
+
+  const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   return {
     name: isJson ? "clipboard.jsonc" : "clipboard.md",
-    kind: "Config", meta: "Analyzing...", tone: "config",
+    kind: /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Scope|Trigger|Parameters):/m.test(trimmed) || /^##\s+(Trigger|Parameters)\b/m.test(trimmed)
+      ? "Skill"
+      : "Config",
+    meta: "Analyzing...",
+    tone: /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Scope|Trigger|Parameters):/m.test(trimmed) || /^##\s+(Trigger|Parameters)\b/m.test(trimmed)
+      ? "skill"
+      : "config",
   };
 }
 
@@ -144,6 +170,7 @@ export default function ShareHomeClient() {
   const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
   const [previewCopied, setPreviewCopied] = useState(false);
   const [pasteState, setPasteState] = useState(DEFAULT_STATUS);
+  const [predictedPreviewItem, setPredictedPreviewItem] = useState<PreviewItem | null>(null);
   const requestIdRef = useRef<number>(0);
 
   const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
@@ -161,14 +188,9 @@ export default function ShareHomeClient() {
     () => showBaseline ? highlightSyntax(BASELINE_EXAMPLE) : highlightSyntax(pasteValue),
     [pasteValue, showBaseline]
   );
-  const fileItems: PreviewItem[] = useMemo(() => {
-    if (showExamples) return [];
-    if (preview?.items?.length) return preview.items.slice(0, 4);
-    return [buildPlaceholderItem(pasteValue, selectedEntries)];
-  }, [showExamples, preview, pasteValue, selectedEntries]);
-
   const exampleItems = useMemo(() => getPreviewItems(null), []);
   const activeExampleName = exampleItems.find(item => item.example === pasteValue)?.name ?? null;
+  const activePreviewItem = showExamples ? null : preview?.items?.[0] ?? predictedPreviewItem;
   const packageStatus = useMemo(
     () => getPackageStatus({ generatedUrl, warnings, effectiveEntryCount: effectiveEntries.length }),
     [generatedUrl, warnings, effectiveEntries.length]
@@ -211,6 +233,7 @@ export default function ShareHomeClient() {
     if (!effectiveEntries.length) {
       requestIdRef.current += 1;
       setPreview(null);
+      setPredictedPreviewItem(null);
       setGeneratedUrl("");
       setWarnings([]);
       setBusyMode(null);
@@ -229,6 +252,9 @@ export default function ShareHomeClient() {
         const nextPreview = await requestPackage(true);
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(nextPreview);
+        if (nextPreview.items?.[0]) {
+          setPredictedPreviewItem(nextPreview.items[0]);
+        }
       } catch {
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(null);
@@ -255,6 +281,7 @@ export default function ShareHomeClient() {
   const assignEntries = async (files: FileList | File[] | null) => {
     const entries = Array.from(files || []).filter(Boolean);
     setSelectedEntries(entries);
+    setPredictedPreviewItem(buildPredictedPreviewItem("", entries));
     resetFormState();
 
     if (entries.length) {
@@ -267,19 +294,31 @@ export default function ShareHomeClient() {
         setPasteState(`Showing ${entries.length === 1 ? entries[0].name : `${entries.length} files`}.`);
       } catch {
         setPasteValue("");
+        setPredictedPreviewItem(null);
         setPasteState(DEFAULT_STATUS);
       }
     } else {
       setPasteValue("");
+      setPredictedPreviewItem(null);
       setPasteState(DEFAULT_STATUS);
     }
   };
 
   const handlePasteChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setPasteValue(event.target.value);
+    const nextValue = event.target.value;
+    const hasContent = nextValue.trim().length > 0;
+
+    setPasteValue(nextValue);
     setSelectedEntries([]);
     resetFormState();
-    setPasteState(event.target.value.trim() ? "Ready to preview." : DEFAULT_STATUS);
+
+    if (!hasContent) {
+      setPredictedPreviewItem(null);
+    } else if (!trimmedPaste.length) {
+      setPredictedPreviewItem(buildPredictedPreviewItem(nextValue, []));
+    }
+
+    setPasteState(hasContent ? "Ready to preview." : DEFAULT_STATUS);
   };
 
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -442,8 +481,10 @@ export default function ShareHomeClient() {
                           className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
                           key={`${item.kind}-${item.name}`}
                           onClick={() => {
-                            setPasteValue(isActive ? "" : item.example!);
+                            const nextPasteValue = isActive ? "" : item.example!;
+                            setPasteValue(nextPasteValue);
                             setSelectedEntries([]);
+                            setPredictedPreviewItem(isActive ? null : item);
                             resetFormState();
                             setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
                           }}
@@ -518,7 +559,7 @@ export default function ShareHomeClient() {
                 <span className="preview-eyebrow">Preview</span>
                 <div className="preview-header-actions">
                   <span className="preview-filename">
-                    <span className={`preview-filename-dot ${fileItems[0] ? toneClass(fileItems[0]) : "dot-pending"}`} />
+                    <span className={`preview-filename-dot ${activePreviewItem ? toneClass(activePreviewItem) : "dot-pending"}`} />
                     {previewFilename}
                     <button
                       type="button"

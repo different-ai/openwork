@@ -84,6 +84,34 @@ function definePreviewWrapTests(mode: "desktop" | "mobile") {
     expect(metrics.newlineGap).not.toBeNull();
     expect(metrics.newlineGap ?? 0).toBeGreaterThan(6);
   });
+
+  test(`keeps the preview type dot stable while editing on ${mode}`, async ({ page }) => {
+    let packageRequests = 0;
+
+    await page.route("**/v1/package", async (route) => {
+      packageRequests += 1;
+      if (packageRequests === 2) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+      }
+      await route.continue();
+    });
+
+    await page.goto("/");
+
+    const editor = page.locator(".preview-editor");
+    const previewDot = page.locator(".preview-filename-dot");
+    await expect(editor).toBeVisible();
+
+    await editor.fill(momTestSkill);
+    await expect(previewDot).toHaveClass(/dot-skill/);
+
+    await editor.fill(`${momTestSkill}\n\nFollow-up note`);
+    await page.waitForTimeout(50);
+    expect(await previewDot.evaluate((node) => node.className)).toContain("dot-skill");
+
+    await page.waitForTimeout(450);
+    await expect(previewDot).toHaveClass(/dot-skill/);
+  });
 }
 
 test.describe("desktop", () => {
