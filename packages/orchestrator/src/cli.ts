@@ -95,6 +95,8 @@ const SANDBOX_INTERNAL_OPENCODE_ROUTER_HEALTH_PORT = 3005;
 const SANDBOX_OPENCODE_GLOBAL_CONFIG_CONTAINER_PATH = "/persist/.config/opencode";
 const SANDBOX_OPENCODE_GLOBAL_DATA_IMPORT_CONTAINER_PATH = "/persist/.openwork-host-opencode-data";
 
+const OPENCODE_GLOBAL_CONFIG_FILES = ["opencode.jsonc", "opencode.json", "config.json", "AGENTS.md"];
+
 type ParsedArgs = {
   positionals: string[];
   flags: Map<string, string | boolean>;
@@ -519,10 +521,9 @@ async function resolveHostOpencodeGlobalConfigDir(): Promise<string | null> {
     candidates.push(join(homedir(), "Library", "Application Support", "opencode"));
   }
 
-  const files = ["opencode.jsonc", "opencode.json", "config.json", "AGENTS.md"];
   for (const candidate of Array.from(new Set(candidates.map((item) => resolve(expandTildePath(item)))))) {
     if (!(await isDir(candidate))) continue;
-    for (const file of files) {
+    for (const file of OPENCODE_GLOBAL_CONFIG_FILES) {
       try {
         await access(join(candidate, file));
         return candidate;
@@ -2243,6 +2244,31 @@ async function ensureOpencodeManagedTools(configDir: string): Promise<void> {
 
   await writeManagedTool("opencode_router_send.ts", opencodeRouterSendToolSource());
   await writeManagedTool("opencode_router_status.ts", opencodeRouterStatusToolSource());
+}
+
+async function syncUserGlobalOpencodeConfig(configDir: string): Promise<void> {
+  const globalDir = await resolveHostOpencodeGlobalConfigDir();
+  if (!globalDir) return;
+
+  for (const file of OPENCODE_GLOBAL_CONFIG_FILES) {
+    const src = join(globalDir, file);
+    const dest = join(configDir, file);
+    try {
+      const srcStat = await stat(src);
+      // Only overwrite if the global config is newer than what's already in the
+      // managed dir, so we don't clobber workspace-specific edits or SDK-written state.
+      try {
+        const destStat = await stat(dest);
+        if (destStat.mtimeMs >= srcStat.mtimeMs) continue;
+      } catch {
+        // dest doesn't exist yet — proceed with copy
+      }
+      await copyFile(src, dest);
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      console.warn(`[openwork-orchestrator] failed to sync config file ${file}: ${err}`);
+    }
+  }
 }
 
 function findWorkspace(state: RouterState, input: string): RouterWorkspace | undefined {
@@ -4079,6 +4105,7 @@ async function runRouterDaemon(args: ParsedArgs) {
   const resolvedWorkdir = await ensureWorkspace(opencodeWorkdir);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkdir));
   await ensureOpencodeManagedTools(opencodeConfigDir);
+  await syncUserGlobalOpencodeConfig(opencodeConfigDir);
   logger.info(
     "Daemon starting",
     { runId, logFormat, workdir: resolvedWorkdir, host, port },
@@ -4861,6 +4888,7 @@ async function runStart(args: ParsedArgs) {
   const dataDir = resolveRouterDataDir(args.flags);
   const opencodeConfigDir = join(dataDir, "opencode-config", workspaceIdForLocal(resolvedWorkspace));
   await ensureOpencodeManagedTools(opencodeConfigDir);
+  await syncUserGlobalOpencodeConfig(opencodeConfigDir);
   const opencodeRouterDataDir =
     sandboxMode === "none" ? join(dataDir, "opencode-router", workspaceIdForLocal(resolvedWorkspace)) : null;
   if (opencodeRouterDataDir) {
