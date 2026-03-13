@@ -8,6 +8,7 @@ const ENV_OPENWORK_PUBLISHER_BASE_URL = String(import.meta.env.VITE_OPENWORK_PUB
 
 export const DEFAULT_OPENWORK_PUBLISHER_BASE_URL =
   ENV_OPENWORK_PUBLISHER_BASE_URL || "https://share.openwork.software";
+export const DEFAULT_OPENWORK_SKILL_EDITOR_BASE_URL = "https://share.openworklabs.com";
 
 function normalizeBaseUrl(input: string): string {
   const trimmed = String(input ?? "").trim();
