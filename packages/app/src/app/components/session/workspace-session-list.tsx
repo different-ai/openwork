@@ -60,18 +60,6 @@ const workspaceSwatchColor = (seed: string) => {
   return WORKSPACE_SWATCHES[Math.abs(hash) % WORKSPACE_SWATCHES.length];
 };
 
-const workspaceSubtitle = (workspace: WorkspaceInfo) => {
-  if (workspace.workspaceType === "remote") {
-    return (
-      workspace.openworkWorkspaceName?.trim() ||
-      workspace.directory?.trim() ||
-      workspace.baseUrl?.trim() ||
-      `${workspaceKindLabel(workspace)} worker`
-    );
-  }
-  return "Local worker";
-};
-
 export default function WorkspaceSessionList(props: Props) {
   const revealLabel = isWindowsPlatform() ? "Reveal in Explorer" : "Reveal in Finder";
   const [expandedWorkspaceIds, setExpandedWorkspaceIds] = createSignal<Set<string>>(new Set());
@@ -194,12 +182,12 @@ export default function WorkspaceSessionList(props: Props) {
             };
 
             return (
-              <div class="space-y-2.5">
+              <div class="space-y-2">
                 <div class="relative group">
                   <div
                     role="button"
                     tabIndex={0}
-                    class={`w-full flex items-center gap-3.5 rounded-[20px] border px-4 py-4 text-left transition-[background-color,border-color,box-shadow] ${
+                    class={`w-full flex items-center justify-between rounded-[20px] border px-4 py-3.5 text-left transition-[background-color,border-color,box-shadow] ${
                       props.activeWorkspaceId === workspace().id
                         ? "border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]"
                         : "border-transparent text-gray-12 hover:bg-gray-2/70"
@@ -216,28 +204,26 @@ export default function WorkspaceSessionList(props: Props) {
                       void Promise.resolve(props.onActivateWorkspace(workspace().id));
                     }}
                   >
-                    <div
-                      class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
-                      style={{ "background-color": workspaceSwatchColor(workspace().id || workspaceLabel(workspace())) }}
-                    />
-
-                    <div class="min-w-0 flex-1">
-                      <div class="truncate text-[15px] font-medium text-dls-text">{workspaceLabel(workspace())}</div>
-                      <div class="mt-1 truncate text-[13px] text-dls-secondary">{workspaceSubtitle(workspace())}</div>
+                    <div class="flex min-w-0 items-center gap-4">
+                      <div
+                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                        style={{ "background-color": workspaceSwatchColor(workspace().id || workspaceLabel(workspace())) }}
+                      />
+                      <span class="truncate text-[16px] font-medium text-dls-text">{workspaceLabel(workspace())}</span>
                     </div>
 
-                    <div class="flex shrink-0 items-center gap-2.5">
+                    <div class="ml-4 flex shrink-0 items-center gap-2">
                       <Show when={group.status === "loading" || isConnecting()}>
                         <Loader2 size={14} class="animate-spin text-gray-9" />
                       </Show>
                       <Show when={!(group.status === "loading" || isConnecting())}>
-                        <span class={`text-[12px] ${statusTone()}`}>{statusLabel()}</span>
+                        <span class={`text-[14px] ${statusTone()}`}>{statusLabel()}</span>
                       </Show>
 
                       <div class="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
                           type="button"
-                          class="p-1.5 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-3/80"
+                          class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
                             props.onCreateTaskInWorkspace(workspace().id);
@@ -250,7 +236,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                         <button
                           type="button"
-                          class="p-1.5 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-3/80"
+                          class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                           onClick={(event) => {
                             event.stopPropagation();
                             setWorkspaceMenuId((current) =>
@@ -265,7 +251,7 @@ export default function WorkspaceSessionList(props: Props) {
 
                       <button
                         type="button"
-                        class="p-1.5 rounded-md text-gray-9 hover:text-gray-11 hover:bg-gray-3/80"
+                        class="rounded-md p-1 text-gray-9 hover:bg-gray-3/80 hover:text-gray-11"
                         aria-label={isWorkspaceExpanded(workspace().id) ? "Collapse" : "Expand"}
                         onClick={(event) => {
                           event.stopPropagation();
