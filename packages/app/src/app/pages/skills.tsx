@@ -3,9 +3,13 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount }
 import type { HubSkillCard, SkillCard } from "../types";
 
 import Button from "../components/button";
-import { Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload } from "lucide-solid";
+import { ArrowLeft, Copy, Edit2, FolderOpen, Link2, Loader2, Package, Plus, RefreshCw, Search, Share2, Sparkles, Trash2, Upload, X } from "lucide-solid";
 import { currentLocale, t } from "../../i18n";
-import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
+import {
+  DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
+  publishOpenworkBundleJson,
+} from "../lib/publisher";
+import { isTauriRuntime } from "../utils";
 
 type InstallResult = { ok: boolean; message: string };
 
@@ -17,6 +21,9 @@ type SkillBundleV1 = {
   description?: string;
   trigger?: string;
 };
+
+type CreateSkillModalStep = "launcher" | "install-link";
+type InstallLinkSource = "launcher-external-editor" | "launcher-direct-link" | "toolbar-shortcut";
 
 const OPENWORK_DEFAULT_SKILL_NAMES = new Set([
   "workspace-guide",
@@ -73,6 +80,8 @@ export default function SkillsView(props: SkillsViewProps) {
   const [installLinkBusy, setInstallLinkBusy] = createSignal(false);
   const [installLinkError, setInstallLinkError] = createSignal<string | null>(null);
   const [installLinkBundle, setInstallLinkBundle] = createSignal<SkillBundleV1 | null>(null);
+  const [createSkillModalStep, setCreateSkillModalStep] = createSignal<CreateSkillModalStep | null>(null);
+  const [installLinkSource, setInstallLinkSource] = createSignal<InstallLinkSource>("toolbar-shortcut");
 
   const [selectedSkill, setSelectedSkill] = createSignal<SkillCard | null>(null);
   const [selectedContent, setSelectedContent] = createSignal("");
@@ -232,6 +241,13 @@ export default function SkillsView(props: SkillsViewProps) {
     props.setPrompt("/skill-creator");
   };
 
+  const resetInstallLinkState = () => {
+    setInstallLinkUrl("");
+    setInstallLinkBusy(false);
+    setInstallLinkError(null);
+    setInstallLinkBundle(null);
+  };
+
   const openShareLink = (skill: SkillCard) => {
     if (props.busy) return;
     setShareTarget(skill);
@@ -299,20 +315,59 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
-  const openInstallFromLink = () => {
+  const openInstallFromLink = (source: InstallLinkSource = "toolbar-shortcut") => {
     if (props.busy) return;
+    setInstallLinkSource(source);
+    setCreateSkillModalStep("install-link");
     setInstallLinkOpen(true);
-    setInstallLinkUrl("");
-    setInstallLinkBusy(false);
-    setInstallLinkError(null);
-    setInstallLinkBundle(null);
+    resetInstallLinkState();
   };
 
   const closeInstallFromLink = () => {
+    setCreateSkillModalStep(null);
     setInstallLinkOpen(false);
-    setInstallLinkBusy(false);
-    setInstallLinkError(null);
-    setInstallLinkBundle(null);
+    resetInstallLinkState();
+  };
+
+  const openCreateSkillModal = () => {
+    if (props.busy) return;
+    setCreateSkillModalStep("launcher");
+    setInstallLinkOpen(false);
+    resetInstallLinkState();
+  };
+
+  const openCreateSkillInChat = async () => {
+    closeInstallFromLink();
+    await handleNewSkill();
+  };
+
+  const openExternalLink = async (url: string) => {
+    if (isTauriRuntime()) {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+  const openExternalSkillEditor = async () => {
+    if (props.busy) return;
+    try {
+      await openExternalLink(DEFAULT_OPENWORK_PUBLISHER_BASE_URL);
+      openInstallFromLink("launcher-external-editor");
+    } catch (e) {
+      setToast(maskError(e));
+    }
+  };
+
+  const backToCreateSkillLauncher = () => {
+    if (installLinkBusy()) return;
+    setCreateSkillModalStep("launcher");
+    setInstallLinkOpen(false);
+    resetInstallLinkState();
   };
 
   const previewInstallLink = async () => {
@@ -328,6 +383,9 @@ export default function SkillsView(props: SkillsViewProps) {
     setInstallLinkBundle(null);
     try {
       const url = new URL(raw);
+      if (!url.searchParams.has("format")) {
+        url.searchParams.set("format", "json");
+      }
       const controller = new AbortController();
       const timer = window.setTimeout(() => controller.abort(), 15_000);
       try {
@@ -466,17 +524,62 @@ export default function SkillsView(props: SkillsViewProps) {
     }
   };
 
-  const newSkillDisabled = createMemo(
-    () =>
-      props.busy ||
-      (!props.canInstallSkillCreator && !props.canUseDesktopTools)
-  );
-
   const workspaceLabel = createMemo(() => props.workspaceName.trim() || "Worker");
 
   const canCreateInChat = createMemo(
     () => !props.busy && (props.canInstallSkillCreator || props.canUseDesktopTools)
   );
+
+  const canOpenCreateSkillModal = createMemo(() => !props.busy);
+  const createSkillModalOpen = createMemo(() => createSkillModalStep() != null || installLinkOpen());
+  const installLinkShowsBack = createMemo(() => installLinkSource() !== "toolbar-shortcut");
+  const installLinkDescription = createMemo(() =>
+    installLinkSource() === "launcher-external-editor"
+      ? "Paste the share link from the editor to install it here."
+      : "Paste a skill bundle URL, preview it, then install."
+  );
+
+  const createSkillOptions = createMemo(() => [
+    {
+      id: "upload-local",
+      title: "Upload the skill",
+      description: "Import a local skill folder into this worker.",
+      icon: Upload,
+      disabled: props.busy || !props.canUseDesktopTools,
+      disabledReason: !props.canUseDesktopTools ? translate("skills.desktop_required") : null,
+      onClick: () => {
+        closeInstallFromLink();
+        props.importLocalSkill();
+      },
+    },
+    {
+      id: "external-editor",
+      title: "Create/edit in skill editor",
+      description: "Open the external editor, then paste the share link back here to install it.",
+      icon: Edit2,
+      disabled: props.busy,
+      disabledReason: null,
+      onClick: () => void openExternalSkillEditor(),
+    },
+    {
+      id: "install-link",
+      title: "Install from link",
+      description: "Paste a share link and install the skill bundle into this worker.",
+      icon: Link2,
+      disabled: props.busy,
+      disabledReason: null,
+      onClick: () => openInstallFromLink("launcher-direct-link"),
+    },
+    {
+      id: "create-in-chat",
+      title: "Create a skill in chat",
+      description: "Open a new thread with /skill-creator prefilled for the current worker.",
+      icon: Sparkles,
+      disabled: !canCreateInChat(),
+      disabledReason: props.busy ? null : props.accessHint ?? translate("skills.host_only_error"),
+      onClick: () => void openCreateSkillInChat(),
+    },
+  ]);
 
   const isOpenworkInjectedSkill = (skill: SkillCard) => {
     const normalizedName = skill.name.trim().toLowerCase();
@@ -505,15 +608,15 @@ export default function SkillsView(props: SkillsViewProps) {
             <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">Worker profile</div>
             <div class="text-xl font-semibold text-dls-text truncate">{workspaceLabel()}</div>
             <p class="text-sm text-dls-secondary">
-              Skills are the core abilities of this worker. Add from Hub or create new ones directly in chat.
+              Skills are the core abilities of this worker. Add from Hub or create new ones from local files, share links, or chat.
             </p>
           </div>
           <button
             type="button"
-            onClick={handleNewSkill}
-            disabled={!canCreateInChat()}
+            onClick={openCreateSkillModal}
+            disabled={!canOpenCreateSkillModal()}
             class={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-xs font-medium transition-colors ${
-              canCreateInChat()
+              canOpenCreateSkillModal()
                 ? "bg-dls-text text-dls-surface hover:opacity-90"
                 : "bg-dls-active text-dls-secondary"
             }`}
@@ -573,10 +676,10 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
         <button
           type="button"
-          onClick={handleNewSkill}
-          disabled={newSkillDisabled()}
+          onClick={openCreateSkillModal}
+          disabled={!canOpenCreateSkillModal()}
           class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
-            newSkillDisabled()
+            !canOpenCreateSkillModal()
               ? "bg-dls-active text-dls-secondary"
               : "bg-dls-text text-dls-surface hover:opacity-90"
           }`}
@@ -586,7 +689,7 @@ export default function SkillsView(props: SkillsViewProps) {
         </button>
         <button
           type="button"
-          onClick={openInstallFromLink}
+          onClick={() => openInstallFromLink()}
           disabled={props.busy}
           class={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors border ${
             props.busy
@@ -1043,102 +1146,181 @@ export default function SkillsView(props: SkillsViewProps) {
         </div>
       </Show>
 
-      <Show when={installLinkOpen()}>
+      <Show when={createSkillModalOpen()}>
         <div class="fixed inset-0 z-50 bg-black/20 backdrop-blur-sm flex items-center justify-center p-4">
-          <div class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden">
-            <div class="p-6 space-y-4">
-              <div>
-                <h3 class="text-lg font-semibold text-dls-text">Install from link</h3>
-                <p class="text-sm text-dls-secondary mt-1">Paste a skill bundle URL, preview it, then install.</p>
-              </div>
-
-              <div class="space-y-2">
-                <div class="text-xs font-semibold uppercase tracking-widest text-dls-secondary">Link</div>
-                <input
-                  type="url"
-                  value={installLinkUrl()}
-                  onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
-                  placeholder="https://share.openwork.software/b/..."
-                  class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
-                  spellcheck={false}
-                />
-              </div>
-
-              <Show when={installLinkError()}>
-                <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
-                  {installLinkError()}
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={createSkillModalStep() === "launcher" ? "Create a skill" : "Install from link"}
+            class="bg-dls-surface border border-dls-border w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden"
+          >
+            <div class="p-6 space-y-5">
+              <div class="flex items-start justify-between gap-4">
+                <div>
+                  <Show
+                    when={createSkillModalStep() === "launcher"}
+                    fallback={<h3 class="text-lg font-semibold text-dls-text">Install from link</h3>}
+                  >
+                    <h3 class="text-lg font-semibold text-dls-text">Create a skill</h3>
+                  </Show>
+                  <p class="text-sm text-dls-secondary mt-1">
+                    {createSkillModalStep() === "launcher"
+                      ? "Choose how you want to add or create a skill for this worker."
+                      : installLinkDescription()}
+                  </p>
                 </div>
-              </Show>
+                <button
+                  type="button"
+                  aria-label="Close create skill modal"
+                  class="rounded-full p-1 text-dls-secondary transition-colors hover:bg-dls-hover hover:text-dls-text"
+                  onClick={closeInstallFromLink}
+                  disabled={installLinkBusy()}
+                >
+                  <X size={18} />
+                </button>
+              </div>
 
-              <Show when={installLinkBundle()}>
-                {(bundle) => {
-                  const taken = installedNames();
-                  const conflict = taken.has(bundle().name.trim());
-                  return (
-                    <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
-                      <div class="text-xs font-semibold text-dls-text">Preview</div>
-                      <div class="text-xs text-dls-secondary">
-                        Skill: <span class="font-mono">{bundle().name}</span>
+              <Show
+                when={createSkillModalStep() === "launcher"}
+                fallback={
+                  <div class="space-y-4">
+                    <Show when={installLinkShowsBack()}>
+                      <button
+                        type="button"
+                        class="inline-flex items-center gap-1.5 text-xs font-medium text-dls-secondary transition-colors hover:text-dls-text"
+                        onClick={backToCreateSkillLauncher}
+                        disabled={installLinkBusy()}
+                      >
+                        <ArrowLeft size={14} />
+                        Back
+                      </button>
+                    </Show>
+
+                    <div class="space-y-2">
+                      <label class="text-xs font-semibold uppercase tracking-widest text-dls-secondary" for="skill-bundle-link">
+                        Link
+                      </label>
+                      <input
+                        id="skill-bundle-link"
+                        aria-label="Skill bundle link"
+                        type="url"
+                        value={installLinkUrl()}
+                        onInput={(e) => setInstallLinkUrl(e.currentTarget.value)}
+                        placeholder="https://share.openwork.software/b/..."
+                        class="w-full bg-dls-hover border border-dls-border rounded-lg px-3 py-2 text-xs font-mono text-dls-text focus:outline-none"
+                        spellcheck={false}
+                      />
+                    </div>
+
+                    <Show when={installLinkError()}>
+                      <div class="rounded-xl border border-red-7/20 bg-red-1/40 px-4 py-3 text-xs text-red-12">
+                        {installLinkError()}
                       </div>
-                      <Show when={bundle().description}>
-                        <div class="text-xs text-dls-secondary">{bundle().description}</div>
-                      </Show>
-                      <Show when={conflict}>
-                        <div class="text-xs text-amber-11">A skill with this name is already installed.</div>
+                    </Show>
+
+                    <Show when={installLinkBundle()}>
+                      {(bundle) => {
+                        const taken = installedNames();
+                        const conflict = taken.has(bundle().name.trim());
+                        return (
+                          <div class="rounded-xl border border-dls-border bg-dls-hover p-4 space-y-2">
+                            <div class="text-xs font-semibold text-dls-text">Preview</div>
+                            <div class="text-xs text-dls-secondary">
+                              Skill: <span class="font-mono">{bundle().name}</span>
+                            </div>
+                            <Show when={bundle().description}>
+                              <div class="text-xs text-dls-secondary">{bundle().description}</div>
+                            </Show>
+                            <Show when={conflict}>
+                              <div class="text-xs text-amber-11">A skill with this name is already installed.</div>
+                            </Show>
+                          </div>
+                        );
+                      }}
+                    </Show>
+
+                    <div class="flex flex-wrap justify-end gap-2">
+                      <Button variant="outline" onClick={closeInstallFromLink} disabled={installLinkBusy()}>
+                        {translate("common.cancel")}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => void previewInstallLink()}
+                        disabled={installLinkBusy() || !installLinkUrl().trim()}
+                      >
+                        {installLinkBusy() && !installLinkBundle() ? "Loading…" : "Preview"}
+                      </Button>
+                      <Show when={installLinkBundle()} keyed>
+                        {(bundle) => {
+                          const conflict = installedNames().has(bundle.name.trim());
+                          return (
+                            <Show
+                              when={conflict}
+                              fallback={
+                                <Button
+                                  variant="secondary"
+                                  onClick={() => void installFromPreview("overwrite")}
+                                  disabled={installLinkBusy()}
+                                >
+                                  {installLinkBusy() ? "Installing…" : "Install"}
+                                </Button>
+                              }
+                            >
+                              <div class="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  onClick={() => void installFromPreview("keep-both")}
+                                  disabled={installLinkBusy()}
+                                >
+                                  {installLinkBusy() ? "Installing…" : "Keep both"}
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  onClick={() => void installFromPreview("overwrite")}
+                                  disabled={installLinkBusy()}
+                                >
+                                  {installLinkBusy() ? "Installing…" : "Overwrite"}
+                                </Button>
+                              </div>
+                            </Show>
+                          );
+                        }}
                       </Show>
                     </div>
-                  );
-                }}
-              </Show>
-
-              <div class="flex justify-end gap-2">
-                <Button variant="outline" onClick={closeInstallFromLink} disabled={installLinkBusy()}>
-                  {translate("common.cancel")}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void previewInstallLink()}
-                  disabled={installLinkBusy() || !installLinkUrl().trim()}
-                >
-                  {installLinkBusy() && !installLinkBundle() ? "Loading…" : "Preview"}
-                </Button>
-                <Show when={installLinkBundle()} keyed>
-                  {(bundle) => {
-                    const conflict = installedNames().has(bundle.name.trim());
-                    return (
-                      <Show
-                        when={conflict}
-                        fallback={
-                          <Button
-                            variant="secondary"
-                            onClick={() => void installFromPreview("overwrite")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Install"}
-                          </Button>
-                        }
+                  </div>
+                }
+              >
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <For each={createSkillOptions()}>
+                    {(item) => (
+                      <button
+                        type="button"
+                        class={`rounded-2xl border p-4 text-left transition-colors ${
+                          item.disabled
+                            ? "border-dls-border bg-dls-hover text-dls-secondary"
+                            : "border-dls-border bg-dls-surface hover:bg-dls-hover"
+                        }`}
+                        onClick={item.onClick}
+                        disabled={item.disabled}
+                        title={item.disabled ? item.disabledReason ?? item.title : item.title}
                       >
-                        <div class="flex gap-2">
-                          <Button
-                            variant="outline"
-                            onClick={() => void installFromPreview("keep-both")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Keep both"}
-                          </Button>
-                          <Button
-                            variant="secondary"
-                            onClick={() => void installFromPreview("overwrite")}
-                            disabled={installLinkBusy()}
-                          >
-                            {installLinkBusy() ? "Installing…" : "Overwrite"}
-                          </Button>
+                        <div class="flex items-start gap-3">
+                          <div class="flex h-10 w-10 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+                            <item.icon size={18} />
+                          </div>
+                          <div class="min-w-0">
+                            <div class="text-sm font-semibold text-dls-text">{item.title}</div>
+                            <p class="mt-1 text-xs text-dls-secondary">{item.description}</p>
+                            <Show when={item.disabled && item.disabledReason}>
+                              <div class="mt-2 text-[11px] text-dls-secondary">{item.disabledReason}</div>
+                            </Show>
+                          </div>
                         </div>
-                      </Show>
-                    );
-                  }}
-                </Show>
-              </div>
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
             </div>
           </div>
         </div>

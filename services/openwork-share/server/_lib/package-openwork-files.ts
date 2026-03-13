@@ -1,4 +1,5 @@
 import { parse as parseJsonc } from "jsonc-parser";
+import { stringify as stringifyYaml } from "yaml";
 
 import type { PreviewItem } from "../../components/share-home-types.ts";
 import { humanizeType, maybeArray, maybeString, parseFrontmatter } from "./share-utils.ts";
@@ -149,11 +150,38 @@ interface SkillRecord {
   preview: PreviewItem;
 }
 
+function extractDescription(body: string): string {
+  for (const line of body.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const cleaned = trimmed.replaceAll("`", "").trim();
+    if (!cleaned) continue;
+    const max = 180;
+    const truncated = Array.from(cleaned).slice(0, max).join("");
+    return truncated.length < cleaned.length ? `${truncated}...` : cleaned;
+  }
+
+  return "";
+}
+
+function buildSkillContent(frontmatter: Frontmatter, name: string, description: string): string {
+  const data: Record<string, unknown> = { ...frontmatter.data, name };
+  if (description) data.description = description;
+  else delete data.description;
+
+  const yaml = stringifyYaml(data).trimEnd();
+  const body = frontmatter.body.replace(/^\n/, "");
+  return `---\n${yaml}\n---\n${body}`;
+}
+
 function buildSkillRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): SkillRecord | null {
   const { data } = frontmatter;
   const parentName = basename(dirname(file.path));
   const name = resolveName(data.name, parentName || stem(file.path));
-  const description = typeof data.description === "string" ? data.description.trim() : "";
+  const description =
+    typeof data.description === "string" && data.description.trim()
+      ? data.description.trim()
+      : extractDescription(frontmatter.body);
   const trigger = typeof data.trigger === "string" ? data.trigger.trim() : "";
   const version = typeof data.version === "string" ? data.version.trim() : "";
   if (!file.content.trim()) {
@@ -164,7 +192,7 @@ function buildSkillRecord(file: NormalizedFile, warnings: string[], frontmatter:
     name,
     description,
     trigger,
-    content: file.content,
+    content: buildSkillContent(frontmatter, name, description),
     preview: buildPreviewItem(name, "Skill", version ? `v${version}` : trigger ? `Trigger · ${trigger}` : "Skill", "skill"),
   };
 }
