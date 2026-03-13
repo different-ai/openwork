@@ -130,7 +130,7 @@ jobs:
           api_key = os.environ["RENDER_API_KEY"]
           service_id = os.environ["RENDER_DEN_CONTROL_PLANE_SERVICE_ID"]
           owner_id = os.environ["RENDER_OWNER_ID"]
-          openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION") or "0.11.145"
+          openwork_version = os.environ.get("DEN_RENDER_WORKER_OPENWORK_VERSION")
           worker_plan = os.environ.get("DEN_RENDER_WORKER_PLAN") or "standard"
           configured_cors_origins = os.environ.get("DEN_CORS_ORIGINS") or ""
           worker_public_domain_suffix = os.environ.get("DEN_RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX") or "openwork.studio"

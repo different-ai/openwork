@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "zod";
 
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
@@ -39,23 +39,24 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
-})
+});
 
-const parsed = schema.parse(process.env)
+const parsed = schema.parse(process.env);
 
 function normalizeOrigin(origin: string): string {
-  const value = origin.trim()
+  const value = origin.trim();
   if (value === "*") {
-    return value
+    return value;
   }
-  return value.replace(/\/+$/, "")
+  return value.replace(/\/+$/, "");
 }
 
 const corsOrigins = parsed.CORS_ORIGINS?.split(",")
   .map((origin) => normalizeOrigin(origin))
-  .filter(Boolean)
+  .filter(Boolean);
 
-const polarFeatureGateEnabled = (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true"
+const polarFeatureGateEnabled =
+  (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true";
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
@@ -77,17 +78,23 @@ export const env = {
     apiBase: parsed.RENDER_API_BASE ?? "https://api.render.com/v1",
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
-    workerRepo: parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
+    workerRepo:
+      parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
-    workerRootDir: parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
+    workerRootDir:
+      parsed.RENDER_WORKER_ROOT_DIR ?? "services/den-worker-runtime",
     workerPlan: parsed.RENDER_WORKER_PLAN ?? "standard",
     workerRegion: parsed.RENDER_WORKER_REGION ?? "oregon",
-    workerOpenworkVersion: parsed.RENDER_WORKER_OPENWORK_VERSION ?? "0.11.113",
+    workerOpenworkVersion: parsed.RENDER_WORKER_OPENWORK_VERSION,
     workerNamePrefix: parsed.RENDER_WORKER_NAME_PREFIX ?? "den-worker",
     workerPublicDomainSuffix: parsed.RENDER_WORKER_PUBLIC_DOMAIN_SUFFIX,
-    customDomainReadyTimeoutMs: Number(parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS ?? "240000"),
+    customDomainReadyTimeoutMs: Number(
+      parsed.RENDER_CUSTOM_DOMAIN_READY_TIMEOUT_MS ?? "240000",
+    ),
     provisionTimeoutMs: Number(parsed.RENDER_PROVISION_TIMEOUT_MS ?? "900000"),
-    healthcheckTimeoutMs: Number(parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000"),
+    healthcheckTimeoutMs: Number(
+      parsed.RENDER_HEALTHCHECK_TIMEOUT_MS ?? "180000",
+    ),
     pollIntervalMs: Number(parsed.RENDER_POLL_INTERVAL_MS ?? "5000"),
   },
   vercel: {
@@ -106,4 +113,4 @@ export const env = {
     successUrl: parsed.POLAR_SUCCESS_URL,
     returnUrl: parsed.POLAR_RETURN_URL,
   },
-}
+};
