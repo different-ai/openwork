@@ -7,6 +7,15 @@ type DenValueSectionProps = {
 };
 
 export function DenValueSection(props: DenValueSectionProps) {
+  const hireHumanSubject =
+    "Please come automate this {TASK} at {LOCATION} - SF for {BUDGET}";
+  const hireHumanBody = `Hey Ben,
+
+I want to automate this {TASK} because {REASON}. I don't trust AI to do this because of the following {AI_CONCERN}. I'm willing to pay you {BUDGET} for {HOURS} of your time.
+
+Best`;
+  const hireHumanHref = `mailto:ben@openwork.software?subject=${encodeURIComponent(hireHumanSubject)}&body=${encodeURIComponent(hireHumanBody)}`;
+
   return (
     <section className="landing-shell rounded-[2.1rem] bg-[radial-gradient(circle_at_top_right,rgba(27,41,255,0.08),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.94),rgba(248,250,252,0.98))] p-7 md:p-9">
       <div className="grid gap-6 xl:grid-cols-[minmax(0,0.62fr)_minmax(0,1.38fr)] xl:items-start">
@@ -53,7 +62,7 @@ export function DenValueSection(props: DenValueSectionProps) {
 
               <div className="mt-auto pt-5">
                 <a
-                  href="mailto:ben@openwork.software?subject=We%20want%20to%20hire%20you"
+                  href={hireHumanHref}
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex min-h-10 w-full items-center justify-center rounded-xl border border-[#cbd5e1] bg-white px-4 py-2 text-center text-sm font-semibold text-[#334155] shadow-[0_1px_2px_rgba(17,24,39,0.06)] transition hover:bg-[#f8fafc]"
