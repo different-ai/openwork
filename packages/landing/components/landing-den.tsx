@@ -55,7 +55,7 @@ export function LandingDen(props: Props) {
 
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-14 px-6 pb-24 md:gap-20 md:px-8 md:pb-28">
           <DenHero stars={props.stars} getStartedHref={props.getStartedHref} />
-
+          <DenCapabilityCarousel />
           <section className="grid gap-5 md:grid-cols-3">
             {useCaseCards.map(card => (
               <article
@@ -81,7 +81,7 @@ export function LandingDen(props: Props) {
             ))}
           </section>
 
-          <DenCapabilityCarousel />
+          
 
           <DenHowItWorks />
 
