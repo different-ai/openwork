@@ -1,161 +1,196 @@
-import { env } from "../env.js"
-import { customDomainForWorker, ensureVercelDnsRecord } from "./vanity-domain.js"
+import { env } from "../env.js";
+import {
+  customDomainForWorker,
+  ensureVercelDnsRecord,
+} from "./vanity-domain.js";
 
 export type ProvisionInput = {
-  workerId: string
-  name: string
-  hostToken: string
-  clientToken: string
-}
+  workerId: string;
+  name: string;
+  hostToken: string;
+  clientToken: string;
+};
 
 export type ProvisionedInstance = {
-  provider: string
-  url: string
-  status: "provisioning" | "healthy"
-  region?: string
-}
+  provider: string;
+  url: string;
+  status: "provisioning" | "healthy";
+  region?: string;
+};
 
 type RenderService = {
-  id: string
-  name?: string
-  slug?: string
+  id: string;
+  name?: string;
+  slug?: string;
   serviceDetails?: {
-    url?: string
-    region?: string
-  }
-}
+    url?: string;
+    region?: string;
+  };
+};
 
 type RenderServiceListRow = {
-  cursor?: string
-  service?: RenderService
-}
+  cursor?: string;
+  service?: RenderService;
+};
 
 type RenderDeploy = {
-  id: string
-  status: string
-}
+  id: string;
+  status: string;
+};
 
-const terminalDeployStates = new Set(["live", "update_failed", "build_failed", "canceled"])
+const terminalDeployStates = new Set([
+  "live",
+  "update_failed",
+  "build_failed",
+  "canceled",
+]);
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const slug = (value: string) =>
   value
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "")
+    .replace(/^-|-$/g, "");
 
 const hostFromUrl = (value: string | null | undefined) => {
   if (!value) {
-    return ""
+    return "";
   }
 
   try {
-    return new URL(value).host.toLowerCase()
+    return new URL(value).host.toLowerCase();
   } catch {
-    return ""
+    return "";
   }
-}
+};
 
-async function renderRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers)
-  headers.set("Authorization", `Bearer ${env.render.apiKey}`)
-  headers.set("Accept", "application/json")
+async function renderRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${env.render.apiKey}`);
+  headers.set("Accept", "application/json");
 
   if (init.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json")
+    headers.set("Content-Type", "application/json");
   }
 
   const response = await fetch(`${env.render.apiBase}${path}`, {
     ...init,
     headers,
-  })
-  const text = await response.text()
+  });
+  const text = await response.text();
 
   if (!response.ok) {
-    throw new Error(`Render API ${path} failed (${response.status}): ${text.slice(0, 400)}`)
+    throw new Error(
+      `Render API ${path} failed (${response.status}): ${text.slice(0, 400)}`,
+    );
   }
 
   if (!text) {
-    return null as T
+    return null as T;
   }
 
-  return JSON.parse(text) as T
+  return JSON.parse(text) as T;
 }
 
 async function waitForDeployLive(serviceId: string) {
-  const startedAt = Date.now()
-  let latest: RenderDeploy | null = null
+  const startedAt = Date.now();
+  let latest: RenderDeploy | null = null;
 
   while (Date.now() - startedAt < env.render.provisionTimeoutMs) {
-    const rows = await renderRequest<Array<{ deploy: RenderDeploy }>>(`/services/${serviceId}/deploys?limit=1`)
-    latest = rows[0]?.deploy ?? null
+    const rows = await renderRequest<Array<{ deploy: RenderDeploy }>>(
+      `/services/${serviceId}/deploys?limit=1`,
+    );
+    latest = rows[0]?.deploy ?? null;
 
     if (latest && terminalDeployStates.has(latest.status)) {
       if (latest.status !== "live") {
-        throw new Error(`Render deploy ${latest.id} ended with ${latest.status}`)
+        throw new Error(
+          `Render deploy ${latest.id} ended with ${latest.status}`,
+        );
       }
-      return latest
+      return latest;
     }
 
-    await sleep(env.render.pollIntervalMs)
+    await sleep(env.render.pollIntervalMs);
   }
 
-  throw new Error(`Timed out waiting for Render deploy for service ${serviceId}`)
+  throw new Error(
+    `Timed out waiting for Render deploy for service ${serviceId}`,
+  );
 }
 
-async function waitForHealth(url: string, timeoutMs = env.render.healthcheckTimeoutMs) {
-  const healthUrl = `${url.replace(/\/$/, "")}/health`
-  const startedAt = Date.now()
+async function waitForHealth(
+  url: string,
+  timeoutMs = env.render.healthcheckTimeoutMs,
+) {
+  const healthUrl = `${url.replace(/\/$/, "")}/health`;
+  const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(healthUrl, { method: "GET" })
+      const response = await fetch(healthUrl, { method: "GET" });
       if (response.ok) {
-        return
+        return;
       }
     } catch {
       // ignore transient network failures while the instance boots
     }
-    await sleep(env.render.pollIntervalMs)
+    await sleep(env.render.pollIntervalMs);
   }
 
-  throw new Error(`Timed out waiting for worker health endpoint ${healthUrl}`)
+  throw new Error(`Timed out waiting for worker health endpoint ${healthUrl}`);
 }
 
 async function listRenderServices(limit = 200) {
-  const rows: RenderService[] = []
-  let cursor: string | undefined
+  const rows: RenderService[] = [];
+  let cursor: string | undefined;
 
   while (rows.length < limit) {
-    const query = new URLSearchParams({ limit: "100" })
+    const query = new URLSearchParams({ limit: "100" });
     if (cursor) {
-      query.set("cursor", cursor)
+      query.set("cursor", cursor);
     }
 
-    const page = await renderRequest<RenderServiceListRow[]>(`/services?${query.toString()}`)
+    const page = await renderRequest<RenderServiceListRow[]>(
+      `/services?${query.toString()}`,
+    );
     if (page.length === 0) {
-      break
+      break;
     }
 
-    rows.push(...page.map((entry) => entry.service).filter((entry): entry is RenderService => Boolean(entry?.id)))
+    rows.push(
+      ...page
+        .map((entry) => entry.service)
+        .filter((entry): entry is RenderService => Boolean(entry?.id)),
+    );
 
-    const nextCursor = page[page.length - 1]?.cursor
+    const nextCursor = page[page.length - 1]?.cursor;
     if (!nextCursor || nextCursor === cursor) {
-      break
+      break;
     }
 
-    cursor = nextCursor
+    cursor = nextCursor;
   }
 
-  return rows.slice(0, limit)
+  return rows.slice(0, limit);
 }
 
-async function attachRenderCustomDomain(serviceId: string, workerId: string, renderUrl: string) {
-  const hostname = customDomainForWorker(workerId, env.render.workerPublicDomainSuffix)
+async function attachRenderCustomDomain(
+  serviceId: string,
+  workerId: string,
+  renderUrl: string,
+) {
+  const hostname = customDomainForWorker(
+    workerId,
+    env.render.workerPublicDomainSuffix,
+  );
   if (!hostname) {
-    return null
+    return null;
   }
 
   try {
@@ -164,7 +199,7 @@ async function attachRenderCustomDomain(serviceId: string, workerId: string, ren
       body: JSON.stringify({
         name: hostname,
       }),
-    })
+    });
 
     const dnsReady = await ensureVercelDnsRecord({
       hostname,
@@ -174,38 +209,46 @@ async function attachRenderCustomDomain(serviceId: string, workerId: string, ren
       token: env.vercel.token,
       teamId: env.vercel.teamId,
       teamSlug: env.vercel.teamSlug,
-    })
+    });
 
     if (!dnsReady) {
-      console.warn(`[provisioner] vanity dns upsert skipped or failed for ${hostname}; using Render URL fallback`)
-      return null
+      console.warn(
+        `[provisioner] vanity dns upsert skipped or failed for ${hostname}; using Render URL fallback`,
+      );
+      return null;
     }
 
-    return `https://${hostname}`
+    return `https://${hostname}`;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(`[provisioner] custom domain attach failed for ${serviceId}: ${message}`)
-    return null
+    const message = error instanceof Error ? error.message : "unknown_error";
+    console.warn(
+      `[provisioner] custom domain attach failed for ${serviceId}: ${message}`,
+    );
+    return null;
   }
 }
 
 function assertRenderConfig() {
   if (!env.render.apiKey) {
-    throw new Error("RENDER_API_KEY is required for render provisioner")
+    throw new Error("RENDER_API_KEY is required for render provisioner");
   }
   if (!env.render.ownerId) {
-    throw new Error("RENDER_OWNER_ID is required for render provisioner")
+    throw new Error("RENDER_OWNER_ID is required for render provisioner");
   }
 }
 
-async function provisionWorkerOnRender(input: ProvisionInput): Promise<ProvisionedInstance> {
-  assertRenderConfig()
+async function provisionWorkerOnRender(
+  input: ProvisionInput,
+): Promise<ProvisionedInstance> {
+  assertRenderConfig();
 
-  const serviceName = slug(`${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`).slice(0, 62)
+  const serviceName = slug(
+    `${env.render.workerNamePrefix}-${input.name}-${input.workerId.slice(0, 8)}`,
+  ).slice(0, 62);
   const startCommand = [
     "mkdir -p /tmp/workspace",
     "attempt=0; while [ $attempt -lt 3 ]; do attempt=$((attempt + 1)); openwork serve --workspace /tmp/workspace --openwork-host 0.0.0.0 --openwork-port ${PORT:-10000} --opencode-host 127.0.0.1 --opencode-port 4096 --connect-host 127.0.0.1 --cors '*' --approval manual --no-opencode-router --verbose && exit 0; echo \"openwork serve failed (attempt $attempt); retrying in 3s\"; sleep 3; done; exit 1",
-  ].join(" && ")
+  ].join(" && ");
 
   const payload = {
     type: "web_service",
@@ -226,37 +269,43 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
       region: env.render.workerRegion,
       healthCheckPath: "/health",
       envSpecificDetails: {
-        buildCommand: `npm install -g openwork-orchestrator@${env.render.workerOpenworkVersion}`,
+        buildCommand: `npm install -g openwork-orchestrator`,
         startCommand,
       },
     },
-  }
+  };
 
   const created = await renderRequest<{ service: RenderService }>("/services", {
     method: "POST",
     body: JSON.stringify(payload),
-  })
+  });
 
-  const serviceId = created.service.id
-  await waitForDeployLive(serviceId)
-  const service = await renderRequest<RenderService>(`/services/${serviceId}`)
-  const renderUrl = service.serviceDetails?.url
+  const serviceId = created.service.id;
+  await waitForDeployLive(serviceId);
+  const service = await renderRequest<RenderService>(`/services/${serviceId}`);
+  const renderUrl = service.serviceDetails?.url;
 
   if (!renderUrl) {
-    throw new Error(`Render service ${serviceId} has no public URL`)
+    throw new Error(`Render service ${serviceId} has no public URL`);
   }
 
-  await waitForHealth(renderUrl)
+  await waitForHealth(renderUrl);
 
-  const customUrl = await attachRenderCustomDomain(serviceId, input.workerId, renderUrl)
-  let url = renderUrl
+  const customUrl = await attachRenderCustomDomain(
+    serviceId,
+    input.workerId,
+    renderUrl,
+  );
+  let url = renderUrl;
 
   if (customUrl) {
     try {
-      await waitForHealth(customUrl, env.render.customDomainReadyTimeoutMs)
-      url = customUrl
+      await waitForHealth(customUrl, env.render.customDomainReadyTimeoutMs);
+      url = customUrl;
     } catch {
-      console.warn(`[provisioner] vanity domain not ready yet for ${input.workerId}; returning Render URL fallback`)
+      console.warn(
+        `[provisioner] vanity domain not ready yet for ${input.workerId}; returning Render URL fallback`,
+      );
     }
   }
 
@@ -265,59 +314,69 @@ async function provisionWorkerOnRender(input: ProvisionInput): Promise<Provision
     url,
     status: "healthy",
     region: service.serviceDetails?.region ?? env.render.workerRegion,
-  }
+  };
 }
 
-export async function provisionWorker(input: ProvisionInput): Promise<ProvisionedInstance> {
+export async function provisionWorker(
+  input: ProvisionInput,
+): Promise<ProvisionedInstance> {
   if (env.provisionerMode === "render") {
-    return provisionWorkerOnRender(input)
+    return provisionWorkerOnRender(input);
   }
 
-  const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}"
-  const url = template.replace("{workerId}", input.workerId)
+  const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}";
+  const url = template.replace("{workerId}", input.workerId);
   return {
     provider: "stub",
     url,
     status: "provisioning",
-  }
+  };
 }
 
-export async function deprovisionWorker(input: { workerId: string; instanceUrl: string | null }) {
+export async function deprovisionWorker(input: {
+  workerId: string;
+  instanceUrl: string | null;
+}) {
   if (env.provisionerMode !== "render") {
-    return
+    return;
   }
 
-  assertRenderConfig()
+  assertRenderConfig();
 
-  const targetHost = hostFromUrl(input.instanceUrl)
-  const workerHint = input.workerId.slice(0, 8).toLowerCase()
+  const targetHost = hostFromUrl(input.instanceUrl);
+  const workerHint = input.workerId.slice(0, 8).toLowerCase();
 
-  const services = await listRenderServices()
+  const services = await listRenderServices();
 
   const target =
     services.find((service) => {
       if (service.name?.toLowerCase().includes(workerHint)) {
-        return true
+        return true;
       }
 
-      if (targetHost && hostFromUrl(service.serviceDetails?.url) === targetHost) {
-        return true
+      if (
+        targetHost &&
+        hostFromUrl(service.serviceDetails?.url) === targetHost
+      ) {
+        return true;
       }
 
-      return false
-    }) ?? null
+      return false;
+    }) ?? null;
 
   if (!target) {
-    return
+    return;
   }
 
   try {
     await renderRequest(`/services/${target.id}/suspend`, {
       method: "POST",
       body: JSON.stringify({}),
-    })
+    });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown_error"
-    console.warn(`[provisioner] failed to suspend Render service ${target.id}: ${message}`)
+    const message = error instanceof Error ? error.message : "unknown_error";
+    console.warn(
+      `[provisioner] failed to suspend Render service ${target.id}: ${message}`,
+    );
   }
 }
