@@ -196,6 +196,12 @@ When editing SolidJS UI (`packages/app/src/**/*.tsx`), consult:
 
 This captures OpenWork’s preferred reactivity + UI state patterns (avoid global `busy()` deadlocks; use scoped async state).
 
+## Skill: PDF Reading
+
+**`take_screenshot` must NEVER be used for PDFs.** Chrome screenshots cause HTTP 413 context overflow. Use CLI text extraction (pdftotext/pdftohtml/pdftoppm) or Python pypdf instead.
+
+* `.opencode/skills/pdf-reading/SKILL.md`
+
 ## Skill: Trigger a Release
 
 OpenWork releases are built by GitHub Actions (`Release App`). A release is triggered by pushing a `v*` tag (e.g. `v0.1.6`).
