@@ -32,6 +32,7 @@ import ResetModal from "./components/reset-modal";
 import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
+import SharedSkillDestinationModal from "./components/shared-skill-destination-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -149,6 +150,7 @@ import {
   type OrchestratorStatus,
   type OpenworkServerInfo,
   type OpenCodeRouterInfo,
+  type WorkspaceInfo,
 } from "./lib/tauri";
 import {
   FONT_ZOOM_STEP,
@@ -232,6 +234,17 @@ type SharedBundleDeepLink = {
   source?: string;
   orgId?: string;
   label?: string;
+};
+
+type SharedBundleCreateWorkerRequest = {
+  request: SharedBundleDeepLink;
+  bundle: SharedBundleV1;
+  defaultPreset: WorkspacePreset;
+};
+
+type SharedSkillDestinationRequest = {
+  request: SharedBundleDeepLink;
+  bundle: SharedSkillBundleV1;
 };
 
 type SharedBundleImportTarget = {
@@ -3132,6 +3145,42 @@ export default function App() {
     };
   };
 
+  const isSharedBundleImportWorkspace = (workspace: WorkspaceDisplay | WorkspaceInfo | null) => {
+    if (!workspace?.id?.trim()) return false;
+    if (workspace.workspaceType === "local") {
+      return Boolean(workspace.path?.trim());
+    }
+    return Boolean(
+      workspace.remoteType === "openwork" ||
+        workspace.openworkHostUrl?.trim() ||
+        workspace.openworkWorkspaceId?.trim()
+    );
+  };
+
+  const resolveSharedBundleImportTargetForWorkspace = (
+    workspace: WorkspaceDisplay | WorkspaceInfo | null,
+  ): SharedBundleImportTarget | undefined => {
+    if (!workspace) return undefined;
+    if (workspace.workspaceType === "local") {
+      const localRoot = workspace.path?.trim() ?? "";
+      return localRoot ? { localRoot } : undefined;
+    }
+
+    const workspaceId =
+      workspace.openworkWorkspaceId?.trim() ||
+      parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
+      parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "") ||
+      null;
+    const directoryHint = workspace.directory?.trim() || workspace.path?.trim() || null;
+    if (workspaceId || directoryHint) {
+      return {
+        workspaceId,
+        directoryHint,
+      };
+    }
+    return undefined;
+  };
+
   const findSharedBundleImportWorkspaceId = (
     items: Array<{ id: string; path?: string; directory?: string; opencode?: { directory?: string } }>,
     target?: SharedBundleImportTarget,
@@ -3221,9 +3270,10 @@ export default function App() {
   const importSharedBundleIntoActiveWorker = async (
     request: SharedBundleDeepLink,
     target?: SharedBundleImportTarget,
+    bundleOverride?: SharedBundleV1,
   ) => {
     try {
-      const bundle = await fetchSharedBundle(request.bundleUrl);
+      const bundle = bundleOverride ?? (await fetchSharedBundle(request.bundleUrl));
       await importSharedBundlePayload(bundle, target);
       setError(null);
       return true;
@@ -3257,6 +3307,41 @@ export default function App() {
     }
   };
 
+  const importSharedSkillIntoWorkspace = async (workspaceId: string) => {
+    if (sharedSkillDestinationBusyId()) return;
+    const destination = sharedSkillDestinationRequest();
+    if (!destination) return;
+
+    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
+    if (!isSharedBundleImportWorkspace(workspace)) {
+      setError("This worker cannot accept shared skills yet.");
+      return;
+    }
+
+    setView("dashboard");
+    setTab("scheduled");
+    setError(null);
+    setSharedSkillDestinationBusyId(workspaceId);
+
+    try {
+      const ok = await workspaceStore.activateWorkspace(workspaceId);
+      if (!ok) return;
+
+      const imported = await importSharedBundleIntoActiveWorker(
+        destination.request,
+        resolveSharedBundleImportTargetForWorkspace(workspace),
+        destination.bundle,
+      );
+      if (!imported) return;
+
+      setSharedSkillDestinationRequest(null);
+      setSharedBundleCreateWorkerRequest(null);
+      setSharedBundleNoticeShown(false);
+    } finally {
+      setSharedSkillDestinationBusyId(null);
+    }
+  };
+
   createEffect(() => {
     const request = pendingSharedBundleInvite();
     if (!request || booting()) {
@@ -3268,13 +3353,48 @@ export default function App() {
     }
 
     if (request.intent === "new_worker" && isTauriRuntime()) {
-      setView("dashboard");
-      setTab("scheduled");
-      setError(null);
-      setSharedBundleCreateWorkerRequest(request);
-      workspaceStore.setCreateWorkspaceOpen(true);
-      setPendingSharedBundleInvite(null);
-      setSharedBundleNoticeShown(false);
+      let cancelled = false;
+      setSharedBundleImportBusy(true);
+
+      void (async () => {
+        try {
+          const bundle = await fetchSharedBundle(request.bundleUrl);
+          if (cancelled) return;
+
+          setView("dashboard");
+          setTab("scheduled");
+          setError(null);
+
+          if (bundle.type === "skill") {
+            setSharedSkillDestinationRequest({ request, bundle });
+          } else {
+            setSharedBundleCreateWorkerRequest({
+              request,
+              bundle,
+              defaultPreset: "automation",
+            });
+            workspaceStore.setCreateWorkspaceOpen(true);
+          }
+
+          setPendingSharedBundleInvite(null);
+          setSharedBundleNoticeShown(false);
+        } catch (error) {
+          if (!cancelled) {
+            const message = error instanceof Error ? error.message : safeStringify(error);
+            setError(addOpencodeCacheHint(message));
+            setPendingSharedBundleInvite(null);
+            setSharedBundleNoticeShown(false);
+          }
+        } finally {
+          if (!cancelled) {
+            setSharedBundleImportBusy(false);
+          }
+        }
+      })();
+
+      onCleanup(() => {
+        cancelled = true;
+      });
       return;
     }
 
@@ -3476,7 +3596,11 @@ export default function App() {
   const [deepLinkRemoteWorkspaceDefaults, setDeepLinkRemoteWorkspaceDefaults] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingRemoteConnectDeepLink, setPendingRemoteConnectDeepLink] = createSignal<RemoteWorkspaceDefaults | null>(null);
   const [pendingSharedBundleInvite, setPendingSharedBundleInvite] = createSignal<SharedBundleDeepLink | null>(null);
-  const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] = createSignal<SharedBundleDeepLink | null>(null);
+  const [sharedBundleCreateWorkerRequest, setSharedBundleCreateWorkerRequest] =
+    createSignal<SharedBundleCreateWorkerRequest | null>(null);
+  const [sharedSkillDestinationRequest, setSharedSkillDestinationRequest] =
+    createSignal<SharedSkillDestinationRequest | null>(null);
+  const [sharedSkillDestinationBusyId, setSharedSkillDestinationBusyId] = createSignal<string | null>(null);
   const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
   const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
@@ -3485,8 +3609,37 @@ export default function App() {
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
 
   const createWorkspaceDefaultPreset = createMemo<WorkspacePreset>(() =>
-    sharedBundleCreateWorkerRequest() ? "automation" : "starter"
+    sharedBundleCreateWorkerRequest()?.defaultPreset ?? "starter"
   );
+
+  const sharedSkillDestinationWorkspaces = createMemo(() => {
+    const activeId = workspaceStore.activeWorkspaceId();
+    return workspaceStore
+      .workspaces()
+      .filter((workspace) => isSharedBundleImportWorkspace(workspace))
+      .slice()
+      .sort((a, b) => {
+        if (a.id === activeId && b.id !== activeId) return -1;
+        if (b.id === activeId && a.id !== activeId) return 1;
+        const aLabel =
+          a.displayName?.trim() ||
+          a.openworkWorkspaceName?.trim() ||
+          a.name?.trim() ||
+          a.directory?.trim() ||
+          a.path?.trim() ||
+          a.baseUrl?.trim() ||
+          "";
+        const bLabel =
+          b.displayName?.trim() ||
+          b.openworkWorkspaceName?.trim() ||
+          b.name?.trim() ||
+          b.directory?.trim() ||
+          b.path?.trim() ||
+          b.baseUrl?.trim() ||
+          "";
+        return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
+      });
+  });
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -6502,10 +6655,13 @@ export default function App() {
           const request = sharedBundleCreateWorkerRequest();
           const ok = await workspaceStore.createWorkspaceFlow(preset, folder);
           if (!ok || !request) return;
-          await importSharedBundleIntoActiveWorker(request, {
+          const imported = await importSharedBundleIntoActiveWorker(request.request, {
             localRoot: workspaceStore.activeWorkspaceRoot().trim(),
-          });
+          }, request.bundle);
           setSharedBundleCreateWorkerRequest(null);
+          if (imported) {
+            setSharedSkillDestinationRequest(null);
+          }
         }}
         onConfirmWorker={
           isTauriRuntime()
@@ -6518,20 +6674,23 @@ export default function App() {
                     ? {
                         onReady: async () => {
                           const active = workspaceStore.activeWorkspaceDisplay();
-                          await importSharedBundleIntoActiveWorker(request, {
+                          await importSharedBundleIntoActiveWorker(request.request, {
                             workspaceId:
                               active.openworkWorkspaceId?.trim() ||
                               parseOpenworkWorkspaceIdFromUrl(active.openworkHostUrl ?? "") ||
                               parseOpenworkWorkspaceIdFromUrl(active.baseUrl ?? "") ||
                               null,
                             directoryHint: active.directory?.trim() || active.path?.trim() || null,
-                          });
+                          }, request.bundle);
                         },
                       }
                     : undefined,
                 );
                 if (!ok) return;
                 setSharedBundleCreateWorkerRequest(null);
+                if (request) {
+                  setSharedSkillDestinationRequest(null);
+                }
               }
             : undefined
         }
@@ -6595,6 +6754,50 @@ export default function App() {
           return busy() && busyLabel() === "status.creating_workspace";
         })()}
         submittingProgress={workspaceStore.sandboxCreateProgress?.() ?? null}
+      />
+
+      <SharedSkillDestinationModal
+        open={
+          Boolean(sharedSkillDestinationRequest()) &&
+          !workspaceStore.createWorkspaceOpen() &&
+          !workspaceStore.createRemoteWorkspaceOpen()
+        }
+        skill={(() => {
+          const request = sharedSkillDestinationRequest();
+          if (!request) return null;
+          return {
+            name: request.bundle.name,
+            description: request.bundle.description ?? null,
+            trigger: request.bundle.trigger ?? null,
+          };
+        })()}
+        workspaces={sharedSkillDestinationWorkspaces()}
+        activeWorkspaceId={workspaceStore.activeWorkspaceId()}
+        busyWorkspaceId={sharedSkillDestinationBusyId()}
+        onClose={() => {
+          if (sharedSkillDestinationBusyId()) return;
+          setSharedSkillDestinationRequest(null);
+        }}
+        onSelectWorkspace={importSharedSkillIntoWorkspace}
+        onCreateWorker={
+          isTauriRuntime()
+            ? () => {
+                const request = sharedSkillDestinationRequest();
+                if (!request) return;
+                setError(null);
+                setSharedBundleCreateWorkerRequest({
+                  request: request.request,
+                  bundle: request.bundle,
+                  defaultPreset: "starter",
+                });
+                workspaceStore.setCreateWorkspaceOpen(true);
+              }
+            : undefined
+        }
+        onConnectRemote={() => {
+          setError(null);
+          workspaceStore.setCreateRemoteWorkspaceOpen(true);
+        }}
       />
 
       <CreateRemoteWorkspaceModal

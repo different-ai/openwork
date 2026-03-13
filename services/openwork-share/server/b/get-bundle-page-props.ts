@@ -60,7 +60,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
     const description = bundle.description || buildBundleNarrative(bundle);
     const installHint =
       bundle.type === "skill"
-        ? "Open in app to create a new worker and install this skill in one step."
+        ? "Open in app to choose where to add this skill."
         : bundle.type === "skills-set"
           ? "Open in app to create a new worker with this entire skills set already attached."
           : "Open in app to create a new worker with these skills, agents, MCPs, and config already bundled.";

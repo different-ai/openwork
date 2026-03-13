@@ -26,7 +26,7 @@ It keeps the existing bundle APIs, but the public share surface now runs as a si
   - Returns an HTML share page by default for browser requests.
   - Includes an **Open in app** action that opens `openwork://import-bundle` with:
     - `ow_bundle=<share-url>`
-    - `ow_intent=new_worker` (default import target)
+    - `ow_intent=new_worker` (desktop OpenWork converts single-skill bundles into a destination picker before import)
     - `ow_source=share_service`
   - Also includes a web fallback action that opens `PUBLIC_OPENWORK_APP_URL` with the same query params.
   - Returns raw JSON for API/programmatic requests:

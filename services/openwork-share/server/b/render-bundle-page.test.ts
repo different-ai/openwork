@@ -64,6 +64,7 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
   assert.match(html, /ow_intent=new_worker/);
   assert.match(html, /ow_source=share_service/);
+  assert.match(html, /Open in app to choose where to add this skill\./);
   assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
 });
