@@ -36,6 +36,18 @@
 
 **Step 5:** Commit the UI change with a short imperative message.
 
+### Task 2b: Neutralize remaining blue icon accents on Den
+
+**Files:**
+- Modify: `packages/landing/components/den-capability-carousel.tsx`
+- Modify: `packages/landing/components/den-how-it-works.tsx`
+
+**Step 1:** Replace the blue icon treatment in `What you get` with gray badge fills and carbon icon color.
+
+**Step 2:** Keep step 1 blue in `How it works`, but move step 4 to a matching carbon/gray badge treatment.
+
+**Step 3:** Refresh the PR screenshots so reviewers can verify the follow-up polish pass.
+
 ### Task 3: Verify the live page and collect artifacts
 
 **Files:**

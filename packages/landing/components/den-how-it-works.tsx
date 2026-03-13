@@ -25,7 +25,7 @@ const steps = [
     title: "4. Review & Merge",
     body: "The worker proposes changes via PRs or messaging platforms.",
     icon: CheckCircle2,
-    accent: "bg-[#1b29ff]/10 text-[#1b29ff]",
+    accent: "bg-[linear-gradient(180deg,#eceff3,#dfe4ea)] text-[#111827] ring-1 ring-[#d7dde5]",
   },
 ];
 
