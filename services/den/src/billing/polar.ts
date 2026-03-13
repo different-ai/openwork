@@ -124,6 +124,16 @@ export type CloudWorkerBillingStatus = {
   invoices: CloudWorkerBillingInvoice[]
 }
 
+export type CloudWorkerAdminBillingStatus = {
+  status: "paid" | "unpaid" | "unavailable"
+  featureGateEnabled: boolean
+  subscriptionId: string | null
+  subscriptionStatus: string | null
+  currentPeriodEnd: string | null
+  source: "benefit" | "subscription" | "unavailable"
+  note: string | null
+}
+
 type CloudAccessInput = {
   userId: string
   email: string
@@ -352,6 +362,11 @@ function normalizeRecurringInterval(value: string | null | undefined): string | 
 
 function normalizeRecurringIntervalCount(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function isActiveSubscriptionStatus(status: string | null | undefined) {
+  const normalized = typeof status === "string" ? status.trim().toLowerCase() : ""
+  return normalized === "active" || normalized === "trialing"
 }
 
 function toBillingSubscription(subscription: PolarSubscription | null): CloudWorkerBillingSubscription | null {
@@ -685,6 +700,85 @@ export async function getCloudWorkerBillingStatus(
     price: productPrice ?? toBillingPriceFromSubscription(subscription),
     subscription,
     invoices,
+  }
+}
+
+export async function getCloudWorkerAdminBillingStatus(
+  input: CloudAccessInput,
+): Promise<CloudWorkerAdminBillingStatus> {
+  if (!env.polar.accessToken) {
+    return {
+      status: "unavailable",
+      featureGateEnabled: env.polar.featureGateEnabled,
+      subscriptionId: null,
+      subscriptionStatus: null,
+      currentPeriodEnd: null,
+      source: "unavailable",
+      note: "Polar access token is not configured.",
+    }
+  }
+
+  if (!env.polar.benefitId && !env.polar.productId) {
+    return {
+      status: "unavailable",
+      featureGateEnabled: env.polar.featureGateEnabled,
+      subscriptionId: null,
+      subscriptionStatus: null,
+      currentPeriodEnd: null,
+      source: "unavailable",
+      note: "Polar product or benefit configuration is missing.",
+    }
+  }
+
+  try {
+    let note: string | null = null
+    let paidByBenefit = false
+
+    if (env.polar.benefitId) {
+      const externalState = await getCustomerStateByExternalId(input.userId)
+      if (hasRequiredBenefit(externalState)) {
+        paidByBenefit = true
+        note = "Benefit granted via external customer id."
+      } else {
+        const customer = await getCustomerByEmail(input.email)
+        if (customer?.id) {
+          const emailState = await getCustomerStateById(customer.id)
+          if (hasRequiredBenefit(emailState)) {
+            paidByBenefit = true
+            note = "Benefit granted via matching customer email."
+            await linkCustomerExternalId(customer, input.userId).catch(() => undefined)
+          }
+        }
+      }
+    }
+
+    const subscription = env.polar.productId ? await getPrimarySubscriptionForCustomer(input.userId) : null
+    const normalizedSubscription = toBillingSubscription(subscription)
+    const paidBySubscription = isActiveSubscriptionStatus(normalizedSubscription?.status)
+
+    return {
+      status: paidByBenefit || paidBySubscription ? "paid" : "unpaid",
+      featureGateEnabled: env.polar.featureGateEnabled,
+      subscriptionId: normalizedSubscription?.id ?? null,
+      subscriptionStatus: normalizedSubscription?.status ?? null,
+      currentPeriodEnd: normalizedSubscription?.currentPeriodEnd ?? null,
+      source: paidByBenefit ? "benefit" : "subscription",
+      note:
+        note ??
+        (normalizedSubscription
+          ? "Subscription status resolved from Polar."
+          : "No active billing record was found for this user."),
+    }
+  } catch (error) {
+    return {
+      status: "unavailable",
+      featureGateEnabled: env.polar.featureGateEnabled,
+      subscriptionId: null,
+      subscriptionStatus: null,
+      currentPeriodEnd: null,
+      source: "unavailable",
+      note: error instanceof Error ? error.message : "Billing lookup failed.",
+    }
   }
 }
 

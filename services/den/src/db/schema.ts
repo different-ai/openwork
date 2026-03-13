@@ -127,6 +127,17 @@ export const OrgMembershipTable = mysqlTable(
   (table) => [index("org_membership_org_id").on(table.org_id), index("org_membership_user_id").on(table.user_id)],
 )
 
+export const AdminAllowlistTable = mysqlTable(
+  "admin_allowlist",
+  {
+    id: id().primaryKey(),
+    email: varchar("email", { length: 255 }).notNull(),
+    note: varchar("note", { length: 255 }),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("admin_allowlist_email").on(table.email)],
+)
+
 export const WorkerTable = mysqlTable(
   "worker",
   {

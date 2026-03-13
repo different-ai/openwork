@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { auth } from "./auth.js"
 import { env } from "./env.js"
+import { adminRouter } from "./http/admin.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { workersRouter } from "./http/workers.js"
 
@@ -42,6 +43,7 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
   res.json(session)
 }))
 
+app.use("/v1/admin", adminRouter)
 app.use("/v1/workers", workersRouter)
 app.use(errorMiddleware)
 
