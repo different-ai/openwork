@@ -252,11 +252,11 @@ export default function ShareBundlePage(props: BundlePageProps) {
                   </div>
                   <div className="step-row">
                     <span className="step-bullet">02</span>
-                    <span>OpenWork reads the bundle metadata, then prepares a new worker import flow.</span>
+                    <span>OpenWork reads the bundle metadata, then lets you choose an existing worker or a new one.</span>
                   </div>
                   <div className="step-row">
                     <span className="step-bullet">03</span>
-                    <span>Your teammate lands in a clean import path with the packaged skills, agents, and MCP setup attached.</span>
+                    <span>Your teammate lands in a clean import path with the packaged skills, agents, and MCP setup ready to apply.</span>
                   </div>
                 </div>
               </article>

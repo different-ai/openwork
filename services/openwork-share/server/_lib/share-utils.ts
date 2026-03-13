@@ -143,7 +143,8 @@ export function buildOpenInAppUrls(shareUrl: string, options: { label?: string }
   const label = String(options.label ?? "").trim();
   if (label) query.set("ow_label", label.slice(0, 120));
 
-  const openInAppDeepLink = `openwork://import-bundle?${query.toString()}`;
+  const appScheme = (getEnv("PUBLIC_OPENWORK_APP_SCHEME", "openwork") || "openwork").trim().toLowerCase();
+  const openInAppDeepLink = `${appScheme}://import-bundle?${query.toString()}`;
   const appUrl = normalizeAppUrl(getEnv("PUBLIC_OPENWORK_APP_URL", DEFAULT_OPENWORK_APP_URL)) || DEFAULT_OPENWORK_APP_URL;
 
   try {
@@ -580,10 +581,10 @@ export function prettyJson(rawJson: string): string {
 export function buildBundleNarrative(bundle: NormalizedBundle): string {
   const counts = getBundleCounts(bundle);
   if (bundle.type === "skill") {
-    return "One reusable skill, wrapped in a share link that opens directly into a new OpenWork worker.";
+    return "One reusable skill, wrapped in a share link that can be added to an existing worker or imported into a new one.";
   }
   if (bundle.type === "skills-set") {
-    return `${counts.skillCount} skills packaged together so a new worker can start with the full set in one import.`;
+    return `${counts.skillCount} skills packaged together so they can land in an existing worker or start a new worker with the full set in one import.`;
   }
 
   const parts: string[] = [];

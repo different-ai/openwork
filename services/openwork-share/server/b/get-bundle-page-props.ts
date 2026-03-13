@@ -62,7 +62,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       bundle.type === "skill"
         ? "Open in app to choose where to add this skill."
         : bundle.type === "skills-set"
-          ? "Open in app to create a new worker with this entire skills set already attached."
+          ? "Open in app to add this full skills set to an existing worker or create a new worker with it attached."
           : "Open in app to create a new worker with these skills, agents, MCPs, and config already bundled.";
 
     return {

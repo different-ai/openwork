@@ -304,6 +304,7 @@ export type DashboardViewProps = {
   notionError: string | null;
   notionBusy: boolean;
   connectNotion: () => void;
+  openDebugShareLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
 };
 
 type SharedSkillItem = {
@@ -1397,6 +1398,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   notionError={props.notionError}
                   notionBusy={props.notionBusy}
                   connectNotion={props.connectNotion}
+                  openDebugShareLink={props.openDebugShareLink}
                 />
 
             </Match>

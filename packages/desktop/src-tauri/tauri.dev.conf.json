@@ -23,5 +23,14 @@
         "resizable": true
       }
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "openwork-dev"
+        ]
+      }
+    }
   }
 }

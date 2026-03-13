@@ -33,6 +33,7 @@ import WorkspaceSwitchOverlay from "./components/workspace-switch-overlay";
 import CreateRemoteWorkspaceModal from "./components/create-remote-workspace-modal";
 import CreateWorkspaceModal from "./components/create-workspace-modal";
 import SharedSkillDestinationModal from "./components/shared-skill-destination-modal";
+import SharedBundleImportModal from "./components/shared-bundle-import-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
 import OnboardingView from "./pages/onboarding";
@@ -133,6 +134,7 @@ import {
 } from "./theme";
 import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { createSessionStore } from "./context/session";
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
@@ -253,6 +255,11 @@ type SharedBundleImportTarget = {
   directoryHint?: string | null;
 };
 
+type SharedBundleImportChoice = {
+  request: SharedBundleDeepLink;
+  bundle: SharedBundleV1;
+};
+
 type SettingsReturnTarget = {
   view: View;
   tab: DashboardTab;
@@ -265,6 +272,35 @@ function normalizeSharedBundleImportIntent(value: string | null | undefined): Sh
     return "new_worker";
   }
   return "import_current";
+}
+
+function describeSharedBundleImport(bundle: SharedBundleV1): { title: string; description: string; items: string[] } {
+  if (bundle.type === "skill") {
+    return {
+      title: "Import 1 skill",
+      description: bundle.description?.trim() || `Add \`${bundle.name}\` to an existing worker or create a new one for it.`,
+      items: [bundle.name],
+    };
+  }
+
+  if (bundle.type === "skills-set") {
+    const count = bundle.skills.length;
+    return {
+      title: `Import ${count} skill${count === 1 ? "" : "s"}`,
+      description:
+        bundle.description?.trim() ||
+        `${bundle.name || "Shared skills"} is ready to import into an existing worker or a new worker.`,
+      items: bundle.skills.map((skill) => skill.name),
+    };
+  }
+
+  return {
+    title: "Import workspace bundle",
+    description:
+      bundle.description?.trim() ||
+      `Create a new worker to import ${bundle.name || "this shared workspace bundle"}.`,
+    items: Array.isArray(bundle.workspace.skills) ? bundle.workspace.skills.map((skill) => skill.name) : [],
+  };
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -368,15 +404,27 @@ async function fetchSharedBundle(bundleUrl: string): Promise<SharedBundleV1> {
   const timeout = window.setTimeout(() => controller.abort(), 15_000);
 
   try {
-    const response = await fetch(targetUrl.toString(), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = isTauriRuntime()
+        ? await tauriFetch(targetUrl.toString(), {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            signal: controller.signal,
+          })
+        : await fetch(targetUrl.toString(), {
+            method: "GET",
+            headers: { Accept: "application/json" },
+            signal: controller.signal,
+          });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      throw new Error(`Failed to load shared bundle from ${targetUrl.toString()}: ${message}`);
+    }
     if (!response.ok) {
       const details = (await response.text()).trim();
       const suffix = details ? `: ${details}` : "";
-      throw new Error(`Failed to fetch bundle (${response.status})${suffix}`);
+      throw new Error(`Failed to fetch bundle from ${targetUrl.toString()} (${response.status})${suffix}`);
     }
     return parseSharedBundle(await response.json());
   } finally {
@@ -447,7 +495,7 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "https:" && protocol !== "http:") {
+  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
     return null;
   }
 
@@ -470,6 +518,25 @@ function parseSharedBundleDeepLink(rawUrl: string): SharedBundleDeepLink | null 
   }
 
   try {
+    if ((protocol === "https:" || protocol === "http:") && !rawBundleUrl.trim()) {
+      const host = url.hostname.toLowerCase();
+      const path = url.pathname.replace(/^\/+/, "");
+      const segments = path.split("/").filter(Boolean);
+      if ((host === "share.openwork.software" || host.endsWith(".openwork.software")) && segments[0] === "b" && segments[1]) {
+        const intent = normalizeSharedBundleImportIntent(url.searchParams.get("ow_intent") ?? url.searchParams.get("intent"));
+        const source = url.searchParams.get("ow_source")?.trim() ?? url.searchParams.get("source")?.trim() ?? "";
+        const orgId = url.searchParams.get("ow_org")?.trim() ?? "";
+        const label = url.searchParams.get("ow_label")?.trim() ?? url.searchParams.get("label")?.trim() ?? "";
+        return {
+          bundleUrl: url.toString(),
+          intent,
+          source: source || undefined,
+          orgId: orgId || undefined,
+          label: label || undefined,
+        };
+      }
+    }
+
     const parsedBundleUrl = new URL(rawBundleUrl.trim());
     if (parsedBundleUrl.protocol !== "https:" && parsedBundleUrl.protocol !== "http:") {
       return null;
@@ -523,7 +590,7 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
   }
 
   const protocol = url.protocol.toLowerCase();
-  if (protocol !== "openwork:" && protocol !== "https:" && protocol !== "http:") {
+  if (protocol !== "openwork:" && protocol !== "openwork-dev:" && protocol !== "https:" && protocol !== "http:") {
     return null;
   }
 
@@ -553,6 +620,71 @@ function parseRemoteConnectDeepLink(rawUrl: string): RemoteWorkspaceDefaults | n
     directory: null,
     displayName: displayName || null,
   };
+}
+
+function normalizeDebugShareLinkInput(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "";
+
+  const directMatch = trimmed.match(/(?:openwork-dev|openwork|https?):\/\/[^\s"'<>]+/i);
+  if (directMatch) return directMatch[0];
+
+  const bareShareMatch = trimmed.match(/share\.openwork\.software\/b\/[^\s"'<>]+/i);
+  if (bareShareMatch) return `https://${bareShareMatch[0]}`;
+
+  return trimmed;
+}
+
+function parseDebugShareLinkInput(rawValue: string):
+  | { kind: "bundle"; link: SharedBundleDeepLink }
+  | { kind: "remote"; link: RemoteWorkspaceDefaults }
+  | null {
+  const normalized = normalizeDebugShareLinkInput(rawValue);
+  if (!normalized) return null;
+
+  const sharedBundleLink = parseSharedBundleDeepLink(normalized);
+  if (sharedBundleLink) {
+    return { kind: "bundle", link: sharedBundleLink };
+  }
+
+  const remoteConnectLink = parseRemoteConnectDeepLink(normalized);
+  if (remoteConnectLink) {
+    return { kind: "remote", link: remoteConnectLink };
+  }
+
+  const bundleMatch = normalized.match(/ow_bundle=([^&\s]+)/i);
+  if (bundleMatch?.[1]) {
+    try {
+      const bundleUrl = decodeURIComponent(bundleMatch[1]);
+      const intentMatch = normalized.match(/(?:ow_intent|intent)=([^&\s]+)/i);
+      const labelMatch = normalized.match(/ow_label=([^&\s]+)/i);
+      const sourceMatch = normalized.match(/(?:ow_source|source)=([^&\s]+)/i);
+      return {
+        kind: "bundle",
+        link: {
+          bundleUrl,
+          intent: normalizeSharedBundleImportIntent(intentMatch?.[1] ? decodeURIComponent(intentMatch[1]) : undefined),
+          label: labelMatch?.[1] ? decodeURIComponent(labelMatch[1]) : undefined,
+          source: sourceMatch?.[1] ? decodeURIComponent(sourceMatch[1]) : undefined,
+        },
+      };
+    } catch {
+      // ignore fallback parsing errors
+    }
+  }
+
+  const shareIdMatch = normalized.match(/share\.openwork\.software\/b\/([^\s/?#"'<>]+)/i);
+  if (shareIdMatch?.[1]) {
+    return {
+      kind: "bundle",
+      link: {
+        bundleUrl: `https://share.openwork.software/b/${shareIdMatch[1]}`,
+        intent: "new_worker",
+      },
+    };
+  }
+
+  return null;
 }
 
 function stripRemoteConnectQuery(rawUrl: string): string | null {
@@ -3263,6 +3395,11 @@ export default function App() {
     await refreshSkills({ force: true });
     await refreshHubSkills({ force: true });
     if (importedSkillsCount > 0) {
+      markReloadRequired("skills", {
+        type: "skill",
+        name: bundle.name?.trim() || undefined,
+        action: "added",
+      });
       console.log(`[openwork] imported ${importedSkillsCount} skills from share bundle`);
     }
   };
@@ -3342,6 +3479,70 @@ export default function App() {
     }
   };
 
+  const processSharedBundleInvite = async (request: SharedBundleDeepLink) => {
+    const bundle = await fetchSharedBundle(request.bundleUrl);
+
+    if (bundle.type === "skill") {
+      setView("dashboard");
+      setTab("scheduled");
+      setError(null);
+      setSharedSkillDestinationRequest({ request, bundle });
+      return { mode: "choice" as const, bundle };
+    }
+
+    if (bundle.type === "skills-set") {
+      setView("dashboard");
+      setTab("skills");
+      setError(null);
+      setSharedBundleImportChoice({ request, bundle });
+      return { mode: "choice" as const, bundle };
+    }
+
+    if (request.intent === "new_worker" && isTauriRuntime()) {
+      setView("dashboard");
+      setTab("scheduled");
+      setError(null);
+      setSharedBundleCreateWorkerRequest({
+        request,
+        bundle,
+        defaultPreset: "automation",
+      });
+      workspaceStore.setCreateWorkspaceOpen(true);
+      return { mode: "new_worker_modal" as const, bundle };
+    }
+
+    if (request.intent === "import_current") {
+      const client = openworkServerClient();
+      const connected = openworkServerStatus() === "connected";
+      const target = resolveActiveSharedBundleImportTarget();
+      const hasTargetHint = Boolean(target.workspaceId?.trim() || target.localRoot?.trim() || target.directoryHint?.trim());
+      if (!client || !connected || !hasTargetHint) {
+        if (!sharedBundleNoticeShown()) {
+          setSharedBundleNoticeShown(true);
+          setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
+        }
+        return { mode: "blocked_import_current" as const, bundle };
+      }
+    } else {
+      const target = resolveSharedBundleWorkerTarget();
+      if (!target.hostUrl.trim() || !target.token.trim()) {
+        if (!sharedBundleNoticeShown()) {
+          setSharedBundleNoticeShown(true);
+          setError("Share link detected. Configure an OpenWork host and token to create a new worker.");
+        }
+        return { mode: "blocked_new_worker" as const, bundle };
+      }
+    }
+
+    if (request.intent === "new_worker") {
+      await createWorkerForSharedBundle(request, bundle);
+    }
+
+    await importSharedBundlePayload(bundle, resolveActiveSharedBundleImportTarget());
+    setError(null);
+    return { mode: "imported" as const, bundle };
+  };
+
   createEffect(() => {
     const request = pendingSharedBundleInvite();
     if (!request || booting()) {
@@ -3352,92 +3553,13 @@ export default function App() {
       return;
     }
 
-    if (request.intent === "new_worker" && isTauriRuntime()) {
-      let cancelled = false;
-      setSharedBundleImportBusy(true);
-
-      void (async () => {
-        try {
-          const bundle = await fetchSharedBundle(request.bundleUrl);
-          if (cancelled) return;
-
-          setView("dashboard");
-          setTab("scheduled");
-          setError(null);
-
-          if (bundle.type === "skill") {
-            setSharedSkillDestinationRequest({ request, bundle });
-          } else {
-            setSharedBundleCreateWorkerRequest({
-              request,
-              bundle,
-              defaultPreset: "automation",
-            });
-            workspaceStore.setCreateWorkspaceOpen(true);
-          }
-
-          setPendingSharedBundleInvite(null);
-          setSharedBundleNoticeShown(false);
-        } catch (error) {
-          if (!cancelled) {
-            const message = error instanceof Error ? error.message : safeStringify(error);
-            setError(addOpencodeCacheHint(message));
-            setPendingSharedBundleInvite(null);
-            setSharedBundleNoticeShown(false);
-          }
-        } finally {
-          if (!cancelled) {
-            setSharedBundleImportBusy(false);
-          }
-        }
-      })();
-
-      onCleanup(() => {
-        cancelled = true;
-      });
-      return;
-    }
-
-    if (request.intent === "import_current") {
-      const client = openworkServerClient();
-      const connected = openworkServerStatus() === "connected";
-      const target = resolveActiveSharedBundleImportTarget();
-      const hasTargetHint = Boolean(
-        target.workspaceId?.trim() || target.localRoot?.trim() || target.directoryHint?.trim(),
-      );
-      if (!client || !connected || !hasTargetHint) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Connect to a writable OpenWork worker to import this bundle.");
-        }
-        return;
-      }
-    } else {
-      const target = resolveSharedBundleWorkerTarget();
-      if (!target.hostUrl.trim() || !target.token.trim()) {
-        if (!sharedBundleNoticeShown()) {
-          setSharedBundleNoticeShown(true);
-          setError("Share link detected. Configure an OpenWork host and token to create a new worker.");
-        }
-        return;
-      }
-    }
-
     let cancelled = false;
     setSharedBundleImportBusy(true);
 
     void (async () => {
       try {
-        const bundle = await fetchSharedBundle(request.bundleUrl);
+        await processSharedBundleInvite(request);
         if (cancelled) return;
-
-        if (request.intent === "new_worker") {
-          await createWorkerForSharedBundle(request, bundle);
-          if (cancelled) return;
-        }
-
-        await importSharedBundlePayload(bundle, resolveActiveSharedBundleImportTarget());
-        setError(null);
       } catch (error) {
         if (!cancelled) {
           const message = error instanceof Error ? error.message : safeStringify(error);
@@ -3601,7 +3723,9 @@ export default function App() {
   const [sharedSkillDestinationRequest, setSharedSkillDestinationRequest] =
     createSignal<SharedSkillDestinationRequest | null>(null);
   const [sharedSkillDestinationBusyId, setSharedSkillDestinationBusyId] = createSignal<string | null>(null);
+  const [sharedBundleImportChoice, setSharedBundleImportChoice] = createSignal<SharedBundleImportChoice | null>(null);
   const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
+  const [sharedBundleImportError, setSharedBundleImportError] = createSignal<string | null>(null);
   const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
@@ -3656,8 +3780,192 @@ export default function App() {
       return false;
     }
     setPendingSharedBundleInvite(parsed);
+    setSharedSkillDestinationRequest(null);
+    setSharedSkillDestinationBusyId(null);
+    setSharedBundleImportChoice(null);
+    setSharedBundleCreateWorkerRequest(null);
+    setSharedBundleImportError(null);
     setSharedBundleNoticeShown(false);
     return true;
+  };
+
+  const openDebugShareLink = async (rawUrl: string): Promise<{ ok: boolean; message: string }> => {
+    const parsed = parseDebugShareLinkInput(rawUrl);
+    if (!parsed) {
+      return { ok: false, message: "That link is not a recognized OpenWork deep link or share URL." };
+    }
+
+    setError(null);
+    setView("dashboard");
+    if (parsed.kind === "bundle") {
+      setPendingSharedBundleInvite(null);
+      setSharedBundleNoticeShown(false);
+      setSharedSkillDestinationRequest(null);
+      setSharedSkillDestinationBusyId(null);
+      setSharedBundleImportError(null);
+      setSharedBundleImportChoice(null);
+      setSharedBundleCreateWorkerRequest(null);
+
+      try {
+        setSharedBundleImportBusy(true);
+        const result = await processSharedBundleInvite(parsed.link);
+        switch (result.mode) {
+          case "choice":
+            return { ok: true, message: "Opened the share import chooser." };
+          case "new_worker_modal":
+            return { ok: true, message: "Opened the new worker import flow." };
+          case "blocked_import_current":
+          case "blocked_new_worker":
+            return { ok: false, message: error() || "The share link needs more worker setup before it can open." };
+          case "imported":
+            return { ok: true, message: "Imported the shared bundle into the current worker." };
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : safeStringify(error);
+        const friendly = addOpencodeCacheHint(message);
+        setError(friendly);
+        return { ok: false, message: friendly };
+      } finally {
+        setSharedBundleImportBusy(false);
+      }
+    }
+    setPendingRemoteConnectDeepLink(parsed.kind === "remote" ? parsed.link : null);
+    setTab("scheduled");
+    return { ok: true, message: "Queued remote worker link. OpenWork should move into the connect flow." };
+  };
+
+  const closeSharedBundleImportChoice = () => {
+    if (sharedBundleImportBusy()) return;
+    setSharedBundleImportChoice(null);
+    setSharedBundleImportError(null);
+  };
+
+  const sharedBundleImportCopy = createMemo(() => {
+    const choice = sharedBundleImportChoice();
+    if (!choice) return null;
+    return describeSharedBundleImport(choice.bundle);
+  });
+
+  const sharedBundleWorkerOptions = createMemo(() => {
+    const activeWorkspaceId = workspaceStore.activeWorkspaceId().trim();
+    const items = workspaceStore.workspaces().map((workspace) => {
+      let disabledReason: string | null = null;
+      if (!resolveSharedBundleImportTargetForWorkspace(workspace)) {
+        disabledReason =
+          workspace.workspaceType === "remote" && workspace.remoteType !== "openwork"
+            ? "Only OpenWork-connected workers support direct shared skill imports."
+            : "This worker is missing the info OpenWork needs to import the bundle.";
+      }
+
+      const label =
+        workspace.displayName?.trim() ||
+        workspace.openworkWorkspaceName?.trim() ||
+        workspace.name?.trim() ||
+        workspace.path?.trim() ||
+        "Worker";
+      const badge =
+        workspace.workspaceType === "remote"
+          ? workspace.sandboxBackend === "docker" ||
+            Boolean(workspace.sandboxRunId?.trim()) ||
+            Boolean(workspace.sandboxContainerName?.trim())
+            ? "Sandbox"
+            : "Remote"
+          : "Local";
+      const detail =
+        workspace.workspaceType === "local"
+          ? workspace.path?.trim() || "Local worker"
+          : workspace.directory?.trim() || workspace.baseUrl?.trim() || workspace.openworkHostUrl?.trim() || "Remote worker";
+
+      return {
+        id: workspace.id,
+        label,
+        detail,
+        badge,
+        current: workspace.id === activeWorkspaceId,
+        disabledReason,
+      };
+    });
+
+    return items.sort((a, b) => {
+      if (a.current !== b.current) return a.current ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
+  });
+
+  const openSharedBundleCreateWorkerFlow = async () => {
+    const choice = sharedBundleImportChoice();
+    if (!choice || sharedBundleImportBusy()) return;
+
+    setSharedBundleImportError(null);
+    setError(null);
+
+    if (isTauriRuntime()) {
+      setView("dashboard");
+      setTab("scheduled");
+      setSharedBundleCreateWorkerRequest({
+        request: choice.request,
+        bundle: choice.bundle,
+        defaultPreset: "starter",
+      });
+      setSharedBundleImportChoice(null);
+      workspaceStore.setCreateWorkspaceOpen(true);
+      return;
+    }
+
+    setSharedBundleImportBusy(true);
+    try {
+      await createWorkerForSharedBundle(choice.request, choice.bundle);
+      await importSharedBundlePayload(choice.bundle, resolveActiveSharedBundleImportTarget());
+      setSharedBundleImportChoice(null);
+      setError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      const friendly = addOpencodeCacheHint(message);
+      setSharedBundleImportError(friendly);
+      setError(friendly);
+    } finally {
+      setSharedBundleImportBusy(false);
+    }
+  };
+
+  const importSharedBundleIntoExistingWorkspace = async (workspaceId: string) => {
+    const choice = sharedBundleImportChoice();
+    if (!choice || sharedBundleImportBusy()) return;
+
+    const workspace = workspaceStore.workspaces().find((item) => item.id === workspaceId) ?? null;
+    if (!workspace) {
+      setSharedBundleImportError("The selected worker is no longer available.");
+      return;
+    }
+
+    const target = resolveSharedBundleImportTargetForWorkspace(workspace);
+    if (!target) {
+      setSharedBundleImportError("This worker cannot accept shared skill imports yet.");
+      return;
+    }
+
+    setSharedBundleImportBusy(true);
+    setSharedBundleImportError(null);
+    setError(null);
+
+    try {
+      setView("dashboard");
+      setTab("skills");
+      const ok = await workspaceStore.activateWorkspace(workspace.id);
+      if (!ok) {
+        throw new Error(error() || `Failed to switch to ${workspace.displayName?.trim() || workspace.name || "the selected worker"}.`);
+      }
+      await importSharedBundlePayload(choice.bundle, target);
+      setSharedBundleImportChoice(null);
+      setError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : safeStringify(error);
+      const friendly = addOpencodeCacheHint(message);
+      setSharedBundleImportError(friendly);
+      setError(friendly);
+    } finally {
+      setSharedBundleImportBusy(false);
+    }
   };
 
   createEffect(() => {
@@ -6268,6 +6576,7 @@ export default function App() {
       notionError: notionError(),
       notionBusy: notionBusy(),
       connectNotion,
+      openDebugShareLink,
       mcpServers: mcpServers(),
       mcpStatus: mcpStatus(),
       mcpLastUpdatedAt: mcpLastUpdatedAt(),
@@ -6640,6 +6949,23 @@ export default function App() {
           await refreshMcpServers();
         }}
         onReloadEngine={() => reloadWorkspaceEngineAndResume()}
+      />
+
+      <SharedBundleImportModal
+        open={Boolean(sharedBundleImportChoice())}
+        title={sharedBundleImportCopy()?.title ?? "Import shared bundle"}
+        description={sharedBundleImportCopy()?.description ?? "Choose how to import this shared bundle."}
+        items={sharedBundleImportCopy()?.items ?? []}
+        workers={sharedBundleWorkerOptions()}
+        busy={sharedBundleImportBusy()}
+        error={sharedBundleImportError()}
+        onClose={closeSharedBundleImportChoice}
+        onCreateNewWorker={() => {
+          void openSharedBundleCreateWorkerFlow();
+        }}
+        onSelectWorker={(workspaceId) => {
+          void importSharedBundleIntoExistingWorkspace(workspaceId);
+        }}
       />
 
       <CreateWorkspaceModal

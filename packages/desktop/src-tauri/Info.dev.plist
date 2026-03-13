@@ -2,9 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <key>CFBundleIdentifier</key>
+  <string>com.differentai.openwork.dev</string>
   <key>CFBundleName</key>
   <string>OpenWork - Dev</string>
   <key>CFBundleDisplayName</key>
   <string>OpenWork - Dev</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>CFBundleURLName</key>
+      <string>com.differentai.openwork.dev openwork-dev</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>openwork-dev</string>
+      </array>
+    </dict>
+  </array>
 </dict>
 </plist>

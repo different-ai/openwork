@@ -136,6 +136,7 @@ export type SettingsViewProps = {
   notionBusy: boolean;
   connectNotion: () => void;
   engineDoctorVersion: string | null;
+  openDebugShareLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
 };
 
 // OpenCodeRouter Settings Component
@@ -787,6 +788,10 @@ export default function SettingsView(props: SettingsViewProps) {
   const [sandboxProbeResult, setSandboxProbeResult] = createSignal<SandboxDebugProbeResult | null>(null);
   const [nukeDevConfigBusy, setNukeDevConfigBusy] = createSignal(false);
   const [nukeDevConfigStatus, setNukeDevConfigStatus] = createSignal<string | null>(null);
+  const [debugShareLinkOpen, setDebugShareLinkOpen] = createSignal(false);
+  const [debugShareLinkInput, setDebugShareLinkInput] = createSignal("");
+  const [debugShareLinkBusy, setDebugShareLinkBusy] = createSignal(false);
+  const [debugShareLinkStatus, setDebugShareLinkStatus] = createSignal<string | null>(null);
   const opencodeDevModeEnabled = createMemo(() => Boolean(buildInfo()?.openworkDevMode));
 
   const sandboxCreateSummary = createMemo(() => {
@@ -981,6 +986,20 @@ export default function SettingsView(props: SettingsViewProps) {
       setSandboxProbeStatus(error instanceof Error ? error.message : "Sandbox probe failed.");
     } finally {
       setSandboxProbeBusy(false);
+    }
+  };
+
+  const submitDebugShareLink = async () => {
+    if (debugShareLinkBusy()) return;
+    setDebugShareLinkBusy(true);
+    setDebugShareLinkStatus(null);
+    try {
+      const result = await props.openDebugShareLink(debugShareLinkInput());
+      setDebugShareLinkStatus(result.message);
+    } catch (error) {
+      setDebugShareLinkStatus(error instanceof Error ? error.message : "Failed to open share link.");
+    } finally {
+      setDebugShareLinkBusy(false);
     }
   };
 
@@ -1320,6 +1339,59 @@ export default function SettingsView(props: SettingsViewProps) {
                 </div>
                 <Show when={nukeDevConfigStatus()}>
                   {(value) => <div class="text-xs text-red-11">{value()}</div>}
+                </Show>
+
+                <Show when={props.developerMode}>
+                  <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                      <div>
+                        <div class="text-sm font-medium text-gray-12">Open share link</div>
+                        <div class="text-xs text-gray-9">
+                          Paste an existing <span class="font-mono">openwork://</span> share link and route it through the dev app.
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        class={compactOutlineActionClass}
+                        onClick={() => {
+                          setDebugShareLinkOpen((value) => !value);
+                          setDebugShareLinkStatus(null);
+                        }}
+                        disabled={props.busy || debugShareLinkBusy()}
+                      >
+                        {debugShareLinkOpen() ? "Hide" : "Open share link"}
+                      </button>
+                    </div>
+
+                    <Show when={debugShareLinkOpen()}>
+                      <div class="space-y-3">
+                        <textarea
+                          value={debugShareLinkInput()}
+                          onInput={(event) => setDebugShareLinkInput(event.currentTarget.value)}
+                          rows={3}
+                          placeholder="openwork://import-bundle?ow_bundle=..."
+                          class="w-full rounded-xl border border-gray-6 bg-gray-1 px-3 py-2 text-xs font-mono text-gray-12 outline-none transition focus:border-blue-8"
+                        />
+                        <div class="flex flex-wrap items-center gap-2">
+                          <Button
+                            variant="secondary"
+                            class="text-xs h-8 py-0 px-3"
+                            onClick={() => void submitDebugShareLink()}
+                            disabled={props.busy || debugShareLinkBusy() || !debugShareLinkInput().trim()}
+                          >
+                            {debugShareLinkBusy() ? "Opening..." : "Open link"}
+                          </Button>
+                          <div class="text-[11px] text-gray-8">
+                            Accepts <span class="font-mono">openwork://</span>, <span class="font-mono">openwork-dev://</span>, or a raw <span class="font-mono">https://share.openwork.software/b/...</span> URL.
+                          </div>
+                        </div>
+                      </div>
+                    </Show>
+
+                    <Show when={debugShareLinkStatus()}>
+                      {(value) => <div class="text-xs text-gray-10">{value()}</div>}
+                    </Show>
+                  </div>
                 </Show>
               </Show>
             </div>
