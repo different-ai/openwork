@@ -18,9 +18,6 @@ export function DenHero(props: DenHeroProps) {
         <div className="mb-4 flex items-center gap-2 text-sm font-medium uppercase tracking-[0.18em] text-gray-500">
           OpenWork hosted
         </div>
-        <h1 className="mb-5 text-5xl font-medium leading-[1.02] tracking-tight md:text-6xl lg:text-7xl">
-          Den
-        </h1>
         <h2 className="max-w-[12.4ch] text-3xl font-medium tracking-tight text-gray-900 md:max-w-[12.1ch] md:text-[3.2rem] md:leading-[0.98] lg:max-w-none lg:text-[3.35rem] xl:text-[3.7rem]">
           <span className="block lg:whitespace-nowrap">Always-on AI workers</span>
           <span className="block lg:whitespace-nowrap">for you and your team.</span>
