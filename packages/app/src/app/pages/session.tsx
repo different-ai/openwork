@@ -3693,16 +3693,16 @@ export default function SessionView(props: SessionViewProps) {
             </Show>
             <Show when={props.messages.length === 0 && !showWorkspaceSetupEmptyState()}>
               <div class="py-14 px-4 md:px-6">
-                <div class="mx-auto max-w-4xl text-center">
-                  <div class="inline-flex items-center rounded-full border border-dls-border bg-dls-hover px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-dls-secondary shadow-sm">
+                <div class="mx-auto max-w-4xl rounded-3xl border border-gray-6 bg-gray-2/60 p-6 text-center shadow-sm md:p-8">
+                  <div class="inline-flex items-center rounded-full border border-gray-6 bg-gray-1 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-gray-11 shadow-sm">
                     Starter tasks
                   </div>
-                  <div class="mx-auto mt-4 flex h-14 w-14 items-center justify-center rounded-[20px] border border-dls-border bg-dls-hover text-dls-secondary shadow-sm">
+                  <div class="mx-auto mt-4 flex h-14 w-14 items-center justify-center rounded-[20px] border border-gray-6 bg-gray-1 text-gray-11 shadow-sm">
                     <Zap size={22} />
                   </div>
                   <div class="mt-5 space-y-2">
-                    <h3 class="text-2xl font-semibold tracking-tight text-dls-text">Start with a real task</h3>
-                    <p class="mx-auto max-w-2xl text-sm leading-relaxed text-dls-secondary">
+                    <h3 class="text-2xl font-semibold tracking-tight text-gray-12">Start with a real task</h3>
+                    <p class="mx-auto max-w-2xl text-sm leading-relaxed text-gray-11">
                       These examples create or verify their own inputs, then finish with a visible result.
                       Or skip them and type your own task below.
                     </p>
@@ -3711,63 +3711,63 @@ export default function SessionView(props: SessionViewProps) {
                   <div class="mt-10 grid gap-4 text-left md:grid-cols-3">
                     <button
                       type="button"
-                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
+                      class="group flex flex-col justify-between rounded-3xl border border-gray-6 bg-gray-1 p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(SORT_INBOX_CSV_TEMPLATE);
                       }}
                     >
                       <div class="flex items-center gap-3">
-                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-dls-secondary">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-6 bg-gray-2/60 text-gray-11 group-hover:border-gray-7 group-hover:bg-gray-3 transition-colors">
                           <HardDrive size={18} />
                         </div>
                         <div>
-                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">Files</div>
-                          <div class="mt-1 text-sm font-semibold text-dls-text">Sort a CSV in the inbox</div>
+                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">Files</div>
+                          <div class="mt-1 text-sm font-semibold text-gray-12">Sort a CSV in the inbox</div>
                         </div>
                       </div>
-                      <div class="mt-3 text-xs leading-relaxed text-dls-secondary">
+                      <div class="mt-3 text-xs leading-relaxed text-gray-10">
                         Create a sample inbox CSV if needed, alphabetize the rows, and save the sorted result back to the worker.
                       </div>
                     </button>
 
                     <button
                       type="button"
-                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
+                      class="group flex flex-col justify-between rounded-3xl border border-gray-6 bg-gray-1 p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(BUILD_THREE_PENGUINS_SITE_TEMPLATE);
                       }}
                     >
                       <div class="flex items-center gap-3">
-                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-dls-secondary">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-6 bg-gray-2/60 text-gray-11 group-hover:border-gray-7 group-hover:bg-gray-3 transition-colors">
                           <Box size={18} />
                         </div>
                         <div>
-                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">Website</div>
-                          <div class="mt-1 text-sm font-semibold text-dls-text">Build a three-penguin site</div>
+                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">Website</div>
+                          <div class="mt-1 text-sm font-semibold text-gray-12">Build a three-penguin site</div>
                         </div>
                       </div>
-                      <div class="mt-3 text-xs leading-relaxed text-dls-secondary">
+                      <div class="mt-3 text-xs leading-relaxed text-gray-10">
                         Make a small website, keep three penguins on the page, start it locally, and leave the running site open before you finish.
                       </div>
                     </button>
 
                     <button
                       type="button"
-                      class="group flex flex-col justify-between rounded-3xl border border-dls-border bg-dls-surface p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
+                      class="group flex flex-col justify-between rounded-3xl border border-gray-6 bg-gray-1 p-5 transition-all hover:-translate-y-0.5 hover:border-gray-7 hover:shadow-md"
                       onClick={() => {
                         void handleStarterQuickstart(SCRAPE_OPENWORK_COM_TEMPLATE);
                       }}
                     >
                       <div class="flex items-center gap-3">
-                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-dls-border bg-dls-surface text-dls-secondary">
+                        <div class="flex h-10 w-10 items-center justify-center rounded-2xl border border-gray-6 bg-gray-2/60 text-gray-11 group-hover:border-gray-7 group-hover:bg-gray-3 transition-colors">
                           <Search size={18} />
                         </div>
                         <div>
-                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-dls-secondary">Browser</div>
-                          <div class="mt-1 text-sm font-semibold text-dls-text">Scrape openwork.com</div>
+                          <div class="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-11">Browser</div>
+                          <div class="mt-1 text-sm font-semibold text-gray-12">Scrape openwork.com</div>
                         </div>
                       </div>
-                      <div class="mt-3 text-xs leading-relaxed text-dls-secondary">
+                      <div class="mt-3 text-xs leading-relaxed text-gray-10">
                         Verify `npx` first, then open the site in a browser and bring back the scraped page data.
                       </div>
                     </button>
