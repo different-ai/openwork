@@ -21,6 +21,16 @@ const nextConfig = {
         permanent: false,
       },
       {
+        source: "/technical",
+        destination: "/docs/technical",
+        permanent: false,
+      },
+      {
+        source: "/non-technical",
+        destination: "/docs/non-technical",
+        permanent: false,
+      },
+      {
         source: "/development",
         destination: "/docs/development",
         permanent: false,

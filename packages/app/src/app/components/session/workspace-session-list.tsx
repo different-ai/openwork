@@ -1,7 +1,6 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
-import { ChevronDown, ChevronRight, HeartPulse, Loader2, MoreHorizontal, Plus } from "lucide-solid";
+import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-solid";
 
-import type { OpenworkSoulStatus } from "../../lib/openwork-server";
 import type { WorkspaceInfo } from "../../lib/tauri";
 import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import { formatRelativeTime, getWorkspaceTaskLoadErrorDisplay, isWindowsPlatform } from "../../utils";
@@ -15,13 +14,11 @@ type Props = {
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
   newTaskDisabled: boolean;
   importingWorkspaceConfig: boolean;
-  soulStatusByWorkspaceId: Record<string, OpenworkSoulStatus | null>;
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
-  onOpenSoul: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
   onRecoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onTestWorkspaceConnection: (workspaceId: string) => Promise<boolean> | boolean | void;
@@ -159,8 +156,6 @@ export default function WorkspaceSessionList(props: Props) {
               workspace().workspaceType === "remote" && connectionState().status === "error";
             const isMenuOpen = () => workspaceMenuId() === workspace().id;
             const taskLoadError = () => getWorkspaceTaskLoadErrorDisplay(workspace(), group.error);
-            const soulStatus = () => props.soulStatusByWorkspaceId[workspace().id] ?? null;
-            const soulEnabled = () => Boolean(soulStatus()?.enabled);
 
             return (
               <div class="space-y-2">
@@ -202,12 +197,6 @@ export default function WorkspaceSessionList(props: Props) {
                       <div class="text-[14px] font-medium truncate">{workspaceLabel(workspace())}</div>
                       <div class="text-[11px] text-gray-10 flex items-center gap-1.5">
                         <span>{workspaceKindLabel(workspace())}</span>
-                        <Show when={soulEnabled()}>
-                          <span class="inline-flex items-center gap-1 rounded-full border border-ruby-7 bg-ruby-3 px-1.5 py-0.5 text-[10px] text-ruby-11">
-                            <HeartPulse size={10} />
-                            Soul
-                          </span>
-                        </Show>
                       </div>
                     </div>
 
@@ -287,16 +276,6 @@ export default function WorkspaceSessionList(props: Props) {
                         }}
                       >
                         Share...
-                      </button>
-                      <button
-                        type="button"
-                        class="w-full text-left px-2 py-1.5 text-sm rounded-md hover:bg-gray-3"
-                        onClick={() => {
-                          props.onOpenSoul(workspace().id);
-                          setWorkspaceMenuId(null);
-                        }}
-                      >
-                        {soulEnabled() ? "Soul settings" : "Enable soul"}
                       </button>
                       <Show when={workspace().workspaceType === "local"}>
                         <button

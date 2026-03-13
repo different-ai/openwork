@@ -21,7 +21,7 @@ child.on("error", (error) => {
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("ENOENT")) {
     console.error(
-      "Control Chrome requires npm (Node.js). Install Node.js or configure mcp.control-chrome.command to a local chrome-devtools-mcp binary."
+      "Control Chrome requires npm (Node.js). Install Node.js or configure mcp.chrome-devtools.command to a local chrome-devtools-mcp binary."
     );
   } else {
     console.error(`Failed to start chrome-devtools-mcp via npm exec: ${message}`);

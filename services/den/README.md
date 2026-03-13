@@ -17,6 +17,8 @@ pnpm dev
 - `BETTER_AUTH_URL` public base URL Better Auth uses for OAuth redirects and callbacks
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
+- `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
+- `GOOGLE_CLIENT_SECRET` optional OAuth app client secret for Google sign-in
 - `PORT` server port
 - `CORS_ORIGINS` comma-separated list of trusted browser origins (used for Better Auth origin validation + Express CORS)
 - `PROVISIONER_MODE` `stub` or `render`
@@ -96,6 +98,8 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 
 - `DEN_GITHUB_CLIENT_ID`
 - `DEN_GITHUB_CLIENT_SECRET`
+- `DEN_GOOGLE_CLIENT_ID`
+- `DEN_GOOGLE_CLIENT_SECRET`
 
 Optional GitHub Actions variable:
 

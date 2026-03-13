@@ -1,5 +1,27 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OpenWork Dev",
-  "identifier": "com.differentai.openwork.dev"
+  "identifier": "com.differentai.openwork.dev",
+  "bundle": {
+    "icon": [
+      "icons/dev/32x32.png",
+      "icons/dev/128x128.png",
+      "icons/dev/128x128@2x.png",
+      "icons/icon-dev.icns"
+    ],
+    "macOS": {
+      "bundleName": "OpenWork - Dev",
+      "infoPlist": "./Info.dev.plist"
+    }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenWork - Dev",
+        "width": 1180,
+        "height": 820,
+        "resizable": true
+      }
+    ]
+  }
 }

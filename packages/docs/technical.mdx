@@ -1,0 +1,73 @@
+---
+title: "Technical"
+description: "Choose CLI or desktop-hosted setup"
+---
+
+Use this path if you are setting up the runtime, picking how OpenWork should run, or deciding how teammates connect to a worker.
+
+---
+
+## Pick a runtime
+
+<CardGroup cols={2}>
+  <Card title="Desktop-hosted app/server" icon="monitor" href="/quickstart">
+    OpenWork runs locally and hosts the server on-device. Use this when you want the app and server together.
+  </Card>
+  <Card title="CLI-hosted server" icon="terminal" href="/cli">
+    `openwrk` or `openwork-server` runs on a trusted machine. Use this when you want automation without the desktop app.
+  </Card>
+</CardGroup>
+
+---
+
+## Start the setup
+
+<CardGroup cols={2}>
+  <Card title="Start with the app" icon="download" href="/quickstart">
+    Download OpenWork, create a worker, and use the desktop-hosted path for the fastest local setup.
+  </Card>
+  <Card title="Start with the CLI" icon="terminal" href="/cli">
+    Install `openwrk`, inspect status, and run headless when you do not need the desktop UI.
+  </Card>
+  <Card title="See the runtime model" icon="compass" href="/openwork">
+    Review desktop host mode, CLI host mode, and remote client mode before you commit to one path.
+  </Card>
+  <Card title="Create a shareable instance" icon="rocket" href="/create-openwork-instance">
+    Follow the operator playbook for one worker, one share path, and one scheduled automation.
+  </Card>
+</CardGroup>
+
+---
+
+## Share it
+
+Use the current share flow when another person needs access to a worker you already host.
+
+- Fastest: open worker actions, choose **Share**, then send `OpenWork invite link`.
+- Manual: share `OpenWork worker URL` + `Access token`.
+- Owner-only: keep `host token` private for approvals and admin actions.
+- Teammates connect through `Add worker` -> `Connect remote`.
+
+<CardGroup cols={2}>
+  <Card title="Use the invite link" icon="share-2" href="/tutorials/share-worker-invite-link">
+    Prefill URL, token, and startup mode in one step.
+  </Card>
+  <Card title="Plan full workspace sharing" icon="layout" href="/tutorials/share-workspace-url-service">
+    See the target design for sharing more than runtime access.
+  </Card>
+</CardGroup>
+
+---
+
+## Extend it
+
+Once the runtime is stable, wire in messaging and stricter operations.
+
+<CardGroup cols={2}>
+  <Card title="Route Slack and Telegram" icon="message-square" href="/opencode-router">
+    Map chat surfaces to the right worker directories.
+  </Card>
+  <Card title="Upgrade worker runtime" icon="shield" href="/worker-runtime-upgrades">
+    Keep runtime operations predictable as you change the stack.
+  </Card>
+</CardGroup>

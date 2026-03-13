@@ -3,7 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Smartphone, X, Zap } from "lucide-solid";
+import { CircleAlert, Copy, Cpu, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Server, Smartphone, X, Zap } from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   OpenworkAuditEntry,
@@ -38,6 +38,7 @@ export type SettingsViewProps = {
   baseUrl: string;
   headerStatus: string;
   busy: boolean;
+  clientConnected: boolean;
   settingsTab: SettingsTab;
   setSettingsTab: (tab: SettingsTab) => void;
   providers: ProviderListItem[];
@@ -465,6 +466,40 @@ export default function SettingsView(props: SettingsViewProps) {
       default:
         return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     }
+  });
+
+  const openworkStatusDot = createMemo(() => {
+    switch (props.openworkServerStatus) {
+      case "connected":
+        return "bg-green-9";
+      case "limited":
+        return "bg-amber-9";
+      default:
+        return "bg-gray-6";
+    }
+  });
+
+  const clientStatusLabel = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "Connecting";
+    if (status === "error") return "Connection failed";
+    return props.clientConnected ? "Connected" : "Not connected";
+  });
+
+  const clientStatusStyle = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "bg-amber-7/10 text-amber-11 border-amber-7/20";
+    if (status === "error") return "bg-red-7/10 text-red-11 border-red-7/20";
+    return props.clientConnected
+      ? "bg-green-7/10 text-green-11 border-green-7/20"
+      : "bg-gray-4/60 text-gray-11 border-gray-7/50";
+  });
+
+  const clientStatusDot = createMemo(() => {
+    const status = props.opencodeConnectStatus?.status;
+    if (status === "connecting") return "bg-amber-9";
+    if (status === "error") return "bg-red-9";
+    return props.clientConnected ? "bg-green-9" : "bg-gray-6";
   });
 
   const engineStatusLabel = createMemo(() => {
@@ -1205,6 +1240,47 @@ export default function SettingsView(props: SettingsViewProps) {
 
         <Match when={activeTab() === "advanced"}>
           <div class="space-y-6">
+            <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-4">
+              <div>
+                <div class="text-sm font-medium text-gray-12">Runtime</div>
+                <div class="text-xs text-gray-9">Status for your local engine and OpenWork server.</div>
+              </div>
+
+              <div class="grid gap-3 sm:grid-cols-2">
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Cpu size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenCode engine</div>
+                      <div class="text-xs text-gray-9">Local runtime for agents, tools, and model providers.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${clientStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${clientStatusDot()}`} />
+                    {clientStatusLabel()}
+                  </div>
+                </div>
+
+                <div class="rounded-xl border border-gray-6/60 bg-gray-1/40 p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-gray-6/60 bg-gray-1/70 text-gray-12">
+                      <Server size={18} />
+                    </div>
+                    <div>
+                      <div class="text-sm font-medium text-gray-12">OpenWork server</div>
+                      <div class="text-xs text-gray-9">Session control plane for app sync, workers, and remote access.</div>
+                    </div>
+                  </div>
+                  <div class={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-medium ${openworkStatusStyle()}`}>
+                    <span class={`h-2 w-2 rounded-full ${openworkStatusDot()}`} />
+                    {openworkStatusLabel()}
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="bg-gray-2/30 border border-gray-7/60 rounded-2xl p-5 space-y-3">
               <div class="text-sm font-medium text-gray-12">Developer mode</div>
               <div class="text-xs text-gray-9">

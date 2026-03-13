@@ -18,26 +18,37 @@
         "tab": "Product",
         "groups": [
           {
-            "group": "Foundations",
+            "group": "Choose a path",
             "pages": [
               "introduction",
-              "openwork",
-              "orbita-layout-style",
-              "opencode-router",
-              "cli"
+              "non-technical",
+              "technical"
             ]
           },
           {
-            "group": "Agent Playbooks",
-            "pages": ["quickstart", "create-openwork-instance"]
+            "group": "Run and share",
+            "pages": [
+              "quickstart",
+              "create-openwork-instance",
+              "tutorials/share-worker-invite-link",
+              "tutorials/automations-repeatable-jobs",
+              "tutorials/worker-isolation"
+            ]
           },
           {
-            "group": "Tutorials",
+            "group": "Technical setup",
             "pages": [
-              "tutorials/automations-repeatable-jobs",
-              "tutorials/worker-isolation",
-              "tutorials/share-worker-invite-link",
-              "tutorials/share-workspace-url-service"
+              "openwork",
+              "cli",
+              "opencode-router",
+              "worker-runtime-upgrades"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "tutorials/share-workspace-url-service",
+              "orbita-layout-style"
             ]
           },
           {

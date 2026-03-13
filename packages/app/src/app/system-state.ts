@@ -112,13 +112,18 @@ export function createSystemState(options: {
     return options.sessions().some((s) => statuses[s.id] === "running");
   });
 
-  function clearOpenworkLocalStorage() {
+  function clearOpenworkLocalStorage(mode: ResetOpenworkMode) {
     if (typeof window === "undefined") return;
 
     try {
+      if (mode === "all") {
+        window.localStorage.clear();
+        return;
+      }
+
       const keys = Object.keys(window.localStorage);
       for (const key of keys) {
-        if (key.startsWith("openwork.")) {
+        if (key.includes("openwork")) {
           window.localStorage.removeItem(key);
         }
       }
@@ -159,7 +164,7 @@ export function createSystemState(options: {
         await resetOpenworkState(resetModalMode());
       }
 
-      clearOpenworkLocalStorage();
+      clearOpenworkLocalStorage(resetModalMode());
 
       if (isTauriRuntime()) {
         await relaunch();

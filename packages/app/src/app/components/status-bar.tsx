@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js";
-import { Cpu, MessageCircle, Server, Settings } from "lucide-solid";
+import { Settings } from "lucide-solid";
 
 import type { OpenworkServerStatus } from "../lib/openwork-server";
 import type { OpenCodeRouterStatus } from "../lib/tauri";
@@ -12,6 +12,7 @@ type StatusBarProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
+  settingsOpen: boolean;
   onOpenSettings: () => void;
   onOpenMessaging: () => void;
   onOpenProviders: () => Promise<void> | void;
@@ -23,40 +24,6 @@ type StatusBarProps = {
 export default function StatusBar(props: StatusBarProps) {
   const [opencodeRouterStatus, setOpenCodeRouterStatus] = createSignal<OpenCodeRouterStatus | null>(null);
   const [documentVisible, setDocumentVisible] = createSignal(true);
-
-  const opencodeStatusMeta = createMemo(() => ({
-    dot: props.clientConnected ? "bg-green-9" : "bg-gray-6",
-    text: props.clientConnected ? "text-green-11" : "text-gray-10",
-    label: props.clientConnected ? "Connected" : "Not connected",
-  }));
-
-  const openworkStatusMeta = createMemo(() => {
-    switch (props.openworkServerStatus) {
-      case "connected":
-        return { dot: "bg-green-9", text: "text-green-11", label: "Ready" };
-      case "limited":
-        return { dot: "bg-amber-9", text: "text-amber-11", label: "Limited access" };
-      default:
-        return { dot: "bg-gray-6", text: "text-gray-10", label: "Unavailable" };
-    }
-  });
-
-  const messagingMeta = createMemo(() => {
-    const status = opencodeRouterStatus();
-    if (!status) {
-      return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge unavailable" };
-    }
-    const telegramConfigured = (status.telegram.items?.length ?? 0) > 0;
-    const slackConfigured = (status.slack.items?.length ?? 0) > 0;
-    const configuredCount = [telegramConfigured, slackConfigured].filter(Boolean).length;
-    if (status.running && configuredCount > 0) {
-      return { dot: "bg-green-9", text: "text-green-11", label: "Messaging bridge ready" };
-    }
-    if (configuredCount > 0 || status.running) {
-      return { dot: "bg-amber-9", text: "text-amber-11", label: "Messaging bridge setup" };
-    }
-    return { dot: "bg-gray-6", text: "text-gray-10", label: "Messaging bridge offline" };
-  });
 
   type ProTip = {
     id: string;
@@ -189,55 +156,30 @@ export default function StatusBar(props: StatusBarProps) {
 
   return (
     <div class="border-t border-gray-6 bg-gray-1/90 backdrop-blur-md">
-      <div class="px-4 py-2 flex flex-wrap items-center gap-3 text-xs">
-        <div
-          class="flex items-center gap-2"
-          title={`OpenCode Engine: ${opencodeStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${opencodeStatusMeta().dot}`} />
-          <Cpu class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || !props.clientConnected}>
-            <span class="text-gray-11 font-medium">OpenCode</span>
-            <span class={opencodeStatusMeta().text}>{opencodeStatusMeta().label}</span>
-          </Show>
-        </div>
-        <div class="w-px h-4 bg-gray-6/70" />
-        <div
-          class="flex items-center gap-2"
-          title={`OpenWork Server: ${openworkStatusMeta().label}`}
-        >
-          <span class={`w-2 h-2 rounded-full ${openworkStatusMeta().dot}`} />
-          <Server class="w-4 h-4 text-gray-11" />
-          <Show when={props.developerMode || props.openworkServerStatus !== "connected"}>
-            <span class="text-gray-11 font-medium">OpenWork</span>
-            <span class={openworkStatusMeta().text}>{openworkStatusMeta().label}</span>
-          </Show>
-        </div>
-        <div class="ml-auto flex items-center gap-2">
-          <Show when={tipVisible() && activeTip()}>
-            <button
-              type="button"
-              class="flex h-7 items-center gap-2 rounded-full border border-gray-6/70 bg-gray-2/40 px-3 text-xs text-gray-10 transition-colors hover:bg-gray-2/60"
-              onClick={() => runAction(activeTip()?.action)}
-              title={activeTip()?.label}
-              aria-label={activeTip()?.label}
-            >
-              <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">Tip</span>
-              <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
-            </button>
-          </Show>
-          <Button
-            variant="ghost"
-            class="h-7 px-2.5 py-0 text-xs"
-            onClick={props.onOpenSettings}
-            title="Settings"
+      <div class="px-4 py-2 flex flex-wrap items-center justify-end gap-2 text-xs">
+        <Show when={tipVisible() && activeTip()}>
+          <button
+            type="button"
+            class="flex h-7 items-center gap-2 rounded-full border border-gray-6/70 bg-gray-2/40 px-3 text-xs text-gray-10 transition-colors hover:bg-gray-2/60"
+            onClick={() => runAction(activeTip()?.action)}
+            title={activeTip()?.label}
+            aria-label={activeTip()?.label}
           >
-            <Settings class="w-4 h-4" />
-            <Show when={props.developerMode}>
-              <span class="text-gray-11 font-medium">Settings</span>
-            </Show>
-          </Button>
-        </div>
+            <span class="uppercase tracking-[0.2em] text-[10px] text-gray-8">Tip</span>
+            <span class="text-gray-11 font-medium">{activeTip()?.label}</span>
+          </button>
+        </Show>
+        <Button
+          variant="ghost"
+          class={`h-7 px-2.5 py-0 text-xs ${props.settingsOpen ? "bg-gray-3 text-gray-12 hover:bg-gray-4" : ""}`}
+          onClick={props.onOpenSettings}
+          title={props.settingsOpen ? "Back to previous screen" : "Settings"}
+        >
+          <Settings class="w-4 h-4" />
+          <Show when={props.developerMode}>
+            <span class="text-gray-11 font-medium">{props.settingsOpen ? "Back" : "Settings"}</span>
+          </Show>
+        </Button>
       </div>
     </div>
   );

@@ -4,7 +4,9 @@ import { fromNodeHeaders } from "better-auth/node"
 import { and, asc, desc, eq, isNull } from "drizzle-orm"
 import { z } from "zod"
 import { auth } from "../auth.js"
-import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
+// Polar billing is temporarily disabled for the one-worker experiment.
+// Keep the old billing integration nearby so it can be restored quickly.
+// import { getCloudWorkerBillingStatus, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
 import { db } from "../db/index.js"
 import { AuditEventTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
@@ -142,6 +144,78 @@ async function resolveConnectUrlFromCandidates(workerId: string, instanceUrl: st
   return null
 }
 
+async function getWorkerRuntimeAccess(workerId: string) {
+  const instance = await getLatestWorkerInstance(workerId)
+  const tokenRows = await db
+    .select()
+    .from(WorkerTokenTable)
+    .where(and(eq(WorkerTokenTable.worker_id, workerId), isNull(WorkerTokenTable.revoked_at)))
+    .orderBy(asc(WorkerTokenTable.created_at))
+
+  const hostToken = tokenRows.find((entry) => entry.scope === "host")?.token ?? null
+  if (!instance?.url || !hostToken) {
+    return null
+  }
+
+  return {
+    instance,
+    hostToken,
+    candidates: getConnectUrlCandidates(workerId, instance.url),
+  }
+}
+
+async function fetchWorkerRuntimeJson(input: {
+  workerId: string
+  path: string
+  method?: "GET" | "POST"
+  body?: unknown
+}) {
+  const access = await getWorkerRuntimeAccess(input.workerId)
+  if (!access) {
+    return {
+      ok: false as const,
+      status: 409,
+      payload: {
+        error: "worker_runtime_unavailable",
+        message: "Worker runtime access is not ready yet. Wait for provisioning to finish and try again.",
+      },
+    }
+  }
+
+  let lastPayload: unknown = null
+  let lastStatus = 502
+
+  for (const candidate of access.candidates) {
+    try {
+      const response = await fetch(`${normalizeUrl(candidate)}${input.path}`, {
+        method: input.method ?? "GET",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-OpenWork-Host-Token": access.hostToken,
+        },
+        body: input.body === undefined ? undefined : JSON.stringify(input.body),
+      })
+
+      const text = await response.text()
+      lastStatus = response.status
+      try {
+        lastPayload = text ? JSON.parse(text) : null
+      } catch {
+        lastPayload = text ? { message: text } : null
+      }
+
+      if (response.ok) {
+        return { ok: true as const, status: response.status, payload: lastPayload }
+      }
+    } catch (error) {
+      lastPayload = { message: error instanceof Error ? error.message : "worker_request_failed" }
+    }
+  }
+
+  return { ok: false as const, status: lastStatus, payload: lastPayload }
+}
+
 async function requireSession(req: express.Request, res: express.Response) {
   const session = await auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
@@ -163,6 +237,31 @@ async function getOrgId(userId: string) {
     return null
   }
   return membership[0].org_id
+}
+
+async function countUserCloudWorkers(userId: string) {
+  const rows = await db
+    .select({ id: WorkerTable.id })
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.created_by_user_id, userId), eq(WorkerTable.destination, "cloud")))
+    .limit(2)
+
+  return rows.length
+}
+
+function getExperimentBillingSummary() {
+  return {
+    featureGateEnabled: false,
+    hasActivePlan: false,
+    checkoutRequired: false,
+    checkoutUrl: null,
+    portalUrl: null,
+    price: null,
+    subscription: null,
+    invoices: [],
+    productId: env.polar.productId,
+    benefitId: env.polar.benefitId,
+  }
 }
 
 async function getLatestWorkerInstance(workerId: string) {
@@ -313,25 +412,33 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     return
   }
 
-  if (parsed.data.destination === "cloud") {
-    const access = await requireCloudWorkerAccess({
-      userId: session.user.id,
-      email: session.user.email ?? `${session.user.id}@placeholder.local`,
-      name: session.user.name ?? session.user.email ?? "OpenWork User",
-    })
+  if (parsed.data.destination === "cloud" && (await countUserCloudWorkers(session.user.id)) > 0) {
+    // Polar is temporarily disabled for this experiment.
+    // Keep the previous paywall block nearby so it can be restored quickly.
+    //
+    // const access = await requireCloudWorkerAccess({
+    //   userId: session.user.id,
+    //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+    //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+    // })
+    // if (!access.allowed) {
+    //   res.status(402).json({
+    //     error: "payment_required",
+    //     message: "Additional cloud workers require an active Den Cloud plan.",
+    //     polar: {
+    //       checkoutUrl: access.checkoutUrl,
+    //       productId: env.polar.productId,
+    //       benefitId: env.polar.benefitId,
+    //     },
+    //   })
+    //   return
+    // }
 
-    if (!access.allowed) {
-      res.status(402).json({
-        error: "payment_required",
-        message: "Cloud workers require an active Den Cloud plan.",
-        polar: {
-          checkoutUrl: access.checkoutUrl,
-          productId: env.polar.productId,
-          benefitId: env.polar.benefitId,
-        },
-      })
-      return
-    }
+    res.status(409).json({
+      error: "worker_limit_reached",
+      message: "You can only create one cloud worker during this experiment.",
+    })
+    return
   }
 
   const orgId =
@@ -409,32 +516,37 @@ workersRouter.get("/billing", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const includeCheckoutUrl = queryIncludesFlag(req.query.includeCheckout)
-  const includePortalUrl = !queryIncludesFlag(req.query.excludePortal)
-  const includeInvoices = !queryIncludesFlag(req.query.excludeInvoices)
-
-  const billingInput = {
-    userId: session.user.id,
-    email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User",
-  }
-
-  const billing = await getCloudWorkerBillingStatus(
-    billingInput,
-    {
-      includeCheckoutUrl,
-      includePortalUrl,
-      includeInvoices,
-    },
-  )
-
   res.json({
-    billing: {
-      ...billing,
-      productId: env.polar.productId,
-      benefitId: env.polar.benefitId,
-    },
+    billing: getExperimentBillingSummary(),
   })
+
+  // Polar billing is temporarily disabled for the one-worker experiment.
+  // const includeCheckoutUrl = queryIncludesFlag(req.query.includeCheckout)
+  // const includePortalUrl = !queryIncludesFlag(req.query.excludePortal)
+  // const includeInvoices = !queryIncludesFlag(req.query.excludeInvoices)
+  //
+  // const billingInput = {
+  //   userId: session.user.id,
+  //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+  //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+  // }
+  //
+  // const billing = await getCloudWorkerBillingStatus(
+  //   billingInput,
+  //   {
+  //     includeCheckoutUrl,
+  //     includePortalUrl,
+  //     includeInvoices,
+  //   },
+  // )
+  //
+  // res.json({
+  //   billing: {
+  //     ...billing,
+  //     productId: env.polar.productId,
+  //     benefitId: env.polar.benefitId,
+  //   },
+  // })
 }))
 
 workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
@@ -447,27 +559,33 @@ workersRouter.post("/billing/subscription", asyncRoute(async (req, res) => {
     return
   }
 
-  const billingInput = {
-    userId: session.user.id,
-    email: session.user.email ?? `${session.user.id}@placeholder.local`,
-    name: session.user.name ?? session.user.email ?? "OpenWork User",
-  }
-
-  const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
-  const billing = await getCloudWorkerBillingStatus(billingInput, {
-    includeCheckoutUrl: false,
-    includePortalUrl: true,
-    includeInvoices: true,
-  })
-
   res.json({
-    subscription,
-    billing: {
-      ...billing,
-      productId: env.polar.productId,
-      benefitId: env.polar.benefitId,
-    },
+    subscription: null,
+    billing: getExperimentBillingSummary(),
   })
+
+  // Polar billing is temporarily disabled for the one-worker experiment.
+  // const billingInput = {
+  //   userId: session.user.id,
+  //   email: session.user.email ?? `${session.user.id}@placeholder.local`,
+  //   name: session.user.name ?? session.user.email ?? "OpenWork User",
+  // }
+  //
+  // const subscription = await setCloudWorkerSubscriptionCancellation(billingInput, parsed.data.cancelAtPeriodEnd)
+  // const billing = await getCloudWorkerBillingStatus(billingInput, {
+  //   includeCheckoutUrl: false,
+  //   includePortalUrl: true,
+  //   includeInvoices: true,
+  // })
+  //
+  // res.json({
+  //   subscription,
+  //   billing: {
+  //     ...billing,
+  //     productId: env.polar.productId,
+  //     benefitId: env.polar.benefitId,
+  //   },
+  // })
 }))
 
 workersRouter.get("/:id", asyncRoute(async (req, res) => {
@@ -547,6 +665,66 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
     },
     connect: connect ?? (instance?.url ? { openworkUrl: instance.url, workspaceId: null } : null),
   })
+}))
+
+workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .limit(1)
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const runtime = await fetchWorkerRuntimeJson({
+    workerId: rows[0].id,
+    path: "/runtime/versions",
+  })
+
+  res.status(runtime.status).json(runtime.payload)
+}))
+
+workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
+  const session = await requireSession(req, res)
+  if (!session) return
+
+  const orgId = await getOrgId(session.user.id)
+  if (!orgId) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const rows = await db
+    .select()
+    .from(WorkerTable)
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .limit(1)
+
+  if (rows.length === 0) {
+    res.status(404).json({ error: "worker_not_found" })
+    return
+  }
+
+  const runtime = await fetchWorkerRuntimeJson({
+    workerId: rows[0].id,
+    path: "/runtime/upgrade",
+    method: "POST",
+    body: req.body ?? {},
+  })
+
+  res.status(runtime.status).json(runtime.payload)
 }))
 
 workersRouter.delete("/:id", asyncRoute(async (req, res) => {

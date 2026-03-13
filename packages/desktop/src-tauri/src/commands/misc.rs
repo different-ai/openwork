@@ -82,6 +82,39 @@ fn opencode_cache_candidates() -> Vec<PathBuf> {
         .collect()
 }
 
+fn stop_host_services(
+    engine_manager: &State<EngineManager>,
+    orchestrator_manager: &State<OrchestratorManager>,
+    openwork_manager: &State<OpenworkServerManager>,
+    opencode_router_manager: &State<OpenCodeRouterManager>,
+) {
+    if let Ok(mut engine) = engine_manager.inner.lock() {
+        EngineManager::stop_locked(&mut engine);
+    }
+    if let Ok(mut orchestrator_state) = orchestrator_manager.inner.lock() {
+        OrchestratorManager::stop_locked(&mut orchestrator_state);
+    }
+    if let Ok(mut openwork_state) = openwork_manager.inner.lock() {
+        OpenworkServerManager::stop_locked(&mut openwork_state);
+    }
+    if let Ok(mut opencode_router_state) = opencode_router_manager.inner.lock() {
+        OpenCodeRouterManager::stop_locked(&mut opencode_router_state);
+    }
+}
+
+fn remove_path_if_exists(path: &Path) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+            .map_err(|e| format!("Failed to remove directory {}: {e}", path.display()))
+    } else {
+        fs::remove_file(path).map_err(|e| format!("Failed to remove file {}: {e}", path.display()))
+    }
+}
+
 fn validate_server_name(name: &str) -> Result<String, String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -244,31 +277,52 @@ pub fn reset_opencode_cache() -> Result<CacheResetResult, String> {
 }
 
 #[tauri::command]
-pub fn reset_openwork_state(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+pub fn reset_openwork_state(
+    app: tauri::AppHandle,
+    mode: String,
+    engine_manager: State<EngineManager>,
+    orchestrator_manager: State<OrchestratorManager>,
+    openwork_manager: State<OpenworkServerManager>,
+    opencode_router_manager: State<OpenCodeRouterManager>,
+) -> Result<(), String> {
     let mode = mode.trim();
     if mode != "onboarding" && mode != "all" {
         return Err("mode must be 'onboarding' or 'all'".to_string());
     }
 
-    let cache_dir = app
-        .path()
-        .app_cache_dir()
-        .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?;
+    stop_host_services(
+        &engine_manager,
+        &orchestrator_manager,
+        &openwork_manager,
+        &opencode_router_manager,
+    );
 
-    if cache_dir.exists() {
-        std::fs::remove_dir_all(&cache_dir)
-            .map_err(|e| format!("Failed to remove cache dir {}: {e}", cache_dir.display()))?;
-    }
+    let mut paths = vec![
+        app.path()
+            .app_cache_dir()
+            .map_err(|e| format!("Failed to resolve app cache dir: {e}"))?,
+        app.path()
+            .app_config_dir()
+            .map_err(|e| format!("Failed to resolve app config dir: {e}"))?,
+        app.path()
+            .app_local_data_dir()
+            .map_err(|e| format!("Failed to resolve app local data dir: {e}"))?,
+    ];
 
     if mode == "all" {
-        let data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to resolve app data dir: {e}"))?;
+        paths.push(
+            app.path()
+                .app_data_dir()
+                .map_err(|e| format!("Failed to resolve app data dir: {e}"))?,
+        );
+        paths.push(PathBuf::from(orchestrator::resolve_orchestrator_data_dir()));
+    }
 
-        if data_dir.exists() {
-            std::fs::remove_dir_all(&data_dir)
-                .map_err(|e| format!("Failed to remove data dir {}: {e}", data_dir.display()))?;
+    let mut seen = HashSet::new();
+    for path in paths {
+        let key = path.to_string_lossy().to_string();
+        if seen.insert(key) {
+            remove_path_if_exists(&path)?;
         }
     }
 

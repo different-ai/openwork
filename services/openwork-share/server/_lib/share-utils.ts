@@ -422,6 +422,153 @@ export function collectBundleItems(bundle: NormalizedBundle, limit = 8): Preview
   return items.slice(0, limit);
 }
 
+const PREVIEW_MAX_CHARS = 2200;
+
+function slugifyPreviewFilename(value: string, fallback: string, extension: string): string {
+  const stem = String(value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  return `${stem || fallback}.${extension}`;
+}
+
+function buildTextPreview(content: string, fallback: string): string {
+  const normalized = String(content ?? "").trim();
+  return truncate(normalized || fallback, PREVIEW_MAX_CHARS);
+}
+
+function buildJsonPreview(value: unknown, fallback: string): string {
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    return truncate(serialized || fallback, PREVIEW_MAX_CHARS);
+  } catch {
+    return fallback;
+  }
+}
+
+function buildBundlePreviewSelection(input: {
+  filename: string;
+  text: string;
+  tone: PreviewItem["tone"];
+  label: string;
+}): {
+  filename: string;
+  text: string;
+  tone: PreviewItem["tone"];
+  label: string;
+} {
+  return input;
+}
+
+export function buildBundlePreview(bundle: NormalizedBundle): {
+  filename: string;
+  text: string;
+  tone: PreviewItem["tone"];
+  label: string;
+} {
+  if (bundle.type === "skill") {
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(bundle.name || "skill", "skill", "md"),
+      text: buildTextPreview(bundle.content, `# ${bundle.name || "OpenWork skill"}`),
+      tone: "skill",
+      label: bundle.trigger ? `Trigger: ${bundle.trigger}` : "Skill preview",
+    });
+  }
+
+  if (bundle.type === "skills-set" && bundle.skills.length) {
+    const firstSkill = bundle.skills[0]!;
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(firstSkill.name || "skill", "skill", "md"),
+      text: buildTextPreview(firstSkill.content, `# ${firstSkill.name || "Shared skill"}`),
+      tone: "skill",
+      label: bundle.skills.length > 1 ? `First of ${bundle.skills.length} skills` : "Skill preview",
+    });
+  }
+
+  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((skill): skill is NormalizedSkillItem => skill !== null);
+  if (workspaceSkills.length) {
+    const firstSkill = workspaceSkills[0]!;
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(firstSkill.name || "skill", "skill", "md"),
+      text: buildTextPreview(firstSkill.content, `# ${firstSkill.name || "Workspace skill"}`),
+      tone: "skill",
+      label: workspaceSkills.length > 1 ? `Lead skill of ${workspaceSkills.length}` : "Skill preview",
+    });
+  }
+
+  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((command): command is NormalizedCommandItem => command !== null);
+  if (commands.length) {
+    const firstCommand = commands[0]!;
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(firstCommand.name || "command", "command", "md"),
+      text: buildTextPreview(firstCommand.template || firstCommand.content, `# ${firstCommand.name || "OpenWork command"}`),
+      tone: "command",
+      label: firstCommand.agent ? `Command for ${firstCommand.agent}` : "Command preview",
+    });
+  }
+
+  const opencode = maybeObject(bundle.workspace?.opencode);
+  const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
+  if (agentEntries.length) {
+    const [name, config] = agentEntries[0]!;
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(name, "agent", "json"),
+      text: buildJsonPreview({ agent: { [name]: config } }, '{\n  "agent": {}\n}'),
+      tone: "agent",
+      label: "Agent config",
+    });
+  }
+
+  const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
+  if (mcpEntries.length) {
+    const [name, config] = mcpEntries[0]!;
+    return buildBundlePreviewSelection({
+      filename: slugifyPreviewFilename(name, "mcp", "json"),
+      text: buildJsonPreview({ mcp: { [name]: config } }, '{\n  "mcp": {}\n}'),
+      tone: "mcp",
+      label: "MCP config",
+    });
+  }
+
+  if (maybeObject(bundle.workspace?.openwork)) {
+    return buildBundlePreviewSelection({
+      filename: "openwork.json",
+      text: buildJsonPreview(bundle.workspace?.openwork, '{\n  "openwork": {}\n}'),
+      tone: "config",
+      label: "OpenWork config",
+    });
+  }
+
+  if (opencode) {
+    return buildBundlePreviewSelection({
+      filename: "opencode.json",
+      text: buildJsonPreview(opencode, '{\n  "opencode": {}\n}'),
+      tone: "config",
+      label: "OpenCode config",
+    });
+  }
+
+  const configEntries = Object.entries(maybeObject(bundle.workspace?.config) ?? {});
+  if (configEntries.length) {
+    const [name, value] = configEntries[0]!;
+    const extension = name.includes(".") ? name.split(".").pop() || "json" : "json";
+    return buildBundlePreviewSelection({
+      filename: name,
+      text: buildJsonPreview(value, `{\n  "${name}": {}\n}`),
+      tone: "config",
+      label: `Config preview · ${extension}`,
+    });
+  }
+
+  return buildBundlePreviewSelection({
+    filename: "bundle.json",
+    text: buildJsonPreview(bundle, '{\n  "bundle": true\n}'),
+    tone: "config",
+    label: "Bundle JSON",
+  });
+}
+
 export function prettyJson(rawJson: string): string {
   try {
     return JSON.stringify(JSON.parse(rawJson), null, 2);

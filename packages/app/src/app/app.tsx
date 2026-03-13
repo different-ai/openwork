@@ -63,10 +63,12 @@ import {
 } from "./constants";
 import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
 import { mapConfigProvidersToList } from "./utils/providers";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
   DashboardTab,
   MessageWithParts,
+  PlaceholderAssistantMessage,
   StartupPreference,
   EngineRuntime,
   ModelOption,
@@ -89,6 +91,7 @@ import type {
   ComposerDraft,
   ComposerPart,
   ProviderListItem,
+  SessionErrorTurn,
   UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
@@ -169,8 +172,6 @@ import {
   writeOpenworkServerSettings,
   clearOpenworkServerSettings,
   type OpenworkAuditEntry,
-  type OpenworkSoulHeartbeatEntry,
-  type OpenworkSoulStatus,
   type OpenworkServerCapabilities,
   type OpenworkServerDiagnostics,
   type OpenworkServerStatus,
@@ -237,6 +238,12 @@ type SharedBundleImportTarget = {
   workspaceId?: string | null;
   localRoot?: string | null;
   directoryHint?: string | null;
+};
+
+type SettingsReturnTarget = {
+  view: View;
+  tab: DashboardTab;
+  sessionId: string | null;
 };
 
 function normalizeSharedBundleImportIntent(value: string | null | undefined): SharedBundleImportIntent {
@@ -1097,6 +1104,11 @@ export default function App() {
   const [selectedSessionId, setSelectedSessionId] = createSignal<string | null>(
     null
   );
+  const [settingsReturnTarget, setSettingsReturnTarget] = createSignal<SettingsReturnTarget>({
+    view: "dashboard",
+    tab: "scheduled",
+    sessionId: null,
+  });
   const SESSION_BY_WORKSPACE_KEY = "openwork.workspace-last-session.v1";
   const readSessionByWorkspace = () => {
     if (typeof window === "undefined") return {} as Record<string, string>;
@@ -1134,6 +1146,48 @@ export default function App() {
   const [providerAuthBusy, setProviderAuthBusy] = createSignal(false);
   const [providerAuthError, setProviderAuthError] = createSignal<string | null>(null);
   const [providerAuthMethods, setProviderAuthMethods] = createSignal<Record<string, ProviderAuthMethod[]>>({});
+
+  createEffect(() => {
+    const view = currentView();
+    const currentTab = tab();
+    if (view === "dashboard" && currentTab === "settings") return;
+    setSettingsReturnTarget({
+      view,
+      tab: currentTab,
+      sessionId: selectedSessionId(),
+    });
+  });
+
+  const restoreSettingsReturnTarget = () => {
+    const target = settingsReturnTarget();
+    if (target.view === "session") {
+      if (target.sessionId) {
+        goToSession(target.sessionId);
+        return;
+      }
+      navigate("/session");
+      return;
+    }
+    if (target.view === "onboarding") {
+      navigate("/onboarding");
+      return;
+    }
+    if (target.view === "proto") {
+      navigate("/proto/workspaces");
+      return;
+    }
+    goToDashboard(target.tab);
+  };
+
+  const toggleSettingsView = (nextTab: SettingsTab = "general") => {
+    const settingsOpen = currentView() === "dashboard" && tab() === "settings";
+    if (settingsOpen) {
+      restoreSettingsReturnTarget();
+      return;
+    }
+    setSettingsTab(nextTab);
+    goToDashboard("settings");
+  };
 
   const sessionStore = createSessionStore({
     client,
@@ -1551,7 +1605,7 @@ export default function App() {
         error: e instanceof Error ? e.message : safeStringify(e),
       });
       const message = e instanceof Error ? e.message : safeStringify(e);
-      setError(addOpencodeCacheHint(message));
+      sessionStore.appendSessionErrorTurn(sessionID, addOpencodeCacheHint(message));
     } finally {
       setBusy(false);
       setBusyLabel(null);
@@ -1662,6 +1716,65 @@ export default function App() {
     return "";
   };
 
+  const createSyntheticSessionErrorMessage = (
+    sessionID: string,
+    errorTurn: SessionErrorTurn,
+  ): MessageWithParts => {
+    const info: PlaceholderAssistantMessage = {
+      id: errorTurn.id,
+      sessionID,
+      role: "assistant",
+      time: { created: errorTurn.time, completed: errorTurn.time },
+      parentID: errorTurn.afterMessageID ?? "",
+      modelID: "",
+      providerID: "",
+      mode: "",
+      agent: "",
+      path: { cwd: "", root: "" },
+      cost: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+    };
+
+    return {
+      info,
+      parts: [
+        {
+          id: `${errorTurn.id}:text`,
+          sessionID,
+          messageID: errorTurn.id,
+          type: "text",
+          text: errorTurn.text,
+        } as Part,
+      ],
+    };
+  };
+
+  const insertSyntheticSessionErrors = (
+    list: MessageWithParts[],
+    sessionID: string | null,
+    errorTurns: SessionErrorTurn[],
+  ) => {
+    if (!sessionID || errorTurns.length === 0) return list;
+
+    const next = list.slice();
+    errorTurns.forEach((errorTurn) => {
+      if (next.some((message) => messageIdFromInfo(message) === errorTurn.id)) return;
+      const syntheticMessage = createSyntheticSessionErrorMessage(sessionID, errorTurn);
+      const anchorIndex = errorTurn.afterMessageID
+        ? next.findIndex((message) => messageIdFromInfo(message) === errorTurn.afterMessageID)
+        : -1;
+
+      if (anchorIndex === -1) {
+        next.push(syntheticMessage);
+        return;
+      }
+
+      next.splice(anchorIndex + 1, 0, syntheticMessage);
+    });
+
+    return next;
+  };
+
   const upsertLocalSession = (next: Session | null | undefined) => {
     const id = (next as { id?: string } | null)?.id ?? "";
     if (!id) return;
@@ -1681,13 +1794,18 @@ export default function App() {
   // as the visibility boundary. OpenWork mirrors that behavior by filtering the
   // displayed transcript.
   const visibleMessages = createMemo(() => {
-    const list = messages();
+    const sessionID = selectedSessionId();
+    const errorTurns = sessionStore.selectedSessionErrorTurns();
+    const list = messages().filter((message) => {
+      const id = messageIdFromInfo(message);
+      return !id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    });
     const revert = selectedSession()?.revert?.messageID ?? null;
-    if (!revert) return list;
-    return list.filter((message) => {
+    const visible = !revert ? list : list.filter((message) => {
       const id = messageIdFromInfo(message);
       return Boolean(id) && id < revert;
     });
+    return insertSyntheticSessionErrors(visible, sessionID, errorTurns);
   });
 
   const restorePromptFromUserMessage = (message: MessageWithParts) => {
@@ -2229,13 +2347,6 @@ export default function App() {
   const [scheduledJobsStatus, setScheduledJobsStatus] = createSignal<string | null>(null);
   const [scheduledJobsBusy, setScheduledJobsBusy] = createSignal(false);
   const [scheduledJobsUpdatedAt, setScheduledJobsUpdatedAt] = createSignal<number | null>(null);
-  const [soulStatusByWorkspaceId, setSoulStatusByWorkspaceId] = createSignal<
-    Record<string, OpenworkSoulStatus | null>
-  >({});
-  const [activeSoulHeartbeats, setActiveSoulHeartbeats] = createSignal<OpenworkSoulHeartbeatEntry[]>([]);
-  const [soulStatusBusy, setSoulStatusBusy] = createSignal(false);
-  const [soulHeartbeatsBusy, setSoulHeartbeatsBusy] = createSignal(false);
-  const [soulError, setSoulError] = createSignal<string | null>(null);
 
   // MCP OAuth modal state
   const [mcpAuthModalOpen, setMcpAuthModalOpen] = createSignal(false);
@@ -3917,168 +4028,11 @@ export default function App() {
     if (isWindowsPlatform()) {
       throw new Error("Scheduler is not supported on Windows yet.");
     }
-    const root = workspaceStore.activeWorkspaceRoot().trim();
-    const job = await schedulerDeleteJob(name, root || undefined);
-    setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
-    return;
-  };
-
-  const resolveSoulWorkspaceMap = async () => {
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() !== "connected") {
-      return {} as Record<string, string>;
-    }
-
-    const response = await client.listWorkspaces();
-    const items = Array.isArray(response.items) ? response.items : [];
-    const map: Record<string, string> = {};
-
-    const idByLocalPath = new Map<string, string>();
-    for (const item of items) {
-      const path = normalizeDirectoryPath(item.path ?? "");
-      if (!path) continue;
-      idByLocalPath.set(path, item.id);
-    }
-
-    for (const workspace of workspaceStore.workspaces()) {
-      if (workspace.workspaceType === "local") {
-        const key = normalizeDirectoryPath(workspace.path ?? "");
-        if (!key) continue;
-        const found = idByLocalPath.get(key);
-        if (found) {
-          map[workspace.id] = found;
-        }
-        continue;
-      }
-
-      if (workspace.remoteType !== "openwork") {
-        continue;
-      }
-
-      const explicitId =
-        workspace.openworkWorkspaceId?.trim() ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.openworkHostUrl ?? "") ||
-        parseOpenworkWorkspaceIdFromUrl(workspace.baseUrl ?? "");
-      if (explicitId) {
-        map[workspace.id] = explicitId;
-        continue;
-      }
-
-      const directoryHint = normalizeDirectoryPath(workspace.directory ?? workspace.path ?? "");
-      if (!directoryHint) continue;
-      const match = items.find((entry) => {
-        const entryPath = normalizeDirectoryPath(
-          (entry.opencode?.directory ?? entry.directory ?? entry.path ?? "") as string,
-        );
-        return Boolean(entryPath && entryPath === directoryHint);
-      });
-      if (match?.id) {
-        map[workspace.id] = match.id;
-      }
-    }
-
-    return map;
-  };
-
-  const refreshSoulData = async (options?: { force?: boolean }) => {
-    if (soulStatusBusy() && !options?.force) return;
-
-    const client = openworkServerClient();
-    if (!client || openworkServerStatus() !== "connected") {
-      setSoulStatusByWorkspaceId({});
-      setActiveSoulHeartbeats([]);
-      setSoulHeartbeatsBusy(false);
-      setSoulError(null);
-      return;
-    }
-
-    setSoulStatusBusy(true);
-    setSoulError(null);
-    try {
-      const workspaceMap = await resolveSoulWorkspaceMap();
-      const workspaceIds = Object.entries(workspaceMap);
-
-      const nextStatusByWorkspace: Record<string, OpenworkSoulStatus | null> = {};
-      for (const workspace of workspaceStore.workspaces()) {
-        nextStatusByWorkspace[workspace.id] = null;
-      }
-
-      let hadStatusError = false;
-      await Promise.all(
-        workspaceIds.map(async ([workspaceId, openworkId]) => {
-          try {
-            const status = await client.getSoulStatus(openworkId);
-            nextStatusByWorkspace[workspaceId] = status;
-          } catch {
-            hadStatusError = true;
-            nextStatusByWorkspace[workspaceId] = null;
-          }
-        }),
-      );
-      setSoulStatusByWorkspaceId(nextStatusByWorkspace);
-
-      const activeWorkspaceId = workspaceStore.activeWorkspaceId();
-      const activeOpenworkId = workspaceMap[activeWorkspaceId];
-      if (!activeOpenworkId) {
-        setActiveSoulHeartbeats([]);
-        setSoulHeartbeatsBusy(false);
-        if (hadStatusError) {
-          setSoulError("Soul status is partially unavailable.");
-        }
-        return;
-      }
-
-      setSoulHeartbeatsBusy(true);
-      try {
-        const response = await client.listSoulHeartbeats(activeOpenworkId, 30);
-        setActiveSoulHeartbeats(Array.isArray(response.items) ? response.items : []);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to load soul heartbeats.";
-        setActiveSoulHeartbeats([]);
-        setSoulError(message);
-      } finally {
-        setSoulHeartbeatsBusy(false);
-      }
-
-      if (hadStatusError && !soulError()) {
-        setSoulError("Soul status is partially unavailable.");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to load soul status.";
-      setSoulStatusByWorkspaceId({});
-      setActiveSoulHeartbeats([]);
-      setSoulHeartbeatsBusy(false);
-      setSoulError(message);
-    } finally {
-      setSoulStatusBusy(false);
-    }
-  };
-
-  const activeSoulStatus = createMemo(() => {
-    const id = workspaceStore.activeWorkspaceId();
-    if (!id) return null;
-    return soulStatusByWorkspaceId()[id] ?? null;
-  });
-
-  let lastSoulRefreshKey = "";
-  createEffect(() => {
-    const status = openworkServerStatus();
-    const hasClient = Boolean(openworkServerClient());
-    const activeWorkspaceId = workspaceStore.activeWorkspaceId();
-    const workspacesKey = workspaceStore
-      .workspaces()
-      .map((workspace) => {
-        const root = workspace.workspaceType === "local"
-          ? workspace.path?.trim() ?? ""
-          : workspace.directory?.trim() ?? workspace.path?.trim() ?? "";
-        return [workspace.id, workspace.workspaceType, workspace.remoteType ?? "", root, workspace.openworkWorkspaceId ?? ""].join("|");
-      })
-      .join(";");
-    const key = [status, hasClient ? "1" : "0", activeWorkspaceId, workspacesKey].join("::");
-    if (key === lastSoulRefreshKey) return;
-    lastSoulRefreshKey = key;
-    void refreshSoulData().catch(() => undefined);
-  });
+  const root = workspaceStore.activeWorkspaceRoot().trim();
+  const job = await schedulerDeleteJob(name, root || undefined);
+  setScheduledJobs((current) => current.filter((entry) => entry.slug !== job.slug));
+  return;
+};
 
   createEffect(() => {
     if (!isTauriRuntime()) return;
@@ -4665,7 +4619,7 @@ export default function App() {
       return;
     }
 
-    const slug = entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = entry.id ?? entry.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 
     try {
       setMcpStatus(null);
@@ -5098,26 +5052,6 @@ export default function App() {
       setCreatingSession(false);
       setBusy(false);
     }
-  }
-
-  function runSoulPrompt(promptText: string) {
-    const text = promptText.trim();
-    if (!text) return;
-    void (async () => {
-      const sessionId = await createSessionAndOpen();
-      if (!sessionId) {
-        setPrompt(text);
-        return;
-      }
-
-      await sendPrompt({
-        mode: "prompt",
-        text,
-        resolvedText: text,
-        parts: [{ type: "text", text }],
-        attachments: [],
-      });
-    })();
   }
 
 
@@ -5981,6 +5915,7 @@ export default function App() {
       submitProviderApiKey,
       view: currentView(),
       setView,
+      toggleSettings: () => toggleSettingsView("general"),
       startupPreference: startupPreference(),
       baseUrl: baseUrl(),
       clientConnected: Boolean(client()),
@@ -6054,14 +5989,6 @@ export default function App() {
       refreshScheduledJobs: (options?: { force?: boolean }) =>
         refreshScheduledJobs(options).catch(() => undefined),
       deleteScheduledJob,
-      soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
-      activeSoulStatus: activeSoulStatus(),
-      activeSoulHeartbeats: activeSoulHeartbeats(),
-      soulStatusBusy: soulStatusBusy(),
-      soulHeartbeatsBusy: soulHeartbeatsBusy(),
-      soulError: soulError(),
-      refreshSoulData: (options?: { force?: boolean }) => refreshSoulData(options).catch(() => undefined),
-      runSoulPrompt,
       activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
       isRemoteWorkspace: workspaceStore.activeWorkspaceDisplay().workspaceType === "remote",
       refreshSkills: (options?: { force?: boolean }) => refreshSkills(options).catch(() => undefined),
@@ -6222,6 +6149,7 @@ export default function App() {
     tab: tab(),
     setTab,
     setSettingsTab,
+    toggleSettings: () => toggleSettingsView("general"),
     activeWorkspaceDisplay: activeWorkspaceDisplay(),
     activeWorkspaceRoot: workspaceStore.activeWorkspaceRoot().trim(),
     workspaces: workspaceStore.workspaces(),
@@ -6276,7 +6204,6 @@ export default function App() {
     retryLastPrompt: retryLastPrompt,
     newTaskDisabled: newTaskDisabled(),
     workspaceSessionGroups: sidebarWorkspaceGroups(),
-    soulStatusByWorkspaceId: soulStatusByWorkspaceId(),
     openRenameWorkspace,
     selectSession: selectSession,
     messages: visibleMessages(),
@@ -6347,7 +6274,6 @@ export default function App() {
 
   const dashboardTabs = new Set<DashboardTab>([
     "scheduled",
-    "soul",
     "skills",
     "plugins",
     "mcp",

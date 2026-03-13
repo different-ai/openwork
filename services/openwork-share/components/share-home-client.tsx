@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { BusyMode, CopyState, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
+import { highlightSyntax } from "./share-preview-syntax";
 import {
   getPackageStatus,
   getPreviewFilename,
@@ -10,111 +11,6 @@ import {
   getSelectionLabel,
   getShareFeedback,
 } from "./share-home-state";
-
-// TODO: replace with a proper syntax highlighting library (e.g. shiki or highlight.js)
-const SKILL_KEYWORDS = /\b(Identity|Scope|Trigger|Parameters|Default behaviors|When|Why|What|How|Runs|sends|handle|qualify|route|Score|Escalate|Send)\b/g;
-const SKILL_TYPES = /\b(Agent|Skill|MCP|Config|Remote|Trigger|OpenWork|OpenCode|Duration|Handlebars)\b/g;
-
-function esc(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function span(cls: string, inner: string): string {
-  return `<span class="${cls}">${inner}</span>`;
-}
-
-function highlightJsonLine(raw: string): string {
-  const tokens: string[] = [];
-  let i = 0;
-
-  while (i < raw.length) {
-    if (raw[i] === '"') {
-      const end = raw.indexOf('"', i + 1);
-      if (end === -1) break;
-      const str = raw.slice(i, end + 1);
-      const afterStr = raw.slice(end + 1).trimStart();
-      if (afterStr.startsWith(":")) {
-        tokens.push(span("hl-key", esc(str)));
-      } else if (/^https?:\/\//.test(str.slice(1, -1))) {
-        tokens.push(span("hl-url", esc(str)));
-      } else {
-        tokens.push(span("hl-string", esc(str)));
-      }
-      i = end + 1;
-    } else if (/[{}\[\]]/.test(raw[i])) {
-      tokens.push(span("hl-bracket", esc(raw[i])));
-      i++;
-    } else if (raw[i] === ":" || raw[i] === ",") {
-      tokens.push(span("hl-punctuation", esc(raw[i])));
-      i++;
-    } else if (/\d/.test(raw[i])) {
-      const match = raw.slice(i).match(/^\d+(\.\d+)?/);
-      if (match) {
-        tokens.push(span("hl-number", match[0]));
-        i += match[0].length;
-      } else {
-        tokens.push(esc(raw[i]));
-        i++;
-      }
-    } else if (raw.startsWith("true", i) && !/\w/.test(raw[i + 4] || "")) {
-      tokens.push(span("hl-keyword", "true"));
-      i += 4;
-    } else if (raw.startsWith("false", i) && !/\w/.test(raw[i + 5] || "")) {
-      tokens.push(span("hl-keyword", "false"));
-      i += 5;
-    } else if (raw.startsWith("null", i) && !/\w/.test(raw[i + 4] || "")) {
-      tokens.push(span("hl-keyword", "null"));
-      i += 4;
-    } else if (raw.startsWith("//", i)) {
-      tokens.push(span("hl-comment", esc(raw.slice(i))));
-      break;
-    } else {
-      tokens.push(esc(raw[i]));
-      i++;
-    }
-  }
-
-  return tokens.join("");
-}
-
-function highlightMdLine(raw: string): string {
-  const line = esc(raw);
-
-  if (/^#{1,6}\s/.test(raw)) {
-    const match = line.match(/^(#{1,6}\s)(.*)/);
-    if (match) return span("hl-punctuation", match[1]) + span("hl-heading", match[2]);
-  }
-
-  let result = line;
-
-  result = result.replace(/^(\s*)(- )([a-z_]+)(:\s)/g, (_, ws: string, bullet: string, field: string, sep: string) =>
-    ws + span("hl-punctuation", bullet) + span("hl-field", field) + span("hl-punctuation", sep)
-  );
-  result = result.replace(/^(\s*)(- )/g, (_, ws: string, bullet: string) =>
-    ws + span("hl-punctuation", bullet)
-  );
-
-  result = result.replace(/(&quot;[^&]*(?:&[^&]*)*?&quot;)/g, span("hl-string", "$1"));
-  result = result.replace(/(`[^`]+`)/g, span("hl-inline-code", "$1"));
-  result = result.replace(/(\*\*[^*]+\*\*)/g, span("hl-bold", "$1"));
-
-  result = result.replace(SKILL_KEYWORDS, span("hl-keyword", "$1"));
-  result = result.replace(SKILL_TYPES, span("hl-type", "$1"));
-
-  result = result.replace(/\b(\d+(?:\.\d+)?(?:h|ms|s|m)?)\b/g, span("hl-number", "$1"));
-
-  result = result.replace(/(\|)/g, span("hl-punctuation", "$1"));
-
-  return result;
-}
-
-function highlightSyntax(text: string): string {
-  if (!text) return "";
-  const trimmed = text.trimStart();
-  const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
-  const highlightLine = isJson ? highlightJsonLine : highlightMdLine;
-  return text.split("\n").map(highlightLine).join("\n");
-}
 
 function toneClass(item: PreviewItem | null): string {
   if (item?.tone === "agent") return "dot-agent";

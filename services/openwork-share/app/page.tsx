@@ -17,16 +17,29 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
+    siteName: "OpenWork Share",
     title: "Package Your Worker",
     description: "Drop skills, agents, or MCPs into OpenWork Share and publish a worker package in one move.",
     url: DEFAULT_PUBLIC_BASE_URL,
-    images: [rootOgImageUrl]
+    images: [
+      {
+        url: rootOgImageUrl,
+        width: 1200,
+        height: 630,
+        alt: "OpenWork Share landing page preview"
+      }
+    ]
   },
   twitter: {
     card: "summary_large_image",
     title: "Package Your Worker",
     description: "Drop skills, agents, or MCPs into OpenWork Share and publish a worker package in one move.",
-    images: [rootOgImageUrl]
+    images: [
+      {
+        url: rootOgImageUrl,
+        alt: "OpenWork Share landing page preview"
+      }
+    ]
   }
 };
 

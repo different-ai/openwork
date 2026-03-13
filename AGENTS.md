@@ -132,6 +132,13 @@ Design principles for hot reload:
 ## Dev Debugging
 
 * If you change `packages/server/src`, rebuild the OpenWork server binary (`pnpm --filter openwork-server build:bin`) because `openwork` (openwork-orchestrator) runs the compiled server, not the TS sources.
+* For the local `app.openwork.software` flow, create repo-root `.env.local` first (see `.env.local.example`), then use `pnpm dev:web-local` from the repo root. This starts MySQL via `packaging/docker/docker-compose.web-local.yml`, runs Den migrations, points the Next web proxy at the local Den service on `http://127.0.0.1:8788`, and serves the web app on `http://127.0.0.1:3005`.
+* Minimum local verification for that mode:
+  * `bash -n scripts/dev-web-local.sh`
+  * `docker compose -f packaging/docker/docker-compose.web-local.yml config`
+  * `pnpm dev:web-local`
+  * `curl http://127.0.0.1:8788/health`
+  * `curl -I http://127.0.0.1:3005`
 
 ## Local Structure
 

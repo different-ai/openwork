@@ -388,6 +388,10 @@ a {
   align-items: stretch;
 }
 
+.share-bundle-grid {
+  align-items: stretch;
+}
+
 .share-card {
   backdrop-filter: blur(22px);
   box-shadow: var(--ow-shadow);
@@ -443,6 +447,10 @@ a {
   min-height: 550px;
   overflow: hidden;
   contain: size;
+}
+
+.share-preview-panel {
+  min-height: 560px;
 }
 
 .preview-surface {
@@ -510,6 +518,10 @@ a {
   line-height: 1.6;
   tab-size: 2;
   white-space: pre;
+}
+
+.share-preview-readonly {
+  min-height: 100%;
 }
 
 .preview-highlight {
@@ -1181,6 +1193,43 @@ a {
   gap: 10px;
 }
 
+.share-story-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.step-list {
+  display: grid;
+  gap: 12px;
+}
+
+.step-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  color: var(--ow-ink);
+  line-height: 1.6;
+}
+
+.step-bullet {
+  display: inline-flex;
+  min-width: 42px;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: var(--ow-muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
 button.included-item {
   font: inherit;
   color: inherit;
@@ -1451,7 +1500,8 @@ button.included-item {
   .nav,
   .hero-layout,
   .artifact-grid,
-  .share-cards-grid {
+  .share-cards-grid,
+  .share-story-grid {
     grid-template-columns: 1fr;
   }
 
