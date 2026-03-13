@@ -3954,6 +3954,17 @@ export default function SessionView(props: SessionViewProps) {
           onOpenMcp={openMcp}
           providerConnectedIds={props.providerConnectedIds}
           mcpStatuses={props.mcpStatuses}
+          statusLabel={showRunIndicator() ? "Session Active" : props.selectedSessionId ? "Session Ready" : "Session Idle"}
+          statusDetail={
+            showRunIndicator()
+              ? `${props.activeWorkspaceDisplay.name} is running`
+              : props.selectedSessionId
+                ? `${selectedSessionTitle() || props.activeWorkspaceDisplay.name} is ready`
+                : "Choose a worker to begin"
+          }
+          statusDotClass={showRunIndicator() ? "bg-green-9" : props.selectedSessionId ? "bg-green-9" : "bg-gray-8"}
+          statusPingClass={showRunIndicator() ? "bg-green-9/45 animate-ping" : "bg-green-9/35"}
+          statusPulse={showRunIndicator()}
         />
       </main>
 

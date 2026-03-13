@@ -15,6 +15,11 @@ type StatusBarProps = {
   onOpenMcp: () => void;
   providerConnectedIds: string[];
   mcpStatuses: McpStatusMap;
+  statusLabel?: string;
+  statusDetail?: string;
+  statusDotClass?: string;
+  statusPingClass?: string;
+  statusPulse?: boolean;
 };
 
 export default function StatusBar(props: StatusBarProps) {
@@ -24,6 +29,16 @@ export default function StatusBar(props: StatusBarProps) {
   );
 
   const statusCopy = createMemo(() => {
+    if (props.statusLabel) {
+      return {
+        label: props.statusLabel,
+        detail: props.statusDetail ?? "",
+        dotClass: props.statusDotClass ?? "bg-green-9",
+        pingClass: props.statusPingClass ?? "bg-green-9/45 animate-ping",
+        pulse: props.statusPulse ?? true,
+      };
+    }
+
     const providers = providerConnectedCount();
     const mcp = mcpConnectedCount();
 

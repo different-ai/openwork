@@ -223,6 +223,99 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
   return { isTask: true, agentType, sessionId };
 }
 
+function compactPathToken(value: string) {
+  const token = value
+    .trim()
+    .replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
+  const segments = token.split(/[\\/]/).filter(Boolean);
+  return segments.length > 0 ? segments[segments.length - 1] : token;
+}
+
+function compactText(value: string, max = 42) {
+  const singleLine = value.replace(/\s+/g, " ").trim();
+  if (!singleLine) return "";
+  return singleLine.length > max ? `${singleLine.slice(0, Math.max(0, max - 3))}...` : singleLine;
+}
+
+function isPathLike(value: string) {
+  return /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
+    /[\\/](?:\.opencode|Users|Library|workspaces)[\\/]/.test(value);
+}
+
+function toolHeadline(part: Part) {
+  if (part.type !== "tool") return "";
+
+  const record = part as any;
+  const state = record.state ?? {};
+  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+  const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
+
+  const pick = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = input[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return "";
+  };
+
+  const target = (...keys: string[]) => {
+    const raw = pick(...keys);
+    if (!raw) return "";
+    return isPathLike(raw) ? compactPathToken(raw) : raw;
+  };
+
+  if (tool === "bash") {
+    const description = pick("description");
+    if (description) return compactText(description);
+    const command = pick("command", "cmd");
+    return command ? compactText(`Run ${command}`, 48) : "Run command";
+  }
+
+  if (tool === "read") {
+    const file = target("filePath", "path", "file");
+    return file ? `Read ${file}` : "Read file";
+  }
+
+  if (tool === "edit") {
+    const file = target("filePath", "path", "file");
+    return file ? `Edit ${file}` : "Edit file";
+  }
+
+  if (tool === "write" || tool === "apply_patch") {
+    const file = target("filePath", "path", "file");
+    return file ? `Update ${file}` : "Update file";
+  }
+
+  if (tool === "grep" || tool === "glob" || tool === "search") {
+    const pattern = pick("pattern", "query");
+    return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
+  }
+
+  if (tool === "list" || tool === "list_files") {
+    const path = target("path");
+    return path ? `List ${path}` : "List files";
+  }
+
+  if (tool === "task") {
+    const description = pick("description");
+    if (description) return compactText(description);
+    const agent = pick("subagent_type");
+    return agent ? `Delegate ${agent}` : "Delegate task";
+  }
+
+  if (tool === "webfetch") {
+    const url = pick("url");
+    return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
+  }
+
+  if (tool === "skill") {
+    const name = pick("name");
+    return name ? `Load skill ${name}` : "Load skill";
+  }
+
+  return "";
+}
+
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
   let previousMessagePartCountById = new Map<string, number>();
@@ -529,113 +622,48 @@ export default function MessageList(props: MessageListProps) {
     props.setScrollToMessageById?.(null);
   });
 
-  /** Compact single-line step row */
+  /** Quiet single-line timeline row */
   const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
-    const category = createMemo(() => summary().toolCategory ?? "tool");
-    const status = createMemo(() => summary().status);
-    const task = createMemo(() => getTaskStepInfo(rowProps.part));
+    const headline = createMemo(() => {
+      const fromTool = toolHeadline(rowProps.part);
+      if (fromTool) return fromTool;
+      const title = summary().title?.trim() ?? "";
+      const detail = summary().detail?.trim() ?? "";
+      if (title && detail && detail.toLowerCase() !== title.toLowerCase()) {
+        return `${title} - ${detail}`;
+      }
+      return detail || title || "Updates progress";
+    });
 
     if (rowProps.part.type === "reasoning") {
       return (
-        <div class="py-2">
-          <div
-            class={`rounded-2xl border border-gray-6/60 bg-gray-2/40 px-3 py-2.5 ${
-              rowProps.groupMode === "exploration" ? "opacity-85" : ""
-            }`}
-          >
-            <div class="text-[12px] font-medium text-gray-12">{summary().title}</div>
-            <Show when={summary().detail}>
-              {(detail) => (
-                <p class="mt-1 text-[12px] leading-relaxed text-gray-10 whitespace-pre-wrap break-words">
-                  {detail()}
-                </p>
-              )}
-            </Show>
+        <div class="flex items-start gap-3 text-[14px] text-gray-9">
+          <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
+          <div class="min-w-0 leading-relaxed">
+            <span class="mr-1">Execution timeline 1 step -</span>
+            <span>{headline()}</span>
           </div>
         </div>
       );
     }
 
     return (
-      <div class="flex items-center gap-2 py-1 min-h-[24px] leading-5 group/step">
-        {/* Status dot */}
-        <div class={`w-1.5 h-1.5 rounded-full shrink-0 ${statusDotClass(status())}`} />
-        {/* Tool icon */}
-        <div class={`shrink-0 ${
-          summary().isSkill 
-            ? "text-purple-10" 
-            : "text-gray-9"
-        }`}>
-          <ToolIcon category={category()} size={13} />
+      <div class="flex items-start gap-3 text-[14px] text-gray-9">
+        <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
+        <div class="min-w-0 leading-relaxed">
+          <span class="mr-1">Execution timeline 1 step -</span>
+          <span>{headline()}</span>
         </div>
-        {/* Title */}
-        <span class="text-[13px] leading-4 text-gray-12 font-medium truncate shrink-0 max-w-[200px]">
-          {summary().title}
-        </span>
-        {/* Skill badge */}
-        <Show when={summary().isSkill}>
-          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-purple-3 text-purple-11 shrink-0">
-            skill
-          </span>
-        </Show>
-        <Show when={task().isTask}>
-          <span class="text-[10px] leading-4 px-1.5 py-0.5 rounded-full bg-blue-3 text-blue-11 shrink-0">
-            subagent
-          </span>
-        </Show>
-        {/* Detail - truncated to single line */}
-        <Show when={summary().detail}>
-          <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
-            {summary().detail}
-          </span>
-        </Show>
-        <Show when={task().agentType && !summary().detail}>
-          {(agentType) => (
-            <span class="text-[12px] leading-4 text-gray-9 truncate min-w-0">
-              {agentType()} agent
-            </span>
-          )}
-        </Show>
-        <Show when={Boolean(task().sessionId && props.openSessionById)}>
-          <button
-            type="button"
-            class="ml-auto text-[11px] text-blue-11 hover:text-blue-10 underline underline-offset-2"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const sessionId = task().sessionId;
-              if (!sessionId) return;
-              props.openSessionById?.(sessionId);
-            }}
-          >
-            open
-          </button>
-        </Show>
       </div>
     );
   };
 
-  /** Compact steps list */
+  /** Quiet steps list */
   const StepsList = (listProps: { parts: Part[]; isUser: boolean; groupMode: StepGroupMode }) => (
-    <div class="divide-y divide-gray-6/40">
+    <div class="flex flex-col gap-4">
       <For each={listProps.parts}>
-        {(part) => (
-          <div>
-            <StepRow part={part} isUser={listProps.isUser} groupMode={listProps.groupMode} />
-            <Show when={props.developerMode && part.type !== "reasoning" && (part.type !== "tool" || props.showThinking)}>
-              <div class="pl-6 pb-2 text-xs text-gray-10">
-                <PartView
-                  part={part}
-                  developerMode={props.developerMode}
-                  showThinking={props.showThinking}
-                  workspaceRoot={props.workspaceRoot}
-                  tone={listProps.isUser ? "dark" : "light"}
-                />
-              </div>
-            </Show>
-          </div>
-        )}
+        {(part) => <StepRow part={part} isUser={listProps.isUser} groupMode={listProps.groupMode} />}
       </For>
     </div>
   );
@@ -648,265 +676,15 @@ export default function MessageList(props: MessageListProps) {
     isUser: boolean;
     isInline?: boolean;
   }) => {
-    const relatedIds = () =>
-      containerProps.relatedIds ?? containerProps.stepGroups.map((group) => group.id).filter((id) => id !== containerProps.id);
-    const expanded = () => isStepsExpanded(containerProps.id, relatedIds());
-    const latestStep = () => latestStepPart(containerProps.stepGroups);
-    const allStepParts = () => containerProps.stepGroups.flatMap((group) => group.parts);
-    const toolCallCount = () =>
-      containerProps.stepGroups.reduce(
-        (sum, group) => sum + group.parts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0),
-        0,
-      );
-    const reasoningCount = () =>
-      containerProps.stepGroups.reduce(
-        (sum, group) => sum + group.parts.reduce((count, part) => (part.type === "reasoning" ? count + 1 : count), 0),
-        0,
-      );
-    const explorationGroups = () => containerProps.stepGroups.filter((group) => group.mode === "exploration");
-    const explorationOnly = () =>
-      explorationGroups().length > 0 && explorationGroups().length === containerProps.stepGroups.length;
-    const explorationSummary = () => summarizeExploration(explorationGroups().flatMap((group) => group.parts));
-    const explorationState = () => explorationStatus(explorationGroups().flatMap((group) => group.parts));
-
-    const executionSummary = () => {
-      const tools = toolCallCount();
-      const reasoning = reasoningCount();
-      if (tools > 0 && reasoning > 0) {
-        return `${tools} step${tools === 1 ? "" : "s"} with ${reasoning} thought update${reasoning === 1 ? "" : "s"}`;
-      }
-      if (tools > 0) {
-        return `${tools} step${tools === 1 ? "" : "s"}`;
-      }
-      if (reasoning > 0) {
-        return `${reasoning} thought update${reasoning === 1 ? "" : "s"}`;
-      }
-      return "updates";
-    };
-
-    const compactPathToken = (value: string) => {
-      const token = value
-        .trim()
-        .replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
-      const segments = token.split(/[\\/]/).filter(Boolean);
-      return segments.length > 0 ? segments[segments.length - 1] : token;
-    };
-
-    const compactText = (value: string, max = 42) => {
-      const singleLine = value.replace(/\s+/g, " ").trim();
-      if (!singleLine) return "";
-      return singleLine.length > max ? `${singleLine.slice(0, Math.max(0, max - 3))}...` : singleLine;
-    };
-
-    const isPathLike = (value: string) =>
-      /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
-      /[\\/](?:\.opencode|Users|Library|workspaces)[\\/]/.test(value);
-
-    const toolHeadline = (part: Part) => {
-      if (part.type !== "tool") return "";
-
-      const record = part as any;
-      const state = record.state ?? {};
-      const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
-      const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
-
-      const pick = (...keys: string[]) => {
-        for (const key of keys) {
-          const value = input[key];
-          if (typeof value === "string" && value.trim()) return value.trim();
-        }
-        return "";
-      };
-
-      const target = (...keys: string[]) => {
-        const raw = pick(...keys);
-        if (!raw) return "";
-        return isPathLike(raw) ? compactPathToken(raw) : raw;
-      };
-
-      if (tool === "bash") {
-        const description = pick("description");
-        if (description) return compactText(description);
-        const command = pick("command", "cmd");
-        return command ? compactText(`Run ${command}`, 48) : "Run command";
-      }
-
-      if (tool === "read") {
-        const file = target("filePath", "path", "file");
-        return file ? `Read ${file}` : "Read file";
-      }
-
-      if (tool === "edit") {
-        const file = target("filePath", "path", "file");
-        return file ? `Edit ${file}` : "Edit file";
-      }
-
-      if (tool === "write" || tool === "apply_patch") {
-        const file = target("filePath", "path", "file");
-        return file ? `Update ${file}` : "Update file";
-      }
-
-      if (tool === "grep" || tool === "glob" || tool === "search") {
-        const pattern = pick("pattern", "query");
-        return pattern ? `Search ${compactText(pattern, 36)}` : "Search code";
-      }
-
-      if (tool === "list" || tool === "list_files") {
-        const path = target("path");
-        return path ? `List ${path}` : "List files";
-      }
-
-      if (tool === "task") {
-        const description = pick("description");
-        if (description) return compactText(description);
-        const agent = pick("subagent_type");
-        return agent ? `Delegate ${agent}` : "Delegate task";
-      }
-
-      if (tool === "webfetch") {
-        const url = pick("url");
-        return url ? `Fetch ${compactText(url, 36)}` : "Fetch web page";
-      }
-
-      if (tool === "skill") {
-        const name = pick("name");
-        return name ? `Load skill ${name}` : "Load skill";
-      }
-
-      return "";
-    };
-
-    const latestStepLabel = () => {
-      const step = latestStep();
-      if (!step) return "Last step";
-
-      const fromTool = toolHeadline(step);
-      if (fromTool) return compactText(fromTool);
-
-      if (step.type === "tool") {
-        const toolName = String((step as any).tool ?? "").trim();
-        if (toolName) {
-          const friendlyTool = toolName.replace(/[_-]+/g, " ");
-          return compactText(friendlyTool);
-        }
-      }
-
-      const summary = summarizeStep(step);
-      const title = compactText(summary.title);
-      const detail = compactText(summary.detail ?? "");
-      const generic = /^(application|tool|step|working|done|completed|success)$/i.test(title);
-
-      if (title && !generic) return title;
-      if (detail) return isPathLike(detail) ? compactPathToken(detail) : detail;
-      if (title) return title;
-      return "Last step";
-    };
-    const hasRunning = () =>
-      allStepParts().some((part) => {
-        if (part.type !== "tool") return false;
-        const state = (part as any).state ?? {};
-        return state.status === "running" || state.status === "pending";
-      });
-    const useInnerTimelineScroll = () => !(Boolean(props.isStreaming) && hasRunning());
-
-    const collapsedLabel = () => {
-      if (explorationOnly()) {
-        return explorationState() === "exploring" ? "Exploring" : "Explored";
-      }
-      return expanded() ? "Hide timeline" : "Execution timeline";
-    };
-
-    const collapsedSummary = () => {
-      if (explorationOnly()) {
-        return formatExplorationSummary(explorationSummary());
-      }
-      return executionSummary();
-    };
-
-    const collapsedDetail = () => {
-      if (explorationOnly()) return "";
-      if (expanded()) return executionSummary();
-      return `${executionSummary()} - ${latestStepLabel()}`;
-    };
-
-    const groupHeaderLabel = (group: StepTimelineGroup) => {
-      if (group.mode !== "exploration") return "";
-      return explorationStatus(group.parts) === "exploring" ? "Exploring" : "Explored";
-    };
-
-    const groupHeaderSummary = (group: StepTimelineGroup) => {
-      if (group.mode !== "exploration") return "";
-      return formatExplorationSummary(summarizeExploration(group.parts));
-    };
+    const useInnerTimelineScroll = () => !Boolean(props.isStreaming);
 
     return (
-      <div class={containerProps.isInline ? (containerProps.isUser ? "mt-2" : "mt-3 pt-3") : ""}>
-        {/* Toggle button - clean, compact */}
-        <button
-          class={`flex items-center gap-2 py-1 leading-5 text-[13px] transition-colors ${
-            containerProps.isUser
-              ? "text-gray-10 hover:text-gray-11"
-              : "text-gray-10 hover:text-gray-12"
-          }`}
-          onClick={() => toggleSteps(containerProps.id, relatedIds())}
-        >
-          <ChevronRight
-            size={14}
-            class={`transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
-          />
-          <span class="font-medium inline-flex items-center gap-1.5 leading-4 text-xs sm:text-[13px] text-gray-11">
-            <Show when={hasRunning()}>
-              <span class="inline-flex h-1 w-1 rounded-full bg-blue-10/70 animate-pulse" />
-            </Show>
-            <span class="truncate max-w-[58ch]">{collapsedLabel()}</span>
-          </span>
-          <Show when={explorationOnly()}>
-            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[46ch]">{collapsedSummary()}</span>
-          </Show>
-          <Show when={!explorationOnly() && !expanded()}>
-            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedDetail()}</span>
-          </Show>
-          <Show when={!explorationOnly() && expanded()}>
-            <span class="text-[11px] leading-4 text-gray-9 truncate max-w-[42ch]">{collapsedSummary()}</span>
-          </Show>
-        </button>
-
-        {/* Expanded content */}
-        <Show when={expanded()}>
-          <div
-            class={`mt-1 ml-1 pl-3 border-l-2 ${useInnerTimelineScroll() ? "max-h-[480px] overflow-y-auto" : ""} ${
-              containerProps.isUser
-                ? "border-gray-6"
-                : "border-gray-6/60"
-            }`}
-          >
-            <For each={containerProps.stepGroups}>
-              {(group, index) => (
-                <div
-                  class={
-                    index() === 0
-                      ? ""
-                      : "mt-2 pt-2 border-t border-gray-6/40"
-                  }
-                >
-                  <Show when={group.mode === "exploration"}>
-                    <div class="mb-1 flex items-center gap-2 text-[11px] text-gray-9">
-                      <span
-                        class={`font-medium ${
-                          groupHeaderLabel(group) === "Exploring" ? "text-blue-11" : "text-gray-10"
-                        }`}
-                      >
-                        {groupHeaderLabel(group)}
-                      </span>
-                      <span class="truncate">{groupHeaderSummary(group)}</span>
-                    </div>
-                  </Show>
-                  <StepsList parts={group.parts} isUser={containerProps.isUser} groupMode={group.mode} />
-                </div>
-              )}
-            </For>
-          </div>
-        </Show>
+      <div class={containerProps.isInline ? (containerProps.isUser ? "mt-3" : "mt-4") : ""}>
+        <div class={`ml-4 flex flex-col gap-4 ${useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}>
+          <For each={containerProps.stepGroups}>
+            {(group) => <StepsList parts={group.parts} isUser={containerProps.isUser} groupMode={group.mode} />}
+          </For>
+        </div>
       </div>
     );
   };
@@ -924,7 +702,7 @@ export default function MessageList(props: MessageListProps) {
           if (block.kind === "steps-cluster") {
             return (
               <div
-                class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+                class={`flex group ${block.isUser ? "justify-center" : "justify-start"}`.trim()}
                 data-message-role={block.isUser ? "user" : "assistant"}
                 data-message-id={block.messageIds[0] ?? ""}
                 style={blockPerfStyle(blockIndex)}
@@ -932,7 +710,7 @@ export default function MessageList(props: MessageListProps) {
                 <div
                   class={`w-full relative ${
                     block.isUser
-                      ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
+                      ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-center text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
                       : "max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
                   } ${searchOutlineClass}`}
                 >
@@ -981,7 +759,7 @@ export default function MessageList(props: MessageListProps) {
 
           return (
             <div
-              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+              class={`flex group ${block.isUser ? "justify-center" : "justify-start"}`.trim()}
               data-message-role={block.isUser ? "user" : "assistant"}
               data-message-id={block.messageId}
               style={blockPerfStyle(blockIndex)}
@@ -989,7 +767,7 @@ export default function MessageList(props: MessageListProps) {
               <div
                 class={`w-full relative ${
                   block.isUser
-                    ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
+                    ? "max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-center text-[15px] leading-relaxed text-dls-text shadow-[var(--dls-card-shadow)]"
                     : "max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
                 } ${searchOutlineClass}`}
               >
