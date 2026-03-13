@@ -502,7 +502,8 @@ a {
   display: grid;
   grid-template-rows: 1fr;
   flex: 1;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .preview-highlight,
@@ -517,7 +518,9 @@ a {
   font-size: 13px;
   line-height: 1.6;
   tab-size: 2;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .share-preview-readonly {
