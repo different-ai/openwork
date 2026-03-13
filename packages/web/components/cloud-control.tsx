@@ -1077,6 +1077,7 @@ export function CloudControlPanel() {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [tokenFetchedForWorkerId, setTokenFetchedForWorkerId] = useState<string | null>(null);
   const [deleteBusyWorkerId, setDeleteBusyWorkerId] = useState<string | null>(null);
+  const [redeployBusyWorkerId, setRedeployBusyWorkerId] = useState<string | null>(null);
   const [workerQuery, setWorkerQuery] = useState("");
   const [workerStatusFilter, setWorkerStatusFilter] = useState<WorkerStatusBucket | "all">("all");
   const [showLaunchForm, setShowLaunchForm] = useState(false);
@@ -1205,6 +1206,7 @@ export function CloudControlPanel() {
 
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
+  const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
   const effectiveCheckoutUrl = BILLING_DISABLED_FOR_EXPERIMENT ? null : (checkoutUrl ?? billingSummary?.checkoutUrl ?? null);
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
@@ -2463,7 +2465,7 @@ export function CloudControlPanel() {
       return;
     }
 
-    if (deleteBusyWorkerId || actionBusy !== null || launchBusy) {
+    if (deleteBusyWorkerId || redeployBusyWorkerId || actionBusy !== null || launchBusy) {
       return;
     }
 
@@ -2518,6 +2520,102 @@ export function CloudControlPanel() {
       appendEvent("error", "Delete failed", message);
     } finally {
       setDeleteBusyWorkerId(null);
+    }
+  }
+
+  async function handleRedeployWorker(workerId: string) {
+    if (!user) {
+      setLaunchError("Sign in before redeploying a worker.");
+      return;
+    }
+
+    if (redeployBusyWorkerId || deleteBusyWorkerId || actionBusy !== null || launchBusy) {
+      return;
+    }
+
+    const target = workers.find((entry) => entry.workerId === workerId) ?? null;
+    const workerLabel = target?.workerName?.trim() || "Cloud Worker";
+
+    if (typeof window !== "undefined") {
+      const confirmed = window.confirm(
+        `Redeploy "${workerLabel}"? This removes the current worker and creates a new one with the same name.`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    setRedeployBusyWorkerId(workerId);
+    setLaunchError(null);
+    setCheckoutUrl(null);
+    setLaunchStatus(`Redeploying ${workerLabel}...`);
+    appendEvent("info", "Redeploy requested", workerLabel);
+
+    try {
+      const { response: deleteResponse, payload: deletePayload } = await requestJson(`/v1/workers/${encodeURIComponent(workerId)}`, {
+        method: "DELETE",
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined
+      });
+
+      if (deleteResponse.status !== 204 && !deleteResponse.ok) {
+        const message = getErrorMessage(deletePayload, `Redeploy failed while deleting (${deleteResponse.status}).`);
+        setLaunchError(message);
+        appendEvent("error", "Redeploy failed", message);
+        return;
+      }
+
+      const { response: createResponse, payload: createPayload } = await requestJson(
+        "/v1/workers",
+        {
+          method: "POST",
+          headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
+          body: JSON.stringify({
+            name: workerLabel,
+            destination: "cloud"
+          })
+        },
+        12000
+      );
+
+      if (!createResponse.ok) {
+        const message = getErrorMessage(createPayload, `Redeploy failed while creating (${createResponse.status}).`);
+        setLaunchError(message);
+        appendEvent("error", "Redeploy failed", message);
+        return;
+      }
+
+      const parsedWorker = getWorker(createPayload);
+      if (!parsedWorker) {
+        setLaunchError("Redeploy response was missing worker details.");
+        appendEvent("error", "Redeploy failed", "Worker payload missing");
+        return;
+      }
+
+      const resolvedWorker = await withResolvedOpenworkCredentials(parsedWorker, { quiet: true });
+      setWorker(resolvedWorker);
+      setWorkerLookupId(parsedWorker.workerId);
+      setPendingRestoredWorkerId(null);
+      setPaymentReturned(false);
+      setShowLaunchForm(false);
+
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, parsedWorker.workerId);
+      }
+
+      if (resolvedWorker.status === "provisioning") {
+        setLaunchStatus(`Redeploy started for ${workerLabel}. This can take a few minutes.`);
+        appendEvent("info", "Redeploy started", `Worker ID ${parsedWorker.workerId}`);
+      } else {
+        setLaunchStatus(getWorkerStatusCopy(resolvedWorker.status));
+        appendEvent("success", "Worker redeployed", workerLabel);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown network error";
+      setLaunchError(message);
+      appendEvent("error", "Redeploy failed", message);
+    } finally {
+      setRedeployBusyWorkerId(null);
+      void refreshWorkers({ keepSelection: true });
     }
   }
 
@@ -2984,6 +3082,16 @@ export function CloudControlPanel() {
                             ) : null}
                           </div>
                           <p className="mb-6 text-sm text-slate-500">{getWorkerStatusCopy(selectedWorkerStatus)}</p>
+                          {isSelectedWorkerFailed ? (
+                            <button
+                              type="button"
+                              className="rounded-[12px] bg-[#1B29FF] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-50"
+                              onClick={() => void handleRedeployWorker(selectedWorker.workerId)}
+                              disabled={redeployBusyWorkerId !== null || deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                            >
+                              {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
+                            </button>
+                          ) : null}
                         </div>
 
                         <div className="rounded-[28px] border border-slate-100 bg-white p-6">
@@ -3206,9 +3314,23 @@ export function CloudControlPanel() {
                                       </button>
                                       <button
                                         type="button"
+                                        className="rounded-[10px] border border-[#1B29FF]/20 bg-[#1B29FF]/5 px-3 py-2 text-xs font-semibold text-[#1B29FF] transition hover:bg-[#1B29FF]/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                        onClick={() => void handleRedeployWorker(selectedWorker.workerId)}
+                                        disabled={
+                                          !isSelectedWorkerFailed ||
+                                          redeployBusyWorkerId !== null ||
+                                          deleteBusyWorkerId !== null ||
+                                          actionBusy !== null ||
+                                          launchBusy
+                                        }
+                                      >
+                                        {redeployBusyWorkerId === selectedWorker.workerId ? "Redeploying..." : "Redeploy"}
+                                      </button>
+                                      <button
+                                        type="button"
                                         className="rounded-[10px] border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                                         onClick={() => void handleDeleteWorker(selectedWorker.workerId)}
-                                        disabled={deleteBusyWorkerId !== null || actionBusy !== null || launchBusy}
+                                        disabled={deleteBusyWorkerId !== null || redeployBusyWorkerId !== null || actionBusy !== null || launchBusy}
                                       >
                                         {deleteBusyWorkerId === selectedWorker.workerId ? "Deleting..." : "Delete worker"}
                                       </button>
