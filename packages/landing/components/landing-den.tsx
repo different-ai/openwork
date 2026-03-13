@@ -31,9 +31,6 @@ export function LandingDen(props: Props) {
             <div className="mb-4 flex items-center gap-2 font-medium text-gray-500">
               OpenWork hosted
             </div>
-            <h1 className="mb-6 text-5xl font-medium leading-[1.1] tracking-tight md:text-6xl lg:text-7xl">
-              Den
-            </h1>
             <h2 className="mb-4 text-2xl font-medium tracking-tight text-gray-800 md:text-3xl">
               Hosted sandboxed workers for your team
             </h2>
@@ -53,10 +50,10 @@ export function LandingDen(props: Props) {
                 Get started
               </a>
               <div className="text-sm text-gray-500">
-                <span className="font-medium text-gray-700">
+                <span className="font-medium text-gray-400 line-through">
                   $50/month per worker.
                 </span>{" "}
-                Cancel anytime.
+                Free (for a limited time).
                 <br />
                 Early adopters get priority onboarding and custom workflow setup
                 through March 1.
