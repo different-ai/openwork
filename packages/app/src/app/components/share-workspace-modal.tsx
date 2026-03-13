@@ -25,6 +25,7 @@ export default function ShareWorkspaceModal(props: {
   shareWorkspaceProfileError?: string | null;
   shareWorkspaceProfileDisabledReason?: string | null;
   onShareSkillsSet?: () => void;
+  onOpenSingleSkillShare?: () => void;
   shareSkillsSetBusy?: boolean;
   shareSkillsSetUrl?: string | null;
   shareSkillsSetError?: string | null;
@@ -306,13 +307,22 @@ export default function ShareWorkspaceModal(props: {
                   <Show 
                     when={props.shareSkillsSetUrl?.trim()} 
                     fallback={
-                      <button
-                        onClick={() => props.onShareSkillsSet?.()}
-                        disabled={Boolean(props.shareSkillsSetDisabledReason) || !props.onShareSkillsSet || props.shareSkillsSetBusy}
-                        class="w-full py-2.5 bg-gray-2 hover:bg-gray-3 text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
-                      >
-                        {props.shareSkillsSetBusy ? "Publishing..." : "Create Skill Link"}
-                      </button>
+                      <div class="space-y-2">
+                        <button
+                          onClick={() => props.onShareSkillsSet?.()}
+                          disabled={Boolean(props.shareSkillsSetDisabledReason) || !props.onShareSkillsSet || props.shareSkillsSetBusy}
+                          class="w-full py-2.5 bg-gray-2 hover:bg-gray-3 text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
+                        >
+                          {props.shareSkillsSetBusy ? "Publishing..." : "Create Skill Link"}
+                        </button>
+                        <button
+                          onClick={() => props.onOpenSingleSkillShare?.()}
+                          disabled={!props.onOpenSingleSkillShare}
+                          class="w-full py-2.5 bg-gray-1 border border-gray-6 hover:bg-gray-2 text-gray-11 hover:text-gray-12 text-[13px] font-bold rounded-xl transition-all disabled:opacity-50"
+                        >
+                          Share Single Skill
+                        </button>
+                      </div>
                     }
                   >
                     <div class="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">

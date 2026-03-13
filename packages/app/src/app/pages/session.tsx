@@ -4192,6 +4192,11 @@ export default function SessionView(props: SessionViewProps) {
         shareWorkspaceProfileError={shareWorkspaceProfileError()}
         shareWorkspaceProfileDisabledReason={shareServiceDisabledReason()}
         onShareSkillsSet={publishSkillsSetLink}
+        onOpenSingleSkillShare={() => {
+          setShareWorkspaceId(null);
+          props.setTab("skills");
+          props.setView("dashboard");
+        }}
         shareSkillsSetBusy={shareSkillsSetBusy()}
         shareSkillsSetUrl={shareSkillsSetUrl()}
         shareSkillsSetError={shareSkillsSetError()}
