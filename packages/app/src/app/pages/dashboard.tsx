@@ -60,6 +60,7 @@ import {
   Circle,
   History,
   Loader2,
+  Menu,
   MessageCircle,
   MoreHorizontal,
   Plus,
@@ -1029,7 +1030,7 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   return (
-    <div class="h-screen w-full overflow-hidden bg-dls-sidebar p-3 md:p-4 text-dls-text font-sans">
+    <div class="h-screen w-full overflow-hidden bg-white p-3 md:p-4 text-dls-text font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
         class="relative hidden md:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
@@ -1143,7 +1144,29 @@ export default function DashboardView(props: DashboardViewProps) {
               <span class="hidden text-[12px] text-dls-secondary lg:inline">{props.busyHint}</span>
             </Show>
           </div>
-          <div class="flex items-center gap-2" />
+          <div class="flex items-center gap-1.5 text-gray-10">
+            <button
+              type="button"
+              class="hidden items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text sm:flex"
+              onClick={toggleRightSidebar}
+              title="Menu"
+              aria-label="Menu"
+            >
+              <Menu size={15} />
+              <span>Menu</span>
+              <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">⌘K</span>
+            </button>
+            <div class="hidden h-4 w-px bg-dls-border sm:block" />
+            <button
+              type="button"
+              class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text"
+              onClick={props.toggleSettings}
+              title="More"
+              aria-label="More"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+          </div>
         </header>
 
         <div class="mx-auto w-full max-w-[1100px] space-y-10 p-6 md:p-10">

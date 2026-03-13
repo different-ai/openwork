@@ -3321,7 +3321,7 @@ export default function SessionView(props: SessionViewProps) {
   );
 
   return (
-    <div class="h-screen w-full overflow-hidden bg-dls-sidebar p-3 md:p-4 text-gray-12 font-sans">
+    <div class="h-screen w-full overflow-hidden bg-white p-3 md:p-4 text-gray-12 font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
         class="relative hidden lg:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
@@ -3464,7 +3464,7 @@ export default function SessionView(props: SessionViewProps) {
             >
               <Menu size={15} />
               <span>Menu</span>
-              <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">Cmd+K</span>
+              <span class="ml-1 rounded border border-dls-border px-1 text-[10px] text-gray-9">⌘K</span>
             </button>
             <button
               type="button"

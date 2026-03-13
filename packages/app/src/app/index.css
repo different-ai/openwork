@@ -67,7 +67,7 @@ body {
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--dls-text-primary);
-  background-color: var(--dls-sidebar);
+  background-color: var(--dls-surface);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
