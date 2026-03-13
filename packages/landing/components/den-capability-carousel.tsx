@@ -20,14 +20,14 @@ const capabilityItems = [
 ];
 
 const premiumBadgeClassName =
-  "relative flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/80 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.96),rgba(255,255,255,0.52)_34%,transparent_35%),linear-gradient(180deg,#f6f8fb_0%,#e0e6ee_100%)] text-[#111827] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),0_14px_26px_-20px_rgba(15,23,42,0.26)] ring-1 ring-[#d9e0e8]";
+  "relative flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white/80 bg-[radial-gradient(circle_at_28%_24%,rgba(255,255,255,0.96),rgba(255,255,255,0.52)_34%,transparent_35%),linear-gradient(180deg,#f6f8fb_0%,#e0e6ee_100%)] text-[#111827] shadow-[inset_0_1px_0_rgba(255,255,255,0.88),0_14px_26px_-20px_rgba(15,23,42,0.26)] ring-1 ring-[#d9e0e8]";
 
 export function DenCapabilityCarousel() {
   const reduceMotion = useReducedMotion();
   const repeatedItems = [...capabilityItems, ...capabilityItems];
 
   return (
-    <section className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden py-5 md:py-6">
+    <section className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden py-3 md:py-4">
       <div className="content-max-width mb-5 px-6 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500 md:px-8">
         What you get
       </div>
@@ -54,7 +54,7 @@ export function DenCapabilityCarousel() {
               >
                 <span className={premiumBadgeClassName}>
                   <span className="pointer-events-none absolute inset-[1px] rounded-full bg-[radial-gradient(circle_at_72%_76%,rgba(255,255,255,0.18),transparent_46%),repeating-linear-gradient(135deg,rgba(255,255,255,0.08)_0,rgba(255,255,255,0.08)_1px,transparent_1px,transparent_7px)] opacity-80" />
-                  <Icon size={17} strokeWidth={2.2} className="relative z-10" />
+                  <Icon size={15} strokeWidth={2.2} className="relative z-10" />
                 </span>
                 <span className="text-[1rem] font-medium tracking-tight text-[#011627] md:text-[1.08rem]">
                   {item.label}
