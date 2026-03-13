@@ -27,7 +27,7 @@ export function DenCapabilityCarousel() {
   const repeatedItems = [...capabilityItems, ...capabilityItems];
 
   return (
-    <section className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden py-3 md:py-4">
+    <section className="relative left-1/2 w-screen -translate-x-1/2 overflow-hidden py-5 md:py-6">
       <div className="content-max-width mb-5 px-6 text-[11px] font-semibold uppercase tracking-[0.22em] text-gray-500 md:px-8">
         What you get
       </div>
