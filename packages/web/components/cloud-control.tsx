@@ -2768,29 +2768,44 @@ export function CloudControlPanel() {
 
   return (
     <section
-      className={`ow-card${
+      className={`ow-card ${
         isShellStep
-          ? " ow-card-shell"
+          ? "ow-card-shell"
           : step === "auth"
-            ? " ow-card-auth"
-            : " ow-card-onboarding"
+            ? "mx-auto w-full max-w-[32rem]"
+            : "mx-auto w-full max-w-[48rem]"
       }`}
     >
       {!isShellStep ? (
-        <div className="ow-onboarding-head">
+        <div className="grid gap-4 border-b border-[var(--dls-border)] px-5 pb-5 pt-5 md:px-8 md:pb-6 md:pt-6">
           <div className="ow-progress-track" aria-hidden="true">
             <span className="ow-progress-fill" style={{ width: progressWidth }} />
           </div>
-          <div className="ow-stepper" aria-label="Den onboarding steps">
+          <div className="flex flex-wrap items-center gap-2 md:gap-3" aria-label="Den onboarding steps">
             {ONBOARDING_STEPS.map((item, index) => {
               const isCompleted = onboardingStepIndex > index;
               const isActive = onboardingStep === item.id;
               return (
                 <div
                   key={item.id}
-                  className={`ow-stepper-item${isActive ? " is-active" : ""}${isCompleted ? " is-complete" : ""}`}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                    isActive
+                      ? "border-slate-900/10 bg-slate-900 text-white"
+                      : isCompleted
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                        : "border-[var(--dls-border)] bg-white text-[var(--dls-text-secondary)]"
+                  }`}
                 >
-                  <span className="ow-stepper-dot" aria-hidden="true">
+                  <span
+                    className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
+                      isActive
+                        ? "bg-white/15 text-white"
+                        : isCompleted
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-[var(--dls-hover)] text-[var(--dls-text-secondary)]"
+                    }`}
+                    aria-hidden="true"
+                  >
                     {index + 1}
                   </span>
                   <span>{item.label}</span>
@@ -2804,23 +2819,23 @@ export function CloudControlPanel() {
       <div className="ow-card-body">
 
         {step === "auth" ? (
-          <div className="ow-stack ow-auth-panel">
-            <div className="ow-heading-block">
-              <span className="ow-icon-chip">01</span>
-              <h1 className="ow-title">{authMode === "sign-up" ? "Start with your email" : "Welcome back"}</h1>
-              <p className="ow-subtitle">
-                {authMode === "sign-up" ? (
-                  <>
-                    <span className="ow-subtitle-line">Create your Den account.</span>
-                    <span className="ow-subtitle-line">We will spin up your first worker right away.</span>
-                  </>
-                ) : (
-                  getAuthInfoForMode("sign-in")
-                )}
+          <div className="mx-auto grid w-full max-w-[28rem] gap-6 px-1 py-1">
+            <div className="grid gap-3 text-center">
+              <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dls-text-secondary)]">
+                <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-[var(--dls-text-primary)] shadow-sm">01</span>
+                Account
+              </div>
+              <h1 className="text-[2rem] font-semibold leading-[1.05] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.35rem]">
+                {authMode === "sign-up" ? "Launch your first worker in one calm flow." : "Welcome back to Den."}
+              </h1>
+              <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                {authMode === "sign-up"
+                  ? "Start with your email, tell us what you want the worker to do, and we will begin provisioning right away."
+                  : getAuthInfoForMode("sign-in")}
               </p>
             </div>
 
-            <form className="ow-stack" onSubmit={handleAuthSubmit}>
+            <form className="grid gap-3 rounded-[24px] border border-[var(--dls-border)] bg-white p-4 shadow-[var(--dls-card-shadow)] md:p-5" onSubmit={handleAuthSubmit}>
               <button
                 type="button"
                 className="ow-btn-secondary ow-social-btn"
@@ -2891,7 +2906,7 @@ export function CloudControlPanel() {
             </div>
 
             {showAuthFeedback ? (
-              <div className="ow-auth-feedback" aria-live="polite">
+              <div className="ow-auth-feedback rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3" aria-live="polite">
                 {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
                 {authError ? <p className="ow-error-text">{authError}</p> : null}
               </div>
@@ -2900,106 +2915,144 @@ export function CloudControlPanel() {
         ) : null}
 
         {step === "intent" ? (
-          <div className="ow-stack ow-onboarding-panel">
-            <div className="ow-heading-block">
-              <span className="ow-icon-chip">02</span>
-              <h2 className="ow-title">What should this worker help with?</h2>
-              <p className="ow-subtitle">
-                Totally optional. This helps us suggest a better setup and naming.
+          <div className="mx-auto grid w-full max-w-[42rem] gap-6 px-1 py-1 md:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
+            <div className="grid gap-5 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6">
+              <div className="grid gap-3">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dls-text-secondary)]">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-[var(--dls-text-primary)] shadow-sm">02</span>
+                  Intent
+                </div>
+                <h2 className="text-[1.8rem] font-semibold leading-[1.08] tracking-[-0.035em] text-[var(--dls-text-primary)] md:text-[2.15rem]">What should this worker do first?</h2>
+                <p className="text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                  Keep it short. We use this to seed the worker name and make the setup feel intentional.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2" role="list" aria-label="Worker intent suggestions">
+                {INTENT_SUGGESTIONS.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    className="rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-left text-[13px] font-medium text-[var(--dls-text-primary)] transition hover:border-slate-300 hover:bg-white"
+                    onClick={() => applyIntentSuggestion(suggestion)}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+
+              <label className="ow-field-block">
+                <span className="ow-field-label">Your worker intent (optional)</span>
+                <textarea
+                  className="ow-input min-h-[9rem] resize-y"
+                  value={workerIntent}
+                  onChange={(event) => setWorkerIntent(event.target.value)}
+                  placeholder="Example: Monitor new inbound leads, enrich them, and post a daily summary."
+                  rows={5}
+                  maxLength={300}
+                />
+              </label>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="ow-btn-secondary"
+                  onClick={() => continueFromIntent(true)}
+                >
+                  Skip for now
+                </button>
+                <button
+                  type="button"
+                  className="ow-btn-primary-inline"
+                  onClick={() => continueFromIntent(false)}
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+
+            <div className="grid content-start gap-4 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+              <div>
+                <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">In progress</div>
+                <div className="mt-2 text-[1.15rem] font-semibold tracking-[-0.03em] text-[var(--dls-text-primary)]">We are already creating the worker.</div>
+              </div>
+              <div className="rounded-[22px] border border-white bg-white p-4 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-2xl bg-slate-900 text-white inline-flex items-center justify-center text-[11px] font-semibold">AI</div>
+                  <div>
+                    <div className="text-sm font-semibold text-[var(--dls-text-primary)]">{workerName || "Founder Ops Pilot"}</div>
+                    <div className="text-[13px] text-[var(--dls-text-secondary)]">Provisioning in the background</div>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[14px] leading-6 text-[var(--dls-text-secondary)]">
+                Skip this if you want. You can always rename the worker or refine its job later after it comes online.
               </p>
             </div>
-
-            <div className="ow-intent-suggestions" role="list" aria-label="Worker intent suggestions">
-              {INTENT_SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  className="ow-intent-pill"
-                  onClick={() => applyIntentSuggestion(suggestion)}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
-
-            <label className="ow-field-block">
-              <span className="ow-field-label">Your worker intent (optional)</span>
-              <textarea
-                className="ow-input ow-textarea"
-                value={workerIntent}
-                onChange={(event) => setWorkerIntent(event.target.value)}
-                placeholder="Example: Monitor new inbound leads, enrich them, and post a daily summary."
-                rows={5}
-                maxLength={300}
-              />
-            </label>
-
-            <div className="ow-inline-actions ow-inline-row">
-              <button
-                type="button"
-                className="ow-btn-secondary"
-                onClick={() => continueFromIntent(true)}
-              >
-                Skip for now
-              </button>
-              <button
-                type="button"
-                className="ow-btn-primary-inline"
-                onClick={() => continueFromIntent(false)}
-              >
-                Continue
-              </button>
-            </div>
-
-            <p className="ow-caption ow-centered-text">
-              Your worker is already being created in the background while you finish this step.
-            </p>
           </div>
         ) : null}
 
         {step === "initializing" ? (
-          <div className="ow-stack ow-onboarding-panel ow-loading-panel">
-            <div className="ow-heading-block">
-              <span className="ow-icon-chip">03</span>
-              <h2 className="ow-title">Initializing your worker</h2>
-              <p className="ow-subtitle">We are provisioning your environment and preparing the connection.</p>
+          <div className="mx-auto grid w-full max-w-[44rem] gap-6 px-1 py-1 md:grid-cols-[minmax(0,1.1fr)_minmax(250px,0.9fr)]">
+            <div className="grid gap-5 rounded-[28px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
+              <div className="grid gap-3">
+                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--dls-text-secondary)]">
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white text-[10px] text-[var(--dls-text-primary)] shadow-sm">03</span>
+                  Initializing
+                </div>
+                <h2 className="text-[1.9rem] font-semibold leading-[1.06] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.3rem]">Your worker is coming online.</h2>
+                <p className="text-[15px] leading-7 text-[var(--dls-text-secondary)]">We are provisioning the runtime, securing access, and preparing your connection details.</p>
+              </div>
+
+              <div className="rounded-[24px] border border-[var(--dls-border)] bg-[linear-gradient(180deg,#fbfcfd_0%,#ffffff_100%)] p-5">
+                <div className="flex items-center gap-4">
+                  <span className="inline-flex h-12 w-12 animate-spin items-center justify-center rounded-full border-2 border-slate-200 border-t-slate-900" aria-hidden="true" />
+                  <div>
+                    <p className="text-[15px] font-semibold text-[var(--dls-text-primary)]">{launchBusy ? "Creating worker" : "Provisioning in progress"}</p>
+                    <p className="mt-1 text-[13px] leading-6 text-[var(--dls-text-secondary)]">{launchStatus}</p>
+                  </div>
+                </div>
+                {launchError ? <p className="mt-4 text-[13px] font-medium text-rose-600">{launchError}</p> : null}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <button
+                  type="button"
+                  className="ow-btn-secondary"
+                  onClick={() => setStep("workspace")}
+                  disabled={!worker}
+                >
+                  Open dashboard
+                </button>
+                <button
+                  type="button"
+                  className="ow-btn-primary-inline"
+                  onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
+                  disabled={launchBusy}
+                >
+                  {launchBusy ? "Working..." : "Retry provisioning"}
+                </button>
+              </div>
             </div>
 
-            <div className="ow-loader-wrap" aria-live="polite">
-              <span className="ow-loader-ring" aria-hidden="true" />
-              <p className="ow-loader-title">{launchBusy ? "Creating worker" : "Provisioning in progress"}</p>
-              <p className="ow-caption ow-centered-text">{launchStatus}</p>
-              {launchError ? <p className="ow-error-text ow-centered-text">{launchError}</p> : null}
-            </div>
+            <div className="grid content-start gap-4 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
+              <div className="rounded-[22px] border border-white bg-white p-4 shadow-sm">
+                <div className="text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">Live status</div>
+                <div className="mt-2 text-[1.1rem] font-semibold tracking-[-0.03em] text-[var(--dls-text-primary)]">{workerName || "Founder Ops Pilot"}</div>
+                <div className="mt-1 text-[13px] text-[var(--dls-text-secondary)]">{worker?.status ? getWorkerStatusCopy(worker.status) : "Preparing worker record"}</div>
+              </div>
 
-            {desktopContext ? (
-              <a
-                href={OPENWORK_DOWNLOAD_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="ow-desktop-cta"
-              >
-                While loading, try the desktop app - it is instantly available.
-              </a>
-            ) : null}
-
-            <div className="ow-inline-actions ow-inline-row">
-              <button
-                type="button"
-                className="ow-btn-secondary"
-                onClick={() => setStep("workspace")}
-                disabled={!worker}
-              >
-                Open dashboard
-              </button>
-              <button
-                type="button"
-                className="ow-btn-primary-inline"
-                onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
-                disabled={launchBusy}
-              >
-                {launchBusy ? "Working..." : "Retry provisioning"}
-              </button>
+              {desktopContext ? (
+                <a
+                  href={OPENWORK_DOWNLOAD_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="rounded-[22px] border border-slate-200 bg-white p-4 text-[14px] font-medium leading-6 text-[var(--dls-text-primary)] shadow-sm transition hover:border-slate-300"
+                >
+                  <span className="block text-[12px] font-semibold uppercase tracking-[0.18em] text-[var(--dls-text-secondary)]">While loading</span>
+                  <span className="mt-2 block">Try the desktop app - it is instantly available and feels closest to the full OpenWork experience.</span>
+                </a>
+              ) : null}
             </div>
           </div>
         ) : null}
