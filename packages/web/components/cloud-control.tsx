@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 
-type Step = 1 | 2;
+type OnboardingStep = "auth" | "intent" | "initializing";
+type Step = OnboardingStep | "workspace";
 type AuthMode = "sign-in" | "sign-up";
 type SocialAuthProvider = "github" | "google";
 type ShellView = "workers" | "billing";
@@ -160,6 +161,18 @@ const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
 const BILLING_DISABLED_FOR_EXPERIMENT = true;
+const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
+const ONBOARDING_STEPS: Array<{ id: OnboardingStep; label: string }> = [
+  { id: "auth", label: "Email" },
+  { id: "intent", label: "Intent" },
+  { id: "initializing", label: "Initializing" }
+];
+const INTENT_SUGGESTIONS = [
+  "Handle customer support triage",
+  "Review pull requests and summarize",
+  "Run sales follow-ups from CRM",
+  "Prepare weekly operations reports"
+];
 
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
@@ -240,6 +253,33 @@ function getSocialCallbackUrl(): string {
 
 function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
+}
+
+function normalizeIntent(input: string): string {
+  return input.trim().replace(/\s+/g, " ");
+}
+
+function getIntentSeedName(input: string): string {
+  const normalized = normalizeIntent(input);
+  if (!normalized) {
+    return "Founder Ops Pilot";
+  }
+
+  const clipped = normalized.slice(0, 48);
+  if (clipped.length <= 2) {
+    return "Founder Ops Pilot";
+  }
+
+  return clipped;
+}
+
+function isDesktopContext(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const ua = window.navigator.userAgent || "";
+  return !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
 }
 
 function getExperimentBillingSummary(): BillingSummary {
@@ -1032,7 +1072,7 @@ function CredentialRow({
 }
 
 export function CloudControlPanel() {
-  const [step, setStep] = useState<Step>(1);
+  const [step, setStep] = useState<Step>("auth");
   const [shellView, setShellView] = useState<ShellView>("workers");
 
   const [authMode, setAuthMode] = useState<AuthMode>("sign-up");
@@ -1056,6 +1096,7 @@ export function CloudControlPanel() {
   });
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
+  const [workerIntent, setWorkerIntent] = useState("");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
@@ -1089,6 +1130,9 @@ export function CloudControlPanel() {
   const [runtimeBusy, setRuntimeBusy] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeUpgradeBusy, setRuntimeUpgradeBusy] = useState(false);
+  const [signupOnboardingActive, setSignupOnboardingActive] = useState(false);
+  const [autoLaunchPending, setAutoLaunchPending] = useState(false);
+  const [desktopContext, setDesktopContext] = useState(false);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
   const activeWorker: WorkerLaunch | null =
@@ -1098,8 +1142,10 @@ export function CloudControlPanel() {
         ? listItemToWorker(selectedWorker, worker)
         : worker;
 
-  const progressWidth = step === 1 ? "45%" : "100%";
-  const isShellStep = step === 2;
+  const onboardingStep: OnboardingStep = step === "workspace" ? "initializing" : step;
+  const onboardingStepIndex = Math.max(ONBOARDING_STEPS.findIndex((item) => item.id === onboardingStep), 0);
+  const progressWidth = `${Math.round(((onboardingStepIndex + 1) / ONBOARDING_STEPS.length) * 100)}%`;
+  const isShellStep = step === "workspace";
   const defaultAuthInfo = getAuthInfoForMode(authMode);
   const showAuthFeedback = authInfo !== defaultAuthInfo || authError !== null;
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
@@ -1735,6 +1781,11 @@ export function CloudControlPanel() {
       userId: user.id,
       authMethod: pendingSocialSignup
     });
+    setSignupOnboardingActive(true);
+    setAutoLaunchPending(true);
+    setLaunchError(null);
+    setLaunchStatus("Creating your first worker. This usually takes a minute or two.");
+    setStep("intent");
   }, [user?.id]);
 
   useEffect(() => {
@@ -1827,16 +1878,28 @@ export function CloudControlPanel() {
   }, [worker]);
 
   useEffect(() => {
-    if (user || checkoutUrl) {
-      setStep(2);
+    if (typeof window === "undefined") {
       return;
     }
 
-    setStep(1);
-  }, [user, checkoutUrl]);
+    setDesktopContext(isDesktopContext());
+  }, []);
 
   useEffect(() => {
-    if (step !== 2) {
+    if (user || checkoutUrl) {
+      if (step === "auth" && !signupOnboardingActive) {
+        setStep("workspace");
+      }
+      return;
+    }
+
+    setStep("auth");
+    setSignupOnboardingActive(false);
+    setAutoLaunchPending(false);
+  }, [checkoutUrl, signupOnboardingActive, step, user]);
+
+  useEffect(() => {
+    if (step !== "workspace") {
       return;
     }
 
@@ -1847,6 +1910,33 @@ export function CloudControlPanel() {
     setMobileWorkersExpanded(false);
     setShowLaunchForm(pendingRestoredWorkerId === null);
   }, [pendingRestoredWorkerId, step, workers.length]);
+
+  useEffect(() => {
+    if (!autoLaunchPending || !user || launchBusy) {
+      return;
+    }
+
+    if (workerLimitReached) {
+      setAutoLaunchPending(false);
+      return;
+    }
+
+    setAutoLaunchPending(false);
+    void handleLaunchWorker({ source: "signup_auto" });
+  }, [autoLaunchPending, launchBusy, user?.id, workerLimitReached]);
+
+  useEffect(() => {
+    if (step !== "initializing" || !worker) {
+      return;
+    }
+
+    if (worker.status === "provisioning") {
+      return;
+    }
+
+    setStep("workspace");
+    setSignupOnboardingActive(false);
+  }, [step, worker?.status, worker?.workerId]);
 
   useEffect(() => {
     if (!user || !worker) {
@@ -1984,7 +2074,16 @@ export function CloudControlPanel() {
         }
       }
 
-      setStep(2);
+      if (authMode === "sign-up") {
+        setSignupOnboardingActive(true);
+        setAutoLaunchPending(true);
+        setLaunchError(null);
+        setLaunchStatus("Creating your first worker. This usually takes a minute or two.");
+        setStep("intent");
+      } else {
+        setSignupOnboardingActive(false);
+        setStep("workspace");
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown network error";
       setAuthError(message);
@@ -2120,8 +2219,11 @@ export function CloudControlPanel() {
     setDeleteBusyWorkerId(null);
     setActionBusy(null);
     setLaunchBusy(false);
-    setStep(1);
+    setStep("auth");
     setShellView("workers");
+    setSignupOnboardingActive(false);
+    setAutoLaunchPending(false);
+    setWorkerIntent("");
     setWorkerQuery("");
     setWorkerStatusFilter("all");
     setShowLaunchForm(false);
@@ -2142,19 +2244,29 @@ export function CloudControlPanel() {
     }
   }
 
-  async function handleLaunchWorker() {
+  async function handleLaunchWorker(options: {
+    source?: "manual" | "signup_auto" | "onboarding_continue";
+    workerNameOverride?: string;
+  } = {}) {
     if (!user) {
       setAuthError("Sign in before launching a worker.");
       return;
     }
 
+    const resolvedLaunchName = options.workerNameOverride?.trim() || workerName.trim() || "Cloud Worker";
+
     setLaunchBusy(true);
     setLaunchError(null);
     setCheckoutUrl(null);
-    setLaunchStatus("Checking subscription and launch eligibility...");
-    appendEvent("info", "Launch requested", workerName.trim() || "Cloud worker");
+    setLaunchStatus(
+      options.source === "signup_auto"
+        ? "Creating your first worker..."
+        : "Checking subscription and launch eligibility..."
+    );
+    appendEvent("info", "Launch requested", resolvedLaunchName);
     trackPosthogEvent("den_worker_launch_requested", {
-      worker_name_present: Boolean(workerName.trim())
+      worker_name_present: Boolean(resolvedLaunchName),
+      source: options.source ?? "manual"
     });
 
     try {
@@ -2164,7 +2276,7 @@ export function CloudControlPanel() {
           method: "POST",
           headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
           body: JSON.stringify({
-            name: workerName.trim() || "Cloud Worker",
+            name: resolvedLaunchName,
             destination: "cloud"
           })
         },
@@ -2268,6 +2380,41 @@ export function CloudControlPanel() {
     } finally {
       setLaunchBusy(false);
       void refreshWorkers({ keepSelection: true });
+    }
+  }
+
+  function applyIntentSuggestion(value: string) {
+    setWorkerIntent((current) => {
+      const normalized = normalizeIntent(current);
+      if (!normalized) {
+        return value;
+      }
+
+      return current;
+    });
+  }
+
+  function continueFromIntent(skip: boolean) {
+    const normalizedIntent = normalizeIntent(workerIntent);
+    let launchNameOverride: string | undefined;
+
+    trackPosthogEvent("den_worker_intent_submitted", {
+      skipped: skip || normalizedIntent.length === 0,
+      intent_length: normalizedIntent.length
+    });
+
+    if (normalizedIntent) {
+      appendEvent("info", "Worker intent", normalizedIntent);
+      if (!worker) {
+        launchNameOverride = getIntentSeedName(normalizedIntent);
+        setWorkerName(launchNameOverride);
+      }
+    }
+
+    setStep("initializing");
+
+    if (!worker && !launchBusy && !autoLaunchPending && user) {
+      void handleLaunchWorker({ source: "onboarding_continue", workerNameOverride: launchNameOverride });
     }
   }
 
@@ -2620,25 +2767,52 @@ export function CloudControlPanel() {
   }
 
   return (
-    <section className={`ow-card${isShellStep ? " ow-card-shell" : " ow-card-auth"}`}>
+    <section
+      className={`ow-card${
+        isShellStep
+          ? " ow-card-shell"
+          : step === "auth"
+            ? " ow-card-auth"
+            : " ow-card-onboarding"
+      }`}
+    >
       {!isShellStep ? (
-        <div className="ow-progress-track">
-          <span className="ow-progress-fill" style={{ width: progressWidth }} />
+        <div className="ow-onboarding-head">
+          <div className="ow-progress-track" aria-hidden="true">
+            <span className="ow-progress-fill" style={{ width: progressWidth }} />
+          </div>
+          <div className="ow-stepper" aria-label="Den onboarding steps">
+            {ONBOARDING_STEPS.map((item, index) => {
+              const isCompleted = onboardingStepIndex > index;
+              const isActive = onboardingStep === item.id;
+              return (
+                <div
+                  key={item.id}
+                  className={`ow-stepper-item${isActive ? " is-active" : ""}${isCompleted ? " is-complete" : ""}`}
+                >
+                  <span className="ow-stepper-dot" aria-hidden="true">
+                    {index + 1}
+                  </span>
+                  <span>{item.label}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 
       <div className="ow-card-body">
 
-        {step === 1 ? (
+        {step === "auth" ? (
           <div className="ow-stack ow-auth-panel">
             <div className="ow-heading-block">
               <span className="ow-icon-chip">01</span>
-              <h1 className="ow-title">{authMode === "sign-up" ? "Get started" : "Welcome back"}</h1>
+              <h1 className="ow-title">{authMode === "sign-up" ? "Start with your email" : "Welcome back"}</h1>
               <p className="ow-subtitle">
                 {authMode === "sign-up" ? (
                   <>
-                    <span className="ow-subtitle-line">Create an account to launch</span>
-                    <span className="ow-subtitle-line">and manage cloud workers.</span>
+                    <span className="ow-subtitle-line">Create your Den account.</span>
+                    <span className="ow-subtitle-line">We will spin up your first worker right away.</span>
                   </>
                 ) : (
                   getAuthInfoForMode("sign-in")
@@ -2725,7 +2899,112 @@ export function CloudControlPanel() {
           </div>
         ) : null}
 
-        {step === 2 ? (
+        {step === "intent" ? (
+          <div className="ow-stack ow-onboarding-panel">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">02</span>
+              <h2 className="ow-title">What should this worker help with?</h2>
+              <p className="ow-subtitle">
+                Totally optional. This helps us suggest a better setup and naming.
+              </p>
+            </div>
+
+            <div className="ow-intent-suggestions" role="list" aria-label="Worker intent suggestions">
+              {INTENT_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  type="button"
+                  className="ow-intent-pill"
+                  onClick={() => applyIntentSuggestion(suggestion)}
+                >
+                  {suggestion}
+                </button>
+              ))}
+            </div>
+
+            <label className="ow-field-block">
+              <span className="ow-field-label">Your worker intent (optional)</span>
+              <textarea
+                className="ow-input ow-textarea"
+                value={workerIntent}
+                onChange={(event) => setWorkerIntent(event.target.value)}
+                placeholder="Example: Monitor new inbound leads, enrich them, and post a daily summary."
+                rows={5}
+                maxLength={300}
+              />
+            </label>
+
+            <div className="ow-inline-actions ow-inline-row">
+              <button
+                type="button"
+                className="ow-btn-secondary"
+                onClick={() => continueFromIntent(true)}
+              >
+                Skip for now
+              </button>
+              <button
+                type="button"
+                className="ow-btn-primary-inline"
+                onClick={() => continueFromIntent(false)}
+              >
+                Continue
+              </button>
+            </div>
+
+            <p className="ow-caption ow-centered-text">
+              Your worker is already being created in the background while you finish this step.
+            </p>
+          </div>
+        ) : null}
+
+        {step === "initializing" ? (
+          <div className="ow-stack ow-onboarding-panel ow-loading-panel">
+            <div className="ow-heading-block">
+              <span className="ow-icon-chip">03</span>
+              <h2 className="ow-title">Initializing your worker</h2>
+              <p className="ow-subtitle">We are provisioning your environment and preparing the connection.</p>
+            </div>
+
+            <div className="ow-loader-wrap" aria-live="polite">
+              <span className="ow-loader-ring" aria-hidden="true" />
+              <p className="ow-loader-title">{launchBusy ? "Creating worker" : "Provisioning in progress"}</p>
+              <p className="ow-caption ow-centered-text">{launchStatus}</p>
+              {launchError ? <p className="ow-error-text ow-centered-text">{launchError}</p> : null}
+            </div>
+
+            {desktopContext ? (
+              <a
+                href={OPENWORK_DOWNLOAD_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="ow-desktop-cta"
+              >
+                While loading, try the desktop app - it is instantly available.
+              </a>
+            ) : null}
+
+            <div className="ow-inline-actions ow-inline-row">
+              <button
+                type="button"
+                className="ow-btn-secondary"
+                onClick={() => setStep("workspace")}
+                disabled={!worker}
+              >
+                Open dashboard
+              </button>
+              <button
+                type="button"
+                className="ow-btn-primary-inline"
+                onClick={() => void handleLaunchWorker({ source: "onboarding_continue" })}
+                disabled={launchBusy}
+              >
+                {launchBusy ? "Working..." : "Retry provisioning"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {step === "workspace" ? (
           <div className="flex h-full flex-col gap-3">
             <div className="mb-3 flex items-center justify-between rounded-[18px] border border-slate-200 bg-white p-2 lg:hidden">
               <div className="flex gap-2">
@@ -2855,7 +3134,7 @@ export function CloudControlPanel() {
                         <button
                           type="button"
                           className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                          onClick={handleLaunchWorker}
+                          onClick={() => void handleLaunchWorker({ source: "manual" })}
                           disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
                         >
                           {launchBusy
@@ -2971,7 +3250,7 @@ export function CloudControlPanel() {
                       <button
                         type="button"
                         className="w-full rounded-[12px] bg-[#1B29FF] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#151FDA] disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={handleLaunchWorker}
+                        onClick={() => void handleLaunchWorker({ source: "manual" })}
                         disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
                       >
                         {launchBusy

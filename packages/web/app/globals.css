@@ -135,6 +135,10 @@ body {
     width: min(100%, 28rem);
 }
 
+.ow-card-onboarding {
+    width: min(100%, 42rem);
+}
+
 .ow-card-shell {
     width: calc(100vw - 3rem);
     max-width: none;
@@ -167,6 +171,63 @@ body {
     background: #e8edf8;
 }
 
+.ow-onboarding-head {
+    display: grid;
+    gap: 0.8rem;
+    padding: 1rem 1.3rem 0.55rem;
+}
+
+.ow-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.55rem;
+    color: #64748b;
+    font-size: 0.72rem;
+    font-weight: 600;
+}
+
+.ow-stepper-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    white-space: nowrap;
+}
+
+.ow-stepper-item.is-active {
+    color: #1b29ff;
+}
+
+.ow-stepper-item.is-complete {
+    color: #0f766e;
+}
+
+.ow-stepper-dot {
+    width: 1.4rem;
+    height: 1.4rem;
+    border-radius: 999px;
+    border: 1px solid #d4ddf2;
+    background: #ffffff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.66rem;
+    line-height: 1;
+    font-weight: 700;
+}
+
+.ow-stepper-item.is-active .ow-stepper-dot {
+    border-color: rgba(27, 41, 255, 0.45);
+    color: #1b29ff;
+    background: rgba(27, 41, 255, 0.08);
+}
+
+.ow-stepper-item.is-complete .ow-stepper-dot {
+    border-color: rgba(15, 118, 110, 0.35);
+    color: #0f766e;
+    background: rgba(15, 118, 110, 0.08);
+}
+
 .ow-progress-fill {
     display: block;
     height: 100%;
@@ -185,6 +246,11 @@ body {
 
 .ow-auth-panel {
     width: min(100%, 21.875rem);
+    margin: 0 auto;
+}
+
+.ow-onboarding-panel {
+    width: min(100%, 34rem);
     margin: 0 auto;
 }
 
@@ -414,6 +480,99 @@ body {
     text-align: center;
     color: #475569;
     font-size: 0.82rem;
+}
+
+.ow-centered-text {
+    text-align: center;
+}
+
+.ow-textarea {
+    resize: vertical;
+    min-height: 7.25rem;
+}
+
+.ow-intent-suggestions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.ow-intent-pill {
+    appearance: none;
+    border: 1px solid #d6deef;
+    background: #f8faff;
+    color: #334155;
+    border-radius: 999px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    padding: 0.4rem 0.72rem;
+    transition:
+        border-color 140ms ease,
+        color 140ms ease,
+        background-color 140ms ease;
+}
+
+.ow-intent-pill:hover {
+    border-color: rgba(27, 41, 255, 0.35);
+    color: #1b29ff;
+    background: rgba(27, 41, 255, 0.08);
+}
+
+.ow-loading-panel {
+    gap: 1.2rem;
+}
+
+.ow-loader-wrap {
+    border: 1px solid #dce3f3;
+    border-radius: 1rem;
+    background: linear-gradient(180deg, #f8fbff 0%, #ffffff 100%);
+    padding: 1.1rem 1rem;
+    display: grid;
+    gap: 0.55rem;
+    justify-items: center;
+}
+
+.ow-loader-ring {
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 999px;
+    border: 2px solid rgba(27, 41, 255, 0.22);
+    border-top-color: #1b29ff;
+    animation: ow-spin 1.05s linear infinite;
+}
+
+.ow-loader-title {
+    margin: 0;
+    font-size: 0.93rem;
+    font-weight: 700;
+    color: #0f172a;
+}
+
+.ow-desktop-cta {
+    border: 1px solid rgba(27, 41, 255, 0.22);
+    background: rgba(27, 41, 255, 0.07);
+    color: #1b29ff;
+    border-radius: 0.92rem;
+    padding: 0.75rem 0.85rem;
+    text-decoration: none;
+    font-size: 0.83rem;
+    font-weight: 600;
+    line-height: 1.35;
+    text-align: center;
+    transition: background-color 140ms ease;
+}
+
+.ow-desktop-cta:hover {
+    background: rgba(27, 41, 255, 0.12);
+}
+
+@keyframes ow-spin {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .ow-app-shell {
@@ -1094,6 +1253,37 @@ body {
         width: 100%;
     }
 
+    .ow-card-onboarding {
+        width: 100%;
+    }
+
+    .ow-onboarding-head {
+        padding: 0.85rem 0.95rem 0.48rem;
+        gap: 0.6rem;
+    }
+
+    .ow-stepper {
+        justify-content: flex-start;
+        overflow-x: auto;
+        gap: 0.45rem;
+        font-size: 0.68rem;
+        scrollbar-width: none;
+    }
+
+    .ow-stepper::-webkit-scrollbar {
+        display: none;
+    }
+
+    .ow-stepper-item {
+        flex: 0 0 auto;
+    }
+
+    .ow-stepper-dot {
+        width: 1.22rem;
+        height: 1.22rem;
+        font-size: 0.58rem;
+    }
+
     .ow-card-shell {
         width: calc(100vw - 1rem);
         min-height: calc(100vh - 5.2rem);
@@ -1121,6 +1311,18 @@ body {
         width: 100%;
     }
 
+    .ow-onboarding-panel {
+        width: 100%;
+    }
+
+    .ow-inline-actions.ow-inline-row {
+        justify-content: space-between;
+    }
+
+    .ow-desktop-cta {
+        font-size: 0.78rem;
+    }
+
     .ow-auth-panel .ow-inline-row {
         flex-direction: row;
         align-items: center;
@@ -1136,5 +1338,9 @@ body {
     .ow-link,
     .ow-input {
         transition: none;
+    }
+
+    .ow-loader-ring {
+        animation: none;
     }
 }
