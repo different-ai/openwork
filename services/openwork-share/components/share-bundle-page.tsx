@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type MouseEvent } from "react";
 
 import type { BundlePageProps } from "../server/_lib/types.ts";
 import ShareNav from "./share-nav";
@@ -55,6 +55,19 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
     }, 800);
   };
 
+  const openInOpenWork = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!openInAppUrl || openInAppUrl === "#") return;
+    event.preventDefault();
+
+    try {
+      const url = new URL(openInAppUrl);
+      url.searchParams.set("ow_nonce", `${Date.now()}`);
+      window.location.assign(url.toString());
+    } catch {
+      window.location.assign(openInAppUrl);
+    }
+  };
+
   return (
     <main className="shell">
       <ShareNav stars={props.stars} />
@@ -82,7 +95,7 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
                 <button className="button-primary" type="button" onClick={() => void copyPreview()}>
                   {previewCopied ? "Copied to clipboard" : "Copy to clipboard"}
                 </button>
-                <a className="button-secondary" href={openInAppUrl}>
+                <a className="button-secondary" href={openInAppUrl} onClick={openInOpenWork}>
                   Open in OpenWork
                 </a>
               </div>

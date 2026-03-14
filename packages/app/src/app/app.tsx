@@ -36,6 +36,8 @@ import SharedSkillDestinationModal from "./components/shared-skill-destination-m
 import SharedBundleImportModal from "./components/shared-bundle-import-modal";
 import RenameWorkspaceModal from "./components/rename-workspace-modal";
 import McpAuthModal from "./components/mcp-auth-modal";
+import ReloadWorkspaceToast from "./components/reload-workspace-toast";
+import StatusToast from "./components/status-toast";
 import OnboardingView from "./pages/onboarding";
 import DashboardView from "./pages/dashboard";
 import SessionView from "./pages/session";
@@ -247,6 +249,11 @@ type SharedBundleCreateWorkerRequest = {
 type SharedSkillDestinationRequest = {
   request: SharedBundleDeepLink;
   bundle: SharedSkillBundleV1;
+};
+
+type SharedSkillSuccessToast = {
+  title: string;
+  description: string;
 };
 
 type SharedBundleImportTarget = {
@@ -3471,6 +3478,10 @@ export default function App() {
       );
       if (!imported) return;
 
+      showSharedSkillSuccessToast({
+        title: "Skill added",
+        description: `Added '${destination.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspace)}.`,
+      });
       setSharedSkillDestinationRequest(null);
       setSharedBundleCreateWorkerRequest(null);
       setSharedBundleNoticeShown(false);
@@ -3727,10 +3738,37 @@ export default function App() {
   const [sharedBundleImportBusy, setSharedBundleImportBusy] = createSignal(false);
   const [sharedBundleImportError, setSharedBundleImportError] = createSignal<string | null>(null);
   const [sharedBundleNoticeShown, setSharedBundleNoticeShown] = createSignal(false);
+  const [sharedSkillSuccessToast, setSharedSkillSuccessToast] = createSignal<SharedSkillSuccessToast | null>(null);
   const [renameWorkspaceOpen, setRenameWorkspaceOpen] = createSignal(false);
   const [renameWorkspaceId, setRenameWorkspaceId] = createSignal<string | null>(null);
   const [renameWorkspaceName, setRenameWorkspaceName] = createSignal("");
   const [renameWorkspaceBusy, setRenameWorkspaceBusy] = createSignal(false);
+  let sharedSkillSuccessToastTimer: number | null = null;
+
+  const clearSharedSkillSuccessToast = () => {
+    if (sharedSkillSuccessToastTimer) {
+      window.clearTimeout(sharedSkillSuccessToastTimer);
+      sharedSkillSuccessToastTimer = null;
+    }
+    setSharedSkillSuccessToast(null);
+  };
+
+  const showSharedSkillSuccessToast = (toast: SharedSkillSuccessToast) => {
+    if (sharedSkillSuccessToastTimer) {
+      window.clearTimeout(sharedSkillSuccessToastTimer);
+    }
+    setSharedSkillSuccessToast(toast);
+    sharedSkillSuccessToastTimer = window.setTimeout(() => {
+      sharedSkillSuccessToastTimer = null;
+      setSharedSkillSuccessToast(null);
+    }, 4200);
+  };
+
+  onCleanup(() => {
+    if (sharedSkillSuccessToastTimer) {
+      window.clearTimeout(sharedSkillSuccessToastTimer);
+    }
+  });
 
   const createWorkspaceDefaultPreset = createMemo<WorkspacePreset>(() =>
     sharedBundleCreateWorkerRequest()?.defaultPreset ?? "starter"
@@ -3764,6 +3802,15 @@ export default function App() {
         return aLabel.localeCompare(bLabel, undefined, { sensitivity: "base" });
       });
   });
+
+  const describeWorkspaceForToasts = (workspace: WorkspaceDisplay | WorkspaceInfo | null) =>
+    workspace?.displayName?.trim() ||
+    workspace?.openworkWorkspaceName?.trim() ||
+    workspace?.name?.trim() ||
+    workspace?.directory?.trim() ||
+    workspace?.path?.trim() ||
+    workspace?.baseUrl?.trim() ||
+    "the selected worker";
 
   const queueRemoteConnectDeepLink = (rawUrl: string): boolean => {
     const parsed = parseRemoteConnectDeepLink(rawUrl);
@@ -6669,7 +6716,7 @@ export default function App() {
     mcpStatus: mcpStatus(),
     skills: skills(),
     skillsStatus: skillsStatus(),
-    showSkillReloadBanner: reloadRequired() && reloadTrigger()?.type === "skill",
+    showSkillReloadBanner: false,
     reloadBannerTitle: reloadCopy().title,
     reloadBannerBody: reloadCopy().body,
     reloadBannerBlocked: activeReloadBlockingSessions().length > 0,
@@ -6986,6 +7033,12 @@ export default function App() {
           }, request.bundle);
           setSharedBundleCreateWorkerRequest(null);
           if (imported) {
+            if (request.bundle.type === "skill") {
+              showSharedSkillSuccessToast({
+                title: "Skill added",
+                description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(workspaceStore.activeWorkspaceDisplay())}.`,
+              });
+            }
             setSharedSkillDestinationRequest(null);
           }
         }}
@@ -7008,6 +7061,12 @@ export default function App() {
                               null,
                             directoryHint: active.directory?.trim() || active.path?.trim() || null,
                           }, request.bundle);
+                          if (request.bundle.type === "skill") {
+                            showSharedSkillSuccessToast({
+                              title: "Skill added",
+                              description: `Added '${request.bundle.name.trim() || "Shared skill"}' to ${describeWorkspaceForToasts(active)}.`,
+                            });
+                          }
                         },
                       }
                     : undefined,
@@ -7104,7 +7163,7 @@ export default function App() {
           if (sharedSkillDestinationBusyId()) return;
           setSharedSkillDestinationRequest(null);
         }}
-        onSelectWorkspace={importSharedSkillIntoWorkspace}
+        onSubmitWorkspace={importSharedSkillIntoWorkspace}
         onCreateWorker={
           isTauriRuntime()
             ? () => {
@@ -7139,6 +7198,40 @@ export default function App() {
           (busyLabel() === "status.creating_workspace" || busyLabel() === "status.connecting")
         }
       />
+
+      <div class="pointer-events-none fixed right-4 top-4 z-50 flex w-[min(24rem,calc(100vw-1.5rem))] max-w-full flex-col gap-3 sm:right-6 sm:top-6">
+        <div class="pointer-events-auto">
+          <StatusToast
+            open={Boolean(sharedSkillSuccessToast())}
+            tone="success"
+            title={sharedSkillSuccessToast()?.title ?? "Skill added"}
+            description={sharedSkillSuccessToast()?.description ?? null}
+            dismissLabel="Dismiss"
+            onDismiss={clearSharedSkillSuccessToast}
+          />
+        </div>
+
+        <div class="pointer-events-auto">
+          <ReloadWorkspaceToast
+            open={reloadRequired() && reloadTrigger()?.type === "skill"}
+            title={reloadCopy().title}
+            description={reloadCopy().body}
+            trigger={reloadTrigger()}
+            error={reloadError()}
+            reloadLabel={activeReloadBlockingSessions().length > 0 ? "Reload & Stop Tasks" : "Reload now"}
+            dismissLabel="Later"
+            busy={reloadBusy()}
+            canReload={canReloadWorkspace()}
+            hasActiveRuns={activeReloadBlockingSessions().length > 0}
+            onReload={() => {
+              void (activeReloadBlockingSessions().length > 0
+                ? forceStopActiveSessionsAndReload()
+                : reloadWorkspaceEngineAndResume());
+            }}
+            onDismiss={clearReloadRequired}
+          />
+        </div>
+      </div>
 
       <RenameWorkspaceModal
         open={renameWorkspaceOpen()}
