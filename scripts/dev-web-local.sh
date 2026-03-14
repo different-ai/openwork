@@ -6,6 +6,13 @@ COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.web-local.yml"
 PROJECT_NAME="openwork-web-local"
 DEV_CMD=(pnpm --parallel --filter @openwork/den --filter @different-ai/openwork-web dev)
 
+# Local-dev defaults — match the MySQL container in docker-compose.web-local.yml.
+# These are only used when not already set in the environment or .env.
+: "${DATABASE_URL:=mysql://root:password@127.0.0.1:3306/openwork_den}"
+: "${BETTER_AUTH_SECRET:=local-dev-secret-not-for-production-use!!}"
+: "${BETTER_AUTH_URL:=http://localhost:8788}"
+export DATABASE_URL BETTER_AUTH_SECRET BETTER_AUTH_URL
+
 detect_web_origins() {
   node <<'EOF'
 const os = require('os');
