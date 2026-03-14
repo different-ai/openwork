@@ -3744,6 +3744,16 @@ export default function SessionView(props: SessionViewProps) {
                     Set up browser actions and run reliable web tasks from OpenWork.
                   </div>
                 </button>
+                <button
+                  type="button"
+                  class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                  onClick={openProviderAuth}
+                >
+                  <div class="text-sm font-semibold text-dls-text">Connect ChatGPT for free</div>
+                  <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                    Pro tip: connect your ChatGPT account to unlock a free provider path.
+                  </div>
+                </button>
               </div>
             </div>
           </Show>
