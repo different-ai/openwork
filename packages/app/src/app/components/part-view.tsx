@@ -470,6 +470,8 @@ function createCustomRenderer(tone: "light" | "dark") {
         src="${safeHref}"
         alt="${escapeHtml(text || "")}"
         ${safeTitle ? `title="${safeTitle}"` : ""}
+        loading="lazy"
+        decoding="async"
         class="max-w-full h-auto rounded-lg my-4"
       />
     `;
@@ -1071,6 +1073,8 @@ export default function PartView(props: Props) {
                     <img
                       src={image.src}
                       alt={image.alt || ""}
+                      loading="lazy"
+                      decoding="async"
                       class="max-w-full h-auto rounded-lg border border-gray-6/50"
                     />
                   )}
@@ -1126,6 +1130,8 @@ export default function PartView(props: Props) {
         <img
           src={inlineImage()!}
           alt=""
+          loading="lazy"
+          decoding="async"
           class="max-w-full h-auto rounded-xl border border-gray-6/50"
         />
       </Match>

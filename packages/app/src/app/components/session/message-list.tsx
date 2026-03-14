@@ -76,6 +76,11 @@ type MessageBlock = {
   kind: "message";
   message: MessageWithParts;
   renderableParts: Part[];
+  attachments: Array<{
+    url: string;
+    filename: string;
+    mime: string;
+  }>;
   groups: MessageGroup[];
   isUser: boolean;
   messageId: string;
@@ -392,14 +397,16 @@ function toolHeadline(part: Part) {
 export default function MessageList(props: MessageListProps) {
   const [copyingId, setCopyingId] = createSignal<string | null>(null);
   let previousMessagePartCountById = new Map<string, number>();
+  let previousMessageBlockById = new Map<string, MessageBlock>();
+  let previousBlockRenderKey = "";
   let copyTimeout: number | undefined;
   const isAttachmentPart = (part: Part) => {
     if (part.type !== "file") return false;
     const url = (part as { url?: string }).url;
     return typeof url === "string" && !url.startsWith("file://");
   };
-  const attachmentsForMessage = (message: MessageWithParts) =>
-    message.parts
+  const attachmentsForParts = (parts: Part[]) =>
+    parts
       .filter(isAttachmentPart)
       .map((part) => {
         const record = part as {
@@ -505,8 +512,10 @@ export default function MessageList(props: MessageListProps) {
 
   const messageBlocks = createMemo<MessageBlockItem[]>(() => {
     const startedAt = perfNow();
+    const renderKey = `${props.developerMode ? 1 : 0}:${props.showThinking ? 1 : 0}`;
     const blocks: MessageBlockItem[] = [];
     const nextMessagePartCountById = new Map<string, number>();
+    const nextMessageBlockById = new Map<string, MessageBlock>();
     let changedMessageCount = 0;
     let addedMessageCount = 0;
     let toolPartCount = 0;
@@ -521,10 +530,34 @@ export default function MessageList(props: MessageListProps) {
       const totalParts = message.parts.length;
       nextMessagePartCountById.set(idKey, totalParts);
       const previousPartCount = previousMessagePartCountById.get(idKey);
+      const previousBlock = previousMessageBlockById.get(idKey);
       if (previousPartCount === undefined) {
         addedMessageCount += 1;
       } else if (previousPartCount !== totalParts) {
         changedMessageCount += 1;
+      }
+
+      const isUser = (message.info as any).role === "user";
+      const canReuseStableBlock =
+        previousBlockRenderKey === renderKey &&
+        index < props.messages.length - 1 &&
+        previousPartCount !== undefined &&
+        previousPartCount === totalParts &&
+        previousBlock?.kind === "message" &&
+        previousBlock.isUser === isUser;
+
+      if (canReuseStableBlock && previousBlock) {
+        toolPartCount += previousBlock.renderableParts.reduce(
+          (count, part) => (part.type === "tool" ? count + 1 : count),
+          0,
+        );
+        stepGroupCount += previousBlock.groups.reduce(
+          (count, group) => (group.kind === "steps" ? count + 1 : count),
+          0,
+        );
+        blocks.push(previousBlock);
+        nextMessageBlockById.set(idKey, previousBlock);
+        return;
       }
 
       toolPartCount += renderableParts.reduce(
@@ -532,8 +565,9 @@ export default function MessageList(props: MessageListProps) {
         0,
       );
       const groupId = String((message.info as any).id ?? "message");
-      const groups = groupMessageParts(renderableParts, groupId);
-      const isUser = (message.info as any).role === "user";
+      const attachments = attachmentsForParts(renderableParts);
+      const nonAttachmentParts = renderableParts.filter((part) => !isAttachmentPart(part));
+      const groups = groupMessageParts(nonAttachmentParts, groupId);
       const isStepsOnly =
         groups.length > 0 && groups.every((group) => group.kind === "steps");
       const stepGroups = isStepsOnly
@@ -565,14 +599,17 @@ export default function MessageList(props: MessageListProps) {
         return;
       }
 
-      blocks.push({
+      const block: MessageBlock = {
         kind: "message",
         message,
         renderableParts,
+        attachments,
         groups,
         isUser,
         messageId,
-      });
+      };
+      blocks.push(block);
+      nextMessageBlockById.set(idKey, block);
     });
 
     let removedMessageCount = 0;
@@ -582,6 +619,8 @@ export default function MessageList(props: MessageListProps) {
       }
     });
     previousMessagePartCountById = nextMessagePartCountById;
+    previousMessageBlockById = nextMessageBlockById;
+    previousBlockRenderKey = renderKey;
 
     const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
     if (
@@ -926,7 +965,7 @@ export default function MessageList(props: MessageListProps) {
               : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
           } ${searchOutlineClass}`}
         >
-          <Show when={attachmentsForMessage(block.message).length > 0}>
+          <Show when={block.attachments.length > 0}>
             <div
               class={
                 block.isUser
@@ -934,7 +973,7 @@ export default function MessageList(props: MessageListProps) {
                   : "mb-4 flex flex-wrap gap-2"
               }
             >
-              <For each={attachmentsForMessage(block.message)}>
+              <For each={block.attachments}>
                 {(attachment) => (
                   <div class="flex items-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3 py-2 text-xs text-gray-11 shadow-[var(--dls-card-shadow)]">
                     <Show
@@ -945,6 +984,8 @@ export default function MessageList(props: MessageListProps) {
                         <img
                           src={attachment.url}
                           alt={attachment.filename}
+                          loading="lazy"
+                          decoding="async"
                           class="h-full w-full object-cover"
                         />
                       </div>

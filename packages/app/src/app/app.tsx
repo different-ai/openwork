@@ -138,6 +138,17 @@ import { createSystemState } from "./system-state";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { createSessionStore } from "./context/session";
+
+const fileToDataUrl = (file: File) =>
+  new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`Failed to read attachment: ${file.name}`));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      resolve(result);
+    };
+    reader.readAsDataURL(file);
+  });
 import { createExtensionsStore } from "./context/extensions";
 import { useGlobalSync } from "./context/global-sync";
 import { createWorkspaceStore } from "./context/workspace";
@@ -1448,7 +1459,14 @@ export default function App() {
 
   type PartInput = TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput;
 
-  const buildPromptParts = (draft: ComposerDraft): PartInput[] => {
+  const attachmentToFilePart = async (attachment: ComposerAttachment): Promise<FilePartInput> => ({
+    type: "file",
+    url: await fileToDataUrl(attachment.file),
+    filename: attachment.name,
+    mime: attachment.mimeType,
+  });
+
+  const buildPromptParts = async (draft: ComposerDraft): Promise<PartInput[]> => {
     const parts: PartInput[] = [];
     const text = draft.resolvedText ?? draft.text;
     parts.push({ type: "text", text } as TextPartInput);
@@ -1488,19 +1506,12 @@ export default function App() {
       }
     }
 
-    for (const attachment of draft.attachments) {
-      parts.push({
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as FilePartInput);
-    }
+    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
 
     return parts;
   };
 
-  const buildCommandFileParts = (draft: ComposerDraft): FilePartInput[] => {
+  const buildCommandFileParts = async (draft: ComposerDraft): Promise<FilePartInput[]> => {
     const parts: FilePartInput[] = [];
     const root = workspaceProjectDir().trim();
 
@@ -1531,14 +1542,7 @@ export default function App() {
       } as FilePartInput);
     }
 
-    for (const attachment of draft.attachments) {
-      parts.push({
-        type: "file",
-        url: attachment.dataUrl,
-        filename: attachment.name,
-        mime: attachment.mimeType,
-      } as FilePartInput);
-    }
+    parts.push(...(await Promise.all(draft.attachments.map(attachmentToFilePart))));
 
     return parts;
   };
@@ -1682,7 +1686,7 @@ export default function App() {
 
       const model = selectedSessionModel();
       const agent = selectedSessionAgent();
-      const parts = buildPromptParts(resolvedDraft);
+      const parts = await buildPromptParts(resolvedDraft);
       const selectedVariant = modelVariant() ?? undefined;
       const reasoningEffort = resolveCodexReasoningEffort(model.modelID, selectedVariant ?? null);
       const requestVariant = reasoningEffort ? undefined : selectedVariant;
@@ -1710,7 +1714,7 @@ export default function App() {
 
         // Slash command: route through session.command() API
         const modelString = `${model.providerID}/${model.modelID}`;
-        const files = buildCommandFileParts(resolvedDraft);
+        const files = await buildCommandFileParts(resolvedDraft);
 
         // session.command() expects `model` as a provider/model string and only supports file parts.
         unwrap(

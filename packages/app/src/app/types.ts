@@ -96,7 +96,8 @@ export type ComposerAttachment = {
   mimeType: string;
   size: number;
   kind: "image" | "file";
-  dataUrl: string;
+  file: File;
+  previewUrl?: string;
 };
 
 export type SlashCommandOption = {

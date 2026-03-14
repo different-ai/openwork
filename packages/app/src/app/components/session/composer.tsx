@@ -138,16 +138,12 @@ const formatLinks = (links: Array<{ name: string; target: string }>) =>
     .map((entry) => `[${escapeMarkdownLabel(entry.name || "file")}](${entry.target})`)
     .join("\n");
 
-const fileToDataUrl = (file: File) =>
-  new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read attachment"));
-    reader.onload = () => {
-      const result = typeof reader.result === "string" ? reader.result : "";
-      resolve(result);
-    };
-    reader.readAsDataURL(file);
-  });
+const estimateInlineAttachmentBytes = (file: Blob) => {
+  const mimeType = file.type || "application/octet-stream";
+  const prefixBytes = `data:${mimeType};base64,`.length;
+  const base64Bytes = Math.ceil(file.size / 3) * 4;
+  return prefixBytes + base64Bytes + 512;
+};
 
 /**
  * Compress an image file to JPEG using OffscreenCanvas (off main thread when possible).
@@ -463,6 +459,11 @@ export default function Composer(props: ComposerProps) {
     objectUrls.add(url);
     return url;
   };
+  const releaseObjectUrl = (url?: string) => {
+    if (!url) return;
+    if (!objectUrls.delete(url)) return;
+    URL.revokeObjectURL(url);
+  };
   // Track IME composition state so we can combine it with keyCode === 229 to
   // reliably suppress Enter during CJK input across Chrome, Safari, and WebKit.
   let imeComposing = false;
@@ -490,6 +491,23 @@ export default function Composer(props: ComposerProps) {
     }
     objectUrls.clear();
   });
+
+  const clearSentAttachments = () => {
+    const current = attachments();
+    for (const attachment of current) {
+      releaseObjectUrl(attachment.previewUrl);
+    }
+    setAttachments([]);
+  };
+
+  const removeAttachment = (attachmentId: string) => {
+    setAttachments((current: ComposerAttachment[]) => {
+      const target = current.find((item) => item.id === attachmentId);
+      releaseObjectUrl(target?.previewUrl);
+      return current.filter((item) => item.id !== attachmentId);
+    });
+    emitDraftChange();
+  };
 
   const createPasteSpan = (part: Extract<ComposerPart, { type: "paste" }>) => {
     pasteTextById.set(part.id, part.text);
@@ -1047,7 +1065,7 @@ export default function Composer(props: ComposerProps) {
     props.onSend(draft);
     setSlashOpen(false);
     setSlashQuery("");
-    setAttachments([]);
+    clearSentAttachments();
     setEditorText("");
     emitDraftChange();
     queueMicrotask(() => focusEditorEnd());
@@ -1087,11 +1105,9 @@ export default function Composer(props: ComposerProps) {
         continue;
       }
       try {
-        // Compress images before encoding to data URL
+        // Compress images before keeping them in local draft state.
         const processed = isImageMime(file.type) ? await compressImageFile(file) : file;
-        const dataUrl = await fileToDataUrl(processed);
-        // Pre-check: data URL will be embedded in JSON body; reject if too large
-        const estimatedJsonBytes = dataUrl.length + 512; // data URL + JSON overhead
+        const estimatedJsonBytes = estimateInlineAttachmentBytes(processed);
         if (estimatedJsonBytes > MAX_ATTACHMENT_BYTES) {
           props.onToast(`${file.name} is too large after encoding. Try a smaller image.`);
           continue;
@@ -1102,7 +1118,8 @@ export default function Composer(props: ComposerProps) {
           mimeType: processed.type || "application/octet-stream",
           size: processed.size,
           kind: isImageMime(processed.type) ? "image" : "file",
-          dataUrl,
+          file: processed,
+          previewUrl: isImageMime(processed.type) ? createObjectUrl(processed) : undefined,
         });
       } catch (error) {
         props.onToast(error instanceof Error ? error.message : "Failed to read attachment");
@@ -1683,7 +1700,12 @@ export default function Composer(props: ComposerProps) {
                         fallback={<FileIcon size={14} class="text-gray-9" />}
                       >
                         <div class="h-10 w-10 rounded-xl bg-gray-1 overflow-hidden border border-gray-6">
-                          <img src={attachment.dataUrl} alt={attachment.name} class="h-full w-full object-cover" />
+                          <img
+                            src={attachment.previewUrl!}
+                            alt={attachment.name}
+                            decoding="async"
+                            class="h-full w-full object-cover"
+                          />
                         </div>
                       </Show>
                       <div class="max-w-[160px]">
@@ -1695,12 +1717,7 @@ export default function Composer(props: ComposerProps) {
                       <button
                         type="button"
                         class="ml-1 rounded-full p-1 text-gray-10 hover:text-gray-11 hover:bg-gray-4"
-                        onClick={() => {
-                          setAttachments((current: ComposerAttachment[]) =>
-                            current.filter((item) => item.id !== attachment.id)
-                          );
-                          emitDraftChange();
-                        }}
+                        onClick={() => removeAttachment(attachment.id)}
                       >
                         <X size={12} />
                       </button>
