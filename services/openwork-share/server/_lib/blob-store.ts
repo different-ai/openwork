@@ -1,3 +1,4 @@
+import os from "node:os";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -24,7 +25,7 @@ function resolveLocalBlobDir(): string | null {
     return null;
   }
 
-  return path.resolve(process.cwd(), ".openwork-share-blobs");
+  return path.join(os.tmpdir(), "openwork-share-blobs");
 }
 
 function resolveBundlePathname(id: string): string {

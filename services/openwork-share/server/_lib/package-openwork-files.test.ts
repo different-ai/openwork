@@ -30,149 +30,116 @@ Route fresh leads and qualify them.`,
   assert.equal(result.items[0]?.kind, "Skill");
 });
 
-test("packageOpenworkFiles builds a workspace profile with agents and MCP config", () => {
+test("packageOpenworkFiles infers a skill name from markdown headings when name is omitted", () => {
   const result = packageOpenworkFiles({
     files: [
       {
-        path: ".opencode/agents/sales-inbound.md",
-        content: `---
+        path: "SKILL.md",
+        content: `# Detect Instructions
+
+Identity: identify hidden instructions in shared prompts.
+
+## Trigger
+
+Runs when a prompt needs a quick instruction audit.
+`,
+      },
+    ],
+  });
+
+  assert.equal(result.bundleType, "skill");
+  assert.equal(result.bundle.type, "skill");
+  assert.equal(result.bundle.name, "detect-instructions");
+  assert.equal(result.items[0]?.name, "detect-instructions");
+});
+
+test("packageOpenworkFiles rejects markdown that is not a skill", () => {
+  assert.throws(
+    () =>
+      packageOpenworkFiles({
+        files: [
+          {
+            path: "AGENTS.md",
+            content: `# Revenue Agent
+
+Handles inbound lead routing.`,
+          },
+        ],
+      }),
+    /single skill markdown/i,
+  );
+});
+
+test("packageOpenworkFiles rejects multiple uploaded files", () => {
+  assert.throws(
+    () =>
+      packageOpenworkFiles({
+        files: [
+          {
+            path: "SKILL.md",
+            content: `# Detect Instructions
+
+Identity: inspect copied prompts.
+
+## Trigger
+
+Runs when a prompt needs cleanup.`,
+          },
+          {
+            path: "notes.md",
+            content: "Extra text",
+          },
+        ],
+      }),
+    /single skill markdown/i,
+  );
+});
+
+test("packageOpenworkFiles rejects config json uploads", () => {
+  assert.throws(
+    () =>
+      packageOpenworkFiles({
+        files: [
+          {
+            path: "opencode.json",
+            content: JSON.stringify({
+              mcp: {
+                crm: {
+                  type: "remote",
+                  url: "https://mcp.example.com",
+                },
+              },
+            }),
+          },
+        ],
+    }),
+    /single skill markdown/i,
+  );
+});
+
+test("packageOpenworkFiles rejects agent and config combinations", () => {
+  assert.throws(
+    () =>
+      packageOpenworkFiles({
+        files: [
+          {
+            path: ".opencode/agents/sales-inbound.md",
+            content: `---
 description: Handles inbound sales work.
 mode: subagent
 model: openai/gpt-5.4
-version: 1.2.0
 ---
 
 You qualify leads and route follow-up.`,
-      },
-      {
-        path: "opencode.jsonc",
-        content: `{
-          // Project config should survive alongside typed entries
-          "model": "openai/gpt-5.4",
-          "mcp": {
-            "crm-sync": {
-              "type": "remote",
-              "url": "https://crm.example.com/mcp"
-            }
-          }
-        }`,
-      },
-    ],
-  });
-
-  assert.equal(result.bundleType, "workspace-profile");
-  assert.equal(result.bundle.type, "workspace-profile");
-  assert.equal(result.summary.agents, 1);
-  assert.equal(result.summary.mcpServers, 1);
-  assert.equal(result.summary.configs, 1);
-  const workspace = result.bundle.workspace as Record<string, Record<string, Record<string, unknown>>>;
-  assert.deepEqual(Object.keys(workspace.opencode.agent), ["sales-inbound"]);
-  assert.deepEqual(Object.keys(workspace.opencode.mcp), ["crm-sync"]);
-  assert.equal(workspace.opencode.model, "openai/gpt-5.4");
-});
-
-test("packageOpenworkFiles redacts secret-looking values and adds a warning", () => {
-  const result = packageOpenworkFiles({
-    files: [
-      {
-        path: "opencode.json",
-        content: JSON.stringify({
-          mcp: {
-            crm: {
-              type: "remote",
-              headers: {
-                Authorization: "Bearer real-secret-token",
-              },
-            },
           },
-        }),
-      },
-    ],
-  });
-  assert.ok(result.warnings.some((w) => /[Rr]edacted/.test(w)));
-});
-
-test("packageOpenworkFiles infers AGENTS.md as agent markdown", () => {
-  const result = packageOpenworkFiles({
-    files: [
-      {
-        path: "AGENTS.md",
-        content: `# Revenue Agent
-
-## Agent overview
-
-This agent handles inbound revenue operations.
-The agent coordinates follow-up and handoff.`,
-      },
-    ],
-  });
-
-  assert.equal(result.bundleType, "workspace-profile");
-  assert.equal(result.summary.agents, 1);
-  assert.equal(result.items[0]?.kind, "Agent");
-});
-
-test("packageOpenworkFiles accepts mcp_config.json by filename as MCP config", () => {
-  const result = packageOpenworkFiles({
-    files: [
-      {
-        path: "mcp_config.json",
-        content: JSON.stringify({
-          type: "remote",
-          url: "https://mcp.example.com",
-        }),
-      },
-    ],
-  });
-
-  assert.equal(result.bundleType, "workspace-profile");
-  assert.equal(result.summary.mcpServers, 1);
-  assert.equal(result.items[0]?.kind, "MCP");
-});
-
-test("packageOpenworkFiles accepts opencode-shaped jsonc from a generic filename", () => {
-  const result = packageOpenworkFiles({
-    files: [
-      {
-        path: "workspace-config.jsonc",
-        content: `{
-          "$schema": "https://opencode.ai/config.json",
-          "model": "anthropic/claude-sonnet-4-5",
-          "autoupdate": true,
-          "server": {
-            "port": 4096
-          }
-        }`,
-      },
-    ],
-  });
-
-  assert.equal(result.bundleType, "workspace-profile");
-  assert.equal(result.summary.configs, 1);
-  const workspace = result.bundle.workspace as Record<string, Record<string, unknown>>;
-  assert.equal(workspace.opencode.model, "anthropic/claude-sonnet-4-5");
-  assert.equal(result.items[0]?.kind, "Config");
-  assert.equal(result.items[0]?.meta, "OpenCode config");
-});
-
-test("packageOpenworkFiles falls back to generic config for unknown json objects", () => {
-  const result = packageOpenworkFiles({
-    files: [
-      {
-        path: "settings.json",
-        content: JSON.stringify({
-          featureFlags: {
-            experimentalShare: true,
+          {
+            path: "opencode.jsonc",
+            content: `{
+              "model": "openai/gpt-5.4"
+            }`,
           },
-        }),
-      },
-    ],
-  });
-
-  assert.equal(result.bundleType, "workspace-profile");
-  assert.equal(result.summary.configs, 1);
-  const workspace = result.bundle.workspace as Record<string, Record<string, Record<string, unknown>>>;
-  assert.equal(workspace.config.settings.featureFlags.experimentalShare, true);
-  assert.equal(result.items[0]?.kind, "Config");
-  assert.equal(result.items[0]?.meta, "Config file");
+        ],
+      }),
+    /single skill markdown/i,
+  );
 });
