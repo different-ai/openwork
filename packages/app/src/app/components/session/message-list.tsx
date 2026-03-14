@@ -1,11 +1,41 @@
-import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+} from "solid-js";
 import type { JSX } from "solid-js";
 import type { Part } from "@opencode-ai/sdk/v2/client";
-import { Check, ChevronDown, ChevronRight, CircleAlert, Copy, Eye, File, FileEdit, FolderSearch, Pencil, Search, Sparkles, Terminal } from "lucide-solid";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  CircleAlert,
+  Copy,
+  Eye,
+  File,
+  FileEdit,
+  FolderSearch,
+  Pencil,
+  Search,
+  Sparkles,
+  Terminal,
+} from "lucide-solid";
 import { createVirtualizer } from "@tanstack/solid-virtual";
 
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageGroup, type MessageWithParts, type StepGroupMode } from "../../types";
-import { groupMessageParts, isUserVisiblePart, summarizeStep } from "../../utils";
+import {
+  SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX,
+  type MessageGroup,
+  type MessageWithParts,
+  type StepGroupMode,
+} from "../../types";
+import {
+  groupMessageParts,
+  isUserVisiblePart,
+  summarizeStep,
+} from "../../utils";
 import PartView from "../part-view";
 import { perfNow, recordPerfLog } from "../../lib/perf-log";
 
@@ -22,7 +52,9 @@ export type MessageListProps = {
   searchHighlightQuery?: string;
   workspaceRoot?: string;
   scrollElement?: () => HTMLElement | undefined;
-  setScrollToMessageById?: (handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null) => void;
+  setScrollToMessageById?: (
+    handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null,
+  ) => void;
   footer?: JSX.Element;
 };
 
@@ -51,7 +83,14 @@ type MessageBlock = {
 
 type MessageBlockItem = MessageBlock | StepClusterBlock;
 
-const EXPLORATION_TOOL_NAMES = new Set(["read", "glob", "grep", "search", "list", "list_files"]);
+const EXPLORATION_TOOL_NAMES = new Set([
+  "read",
+  "glob",
+  "grep",
+  "search",
+  "list",
+  "list_files",
+]);
 const VIRTUALIZATION_THRESHOLD = 500;
 const VIRTUAL_OVERSCAN = 4;
 
@@ -63,7 +102,10 @@ type ExplorationSummary = {
 
 function isExplorationTool(part: Part) {
   if (part.type !== "tool") return false;
-  const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+  const tool =
+    typeof (part as any).tool === "string"
+      ? String((part as any).tool).toLowerCase()
+      : "";
   return EXPLORATION_TOOL_NAMES.has(tool);
 }
 
@@ -81,12 +123,19 @@ function summarizeExploration(parts: Part[]): ExplorationSummary {
 
   parts.forEach((part) => {
     if (part.type !== "tool") return;
-    const tool = typeof (part as any).tool === "string" ? String((part as any).tool).toLowerCase() : "";
+    const tool =
+      typeof (part as any).tool === "string"
+        ? String((part as any).tool).toLowerCase()
+        : "";
     const state = (part as any).state ?? {};
-    const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+    const input =
+      state.input && typeof state.input === "object"
+        ? (state.input as Record<string, unknown>)
+        : {};
 
     if (tool === "read") {
-      const filePath = typeof input.filePath === "string" ? normalizePath(input.filePath) : "";
+      const filePath =
+        typeof input.filePath === "string" ? normalizePath(input.filePath) : "";
       if (filePath) {
         files.add(filePath);
       } else {
@@ -114,9 +163,14 @@ function summarizeExploration(parts: Part[]): ExplorationSummary {
 
 function formatExplorationSummary(summary: ExplorationSummary) {
   const items: string[] = [];
-  if (summary.files > 0) items.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
-  if (summary.searches > 0) items.push(`${summary.searches} search${summary.searches === 1 ? "" : "es"}`);
-  if (summary.lists > 0) items.push(`${summary.lists} list${summary.lists === 1 ? "" : "s"}`);
+  if (summary.files > 0)
+    items.push(`${summary.files} file${summary.files === 1 ? "" : "s"}`);
+  if (summary.searches > 0)
+    items.push(
+      `${summary.searches} search${summary.searches === 1 ? "" : "es"}`,
+    );
+  if (summary.lists > 0)
+    items.push(`${summary.lists} list${summary.lists === 1 ? "" : "s"}`);
   return items.length > 0 ? items.join(" · ") : "context activity";
 }
 
@@ -172,7 +226,11 @@ function statusDotClass(status?: string): string {
 }
 
 function latestStepPart(stepGroups: StepTimelineGroup[]): Part | undefined {
-  for (let groupIndex = stepGroups.length - 1; groupIndex >= 0; groupIndex -= 1) {
+  for (
+    let groupIndex = stepGroups.length - 1;
+    groupIndex >= 0;
+    groupIndex -= 1
+  ) {
     const parts = stepGroups[groupIndex]?.parts ?? [];
     for (let partIndex = parts.length - 1; partIndex >= 0; partIndex -= 1) {
       const part = parts[partIndex];
@@ -208,25 +266,33 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
   if (tool !== "task") return { isTask: false };
 
   const state = record.state ?? {};
-  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
-  const metadata = state.metadata && typeof state.metadata === "object" ? (state.metadata as Record<string, unknown>) : {};
+  const input =
+    state.input && typeof state.input === "object"
+      ? (state.input as Record<string, unknown>)
+      : {};
+  const metadata =
+    state.metadata && typeof state.metadata === "object"
+      ? (state.metadata as Record<string, unknown>)
+      : {};
 
-  const rawAgentType = typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
+  const rawAgentType =
+    typeof input.subagent_type === "string" ? input.subagent_type.trim() : "";
   const agentType = rawAgentType ? formatAgentType(rawAgentType) : undefined;
   const rawSessionId =
     metadata.sessionId ??
     metadata.sessionID ??
     state.sessionId ??
     state.sessionID;
-  const sessionId = typeof rawSessionId === "string" && rawSessionId.trim() ? rawSessionId.trim() : undefined;
+  const sessionId =
+    typeof rawSessionId === "string" && rawSessionId.trim()
+      ? rawSessionId.trim()
+      : undefined;
 
   return { isTask: true, agentType, sessionId };
 }
 
 function compactPathToken(value: string) {
-  const token = value
-    .trim()
-    .replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
+  const token = value.trim().replace(/^[`'"([{]+|[`'"\])},.;:]+$/g, "");
   const segments = token.split(/[\\/]/).filter(Boolean);
   return segments.length > 0 ? segments[segments.length - 1] : token;
 }
@@ -234,12 +300,16 @@ function compactPathToken(value: string) {
 function compactText(value: string, max = 42) {
   const singleLine = value.replace(/\s+/g, " ").trim();
   if (!singleLine) return "";
-  return singleLine.length > max ? `${singleLine.slice(0, Math.max(0, max - 3))}...` : singleLine;
+  return singleLine.length > max
+    ? `${singleLine.slice(0, Math.max(0, max - 3))}...`
+    : singleLine;
 }
 
 function isPathLike(value: string) {
-  return /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
-    /[\\/](?:\.opencode|Users|Library|workspaces)[\\/]/.test(value);
+  return (
+    /^(?:[A-Za-z]:[\\/]|~[\\/]|\/[\w_\-~]|\.\.?[\\/])/.test(value) ||
+    /[\\/](?:\.opencode|Users|Library|workspaces)[\\/]/.test(value)
+  );
 }
 
 function toolHeadline(part: Part) {
@@ -247,7 +317,10 @@ function toolHeadline(part: Part) {
 
   const record = part as any;
   const state = record.state ?? {};
-  const input = state.input && typeof state.input === "object" ? (state.input as Record<string, unknown>) : {};
+  const input =
+    state.input && typeof state.input === "object"
+      ? (state.input as Record<string, unknown>)
+      : {};
   const tool = typeof record.tool === "string" ? record.tool.toLowerCase() : "";
 
   const pick = (...keys: string[]) => {
@@ -329,7 +402,11 @@ export default function MessageList(props: MessageListProps) {
     message.parts
       .filter(isAttachmentPart)
       .map((part) => {
-        const record = part as { url?: string; filename?: string; mime?: string };
+        const record = part as {
+          url?: string;
+          filename?: string;
+          mime?: string;
+        };
         return {
           url: record.url ?? "",
           filename: record.filename ?? "attachment",
@@ -369,7 +446,11 @@ export default function MessageList(props: MessageListProps) {
       return name ? `@${name}` : "@agent";
     }
     if (part.type === "file") {
-      const record = part as { label?: string; path?: string; filename?: string };
+      const record = part as {
+        label?: string;
+        path?: string;
+        filename?: string;
+      };
       const label = record.label ?? record.path ?? record.filename ?? "";
       return label ? `@${label}` : "@file";
     }
@@ -379,7 +460,8 @@ export default function MessageList(props: MessageListProps) {
   const toggleSteps = (id: string, relatedIds: string[] = []) => {
     props.setExpandedStepIds((current) => {
       const next = new Set(current);
-      const isExpanded = next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
+      const isExpanded =
+        next.has(id) || relatedIds.some((relatedId) => next.has(relatedId));
       if (isExpanded) {
         next.delete(id);
         relatedIds.forEach((relatedId) => next.delete(relatedId));
@@ -409,7 +491,12 @@ export default function MessageList(props: MessageListProps) {
         return false;
       }
 
-      if (part.type === "text" || part.type === "tool" || part.type === "agent" || part.type === "file") {
+      if (
+        part.type === "text" ||
+        part.type === "tool" ||
+        part.type === "agent" ||
+        part.type === "file"
+      ) {
         return true;
       }
 
@@ -440,21 +527,38 @@ export default function MessageList(props: MessageListProps) {
         changedMessageCount += 1;
       }
 
-      toolPartCount += renderableParts.reduce((count, part) => (part.type === "tool" ? count + 1 : count), 0);
+      toolPartCount += renderableParts.reduce(
+        (count, part) => (part.type === "tool" ? count + 1 : count),
+        0,
+      );
       const groupId = String((message.info as any).id ?? "message");
       const groups = groupMessageParts(renderableParts, groupId);
       const isUser = (message.info as any).role === "user";
-      const isStepsOnly = groups.length > 0 && groups.every((group) => group.kind === "steps");
+      const isStepsOnly =
+        groups.length > 0 && groups.every((group) => group.kind === "steps");
       const stepGroups = isStepsOnly
-        ? (groups as { kind: "steps"; id: string; parts: Part[]; segment: "execution"; mode: StepGroupMode }[])
+        ? (groups as {
+            kind: "steps";
+            id: string;
+            parts: Part[];
+            segment: "execution";
+            mode: StepGroupMode;
+          }[])
         : [];
-      stepGroupCount += groups.reduce((count, group) => (group.kind === "steps" ? count + 1 : count), 0);
+      stepGroupCount += groups.reduce(
+        (count, group) => (group.kind === "steps" ? count + 1 : count),
+        0,
+      );
 
       if (isStepsOnly) {
         blocks.push({
           kind: "steps-cluster",
           id: stepGroups[0].id,
-          stepGroups: stepGroups.map((group) => ({ id: group.id, parts: group.parts, mode: group.mode })),
+          stepGroups: stepGroups.map((group) => ({
+            id: group.id,
+            parts: group.parts,
+            mode: group.mode,
+          })),
           messageIds: [messageId],
           isUser,
         });
@@ -482,11 +586,13 @@ export default function MessageList(props: MessageListProps) {
     const elapsedMs = Math.round((perfNow() - startedAt) * 100) / 100;
     if (
       props.developerMode &&
-      (
-        elapsedMs >= 6 ||
-        (Boolean(props.isStreaming) && props.messages.length >= 16 && changedMessageCount <= 2 && addedMessageCount <= 1 && removedMessageCount === 0) ||
-        (Boolean(props.isStreaming) && toolPartCount >= 10)
-      )
+      (elapsedMs >= 6 ||
+        (Boolean(props.isStreaming) &&
+          props.messages.length >= 16 &&
+          changedMessageCount <= 2 &&
+          addedMessageCount <= 1 &&
+          removedMessageCount === 0) ||
+        (Boolean(props.isStreaming) && toolPartCount >= 10))
     ) {
       recordPerfLog(true, "session.render", "message-blocks", {
         messageCount: props.messages.length,
@@ -531,7 +637,9 @@ export default function MessageList(props: MessageListProps) {
   });
 
   const shouldVirtualize = createMemo(
-    () => Boolean(props.scrollElement?.()) && messageBlocks().length >= VIRTUALIZATION_THRESHOLD,
+    () =>
+      Boolean(props.scrollElement?.()) &&
+      messageBlocks().length >= VIRTUALIZATION_THRESHOLD,
   );
 
   const virtualizer = createVirtualizer<HTMLElement, HTMLDivElement>({
@@ -566,16 +674,23 @@ export default function MessageList(props: MessageListProps) {
   });
 
   const virtualRowByIndex = createMemo(() => {
-    const map = new Map<number, ReturnType<typeof virtualizer.getVirtualItems>[number]>();
+    const map = new Map<
+      number,
+      ReturnType<typeof virtualizer.getVirtualItems>[number]
+    >();
     virtualRows().forEach((row) => {
       map.set(row.index, row);
     });
     return map;
   });
 
-  const virtualRowIndices = createMemo(() => virtualRows().map((row) => row.index));
+  const virtualRowIndices = createMemo(() =>
+    virtualRows().map((row) => row.index),
+  );
 
-  const shouldUseContentVisibility = createMemo(() => !shouldVirtualize() && messageBlocks().length > 500);
+  const shouldUseContentVisibility = createMemo(
+    () => !shouldVirtualize() && messageBlocks().length > 500,
+  );
   const blockPerfStyle = (index: number): JSX.CSSProperties | undefined => {
     if (!shouldUseContentVisibility()) return undefined;
     const total = messageBlocks().length;
@@ -604,7 +719,9 @@ export default function MessageList(props: MessageListProps) {
       const container = props.scrollElement?.();
       if (!container) return false;
       const escapedId = messageId.replace(/"/g, '\\"');
-      const target = container.querySelector(`[data-message-id="${escapedId}"]`) as HTMLElement | null;
+      const target = container.querySelector(
+        `[data-message-id="${escapedId}"]`,
+      ) as HTMLElement | null;
       if (!target) return false;
       target.scrollIntoView({ behavior, block: "center" });
       return true;
@@ -623,7 +740,11 @@ export default function MessageList(props: MessageListProps) {
   });
 
   /** Quiet single-line timeline row */
-  const StepRow = (rowProps: { part: Part; isUser: boolean; groupMode?: StepGroupMode }) => {
+  const StepRow = (rowProps: {
+    part: Part;
+    isUser: boolean;
+    groupMode?: StepGroupMode;
+  }) => {
     const summary = createMemo(() => summarizeStep(rowProps.part));
     const headline = createMemo(() => {
       const fromTool = toolHeadline(rowProps.part);
@@ -660,10 +781,20 @@ export default function MessageList(props: MessageListProps) {
   };
 
   /** Quiet steps list */
-  const StepsList = (listProps: { parts: Part[]; isUser: boolean; groupMode: StepGroupMode }) => (
+  const StepsList = (listProps: {
+    parts: Part[];
+    isUser: boolean;
+    groupMode: StepGroupMode;
+  }) => (
     <div class="flex flex-col gap-4">
       <For each={listProps.parts}>
-        {(part) => <StepRow part={part} isUser={listProps.isUser} groupMode={listProps.groupMode} />}
+        {(part) => (
+          <StepRow
+            part={part}
+            isUser={listProps.isUser}
+            groupMode={listProps.groupMode}
+          />
+        )}
       </For>
     </div>
   );
@@ -679,10 +810,26 @@ export default function MessageList(props: MessageListProps) {
     const useInnerTimelineScroll = () => !Boolean(props.isStreaming);
 
     return (
-      <div class={containerProps.isInline ? (containerProps.isUser ? "mt-3" : "mt-4") : ""}>
-        <div class={`ml-4 flex flex-col gap-4 ${useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}>
+      <div
+        class={
+          containerProps.isInline
+            ? containerProps.isUser
+              ? "mt-3"
+              : "mt-4"
+            : ""
+        }
+      >
+        <div
+          class={`ml-4 flex flex-col gap-4 ${useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}
+        >
           <For each={containerProps.stepGroups}>
-            {(group) => <StepsList parts={group.parts} isUser={containerProps.isUser} groupMode={group.mode} />}
+            {(group) => (
+              <StepsList
+                parts={group.parts}
+                isUser={containerProps.isUser}
+                groupMode={group.mode}
+              />
+            )}
           </For>
         </div>
       </div>
@@ -690,194 +837,243 @@ export default function MessageList(props: MessageListProps) {
   };
 
   const renderBlock = (block: MessageBlockItem, blockIndex: number) => {
-          const blockMessageIds = block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
-          const hasSearchMatch = blockMessageIds.some((id) => props.searchMatchMessageIds?.has(id));
-          const hasActiveSearchMatch = blockMessageIds.some((id) => id === props.activeSearchMessageId);
-          const searchOutlineClass = hasActiveSearchMatch
-            ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
-            : hasSearchMatch
-              ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
-              : "";
+    const blockMessageIds =
+      block.kind === "steps-cluster" ? block.messageIds : [block.messageId];
+    const hasSearchMatch = blockMessageIds.some((id) =>
+      props.searchMatchMessageIds?.has(id),
+    );
+    const hasActiveSearchMatch = blockMessageIds.some(
+      (id) => id === props.activeSearchMessageId,
+    );
+    const searchOutlineClass = hasActiveSearchMatch
+      ? "outline outline-2 outline-amber-8/70 outline-offset-2 rounded-2xl"
+      : hasSearchMatch
+        ? "outline outline-1 outline-amber-7/50 outline-offset-1 rounded-2xl"
+        : "";
 
-          if (block.kind === "steps-cluster") {
-            return (
-              <div
-                class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-                data-message-role={block.isUser ? "user" : "assistant"}
-                data-message-id={block.messageIds[0] ?? ""}
-                style={blockPerfStyle(blockIndex)}
-              >
-                <div
-                  class={`${
-                    block.isUser
-                      ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-                      : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
-                  } ${searchOutlineClass}`}
-                >
-                  <StepsContainer
-                    id={block.id}
-                    relatedIds={block.stepGroups.map((stepGroup) => stepGroup.id).filter((stepId) => stepId !== block.id)}
-                    stepGroups={block.stepGroups}
-                    isUser={block.isUser}
-                  />
-                </div>
-              </div>
-            );
-          }
+    if (block.kind === "steps-cluster") {
+      return (
+        <div
+          class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+          data-message-role={block.isUser ? "user" : "assistant"}
+          data-message-id={block.messageIds[0] ?? ""}
+          style={blockPerfStyle(blockIndex)}
+        >
+          <div
+            class={`${
+              block.isUser
+                ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+                : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
+            } ${searchOutlineClass}`}
+          >
+            <StepsContainer
+              id={block.id}
+              relatedIds={block.stepGroups
+                .map((stepGroup) => stepGroup.id)
+                .filter((stepId) => stepId !== block.id)}
+              stepGroups={block.stepGroups}
+              isUser={block.isUser}
+            />
+          </div>
+        </div>
+      );
+    }
 
-          const groupSpacing = block.isUser ? "mb-3" : "mb-4";
-          const isSyntheticSessionError =
-            !block.isUser && block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
+    const groupSpacing = block.isUser ? "mb-3" : "mb-4";
+    const isSyntheticSessionError =
+      !block.isUser &&
+      block.messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX);
 
-          if (isSyntheticSessionError) {
-            const messageText = block.renderableParts
-              .map((part) => partToText(part))
-              .join(" ")
-              .replace(/\s*\n+\s*/g, " ")
-              .replace(/\s{2,}/g, " ")
-              .trim();
+    if (isSyntheticSessionError) {
+      const messageText = block.renderableParts
+        .map((part) => partToText(part))
+        .join(" ")
+        .replace(/\s*\n+\s*/g, " ")
+        .replace(/\s{2,}/g, " ")
+        .trim();
 
-            return (
-              <div
-                class="flex group justify-start"
-                data-message-role="assistant"
-                data-message-id={block.messageId}
-                style={blockPerfStyle(blockIndex)}
-              >
-                <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
-                  <div
-                    class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
-                    role="alert"
-                  >
-                    <CircleAlert size={14} class="mt-0.5 shrink-0" />
-                    <div class="min-w-0 break-words">{messageText}</div>
-                  </div>
-                </div>
-              </div>
-            );
-          }
-
-          return (
+      return (
+        <div
+          class="flex group justify-start"
+          data-message-role="assistant"
+          data-message-id={block.messageId}
+          style={blockPerfStyle(blockIndex)}
+        >
+          <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
             <div
-              class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
-              data-message-role={block.isUser ? "user" : "assistant"}
-              data-message-id={block.messageId}
-              style={blockPerfStyle(blockIndex)}
+              class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
+              role="alert"
             >
-              <div
-                class={`${
-                  block.isUser
-                    ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-                    : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
-                } ${searchOutlineClass}`}
-              >
-                <Show when={attachmentsForMessage(block.message).length > 0}>
-                  <div class={block.isUser ? "mb-3 flex flex-wrap gap-2" : "mb-4 flex flex-wrap gap-2"}>
-                    <For each={attachmentsForMessage(block.message)}>
-                      {(attachment) => (
-                        <div class="flex items-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3 py-2 text-xs text-gray-11 shadow-[var(--dls-card-shadow)]">
-                          <Show
-                            when={isImageAttachment(attachment.mime)}
-                            fallback={<File size={14} class="text-gray-9" />}
-                          >
-                            <div class="h-12 w-12 overflow-hidden rounded-xl border border-dls-border bg-dls-sidebar">
-                              <img
-                                src={attachment.url}
-                                alt={attachment.filename}
-                                class="h-full w-full object-cover"
-                              />
-                            </div>
-                          </Show>
-                          <div class="max-w-[180px]">
-                            <div class="truncate text-gray-12">{attachment.filename}</div>
-                            <div class="text-[10px] text-gray-9">{attachment.mime}</div>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-                <For each={block.groups}>
-                  {(group, idx) => (
-                    <div class={idx() === block.groups.length - 1 ? "" : groupSpacing}>
-                      <Show when={group.kind === "text"}>
-                        {(() => {
-                          const isStreamingLatestAssistant =
-                            !block.isUser && props.isStreaming && block.messageId === latestAssistantMessageId();
-                          const markdownThrottleMs = isStreamingLatestAssistant ? 550 : 100;
-                          return (
-                            <PartView
-                              part={(group as { kind: "text"; part: Part; segment: "intent" | "result" }).part}
-                              developerMode={props.developerMode}
-                              showThinking={props.showThinking}
-                              workspaceRoot={props.workspaceRoot}
-                              tone={block.isUser ? "dark" : "light"}
-                              renderMarkdown={!block.isUser}
-                              markdownThrottleMs={markdownThrottleMs}
-                              highlightQuery={hasSearchMatch ? props.searchHighlightQuery : undefined}
-                            />
-                          );
-                        })()}
-                      </Show>
-                      {group.kind === "steps" &&
-                        (() => {
-                          const stepGroup = group as {
-                            kind: "steps";
-                            id: string;
-                            parts: Part[];
-                            segment: "execution";
-                            mode: StepGroupMode;
-                          };
-                          return (
-                            <StepsContainer
-                              id={stepGroup.id}
-                              stepGroups={[{ id: stepGroup.id, parts: stepGroup.parts, mode: stepGroup.mode }]}
-                              isUser={block.isUser}
-                              isInline={true}
-                            />
-                          );
-                        })()}
-                    </div>
-                  )}
-                </For>
-                <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-                  <button
-                    class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-                    title="Copy message"
-                    onClick={() => {
-                      const text = block.renderableParts
-                        .map((part) => partToText(part))
-                        .join("\n");
-                      handleCopy(text, block.messageId);
-                    }}
-                  >
-                    <Show when={copyingId() === block.messageId} fallback={<Copy size={12} />}>
-                      <Check size={12} class="text-green-10" />
-                    </Show>
-                  </button>
-                </div>
-              </div>
+              <CircleAlert size={14} class="mt-0.5 shrink-0" />
+              <div class="min-w-0 break-words">{messageText}</div>
             </div>
-          );
-        };
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        class={`flex group ${block.isUser ? "justify-end" : "justify-start"}`.trim()}
+        data-message-role={block.isUser ? "user" : "assistant"}
+        data-message-id={block.messageId}
+        style={blockPerfStyle(blockIndex)}
+      >
+        <div
+          class={`${
+            block.isUser
+              ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+              : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
+          } ${searchOutlineClass}`}
+        >
+          <Show when={attachmentsForMessage(block.message).length > 0}>
+            <div
+              class={
+                block.isUser
+                  ? "mb-3 flex flex-wrap gap-2"
+                  : "mb-4 flex flex-wrap gap-2"
+              }
+            >
+              <For each={attachmentsForMessage(block.message)}>
+                {(attachment) => (
+                  <div class="flex items-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3 py-2 text-xs text-gray-11 shadow-[var(--dls-card-shadow)]">
+                    <Show
+                      when={isImageAttachment(attachment.mime)}
+                      fallback={<File size={14} class="text-gray-9" />}
+                    >
+                      <div class="h-12 w-12 overflow-hidden rounded-xl border border-dls-border bg-dls-sidebar">
+                        <img
+                          src={attachment.url}
+                          alt={attachment.filename}
+                          class="h-full w-full object-cover"
+                        />
+                      </div>
+                    </Show>
+                    <div class="max-w-[180px]">
+                      <div class="truncate text-gray-12">
+                        {attachment.filename}
+                      </div>
+                      <div class="text-[10px] text-gray-9">
+                        {attachment.mime}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </For>
+            </div>
+          </Show>
+          <For each={block.groups}>
+            {(group, idx) => (
+              <div
+                class={idx() === block.groups.length - 1 ? "" : groupSpacing}
+              >
+                <Show when={group.kind === "text"}>
+                  {(() => {
+                    const isStreamingLatestAssistant =
+                      !block.isUser &&
+                      props.isStreaming &&
+                      block.messageId === latestAssistantMessageId();
+                    const markdownThrottleMs = isStreamingLatestAssistant
+                      ? 550
+                      : 100;
+                    return (
+                      <PartView
+                        part={
+                          (
+                            group as {
+                              kind: "text";
+                              part: Part;
+                              segment: "intent" | "result";
+                            }
+                          ).part
+                        }
+                        developerMode={props.developerMode}
+                        showThinking={props.showThinking}
+                        workspaceRoot={props.workspaceRoot}
+                        tone={block.isUser ? "dark" : "light"}
+                        renderMarkdown={!block.isUser}
+                        markdownThrottleMs={markdownThrottleMs}
+                        highlightQuery={
+                          hasSearchMatch
+                            ? props.searchHighlightQuery
+                            : undefined
+                        }
+                      />
+                    );
+                  })()}
+                </Show>
+                {group.kind === "steps" &&
+                  (() => {
+                    const stepGroup = group as {
+                      kind: "steps";
+                      id: string;
+                      parts: Part[];
+                      segment: "execution";
+                      mode: StepGroupMode;
+                    };
+                    return (
+                      <StepsContainer
+                        id={stepGroup.id}
+                        stepGroups={[
+                          {
+                            id: stepGroup.id,
+                            parts: stepGroup.parts,
+                            mode: stepGroup.mode,
+                          },
+                        ]}
+                        isUser={block.isUser}
+                        isInline={true}
+                      />
+                    );
+                  })()}
+              </div>
+            )}
+          </For>
+          <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+            <button
+              class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+              title="Copy message"
+              onClick={() => {
+                const text = block.renderableParts
+                  .map((part) => partToText(part))
+                  .join("\n");
+                handleCopy(text, block.messageId);
+              }}
+            >
+              <Show
+                when={copyingId() === block.messageId}
+                fallback={<Copy size={12} />}
+              >
+                <Check size={12} class="text-green-10" />
+              </Show>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div class="pb-24" style={{ contain: "layout paint style" }}>
+    <div class="pb-10" style={{ contain: "layout paint style" }}>
       <Show
         when={shouldVirtualize()}
-        fallback={(
+        fallback={
           <div class="space-y-4">
-            <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+            <For each={messageBlocks()}>
+              {(block, blockIndex) => renderBlock(block, blockIndex())}
+            </For>
           </div>
-        )}
+        }
       >
         <Show
           when={virtualRows().length > 0}
-          fallback={(
+          fallback={
             <div class="space-y-4">
-              <For each={messageBlocks()}>{(block, blockIndex) => renderBlock(block, blockIndex())}</For>
+              <For each={messageBlocks()}>
+                {(block, blockIndex) => renderBlock(block, blockIndex())}
+              </For>
             </div>
-          )}
+          }
         >
           <div
             class="relative"
