@@ -3,7 +3,24 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
-import { CircleAlert, Copy, Cpu, Download, FolderOpen, HardDrive, MessageCircle, PlugZap, RefreshCcw, Server, Smartphone, X, Zap } from "lucide-solid";
+import { usePlatform } from "../context/platform";
+import {
+  ArrowUpRight,
+  CircleAlert,
+  Copy,
+  Cpu,
+  Download,
+  FolderOpen,
+  HardDrive,
+  LifeBuoy,
+  MessageCircle,
+  PlugZap,
+  RefreshCcw,
+  Server,
+  Smartphone,
+  X,
+  Zap,
+} from "lucide-solid";
 import type { OpencodeConnectStatus, ProviderListItem, SettingsTab, StartupPreference } from "../types";
 import type {
   OpenworkAuditEntry,
@@ -139,6 +156,11 @@ export type SettingsViewProps = {
   openDebugShareLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
 };
 
+const FEEDBACK_FORM_URL =
+  "https://github.com/different-ai/openwork/issues/new?template=feature.yml&title=%5BFeedback%5D+";
+const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
+const BUG_REPORT_URL = "https://github.com/different-ai/openwork/issues/new?template=bug.yml";
+
 // OpenCodeRouter Settings Component
 //
 // Messaging identities + routing are managed in the Identities tab.
@@ -166,8 +188,15 @@ export function OpenCodeRouterSettings(_props: {
 
 
 export default function SettingsView(props: SettingsViewProps) {
+  const platform = usePlatform();
   const translate = (key: string) => t(key, currentLocale());
   const engineCustomBinPathLabel = () => props.engineCustomBinPath.trim() || "No binary selected.";
+
+  const openExternalLink = (url: string) => {
+    const resolved = url.trim();
+    if (!resolved) return;
+    platform.openLink(resolved);
+  };
 
   const handlePickEngineBinary = async () => {
     if (!isTauriRuntime()) return;
@@ -1181,6 +1210,55 @@ export default function SettingsView(props: SettingsViewProps) {
 
               <div class="text-xs text-gray-8">
                 System mode follows your OS preference automatically.
+              </div>
+            </div>
+
+            <div class="relative overflow-hidden rounded-2xl border border-blue-7/30 bg-gradient-to-br from-blue-3/35 via-gray-1/75 to-cyan-3/30 p-5">
+              <div class="pointer-events-none absolute -right-10 -top-10 h-32 w-32 rounded-full bg-blue-6/20 blur-2xl" />
+              <div class="pointer-events-none absolute -bottom-12 left-6 h-24 w-24 rounded-full bg-cyan-6/20 blur-2xl" />
+
+              <div class="relative space-y-4">
+                <div class="space-y-2">
+                  <div class="inline-flex items-center gap-1.5 rounded-full border border-blue-7/35 bg-blue-4/25 px-2.5 py-1 text-[11px] font-medium text-blue-11">
+                    <LifeBuoy size={12} />
+                    We read every message
+                  </div>
+                  <div class="text-sm font-semibold text-gray-12">Help shape OpenWork</div>
+                  <div class="max-w-[58ch] text-xs text-gray-10">
+                    Tell us what feels great and what feels rough. Feedback goes straight to the team and helps
+                    us prioritize what ships next.
+                  </div>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="secondary"
+                    class="h-9 rounded-xl bg-blue-10 px-4 text-xs font-semibold text-white hover:bg-blue-11"
+                    onClick={() => openExternalLink(FEEDBACK_FORM_URL)}
+                  >
+                    <MessageCircle size={14} />
+                    Send feedback
+                    <ArrowUpRight size={13} />
+                  </Button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-blue-7/35 bg-gray-1/70 px-3 text-xs font-medium text-gray-11 transition-colors hover:border-blue-7/50 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-7/30"
+                    onClick={() => openExternalLink(DISCORD_INVITE_URL)}
+                  >
+                    Join Discord
+                    <ArrowUpRight size={13} />
+                  </button>
+
+                  <button
+                    type="button"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-xl border border-gray-7/60 bg-gray-1/70 px-3 text-xs font-medium text-gray-10 transition-colors hover:border-gray-7/80 hover:text-gray-12 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-7/40"
+                    onClick={() => openExternalLink(BUG_REPORT_URL)}
+                  >
+                    Report an issue
+                    <ArrowUpRight size={13} />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
