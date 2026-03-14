@@ -4,13 +4,15 @@ export function getPreviewFilename(input: {
   selectedEntryCount: number;
   selectedEntryName?: string | null;
   hasPastedContent: boolean;
+  manualName?: string | null;
 }): string {
-  const { selectedEntryCount, selectedEntryName, hasPastedContent } = input;
+  const { selectedEntryCount, selectedEntryName, hasPastedContent, manualName } = input;
 
+  if (manualName && manualName.trim()) return manualName.trim();
   if (selectedEntryCount === 1 && selectedEntryName) return selectedEntryName;
   if (selectedEntryCount > 1) return `${selectedEntryCount} files`;
-  if (hasPastedContent) return "clipboard.md";
-  return "SKILL.md";
+  if (hasPastedContent) return "skill.md";
+  return "skill.md";
 }
 
 export function getPackageStatus({ errorMessage, warnings, effectiveEntryCount }: PackageStatusInput): PackageStatus {
@@ -25,7 +27,7 @@ export function getPackageStatus({ errorMessage, warnings, effectiveEntryCount }
   if (!effectiveEntryCount) {
     return {
       severity: "neutral",
-      label: "Upload one SKILL.md file or paste a skill below.",
+      label: "Upload a file or paste skill content below.",
       items: [],
     };
   }

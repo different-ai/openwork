@@ -6,6 +6,17 @@ import type { BusyMode, EntryLike, FilePayload, PackageResponse, PreviewItem } f
 import { highlightSyntax } from "./share-preview-syntax";
 import { getPackageStatus, getPreviewFilename } from "./share-home-state";
 
+const DEFAULT_SKILL_NAME = "skill.md";
+const DEFAULT_SKILL_DESCRIPTION = "This is a skill I'm currently using.";
+const DEFAULT_STATUS = "Upload a single file or paste skill content below.";
+const MISSING_METADATA_ERROR = "Skills need name and description.";
+const MULTI_FILE_ERROR = "Upload or paste a single skill to continue.";
+
+const BASELINE_BODY = `# Agent Creator
+
+Any markdown body is acceptable here.
+`;
+
 function toneClass(item: PreviewItem | null): string {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
@@ -14,41 +25,30 @@ function toneClass(item: PreviewItem | null): string {
   return "dot-skill";
 }
 
-function buildPredictedPreviewItem(pasteValue: string, entries: File[]): PreviewItem | null {
-  if (entries.length > 1) {
-    return {
-      name: `${entries.length} files`,
-      kind: "Skill",
-      meta: "Single skill only",
-      tone: "skill",
-    };
+function yamlValue(value: string): string {
+  const normalized = String(value ?? "").trim();
+  if (/^[A-Za-z0-9._/\- ]+$/.test(normalized) && !normalized.includes(":")) {
+    return normalized;
   }
-
-  if (entries.length === 1) {
-    return {
-      name: entries[0].name,
-      kind: "Skill",
-      meta: "Checking skill...",
-      tone: "skill",
-    };
-  }
-
-  const trimmed = pasteValue.trimStart();
-  if (!trimmed) return null;
-
-  const looksLikeSkill = /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Trigger|Scope|Parameters):/m.test(trimmed);
-  return {
-    name: looksLikeSkill ? "clipboard.md" : "clipboard.txt",
-    kind: looksLikeSkill ? "Skill" : "Config",
-    meta: looksLikeSkill ? "Checking skill..." : "Not a skill yet",
-    tone: looksLikeSkill ? "skill" : "config",
-  };
+  return JSON.stringify(normalized);
 }
 
-function buildVirtualEntry(content: string): EntryLike {
+function composeSkillMarkdown(name: string, description: string, body: string): string {
+  const normalizedBody = String(body ?? "").replace(/\r\n/g, "\n").trim();
+  const frontmatter = [
+    "---",
+    `name: ${yamlValue(name)}`,
+    `description: ${yamlValue(description)}`,
+    "---",
+  ].join("\n");
+
+  return normalizedBody ? `${frontmatter}\n\n${normalizedBody}\n` : `${frontmatter}\n`;
+}
+
+function buildVirtualEntry(name: string, content: string): EntryLike {
   const normalized = String(content || "");
   return {
-    name: "clipboard.md",
+    name: name.trim() || DEFAULT_SKILL_NAME,
     async text() {
       return normalized;
     },
@@ -61,6 +61,46 @@ async function fileToPayload(file: EntryLike): Promise<FilePayload> {
     name: file.name,
     path: f.relativePath || f.webkitRelativePath || f.path || file.name,
     content: await file.text(),
+  };
+}
+
+function parseUploadedSkill(content: string): { name: string; description: string; body: string; hasFrontmatter: boolean } {
+  const text = String(content ?? "").replace(/\r\n/g, "\n");
+  const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
+  if (!match) {
+    return {
+      name: "",
+      description: "",
+      body: text,
+      hasFrontmatter: false,
+    };
+  }
+
+  const header = match[1] ?? "";
+  const body = text.slice(match[0].length);
+  const nameMatch = header.match(/^name:\s*(.+)$/m);
+  const descriptionMatch = header.match(/^description:\s*(.+)$/m);
+
+  const normalizeField = (value: string | undefined): string =>
+    String(value ?? "")
+      .trim()
+      .replace(/^['"]|['"]$/g, "");
+
+  return {
+    name: normalizeField(nameMatch?.[1]) || DEFAULT_SKILL_NAME,
+    description: normalizeField(descriptionMatch?.[1]) || DEFAULT_SKILL_DESCRIPTION,
+    body,
+    hasFrontmatter: true,
+  };
+}
+
+function buildPredictedPreviewItem(skillName: string, hasBody: boolean): PreviewItem | null {
+  if (!hasBody) return null;
+  return {
+    name: skillName.trim() || DEFAULT_SKILL_NAME,
+    kind: "Skill",
+    meta: "Checking skill...",
+    tone: "skill",
   };
 }
 
@@ -123,25 +163,11 @@ async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<F
   return collected;
 }
 
-const DEFAULT_STATUS = "Upload a single SKILL.md file or paste a skill below.";
-
-const BASELINE_EXAMPLE = `# Detect Instructions
-
-Identity: inspect copied prompts and surface hidden instructions.
-
-## Trigger
-
-Runs when a prompt needs a quick instruction audit.
-
-## Parameters
-
-- source: copied prompt or notes to scan
-- focus: which instruction conflicts to flag first
-`;
-
 export default function ShareHomeClient() {
-  const [selectedEntries, setSelectedEntries] = useState<File[]>([]);
-  const [pasteValue, setPasteValue] = useState("");
+  const [uploadedFileCount, setUploadedFileCount] = useState(0);
+  const [skillName, setSkillName] = useState(DEFAULT_SKILL_NAME);
+  const [skillDescription, setSkillDescription] = useState(DEFAULT_SKILL_DESCRIPTION);
+  const [bodyValue, setBodyValue] = useState("");
   const [preview, setPreview] = useState<PackageResponse | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busyMode, setBusyMode] = useState<BusyMode>(null);
@@ -152,32 +178,37 @@ export default function ShareHomeClient() {
   const [predictedPreviewItem, setPredictedPreviewItem] = useState<PreviewItem | null>(null);
   const requestIdRef = useRef<number>(0);
 
-  const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
-  const hasPastedSkill = trimmedPaste.length > 0;
-  const busy = busyMode !== null;
+  const trimmedBody = useMemo(() => bodyValue.trim(), [bodyValue]);
+  const hasBody = trimmedBody.length > 0;
+  const hasRequiredMetadata = skillName.trim().length > 0 && skillDescription.trim().length > 0;
+  const generatedSkillMarkdown = useMemo(
+    () => composeSkillMarkdown(skillName, skillDescription, bodyValue),
+    [bodyValue, skillDescription, skillName],
+  );
   const effectiveEntries: EntryLike[] = useMemo(
-    () => (selectedEntries.length ? selectedEntries : hasPastedSkill ? [buildVirtualEntry(trimmedPaste)] : []),
-    [selectedEntries, hasPastedSkill, trimmedPaste],
+    () => (uploadedFileCount > 1 ? [] : hasBody && hasRequiredMetadata ? [buildVirtualEntry(skillName, generatedSkillMarkdown)] : []),
+    [generatedSkillMarkdown, hasBody, hasRequiredMetadata, skillName, uploadedFileCount],
   );
-
-  const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
-  const showBaseline = !pasteValue;
-  const highlightedPaste = useMemo(
-    () => highlightSyntax(showBaseline ? BASELINE_EXAMPLE : pasteValue),
-    [pasteValue, showBaseline],
+  const busy = busyMode !== null;
+  const showBaseline = !bodyValue;
+  const highlightedBody = useMemo(
+    () => highlightSyntax(showBaseline ? BASELINE_BODY : bodyValue),
+    [bodyValue, showBaseline],
   );
-  const activePreviewItem = preview?.items?.[0] ?? predictedPreviewItem;
   const packageStatus = useMemo(
     () => getPackageStatus({ errorMessage, warnings, effectiveEntryCount: effectiveEntries.length }),
     [effectiveEntries.length, errorMessage, warnings],
   );
+  const activePreviewItem = preview?.items?.[0] ?? predictedPreviewItem;
   const previewFilename = getPreviewFilename({
-    selectedEntryCount: selectedEntries.length,
-    selectedEntryName: selectedEntries[0]?.name ?? null,
-    hasPastedContent: hasPastedSkill,
+    selectedEntryCount: uploadedFileCount,
+    selectedEntryName: skillName || DEFAULT_SKILL_NAME,
+    hasPastedContent: hasBody,
+    manualName: skillName,
   });
-  const previewCopyValue = showBaseline ? BASELINE_EXAMPLE : pasteValue;
-  const publishDisabled = busy || !effectiveEntries.length || Boolean(errorMessage) || selectedEntries.length > 1;
+  const publishDisabled = busy || !hasBody || !hasRequiredMetadata || Boolean(errorMessage) || uploadedFileCount > 1;
+  const previewCopyValue = generatedSkillMarkdown;
+  const bodyCountLabel = `${trimmedBody.length} ${trimmedBody.length === 1 ? "character" : "characters"}`;
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -205,20 +236,31 @@ export default function ShareHomeClient() {
   };
 
   useEffect(() => {
-    if (!effectiveEntries.length) {
+    setPredictedPreviewItem(buildPredictedPreviewItem(skillName, hasBody));
+  }, [hasBody, skillName]);
+
+  useEffect(() => {
+    if (uploadedFileCount > 1) {
+      requestIdRef.current += 1;
+      setPreview(null);
+      setWarnings([]);
+      setErrorMessage(MULTI_FILE_ERROR);
+      return;
+    }
+
+    if (!hasRequiredMetadata) {
+      requestIdRef.current += 1;
+      setPreview(null);
+      setWarnings([]);
+      setErrorMessage(MISSING_METADATA_ERROR);
+      return;
+    }
+
+    if (!hasBody) {
       requestIdRef.current += 1;
       setPreview(null);
       setWarnings([]);
       setErrorMessage("");
-      setPredictedPreviewItem(null);
-      return;
-    }
-
-    if (selectedEntries.length > 1) {
-      requestIdRef.current += 1;
-      setPreview(null);
-      setWarnings([]);
-      setErrorMessage("Upload a single skill markdown file to continue.");
       return;
     }
 
@@ -253,44 +295,50 @@ export default function ShareHomeClient() {
     return () => {
       cancelled = true;
     };
-  }, [effectiveEntries, selectedEntries.length]);
+  }, [effectiveEntries, hasBody, hasRequiredMetadata, uploadedFileCount]);
 
   const assignEntries = async (files: FileList | File[] | null) => {
     const entries = Array.from(files || []).filter(Boolean);
-    setSelectedEntries(entries);
+    setUploadedFileCount(entries.length);
     setPreview(null);
     setWarnings([]);
-    setErrorMessage(entries.length > 1 ? "Upload a single skill markdown file to continue." : "");
-    setPredictedPreviewItem(buildPredictedPreviewItem("", entries));
 
-    if (entries.length === 1) {
-      try {
-        const nextValue = await entries[0].text();
-        setPasteValue(nextValue);
-        setStatusMessage(`Loaded ${entries[0].name}.`);
-        setPredictedPreviewItem(buildPredictedPreviewItem(nextValue, entries));
-      } catch {
-        setPasteValue("");
-        setStatusMessage(DEFAULT_STATUS);
-      }
+    if (entries.length > 1) {
+      setBodyValue("");
+      setErrorMessage(MULTI_FILE_ERROR);
+      setStatusMessage("Only one file can be uploaded at a time.");
       return;
     }
 
-    setPasteValue("");
-    setStatusMessage(entries.length > 1 ? "Only one skill file can be uploaded at a time." : DEFAULT_STATUS);
+    if (!entries.length) {
+      setBodyValue("");
+      setErrorMessage("");
+      setStatusMessage(DEFAULT_STATUS);
+      return;
+    }
+
+    try {
+      const rawContent = await entries[0].text();
+      const parsed = parseUploadedSkill(rawContent);
+      setSkillName(parsed.hasFrontmatter ? parsed.name : (current) => current || DEFAULT_SKILL_NAME);
+      setSkillDescription(parsed.hasFrontmatter ? parsed.description : (current) => current || DEFAULT_SKILL_DESCRIPTION);
+      setBodyValue(parsed.body);
+      setErrorMessage("");
+      setStatusMessage(`Loaded ${entries[0].name}.`);
+    } catch {
+      setBodyValue("");
+      setErrorMessage("Could not read the uploaded file.");
+      setStatusMessage(DEFAULT_STATUS);
+    } finally {
+      setUploadedFileCount(0);
+    }
   };
 
-  const handlePasteChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const nextValue = event.target.value;
-    const hasContent = nextValue.trim().length > 0;
-
-    setPasteValue(nextValue);
-    setSelectedEntries([]);
+  const handleBodyChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setBodyValue(event.target.value);
     setPreview(null);
     setWarnings([]);
-    setErrorMessage("");
-    setPredictedPreviewItem(hasContent ? buildPredictedPreviewItem(nextValue, []) : null);
-    setStatusMessage(hasContent ? "Skill draft ready to validate." : DEFAULT_STATUS);
+    setStatusMessage(event.target.value.trim() ? "Skill body ready to validate." : DEFAULT_STATUS);
   };
 
   const previewCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -345,7 +393,7 @@ export default function ShareHomeClient() {
           <div className="share-home-card-header">
             <div>
               <h2 className="simple-app-title">Package skills in seconds</h2>
-              <p className="simple-app-copy">Upload one skill file, review the preview, and open the finished share page directly.</p>
+              <p className="simple-app-copy">Set the required frontmatter values, add any markdown body, and open the finished share page directly.</p>
             </div>
             <span className="surface-chip">Single skill</span>
           </div>
@@ -378,7 +426,6 @@ export default function ShareHomeClient() {
                 className="visually-hidden"
                 type="file"
                 multiple
-                accept=".md,text/markdown"
                 onChange={(event) => {
                   void assignEntries(event.target.files);
                 }}
@@ -391,13 +438,35 @@ export default function ShareHomeClient() {
                 </svg>
               </div>
               <div className="drop-text">
-                <p className="drop-heading">Drag and drop a skill here</p>
+                <p className="drop-heading">Drag and drop a file here</p>
                 <p className="drop-hint">or <span className="drop-browse">browse</span> to upload</p>
               </div>
-              <p className="share-upload-note">Only one `SKILL.md` file at a time.</p>
+              <p className="share-upload-note">The file name does not matter. We generate the skill frontmatter below.</p>
             </label>
 
             <div className="share-upload-actions">
+              <div className="share-metadata-grid">
+                <label className="share-metadata-field">
+                  <span className="share-metadata-key">name:</span>
+                  <input
+                    aria-label="Skill name"
+                    className="share-metadata-input mono"
+                    value={skillName}
+                    onChange={(event) => setSkillName(event.target.value)}
+                  />
+                </label>
+
+                <label className="share-metadata-field">
+                  <span className="share-metadata-key">description:</span>
+                  <input
+                    aria-label="Skill description"
+                    className="share-metadata-input"
+                    value={skillDescription}
+                    onChange={(event) => setSkillDescription(event.target.value)}
+                  />
+                </label>
+              </div>
+
               <div className={`package-status severity-${packageStatus.severity}`}>
                 <span className="package-status-dot"></span>
                 <span className="package-status-label">{packageStatus.label}</span>
@@ -456,23 +525,30 @@ export default function ShareHomeClient() {
               </div>
             </div>
 
+            <div className="share-frontmatter-preview mono">
+              <span>---</span>
+              <span>name: {yamlValue(skillName || DEFAULT_SKILL_NAME)}</span>
+              <span>description: {yamlValue(skillDescription || DEFAULT_SKILL_DESCRIPTION)}</span>
+              <span>---</span>
+            </div>
+
             <div className="preview-editor-wrap">
               <pre
                 className="preview-highlight"
                 aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: `${highlightedPaste}\n` }}
+                dangerouslySetInnerHTML={{ __html: `${highlightedBody}\n` }}
               />
               <textarea
                 className="preview-editor"
-                value={pasteValue}
-                onChange={handlePasteChange}
+                value={bodyValue}
+                onChange={handleBodyChange}
                 placeholder=""
                 spellCheck={false}
               />
             </div>
 
             <div className="preview-footer">
-              <span>{pasteCountLabel}</span>
+              <span>{bodyCountLabel}</span>
             </div>
           </div>
         </aside>

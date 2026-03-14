@@ -518,6 +518,16 @@ a {
   gap: 8px;
 }
 
+.share-frontmatter-preview {
+  display: grid;
+  gap: 4px;
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(248, 250, 252, 0.78);
+  font-size: 12px;
+  color: #64748b;
+}
+
 .preview-editor-wrap {
   display: grid;
   grid-template-rows: 1fr;
@@ -927,6 +937,38 @@ a {
   display: grid;
   gap: 12px;
   align-content: start;
+}
+
+.share-metadata-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.share-metadata-field {
+  display: grid;
+  gap: 6px;
+}
+
+.share-metadata-key {
+  font-family: var(--ow-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ow-muted);
+}
+
+.share-metadata-input {
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--ow-ink);
+  outline: none;
+}
+
+.share-metadata-input:focus {
+  border-color: rgba(37, 99, 235, 0.45);
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
 }
 
 .share-feedback,

@@ -211,16 +211,20 @@ interface SkillRecord {
 
 function buildSkillRecord(file: NormalizedFile, warnings: string[], frontmatter: Frontmatter): SkillRecord | null {
   const { data } = frontmatter;
-  const name = resolveName(data.name, inferSkillName(file, frontmatter));
-  const description = typeof data.description === "string" ? data.description.trim() : "";
+  const name = maybeString(data.name).trim();
+  const description = maybeString(data.description).trim();
   const trigger = typeof data.trigger === "string" ? data.trigger.trim() : "";
   const version = typeof data.version === "string" ? data.version.trim() : "";
-  if (!file.content.trim()) {
+  if (!name || !description) {
+    warnings.push(`Skill files need frontmatter with both name and description: ${file.path}`);
+    return null;
+  }
+  if (!frontmatter.body.trim()) {
     warnings.push(`Ignored empty skill file: ${file.path}`);
     return null;
   }
   return {
-    name,
+    name: resolveName(name, name),
     description,
     trigger,
     content: file.content,
@@ -539,13 +543,13 @@ function buildBundleDescription(bundleType: string, summary: PackageSummary): st
 export function packageOpenworkFiles(input: PackageInput): PackageResult {
   const rawFiles = Array.isArray(input?.files) ? input.files : [];
   if (!rawFiles.length) {
-    throw new Error("Upload a single skill markdown file or paste a skill to continue.");
+    throw new Error("Upload or paste a single skill to continue.");
   }
   if (rawFiles.length > MAX_FILES) {
     throw new Error(`Too many files. Package up to ${MAX_FILES} files at once.`);
   }
   if (rawFiles.length !== 1) {
-    throw new Error("Upload a single skill markdown file to continue.");
+    throw new Error("Upload or paste a single skill to continue.");
   }
 
   const warnings: string[] = [];
@@ -562,29 +566,13 @@ export function packageOpenworkFiles(input: PackageInput): PackageResult {
   for (let index = 0; index < rawFiles.length; index += 1) {
     const file = normalizeFile(rawFiles[index], index);
     if (!file.content.trim()) {
-      throw new Error("Upload a single skill markdown file to continue.");
-    }
-
-    if (!isMarkdownFile(file)) {
-      throw new Error("Upload a single skill markdown file to continue.");
+      throw new Error("Skills need frontmatter with name and description.");
     }
 
     const frontmatter = parseFrontmatter(file.content);
-    const markdownKind = isCommandFile(file)
-      ? "command"
-      : isSkillFile(file)
-        ? "skill"
-        : isAgentFile(file, frontmatter.data)
-          ? "agent"
-          : inferMarkdownKind(file, frontmatter.data);
-
-    if (markdownKind !== "skill") {
-      throw new Error("Upload a single skill markdown file to continue.");
-    }
-
     const record = buildSkillRecord(file, warnings, frontmatter);
     if (!record) {
-      throw new Error("Upload a single skill markdown file to continue.");
+      throw new Error("Skills need frontmatter with name and description.");
     }
     skills.push(record);
     previewItems.push(record.preview);

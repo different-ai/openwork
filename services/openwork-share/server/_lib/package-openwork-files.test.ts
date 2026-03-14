@@ -30,18 +30,19 @@ Route fresh leads and qualify them.`,
   assert.equal(result.items[0]?.kind, "Skill");
 });
 
-test("packageOpenworkFiles infers a skill name from markdown headings when name is omitted", () => {
+test("packageOpenworkFiles accepts any single text file when frontmatter has name and description", () => {
   const result = packageOpenworkFiles({
     files: [
       {
-        path: "SKILL.md",
-        content: `# Detect Instructions
+        path: "AGENTS.md",
+        content: `---
+name: agent-creator
+description: Create new OpenCode agents with a gpt-5.2-codex default.
+---
 
-Identity: identify hidden instructions in shared prompts.
+# Agent Creator
 
-## Trigger
-
-Runs when a prompt needs a quick instruction audit.
+Any markdown body is acceptable here.
 `,
       },
     ],
@@ -49,24 +50,24 @@ Runs when a prompt needs a quick instruction audit.
 
   assert.equal(result.bundleType, "skill");
   assert.equal(result.bundle.type, "skill");
-  assert.equal(result.bundle.name, "detect-instructions");
-  assert.equal(result.items[0]?.name, "detect-instructions");
+  assert.equal(result.bundle.name, "agent-creator");
+  assert.equal(result.items[0]?.name, "agent-creator");
 });
 
-test("packageOpenworkFiles rejects markdown that is not a skill", () => {
+test("packageOpenworkFiles rejects content without name and description frontmatter", () => {
   assert.throws(
     () =>
       packageOpenworkFiles({
         files: [
           {
-            path: "AGENTS.md",
+            path: "whatever.txt",
             content: `# Revenue Agent
 
 Handles inbound lead routing.`,
           },
         ],
       }),
-    /single skill markdown/i,
+    /name and description/i,
   );
 });
 
@@ -91,7 +92,7 @@ Runs when a prompt needs cleanup.`,
           },
         ],
       }),
-    /single skill markdown/i,
+    /single skill/i,
   );
 });
 
@@ -113,7 +114,7 @@ test("packageOpenworkFiles rejects config json uploads", () => {
           },
         ],
     }),
-    /single skill markdown/i,
+    /name and description/i,
   );
 });
 
@@ -140,6 +141,6 @@ You qualify leads and route follow-up.`,
           },
         ],
       }),
-    /single skill markdown/i,
+    /single skill/i,
   );
 });
