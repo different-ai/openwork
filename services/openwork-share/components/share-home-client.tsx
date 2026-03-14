@@ -2,15 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { BusyMode, CopyState, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
+import type { BusyMode, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
 import { highlightSyntax } from "./share-preview-syntax";
-import {
-  getPackageStatus,
-  getPreviewFilename,
-  getPreviewItems,
-  getSelectionLabel,
-  getShareFeedback,
-} from "./share-home-state";
+import { getPackageStatus, getPreviewFilename } from "./share-home-state";
 
 function toneClass(item: PreviewItem | null): string {
   if (item?.tone === "agent") return "dot-agent";
@@ -24,52 +18,40 @@ function buildPredictedPreviewItem(pasteValue: string, entries: File[]): Preview
   if (entries.length > 1) {
     return {
       name: `${entries.length} files`,
-      kind: "Config", meta: "Analyzing...", tone: "config",
+      kind: "Skill",
+      meta: "Single skill only",
+      tone: "skill",
     };
   }
 
   if (entries.length === 1) {
-    const entry = entries[0] as File & { relativePath?: string; webkitRelativePath?: string };
-    const normalizedName = (entry.relativePath || entry.webkitRelativePath || entry.name).toLowerCase();
-
-    if (normalizedName.endsWith("/skill.md") || normalizedName === "skill.md") {
-      return { name: entry.name, kind: "Skill", meta: "Analyzing...", tone: "skill" };
-    }
-    if (normalizedName.endsWith("/agents.md") || normalizedName === "agents.md") {
-      return { name: entry.name, kind: "Agent", meta: "Analyzing...", tone: "agent" };
-    }
-    if (normalizedName.includes("mcp")) {
-      return { name: entry.name, kind: "MCP", meta: "Analyzing...", tone: "mcp" };
-    }
-    return { name: entry.name, kind: "Config", meta: "Analyzing...", tone: "config" };
+    return {
+      name: entries[0].name,
+      kind: "Skill",
+      meta: "Checking skill...",
+      tone: "skill",
+    };
   }
 
   const trimmed = pasteValue.trimStart();
   if (!trimmed) return null;
 
-  const isJson = trimmed.startsWith("{") || trimmed.startsWith("[");
+  const looksLikeSkill = /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Trigger|Scope|Parameters):/m.test(trimmed);
   return {
-    name: isJson ? "clipboard.jsonc" : "clipboard.md",
-    kind: /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Scope|Trigger|Parameters):/m.test(trimmed) || /^##\s+(Trigger|Parameters)\b/m.test(trimmed)
-      ? "Skill"
-      : "Config",
-    meta: "Analyzing...",
-    tone: /^#{1,6}\s/m.test(trimmed) || /\b(Identity|Scope|Trigger|Parameters):/m.test(trimmed) || /^##\s+(Trigger|Parameters)\b/m.test(trimmed)
-      ? "skill"
-      : "config",
+    name: looksLikeSkill ? "clipboard.md" : "clipboard.txt",
+    kind: looksLikeSkill ? "Skill" : "Config",
+    meta: looksLikeSkill ? "Checking skill..." : "Not a skill yet",
+    tone: looksLikeSkill ? "skill" : "config",
   };
 }
 
 function buildVirtualEntry(content: string): EntryLike {
   const normalized = String(content || "");
-  const trimmed = normalized.trimStart();
-  const isJsonLike = trimmed.startsWith("{") || trimmed.startsWith("[") || trimmed.startsWith("//") || trimmed.startsWith("/*");
-
   return {
-    name: isJsonLike ? "clipboard.jsonc" : "clipboard.md",
+    name: "clipboard.md",
     async text() {
       return normalized;
-    }
+    },
   };
 }
 
@@ -78,7 +60,7 @@ async function fileToPayload(file: EntryLike): Promise<FilePayload> {
   return {
     name: file.name,
     path: f.relativePath || f.webkitRelativePath || f.path || file.name,
-    content: await file.text()
+    content: await file.text(),
   };
 }
 
@@ -90,7 +72,7 @@ function flattenEntries(entry: FileSystemEntry, prefix = ""): Promise<File[]> {
           (file as File & { relativePath: string }).relativePath = `${prefix}${file.name}`;
           resolve([file]);
         },
-        reject
+        reject,
       );
       return;
     }
@@ -115,7 +97,7 @@ function flattenEntries(entry: FileSystemEntry, prefix = ""): Promise<File[]> {
           }
           readBatch();
         },
-        reject
+        reject,
       );
     };
 
@@ -141,68 +123,61 @@ async function collectDroppedFiles(dataTransfer: DataTransfer | null): Promise<F
   return collected;
 }
 
-const DEFAULT_STATUS = "# TODO  Paste AGENTS.md, SKILL.md, or JSON/JSONC config here.";
+const DEFAULT_STATUS = "Upload a single SKILL.md file or paste a skill below.";
 
-const BASELINE_EXAMPLE = `# My Skill
+const BASELINE_EXAMPLE = `# Detect Instructions
 
-Identity: a short description of what this skill does.
-
-Scope: the boundaries and focus area for this skill.
+Identity: inspect copied prompts and surface hidden instructions.
 
 ## Trigger
 
-Runs when a specific event or condition is met.
+Runs when a prompt needs a quick instruction audit.
 
 ## Parameters
 
-- param_one: Description of the first parameter
-- param_two: Description of the second parameter
+- source: copied prompt or notes to scan
+- focus: which instruction conflicts to flag first
 `;
 
 export default function ShareHomeClient() {
   const [selectedEntries, setSelectedEntries] = useState<File[]>([]);
   const [pasteValue, setPasteValue] = useState("");
   const [preview, setPreview] = useState<PackageResponse | null>(null);
-  const [generatedUrl, setGeneratedUrl] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [busyMode, setBusyMode] = useState<BusyMode>(null);
   const [dropActive, setDropActive] = useState(false);
-  const [copyState, setCopyState] = useState<CopyState>("ready-not-copied");
   const [previewCopied, setPreviewCopied] = useState(false);
-  const [pasteState, setPasteState] = useState(DEFAULT_STATUS);
+  const [statusMessage, setStatusMessage] = useState(DEFAULT_STATUS);
+  const [errorMessage, setErrorMessage] = useState("");
   const [predictedPreviewItem, setPredictedPreviewItem] = useState<PreviewItem | null>(null);
   const requestIdRef = useRef<number>(0);
 
   const trimmedPaste = useMemo(() => pasteValue.trim(), [pasteValue]);
   const hasPastedSkill = trimmedPaste.length > 0;
-  const showExamples = !trimmedPaste && !selectedEntries.length;
   const busy = busyMode !== null;
   const effectiveEntries: EntryLike[] = useMemo(
     () => (selectedEntries.length ? selectedEntries : hasPastedSkill ? [buildVirtualEntry(trimmedPaste)] : []),
-    [selectedEntries, hasPastedSkill, trimmedPaste]
+    [selectedEntries, hasPastedSkill, trimmedPaste],
   );
 
   const pasteCountLabel = `${trimmedPaste.length} ${trimmedPaste.length === 1 ? "character" : "characters"}`;
   const showBaseline = !pasteValue;
   const highlightedPaste = useMemo(
-    () => showBaseline ? highlightSyntax(BASELINE_EXAMPLE) : highlightSyntax(pasteValue),
-    [pasteValue, showBaseline]
+    () => highlightSyntax(showBaseline ? BASELINE_EXAMPLE : pasteValue),
+    [pasteValue, showBaseline],
   );
-  const exampleItems = useMemo(() => getPreviewItems(null), []);
-  const activeExampleName = exampleItems.find(item => item.example === pasteValue)?.name ?? null;
-  const activePreviewItem = showExamples ? null : preview?.items?.[0] ?? predictedPreviewItem;
+  const activePreviewItem = preview?.items?.[0] ?? predictedPreviewItem;
   const packageStatus = useMemo(
-    () => getPackageStatus({ generatedUrl, warnings, effectiveEntryCount: effectiveEntries.length }),
-    [generatedUrl, warnings, effectiveEntries.length]
+    () => getPackageStatus({ errorMessage, warnings, effectiveEntryCount: effectiveEntries.length }),
+    [effectiveEntries.length, errorMessage, warnings],
   );
-  const shareFeedback = useMemo(() => getShareFeedback(copyState), [copyState]);
-  const selectionLabel = getSelectionLabel(effectiveEntries.length > 0);
   const previewFilename = getPreviewFilename({
     selectedEntryCount: selectedEntries.length,
     selectedEntryName: selectedEntries[0]?.name ?? null,
     hasPastedContent: hasPastedSkill,
   });
   const previewCopyValue = showBaseline ? BASELINE_EXAMPLE : pasteValue;
+  const publishDisabled = busy || !effectiveEntries.length || Boolean(errorMessage) || selectedEntries.length > 1;
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -210,12 +185,12 @@ export default function ShareHomeClient() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Accept: "application/json"
+        Accept: "application/json",
       },
-      body: JSON.stringify({ files, preview: previewOnly })
+      body: JSON.stringify({ files, preview: previewOnly }),
     });
 
-    let json: PackageResponse | null = null;
+    let json: PackageResponse | { message?: string } | null = null;
     try {
       json = await response.json();
     } catch {
@@ -223,21 +198,27 @@ export default function ShareHomeClient() {
     }
 
     if (!response.ok) {
-      throw new Error((json as Record<string, unknown> | null)?.message as string || "Packaging failed.");
+      throw new Error(json && "message" in json && typeof json.message === "string" ? json.message : "Packaging failed.");
     }
 
-    return json!;
+    return json as PackageResponse;
   };
 
   useEffect(() => {
     if (!effectiveEntries.length) {
       requestIdRef.current += 1;
       setPreview(null);
-      setPredictedPreviewItem(null);
-      setGeneratedUrl("");
       setWarnings([]);
-      setBusyMode(null);
-      setCopyState("ready-not-copied");
+      setErrorMessage("");
+      setPredictedPreviewItem(null);
+      return;
+    }
+
+    if (selectedEntries.length > 1) {
+      requestIdRef.current += 1;
+      setPreview(null);
+      setWarnings([]);
+      setErrorMessage("Upload a single skill markdown file to continue.");
       return;
     }
 
@@ -252,12 +233,16 @@ export default function ShareHomeClient() {
         const nextPreview = await requestPackage(true);
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(nextPreview);
+        setWarnings(Array.isArray(nextPreview.warnings) ? nextPreview.warnings : []);
+        setErrorMessage("");
         if (nextPreview.items?.[0]) {
           setPredictedPreviewItem(nextPreview.items[0]);
         }
-      } catch {
+      } catch (error) {
         if (cancelled || requestIdRef.current !== currentRequestId) return;
         setPreview(null);
+        setWarnings([]);
+        setErrorMessage(error instanceof Error ? error.message : "Packaging failed.");
       } finally {
         if (!cancelled && requestIdRef.current === currentRequestId) {
           setBusyMode(null);
@@ -268,40 +253,31 @@ export default function ShareHomeClient() {
     return () => {
       cancelled = true;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveEntries]);
-
-  const resetFormState = () => {
-    setPreview(null);
-    setGeneratedUrl("");
-    setWarnings([]);
-    setCopyState("ready-not-copied");
-  };
+  }, [effectiveEntries, selectedEntries.length]);
 
   const assignEntries = async (files: FileList | File[] | null) => {
     const entries = Array.from(files || []).filter(Boolean);
     setSelectedEntries(entries);
+    setPreview(null);
+    setWarnings([]);
+    setErrorMessage(entries.length > 1 ? "Upload a single skill markdown file to continue." : "");
     setPredictedPreviewItem(buildPredictedPreviewItem("", entries));
-    resetFormState();
 
-    if (entries.length) {
+    if (entries.length === 1) {
       try {
-        const texts = await Promise.all(entries.slice(0, 4).map((f) => f.text()));
-        const combined = entries.length === 1
-          ? texts[0]
-          : texts.map((t, i) => `// --- ${entries[i].name} ---\n${t}`).join("\n\n");
-        setPasteValue(combined);
-        setPasteState(`Showing ${entries.length === 1 ? entries[0].name : `${entries.length} files`}.`);
+        const nextValue = await entries[0].text();
+        setPasteValue(nextValue);
+        setStatusMessage(`Loaded ${entries[0].name}.`);
+        setPredictedPreviewItem(buildPredictedPreviewItem(nextValue, entries));
       } catch {
         setPasteValue("");
-        setPredictedPreviewItem(null);
-        setPasteState(DEFAULT_STATUS);
+        setStatusMessage(DEFAULT_STATUS);
       }
-    } else {
-      setPasteValue("");
-      setPredictedPreviewItem(null);
-      setPasteState(DEFAULT_STATUS);
+      return;
     }
+
+    setPasteValue("");
+    setStatusMessage(entries.length > 1 ? "Only one skill file can be uploaded at a time." : DEFAULT_STATUS);
   };
 
   const handlePasteChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -310,82 +286,42 @@ export default function ShareHomeClient() {
 
     setPasteValue(nextValue);
     setSelectedEntries([]);
-    resetFormState();
-
-    if (!hasContent) {
-      setPredictedPreviewItem(null);
-    } else if (!trimmedPaste.length) {
-      setPredictedPreviewItem(buildPredictedPreviewItem(nextValue, []));
-    }
-
-    setPasteState(hasContent ? "Ready to preview." : DEFAULT_STATUS);
+    setPreview(null);
+    setWarnings([]);
+    setErrorMessage("");
+    setPredictedPreviewItem(hasContent ? buildPredictedPreviewItem(nextValue, []) : null);
+    setStatusMessage(hasContent ? "Skill draft ready to validate." : DEFAULT_STATUS);
   };
 
-  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const publishBundle = async () => {
-    if (!effectiveEntries.length || busy) return;
+    if (publishDisabled) return;
 
     setBusyMode("publish");
 
     try {
       const result = await requestPackage(false);
       const nextUrl = typeof result?.url === "string" ? result.url : "";
-      let nextCopyState: CopyState = "ready-not-copied";
-
       if (nextUrl) {
-        try {
-          await navigator.clipboard.writeText(nextUrl);
-          nextCopyState = "copied";
-        } catch {
-          nextCopyState = "copy-failed";
-        }
+        window.location.assign(nextUrl);
+        return;
       }
-
-      setPreview(result);
-      setWarnings(Array.isArray(result?.warnings) ? result.warnings : []);
-      setGeneratedUrl(nextUrl);
-      setCopyState(nextCopyState);
-
-      if (nextCopyState === "copied") {
-        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-        copyTimerRef.current = setTimeout(() => {
-          setCopyState("ready-not-copied");
-          copyTimerRef.current = null;
-        }, 800);
-      }
-    } catch {
-      // Errors surface through the packageStatus derived state
+      setErrorMessage("Share link generation completed without a destination URL.");
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Packaging failed.");
     } finally {
       setBusyMode(null);
     }
-  };
-
-  const copyGeneratedUrl = async () => {
-    if (!generatedUrl) return;
-
-    try {
-      await navigator.clipboard.writeText(generatedUrl);
-      setCopyState("copied");
-    } catch {
-      setCopyState("copy-failed");
-    }
-
-    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-    copyTimerRef.current = setTimeout(() => {
-      setCopyState("ready-not-copied");
-      copyTimerRef.current = null;
-    }, 800);
   };
 
   const copyPreviewText = async () => {
     try {
       await navigator.clipboard.writeText(previewCopyValue);
       setPreviewCopied(true);
-      setPasteState("Copied preview to clipboard.");
+      setStatusMessage("Copied preview to clipboard.");
     } catch {
-      setPasteState("Clipboard access was blocked.");
+      setStatusMessage("Clipboard access was blocked.");
     }
 
     if (previewCopyTimerRef.current) clearTimeout(previewCopyTimerRef.current);
@@ -397,111 +333,71 @@ export default function ShareHomeClient() {
 
   return (
     <section className="hero-layout hero-layout-share">
-        <div className="hero-copy">
-          <h1>
-            Share your <em>agent</em>
-            <br />
-            setup
-          </h1>
-          <p className="hero-body">
-            Package agents, skills, commands, and config files in seconds.
-          </p>
-        </div>
+      <div className="hero-copy">
+        <h1>
+          Share your <em>skill</em>
+        </h1>
+        <p className="hero-body">Edit and share skills in seconds.</p>
+      </div>
 
-        <div className="share-cards-grid">
-          <div className="package-card share-card surface-soft">
-            <div className="package-card-header">
-              <span className="surface-chip">Package once</span>
-              <div className="selection-badge">{selectionLabel}</div>
+      <div className="share-home-stack">
+        <div className="package-card share-card surface-soft">
+          <div className="share-home-card-header">
+            <div>
+              <h2 className="simple-app-title">Package skills in seconds</h2>
+              <p className="simple-app-copy">Upload one skill file, review the preview, and open the finished share page directly.</p>
             </div>
+            <span className="surface-chip">Single skill</span>
+          </div>
 
-            <h2 className="simple-app-title">Create a share link</h2>
-            <p className="simple-app-copy">
-              Drop <span className="inline-token token-agent">AGENTS.md</span>,{" "}
-              <span className="inline-token token-skill">SKILL.md</span>,{" "}
-              <span className="inline-token token-mcp">mcp.json</span>, or{" "}
-              <span className="inline-token token-config">config</span> files,
-              <span style={{ display: "block" }}>we remove the <span style={{ textDecoration: "line-through", opacity: 0.5 }}>secrets</span>, so share with others more easily.</span>
-            </p>
-
-            <div className="input-method-grid">
-              <label
-                className={`drop-zone${dropActive ? " is-dragover" : ""}`}
-                aria-busy={busy ? "true" : "false"}
-                onDragEnter={(event) => {
-                  event.preventDefault();
-                  setDropActive(true);
+          <div className="share-upload-grid">
+            <label
+              className={`drop-zone share-skill-drop-zone${dropActive ? " is-dragover" : ""}`}
+              aria-busy={busy ? "true" : "false"}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDropActive(true);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDropActive(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setDropActive(false);
+              }}
+              onDrop={async (event) => {
+                event.preventDefault();
+                setDropActive(false);
+                if (busy) return;
+                const files = await collectDroppedFiles(event.dataTransfer);
+                void assignEntries(files);
+              }}
+            >
+              <input
+                className="visually-hidden"
+                type="file"
+                multiple
+                accept=".md,text/markdown"
+                onChange={(event) => {
+                  void assignEntries(event.target.files);
                 }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setDropActive(true);
-                }}
-                onDragLeave={(event) => {
-                  event.preventDefault();
-                  setDropActive(false);
-                }}
-                onDrop={async (event) => {
-                  event.preventDefault();
-                  setDropActive(false);
-                  if (busy) return;
-                  const files = await collectDroppedFiles(event.dataTransfer);
-                  assignEntries(files);
-                }}
-              >
-                <input
-                  className="visually-hidden"
-                  type="file"
-                  multiple
-                  onChange={(event) => assignEntries(event.target.files)}
-                />
-                <div className="drop-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path>
-                    <path d="M7 9l5-5 5 5"></path>
-                    <path d="M12 4v12"></path>
-                  </svg>
-                </div>
-                <div className="drop-text">
-                  <p className="drop-heading">Drag &amp; drop files here</p>
-                  <p className="drop-hint">or <span className="drop-browse">browse</span> to upload</p>
-                </div>
-              </label>
-
-              <div className="included-section">
-                <div className="included-section-header">
-                  <h4>Example contents</h4>
-                </div>
-                  <div className="included-list">
-                    {exampleItems.map((item) => {
-                      const isActive = activeExampleName === item.name;
-                      const isDimmed = Boolean(activeExampleName) && !isActive;
-                      return (
-                        <button
-                          type="button"
-                          className={`included-item${isActive ? " is-active" : ""}${isDimmed ? " is-dimmed" : ""}`}
-                          key={`${item.kind}-${item.name}`}
-                          onClick={() => {
-                            const nextPasteValue = isActive ? "" : item.example!;
-                            setPasteValue(nextPasteValue);
-                            setSelectedEntries([]);
-                            setPredictedPreviewItem(isActive ? null : item);
-                            resetFormState();
-                            setPasteState(isActive ? DEFAULT_STATUS : `Loaded "${item.name}" example.`);
-                          }}
-                        >
-                          <div className={`item-dot ${toneClass(item)}`}></div>
-                          <div className="item-text">
-                            <span className="item-title">{item.name || "Unnamed item"}</span>
-                            <span className="item-meta">{item.meta || item.kind || "Item"}</span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+              />
+              <div className="drop-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"></path>
+                  <path d="M7 9l5-5 5 5"></path>
+                  <path d="M12 4v12"></path>
+                </svg>
               </div>
-            </div>
+              <div className="drop-text">
+                <p className="drop-heading">Drag and drop a skill here</p>
+                <p className="drop-hint">or <span className="drop-browse">browse</span> to upload</p>
+              </div>
+              <p className="share-upload-note">Only one `SKILL.md` file at a time.</p>
+            </label>
 
-            <div className="package-actions" aria-live="polite">
+            <div className="share-upload-actions">
               <div className={`package-status severity-${packageStatus.severity}`}>
                 <span className="package-status-dot"></span>
                 <span className="package-status-label">{packageStatus.label}</span>
@@ -515,93 +411,72 @@ export default function ShareHomeClient() {
                 </ul>
               )}
 
-              {generatedUrl ? (
-                <div className="publish-result">
-                  <div className={`share-link-row${copyState === "copied" ? " is-copied" : ""}`}>
-                    <div className="share-link-inline mono">{generatedUrl}</div>
-                    <button className={`copy-icon-button${copyState === "copied" ? " is-copied" : ""}`} type="button" onClick={copyGeneratedUrl} title="Copy link">
-                      {copyState === "copied" ? (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                  <a className="button-primary" href={generatedUrl} target="_blank" rel="noreferrer">
-                    Open share page
-                  </a>
-                </div>
-              ) : (
-                <div className="publish-action">
-                  <p className="publish-hint">Creates a public URL that anyone can use to import this config.</p>
-                  <button
-                    className="button-primary publish-button"
-                    type="button"
-                    onClick={() => void publishBundle()}
-                    disabled={busyMode === "publish" || !effectiveEntries.length}
-                  >
-                    {busyMode === "publish" ? "Publishing..." : "🔗 Generate share link"}
-                  </button>
-                </div>
-              )}
-            </div>
+              <p className="publish-hint">Generate the share link here, then continue on the share page to copy or share it.</p>
+              <button
+                className="button-primary publish-button"
+                type="button"
+                onClick={() => void publishBundle()}
+                disabled={publishDisabled}
+              >
+                {busyMode === "publish" ? "Generating..." : "🔗 Generate share link"}
+              </button>
 
+              <p className="share-inline-status">{statusMessage}</p>
+            </div>
           </div>
+        </div>
 
-          <aside className="preview-panel">
-            <div className="preview-surface">
-              <div className="preview-header">
-                <span className="preview-eyebrow">Preview</span>
-                <div className="preview-header-actions">
-                  <span className="preview-filename">
-                    <span className={`preview-filename-dot ${activePreviewItem ? toneClass(activePreviewItem) : "dot-pending"}`} />
-                    {previewFilename}
-                    <button
-                      type="button"
-                      className="clipboard-egg-button preview-copy-button clipboard-egg-inline"
-                      title="Copy preview"
-                      aria-label="Copy preview"
-                      onClick={() => void copyPreviewText()}
-                    >
-                      {previewCopied ? (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="20 6 9 17 4 12"></polyline>
-                        </svg>
-                      ) : (
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                        </svg>
-                      )}
-                    </button>
-                  </span>
-                </div>
-              </div>
-              <div className="preview-editor-wrap">
-                <pre
-                  className="preview-highlight"
-                  aria-hidden="true"
-                  dangerouslySetInnerHTML={{ __html: highlightedPaste + "\n" }}
-                />
-                <textarea
-                  className="preview-editor"
-                  value={pasteValue}
-                  onChange={handlePasteChange}
-                  placeholder=""
-                  spellCheck={false}
-                />
-              </div>
-              <div className="preview-footer">
-                <span>{pasteCountLabel}</span>
+        <aside className="preview-panel share-home-preview">
+          <div className="preview-surface">
+            <div className="preview-header">
+              <span className="preview-eyebrow">Preview</span>
+              <div className="preview-header-actions">
+                <span className="preview-filename">
+                  <span className={`preview-filename-dot ${activePreviewItem ? toneClass(activePreviewItem) : "dot-pending"}`} />
+                  {previewFilename}
+                  <button
+                    type="button"
+                    className="clipboard-egg-button preview-copy-button clipboard-egg-inline"
+                    title="Copy preview"
+                    aria-label="Copy preview"
+                    onClick={() => void copyPreviewText()}
+                  >
+                    {previewCopied ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12"></polyline>
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    )}
+                  </button>
+                </span>
               </div>
             </div>
-          </aside>
-        </div>
+
+            <div className="preview-editor-wrap">
+              <pre
+                className="preview-highlight"
+                aria-hidden="true"
+                dangerouslySetInnerHTML={{ __html: `${highlightedPaste}\n` }}
+              />
+              <textarea
+                className="preview-editor"
+                value={pasteValue}
+                onChange={handlePasteChange}
+                placeholder=""
+                spellCheck={false}
+              />
+            </div>
+
+            <div className="preview-footer">
+              <span>{pasteCountLabel}</span>
+            </div>
+          </div>
+        </aside>
+      </div>
     </section>
   );
 }

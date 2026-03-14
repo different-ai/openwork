@@ -388,6 +388,11 @@ a {
   align-items: stretch;
 }
 
+.share-home-stack {
+  display: grid;
+  gap: 18px;
+}
+
 .share-bundle-grid {
   align-items: stretch;
 }
@@ -439,6 +444,14 @@ a {
   align-content: start;
 }
 
+.share-home-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
 .preview-panel {
   grid-column: 2;
   grid-row: 1;
@@ -451,6 +464,13 @@ a {
 
 .share-preview-panel {
   min-height: 560px;
+}
+
+.share-home-preview {
+  grid-column: auto;
+  grid-row: auto;
+  min-height: 620px;
+  contain: initial;
 }
 
 .preview-surface {
@@ -896,6 +916,19 @@ a {
   align-items: stretch;
 }
 
+.share-upload-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.share-upload-actions {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
 .share-feedback,
 .warning-card {
   display: grid;
@@ -1029,6 +1062,10 @@ a {
   cursor: pointer;
 }
 
+.share-skill-drop-zone {
+  min-height: 240px;
+}
+
 .drop-zone:hover,
 .drop-zone.is-dragover {
   border-color: rgba(37, 99, 235, 0.45);
@@ -1135,6 +1172,14 @@ a {
 .drop-hint {
   margin: 0;
   font-size: 13px;
+  color: var(--ow-muted);
+}
+
+.share-upload-note,
+.share-inline-status {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
   color: var(--ow-muted);
 }
 
@@ -1520,6 +1565,10 @@ button.included-item {
   }
 
   .input-method-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .share-upload-grid {
     grid-template-columns: 1fr;
   }
 

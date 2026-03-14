@@ -10,16 +10,16 @@ export const revalidate = 3600;
 const rootOgImageUrl = `${DEFAULT_PUBLIC_BASE_URL}/og/root`;
 
 export const metadata: Metadata = {
-  title: "Package Your Worker",
-  description: "Drag and drop OpenWork skills, agents, commands, or MCP config to publish a shareable worker package.",
+  title: "Share Your Skill",
+  description: "Upload, edit, and publish a single OpenWork skill for sharing.",
   alternates: {
     canonical: DEFAULT_PUBLIC_BASE_URL
   },
   openGraph: {
     type: "website",
     siteName: "OpenWork Share",
-    title: "Package Your Worker",
-    description: "Drop skills, agents, or MCPs into OpenWork Share and publish a worker package in one move.",
+    title: "Share Your Skill",
+    description: "Upload, edit, and publish a single OpenWork skill for sharing.",
     url: DEFAULT_PUBLIC_BASE_URL,
     images: [
       {
@@ -32,8 +32,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Package Your Worker",
-    description: "Drop skills, agents, or MCPs into OpenWork Share and publish a worker package in one move.",
+    title: "Share Your Skill",
+    description: "Upload, edit, and publish a single OpenWork skill for sharing.",
     images: [
       {
         url: rootOgImageUrl,
