@@ -110,6 +110,23 @@ export default function ShareBundlePage(props: BundlePageProps) {
             </section>
 
             <section className="share-bundle-stack">
+              <article className="result-card share-install-card">
+                <div className="share-inline-steps">
+                  <div className="share-inline-step">
+                    <span className="step-bullet">01</span>
+                    <span>Open the bundle in OpenWork</span>
+                  </div>
+                  <div className="share-inline-step">
+                    <span className="step-bullet">02</span>
+                    <span>Choose the destination worker</span>
+                  </div>
+                  <div className="share-inline-step">
+                    <span className="step-bullet">03</span>
+                    <span>Happy OpenWorking!</span>
+                  </div>
+                </div>
+              </article>
+
               <article className="bundle-compact-strip surface-soft">
                 <div className="bundle-strip-header">Skills:</div>
                 <div className="bundle-strip-list" aria-label="Skills">
@@ -143,24 +160,6 @@ export default function ShareBundlePage(props: BundlePageProps) {
                 copied={previewCopied}
                 onCopy={() => void copyPreview()}
               />
-
-              <article className="result-card share-install-card">
-                <span className="eyebrow">Open it in OpenWork</span>
-                <div className="share-inline-steps">
-                  <div className="share-inline-step">
-                    <span className="step-bullet">01</span>
-                    <span>Open the bundle in OpenWork or jump into an OpenWork den.</span>
-                  </div>
-                  <div className="share-inline-step">
-                    <span className="step-bullet">02</span>
-                    <span>Choose the destination worker or remote environment for this skill.</span>
-                  </div>
-                  <div className="share-inline-step">
-                    <span className="step-bullet">03</span>
-                    <span>Review the selected skill.md preview, then import it into OpenWork.</span>
-                  </div>
-                </div>
-              </article>
             </section>
           </>
         )}

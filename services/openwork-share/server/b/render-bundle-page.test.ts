@@ -95,7 +95,9 @@ test("renderBundlePage shows workspace profile metadata", () => {
     req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
   });
 
-  assert.match(html, /Open it in OpenWork/);
+  assert.match(html, /Open the bundle in OpenWork/);
+  assert.match(html, /Choose the destination worker/);
+  assert.match(html, /Happy OpenWorking!/);
   assert.match(html, /Skills:/);
   assert.doesNotMatch(html, /Bundle details/);
   assert.doesNotMatch(html, /Raw endpoints/);

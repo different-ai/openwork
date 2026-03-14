@@ -452,11 +452,10 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
 
     <section class="results-grid">
       <div class="result-card">
-        <h3>Open it in OpenWork</h3>
         <div class="step-list">
-          <div class="step-row"><span class="step-bullet">01</span><span>Open this share page or jump straight into OpenWork with the import action.</span></div>
-          <div class="step-row"><span class="step-bullet">02</span><span>Choose where to add the skill inside OpenWork once the bundle is loaded.</span></div>
-          <div class="step-row"><span class="step-bullet">03</span><span>Review the generated skill.md content, then finish the import in OpenWork.</span></div>
+          <div class="step-row"><span class="step-bullet">01</span><span>Open the bundle in OpenWork</span></div>
+          <div class="step-row"><span class="step-bullet">02</span><span>Choose the destination worker</span></div>
+          <div class="step-row"><span class="step-bullet">03</span><span>Happy OpenWorking!</span></div>
         </div>
       </div>
     </section>
