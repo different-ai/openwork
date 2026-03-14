@@ -1,5 +1,9 @@
 import { env } from "../env.js";
 import {
+  deprovisionWorkerOnDaytona,
+  provisionWorkerOnDaytona,
+} from "./daytona.js";
+import {
   customDomainForWorker,
   ensureVercelDnsRecord,
 } from "./vanity-domain.js";
@@ -331,6 +335,10 @@ export async function provisionWorker(
     return provisionWorkerOnRender(input);
   }
 
+  if (env.provisionerMode === "daytona") {
+    return provisionWorkerOnDaytona(input);
+  }
+
   const template = env.workerUrlTemplate ?? "https://workers.local/{workerId}";
   const url = template.replace("{workerId}", input.workerId);
   return {
@@ -344,6 +352,11 @@ export async function deprovisionWorker(input: {
   workerId: string;
   instanceUrl: string | null;
 }) {
+  if (env.provisionerMode === "daytona") {
+    await deprovisionWorkerOnDaytona(input.workerId);
+    return;
+  }
+
   if (env.provisionerMode !== "render") {
     return;
   }

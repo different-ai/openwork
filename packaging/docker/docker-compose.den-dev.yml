@@ -15,13 +15,11 @@
 #   DEN_CORS_ORIGINS        — comma-separated trusted origins for Express CORS (auto-populated by den-dev-up.sh)
 #   DEN_PROVISIONER_MODE    — stub or render (default: stub)
 #   DEN_WORKER_URL_TEMPLATE — worker URL template used by stub provisioning
+#   DAYTONA_API_URL / DAYTONA_API_KEY / DAYTONA_TARGET / DAYTONA_OPENWORK_VERSION
+#                           — optional Daytona passthrough vars when DEN_PROVISIONER_MODE=daytona
 
 x-shared: &shared
-  image: node:22-bookworm-slim
-  working_dir: /app
-  volumes:
-    - ../../:/app
-    - pnpm-store:/root/.local/share/pnpm/store
+  restart: unless-stopped
 
 services:
   mysql:
@@ -49,39 +47,16 @@ services:
 
   den:
     <<: *shared
+    build:
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile.den
     depends_on:
       mysql:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-          curl ca-certificates >/dev/null 2>&1
-
-        corepack enable && corepack prepare pnpm@10.27.0 --activate
-
-        echo "[den] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
-
-        echo "[den] Running migrations..."
-        pnpm --filter @openwork/den db:migrate
-
-        echo ""
-        echo "============================================"
-        echo "  Den control plane"
-        echo "  Demo/API: http://localhost:${DEN_API_PORT:-8788}"
-        echo "  Health:   http://localhost:${DEN_API_PORT:-8788}/health"
-        echo "  Auth URL: ${DEN_BETTER_AUTH_URL:-http://localhost:3005}"
-        echo "============================================"
-        echo ""
-
-        exec pnpm --filter @openwork/den dev
     ports:
       - "${DEN_API_PORT:-8788}:8788"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8788/health || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8788/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -98,38 +73,23 @@ services:
       PROVISIONER_MODE: ${DEN_PROVISIONER_MODE:-stub}
       WORKER_URL_TEMPLATE: ${DEN_WORKER_URL_TEMPLATE:-}
       POLAR_FEATURE_GATE_ENABLED: "false"
+      DAYTONA_API_URL: ${DAYTONA_API_URL:-}
+      DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+      DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+      DAYTONA_OPENWORK_VERSION: ${DAYTONA_OPENWORK_VERSION:-}
 
   web:
     <<: *shared
+    build:
+      context: ../../
+      dockerfile: packaging/docker/Dockerfile.den-web
     depends_on:
       den:
         condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-
-        apt-get update -qq && apt-get install -y -qq --no-install-recommends \
-          curl ca-certificates >/dev/null 2>&1
-
-        corepack enable && corepack prepare pnpm@10.27.0 --activate
-
-        echo "[den-web] Installing dependencies..."
-        pnpm install --no-frozen-lockfile --network-concurrency 1 --child-concurrency 1
-
-        echo ""
-        echo "============================================"
-        echo "  OpenWork Cloud web app"
-        echo "  URL:      http://localhost:${DEN_WEB_PORT:-3005}"
-        echo "  Den API:  http://localhost:${DEN_API_PORT:-8788}"
-        echo "============================================"
-        echo ""
-
-        exec pnpm --filter @different-ai/openwork-web dev
     ports:
       - "${DEN_WEB_PORT:-3005}:3005"
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3005/api/den/health || exit 1"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/api/den/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s
       timeout: 10s
       retries: 30
@@ -144,4 +104,3 @@ services:
 
 volumes:
   den-mysql-data:
-  pnpm-store:

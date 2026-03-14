@@ -1,0 +1,325 @@
+import { Daytona, type Sandbox } from "@daytonaio/sdk"
+import { env } from "../env.js"
+
+type ProvisionInput = {
+  workerId: string
+  name: string
+  hostToken: string
+  clientToken: string
+}
+
+type ProvisionedInstance = {
+  provider: string
+  url: string
+  status: "provisioning" | "healthy"
+  region?: string
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+const maxSignedPreviewExpirySeconds = 60 * 60 * 24
+
+const slug = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+
+function shellQuote(value: string) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`
+}
+
+function createDaytonaClient() {
+  return new Daytona({
+    apiKey: env.daytona.apiKey,
+    apiUrl: env.daytona.apiUrl,
+    ...(env.daytona.target ? { target: env.daytona.target } : {}),
+  })
+}
+
+function assertDaytonaConfig() {
+  if (!env.daytona.apiKey) {
+    throw new Error("DAYTONA_API_KEY is required for daytona provisioner")
+  }
+}
+
+function workerHint(workerId: string) {
+  return workerId.replace(/-/g, "").slice(0, 12)
+}
+
+function sandboxLabels(workerId: string) {
+  return {
+    "openwork.den.provider": "daytona",
+    "openwork.den.worker-id": workerId,
+  }
+}
+
+function sandboxName(input: ProvisionInput) {
+  return slug(
+    `${env.daytona.sandboxNamePrefix}-${input.name}-${workerHint(input.workerId)}`,
+  ).slice(0, 63)
+}
+
+function workspaceVolumeName(workerId: string) {
+  return slug(`${env.daytona.volumeNamePrefix}-${workerHint(workerId)}-workspace`).slice(0, 63)
+}
+
+function dataVolumeName(workerId: string) {
+  return slug(`${env.daytona.volumeNamePrefix}-${workerHint(workerId)}-data`).slice(0, 63)
+}
+
+function buildOpenWorkStartCommand(input: ProvisionInput) {
+  const orchestratorPackage = env.daytona.openworkVersion?.trim()
+    ? `openwork-orchestrator@${env.daytona.openworkVersion.trim()}`
+    : "openwork-orchestrator"
+  const installStep = `if ! command -v openwork >/dev/null 2>&1; then npm install -g ${shellQuote(orchestratorPackage)}; fi`
+  const openworkServe = [
+    "OPENWORK_DATA_DIR=",
+    shellQuote(env.daytona.runtimeDataPath),
+    " OPENWORK_SIDECAR_DIR=",
+    shellQuote(env.daytona.sidecarDir),
+    " OPENWORK_TOKEN=",
+    shellQuote(input.clientToken),
+    " OPENWORK_HOST_TOKEN=",
+    shellQuote(input.hostToken),
+    " openwork serve",
+    ` --workspace ${shellQuote(env.daytona.runtimeWorkspacePath)}`,
+    ` --openwork-host 0.0.0.0`,
+    ` --openwork-port ${env.daytona.openworkPort}`,
+    ` --opencode-host 127.0.0.1`,
+    ` --opencode-port ${env.daytona.opencodePort}`,
+    ` --connect-host 127.0.0.1`,
+    ` --cors '*'`,
+    ` --approval manual`,
+    ` --no-opencode-router`,
+    ` --verbose`,
+  ].join("")
+
+  const script = `
+set -u
+mkdir -p ${shellQuote(env.daytona.workspaceMountPath)} ${shellQuote(env.daytona.dataMountPath)} ${shellQuote(env.daytona.runtimeWorkspacePath)} ${shellQuote(env.daytona.runtimeDataPath)} ${shellQuote(env.daytona.sidecarDir)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes`)}
+ln -sfn ${shellQuote(env.daytona.workspaceMountPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes/workspace`) }
+ln -sfn ${shellQuote(env.daytona.dataMountPath)} ${shellQuote(`${env.daytona.runtimeWorkspacePath}/volumes/data`) }
+${installStep}
+attempt=0
+while [ "$attempt" -lt 3 ]; do
+  attempt=$((attempt + 1))
+  if ${openworkServe}; then
+    exit 0
+  fi
+  status=$?
+  echo "openwork serve failed (attempt $attempt, exit $status); retrying in 3s"
+  sleep 3
+done
+exit 1
+`.trim()
+
+  return `sh -lc ${shellQuote(script)}`
+}
+
+async function waitForVolumeReady(daytona: Daytona, name: string, timeoutMs: number) {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const volume = await daytona.volume.get(name)
+    if (volume.state === "ready") {
+      return volume
+    }
+    await sleep(env.daytona.pollIntervalMs)
+  }
+
+  throw new Error(`Timed out waiting for Daytona volume ${name} to become ready`)
+}
+
+async function waitForHealth(url: string, timeoutMs: number, sandbox: Sandbox, sessionId: string, commandId: string) {
+  const startedAt = Date.now()
+
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${url.replace(/\/$/, "")}/health`, { method: "GET" })
+      if (response.ok) {
+        return
+      }
+    } catch {
+      // ignore transient startup failures
+    }
+
+    try {
+      const command = await sandbox.process.getSessionCommand(sessionId, commandId)
+      if (typeof command.exitCode === "number" && command.exitCode !== 0) {
+        const logs = await sandbox.process.getSessionCommandLogs(sessionId, commandId)
+        throw new Error(
+          [
+            `openwork session exited with ${command.exitCode}`,
+            logs.stdout?.trim() ? `stdout:\n${logs.stdout.trim().slice(-4000)}` : "",
+            logs.stderr?.trim() ? `stderr:\n${logs.stderr.trim().slice(-4000)}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        )
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("openwork session exited")) {
+        throw error
+      }
+    }
+
+    await sleep(env.daytona.pollIntervalMs)
+  }
+
+  const logs = await sandbox.process.getSessionCommandLogs(sessionId, commandId).catch(
+    () => null,
+  )
+  throw new Error(
+    [
+      `Timed out waiting for Daytona worker health at ${url.replace(/\/$/, "")}/health`,
+      logs?.stdout?.trim() ? `stdout:\n${logs.stdout.trim().slice(-4000)}` : "",
+      logs?.stderr?.trim() ? `stderr:\n${logs.stderr.trim().slice(-4000)}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  )
+}
+
+export async function provisionWorkerOnDaytona(
+  input: ProvisionInput,
+): Promise<ProvisionedInstance> {
+  assertDaytonaConfig()
+
+  const daytona = createDaytonaClient()
+  const labels = sandboxLabels(input.workerId)
+  const workspaceVolumeNameValue = workspaceVolumeName(input.workerId)
+  const dataVolumeNameValue = dataVolumeName(input.workerId)
+  await daytona.volume.get(workspaceVolumeNameValue, true)
+  await daytona.volume.get(dataVolumeNameValue, true)
+  const workspaceVolume = await waitForVolumeReady(
+    daytona,
+    workspaceVolumeNameValue,
+    env.daytona.createTimeoutSeconds * 1000,
+  )
+  const dataVolume = await waitForVolumeReady(
+    daytona,
+    dataVolumeNameValue,
+    env.daytona.createTimeoutSeconds * 1000,
+  )
+  let sandbox: Awaited<ReturnType<typeof daytona.create>> | null = null
+
+  try {
+    sandbox = env.daytona.snapshot
+      ? await daytona.create(
+          {
+            name: sandboxName(input),
+            snapshot: env.daytona.snapshot,
+            autoStopInterval: env.daytona.autoStopInterval,
+            autoArchiveInterval: env.daytona.autoArchiveInterval,
+            autoDeleteInterval: env.daytona.autoDeleteInterval,
+            public: env.daytona.public,
+            labels,
+            envVars: {
+              DEN_WORKER_ID: input.workerId,
+            },
+            volumes: [
+              {
+                volumeId: workspaceVolume.id,
+                mountPath: env.daytona.workspaceMountPath,
+              },
+              {
+                volumeId: dataVolume.id,
+                mountPath: env.daytona.dataMountPath,
+              },
+            ],
+          },
+          { timeout: env.daytona.createTimeoutSeconds },
+        )
+      : await daytona.create(
+          {
+            name: sandboxName(input),
+            image: env.daytona.image,
+            autoStopInterval: env.daytona.autoStopInterval,
+            autoArchiveInterval: env.daytona.autoArchiveInterval,
+            autoDeleteInterval: env.daytona.autoDeleteInterval,
+            public: env.daytona.public,
+            labels,
+            envVars: {
+              DEN_WORKER_ID: input.workerId,
+            },
+            resources: {
+              cpu: env.daytona.resources.cpu,
+              memory: env.daytona.resources.memory,
+              disk: env.daytona.resources.disk,
+            },
+            volumes: [
+              {
+                volumeId: workspaceVolume.id,
+                mountPath: env.daytona.workspaceMountPath,
+              },
+              {
+                volumeId: dataVolume.id,
+                mountPath: env.daytona.dataMountPath,
+              },
+            ],
+          },
+          { timeout: env.daytona.createTimeoutSeconds },
+        )
+
+    const sessionId = `openwork-${workerHint(input.workerId)}`
+    await sandbox.process.createSession(sessionId)
+    const command = await sandbox.process.executeSessionCommand(
+      sessionId,
+      {
+        command: buildOpenWorkStartCommand(input),
+        runAsync: true,
+      },
+      0,
+    )
+
+    const preview = await sandbox.getSignedPreviewUrl(
+      env.daytona.openworkPort,
+      Math.max(
+        1,
+        Math.min(env.daytona.signedPreviewExpiresSeconds, maxSignedPreviewExpirySeconds),
+      ),
+    )
+    await waitForHealth(preview.url, env.daytona.healthcheckTimeoutMs, sandbox, sessionId, command.cmdId)
+
+    return {
+      provider: "daytona",
+      url: preview.url,
+      status: "healthy",
+      region: sandbox.target,
+    }
+  } catch (error) {
+    if (sandbox) {
+      await sandbox.delete(env.daytona.deleteTimeoutSeconds).catch(() => {})
+    }
+    await daytona.volume.delete(workspaceVolume).catch(() => {})
+    await daytona.volume.delete(dataVolume).catch(() => {})
+    throw error
+  }
+}
+
+export async function deprovisionWorkerOnDaytona(workerId: string) {
+  assertDaytonaConfig()
+
+  const daytona = createDaytonaClient()
+  const sandboxes = await daytona.list(sandboxLabels(workerId), 1, 20)
+
+  for (const sandbox of sandboxes.items) {
+    await sandbox.delete(env.daytona.deleteTimeoutSeconds).catch((error) => {
+      const message = error instanceof Error ? error.message : "unknown_error"
+      console.warn(`[provisioner] failed to delete Daytona sandbox ${sandbox.id}: ${message}`)
+    })
+  }
+
+  const volumes = await daytona.volume.list()
+  for (const name of [workspaceVolumeName(workerId), dataVolumeName(workerId)]) {
+    const volume = volumes.find((entry) => entry.name === name)
+    if (!volume) {
+      continue
+    }
+    await daytona.volume.delete(volume).catch((error) => {
+      const message = error instanceof Error ? error.message : "unknown_error"
+      console.warn(`[provisioner] failed to delete Daytona volume ${name}: ${message}`)
+    })
+  }
+}

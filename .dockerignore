@@ -1,0 +1,10 @@
+.git
+.github
+.opencode
+node_modules
+**/node_modules
+tmp
+dist
+**/dist
+.env
+.env.*

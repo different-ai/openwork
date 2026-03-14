@@ -11,8 +11,9 @@ const schema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
-  PROVISIONER_MODE: z.enum(["stub", "render"]).optional(),
+  PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
+  OPENWORK_DAYTONA_ENV_PATH: z.string().optional(),
   RENDER_API_BASE: z.string().optional(),
   RENDER_API_KEY: z.string().optional(),
   RENDER_OWNER_ID: z.string().optional(),
@@ -40,9 +41,41 @@ const schema = z.object({
   POLAR_BENEFIT_ID: z.string().optional(),
   POLAR_SUCCESS_URL: z.string().optional(),
   POLAR_RETURN_URL: z.string().optional(),
+  DAYTONA_API_URL: z.string().optional(),
+  DAYTONA_API_KEY: z.string().optional(),
+  DAYTONA_TARGET: z.string().optional(),
+  DAYTONA_SNAPSHOT: z.string().optional(),
+  DAYTONA_SANDBOX_IMAGE: z.string().optional(),
+  DAYTONA_SANDBOX_CPU: z.string().optional(),
+  DAYTONA_SANDBOX_MEMORY: z.string().optional(),
+  DAYTONA_SANDBOX_DISK: z.string().optional(),
+  DAYTONA_SANDBOX_PUBLIC: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_STOP_INTERVAL: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL: z.string().optional(),
+  DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL: z.string().optional(),
+  DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS: z.string().optional(),
+  DAYTONA_SANDBOX_NAME_PREFIX: z.string().optional(),
+  DAYTONA_VOLUME_NAME_PREFIX: z.string().optional(),
+  DAYTONA_WORKSPACE_MOUNT_PATH: z.string().optional(),
+  DAYTONA_DATA_MOUNT_PATH: z.string().optional(),
+  DAYTONA_RUNTIME_WORKSPACE_PATH: z.string().optional(),
+  DAYTONA_RUNTIME_DATA_PATH: z.string().optional(),
+  DAYTONA_SIDECAR_DIR: z.string().optional(),
+  DAYTONA_OPENWORK_PORT: z.string().optional(),
+  DAYTONA_OPENCODE_PORT: z.string().optional(),
+  DAYTONA_OPENWORK_VERSION: z.string().optional(),
+  DAYTONA_CREATE_TIMEOUT_SECONDS: z.string().optional(),
+  DAYTONA_DELETE_TIMEOUT_SECONDS: z.string().optional(),
+  DAYTONA_HEALTHCHECK_TIMEOUT_MS: z.string().optional(),
+  DAYTONA_POLL_INTERVAL_MS: z.string().optional(),
 });
 
 const parsed = schema.parse(process.env);
+
+function optionalString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
 
 function normalizeOrigin(origin: string): string {
   const value = origin.trim();
@@ -65,6 +98,9 @@ const betterAuthTrustedOrigins =
 
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true";
+
+const daytonaSandboxPublic =
+  (parsed.DAYTONA_SANDBOX_PUBLIC ?? "false").toLowerCase() === "true";
 
 export const env = {
   databaseUrl: parsed.DATABASE_URL,
@@ -121,5 +157,53 @@ export const env = {
     benefitId: parsed.POLAR_BENEFIT_ID,
     successUrl: parsed.POLAR_SUCCESS_URL,
     returnUrl: parsed.POLAR_RETURN_URL,
+  },
+  daytona: {
+    envPath: optionalString(parsed.OPENWORK_DAYTONA_ENV_PATH),
+    apiUrl: optionalString(parsed.DAYTONA_API_URL) ?? "https://app.daytona.io/api",
+    apiKey: optionalString(parsed.DAYTONA_API_KEY),
+    target: optionalString(parsed.DAYTONA_TARGET),
+    snapshot: optionalString(parsed.DAYTONA_SNAPSHOT),
+    image: optionalString(parsed.DAYTONA_SANDBOX_IMAGE) ?? "node:20-bookworm",
+    resources: {
+      cpu: Number(parsed.DAYTONA_SANDBOX_CPU ?? "2"),
+      memory: Number(parsed.DAYTONA_SANDBOX_MEMORY ?? "4"),
+      disk: Number(parsed.DAYTONA_SANDBOX_DISK ?? "8"),
+    },
+    public: daytonaSandboxPublic,
+    autoStopInterval: Number(parsed.DAYTONA_SANDBOX_AUTO_STOP_INTERVAL ?? "0"),
+    autoArchiveInterval: Number(
+      parsed.DAYTONA_SANDBOX_AUTO_ARCHIVE_INTERVAL ?? "10080",
+    ),
+    autoDeleteInterval: Number(
+      parsed.DAYTONA_SANDBOX_AUTO_DELETE_INTERVAL ?? "-1",
+    ),
+    signedPreviewExpiresSeconds: Number(
+      parsed.DAYTONA_SIGNED_PREVIEW_EXPIRES_SECONDS ?? "86400",
+    ),
+    sandboxNamePrefix:
+      optionalString(parsed.DAYTONA_SANDBOX_NAME_PREFIX) ?? "den-daytona-worker",
+    volumeNamePrefix:
+      optionalString(parsed.DAYTONA_VOLUME_NAME_PREFIX) ?? "den-daytona-worker",
+    workspaceMountPath:
+      optionalString(parsed.DAYTONA_WORKSPACE_MOUNT_PATH) ?? "/workspace",
+    dataMountPath:
+      optionalString(parsed.DAYTONA_DATA_MOUNT_PATH) ?? "/persist/openwork",
+    runtimeWorkspacePath:
+      optionalString(parsed.DAYTONA_RUNTIME_WORKSPACE_PATH) ??
+      "/tmp/openwork-workspace",
+    runtimeDataPath:
+      optionalString(parsed.DAYTONA_RUNTIME_DATA_PATH) ?? "/tmp/openwork-data",
+    sidecarDir:
+      optionalString(parsed.DAYTONA_SIDECAR_DIR) ?? "/tmp/openwork-sidecars",
+    openworkPort: Number(parsed.DAYTONA_OPENWORK_PORT ?? "8787"),
+    opencodePort: Number(parsed.DAYTONA_OPENCODE_PORT ?? "4096"),
+    openworkVersion: optionalString(parsed.DAYTONA_OPENWORK_VERSION),
+    createTimeoutSeconds: Number(parsed.DAYTONA_CREATE_TIMEOUT_SECONDS ?? "300"),
+    deleteTimeoutSeconds: Number(parsed.DAYTONA_DELETE_TIMEOUT_SECONDS ?? "120"),
+    healthcheckTimeoutMs: Number(
+      parsed.DAYTONA_HEALTHCHECK_TIMEOUT_MS ?? "300000",
+    ),
+    pollIntervalMs: Number(parsed.DAYTONA_POLL_INTERVAL_MS ?? "5000"),
   },
 };

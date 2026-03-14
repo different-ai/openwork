@@ -14,6 +14,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/packaging/docker/docker-compose.den-dev.yml"
 RUNTIME_DIR="$ROOT_DIR/tmp/docker-den-dev"
+DAYTONA_ENV_FILE="${DAYTONA_ENV_FILE:-$ROOT_DIR/.env.daytona}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required" >&2
@@ -104,6 +105,19 @@ fi
 
 DEN_BETTER_AUTH_TRUSTED_ORIGINS="${DEN_BETTER_AUTH_TRUSTED_ORIGINS:-$DEN_CORS_ORIGINS}"
 
+if [ "$DEN_PROVISIONER_MODE" = "daytona" ] && [ -f "$DAYTONA_ENV_FILE" ]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$DAYTONA_ENV_FILE"
+  set +a
+fi
+
+if [ "$DEN_PROVISIONER_MODE" = "daytona" ] && [ -z "${DAYTONA_API_KEY:-}" ]; then
+  echo "DAYTONA_API_KEY is required when DEN_PROVISIONER_MODE=daytona" >&2
+  echo "Set DAYTONA_ENV_FILE to your .env.daytona path or export DAYTONA_API_KEY before running den-dev-up.sh" >&2
+  exit 1
+fi
+
 mkdir -p "$RUNTIME_DIR"
 RUNTIME_FILE="$ROOT_DIR/tmp/.den-dev-env-$DEV_ID"
 
@@ -125,6 +139,12 @@ echo "- DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL" >&2
 echo "- DEN_BETTER_AUTH_TRUSTED_ORIGINS=$DEN_BETTER_AUTH_TRUSTED_ORIGINS" >&2
 echo "- DEN_CORS_ORIGINS=$DEN_CORS_ORIGINS" >&2
 echo "- DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE" >&2
+if [ "$DEN_PROVISIONER_MODE" = "daytona" ]; then
+  echo "- DAYTONA_API_URL=${DAYTONA_API_URL:-https://app.daytona.io/api}" >&2
+  if [ -n "${DAYTONA_TARGET:-}" ]; then
+    echo "- DAYTONA_TARGET=$DAYTONA_TARGET" >&2
+  fi
+fi
 
 if ! DEN_API_PORT="$DEN_API_PORT" \
   DEN_WEB_PORT="$DEN_WEB_PORT" \
@@ -134,7 +154,11 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   DEN_CORS_ORIGINS="$DEN_CORS_ORIGINS" \
   DEN_PROVISIONER_MODE="$DEN_PROVISIONER_MODE" \
   DEN_WORKER_URL_TEMPLATE="$DEN_WORKER_URL_TEMPLATE" \
-  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --wait; then
+  DAYTONA_API_URL="${DAYTONA_API_URL:-}" \
+  DAYTONA_API_KEY="${DAYTONA_API_KEY:-}" \
+  DAYTONA_TARGET="${DAYTONA_TARGET:-}" \
+  DAYTONA_OPENWORK_VERSION="${DAYTONA_OPENWORK_VERSION:-}" \
+  docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build --wait; then
   echo "Den Docker stack failed to start. Recent logs:" >&2
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" logs --tail=200 >&2 || true
   exit 1
