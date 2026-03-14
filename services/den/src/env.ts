@@ -10,6 +10,7 @@ const schema = z.object({
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   PORT: z.string().optional(),
+  OPENWORK_DEV_MODE: z.string().optional(),
   CORS_ORIGINS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
@@ -107,6 +108,7 @@ export const env = {
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
   betterAuthTrustedOrigins,
+  devMode: (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1",
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,

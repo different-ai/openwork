@@ -165,6 +165,7 @@ async function main() {
     BETTER_AUTH_SECRET: "openwork-den-e2e-secret-000000000000",
     BETTER_AUTH_URL: baseUrl,
     PORT: String(appPort),
+    OPENWORK_DEV_MODE: "1",
     CORS_ORIGINS: baseUrl,
     PROVISIONER_MODE: "stub",
     WORKER_URL_TEMPLATE: "https://workers.example.com/{workerId}",
@@ -306,15 +307,15 @@ async function main() {
       },
     });
 
-    if (secondWorker.response.status !== 409) {
-      fail("Second worker was not blocked by the one-worker limit", {
+    if (secondWorker.response.status !== 202) {
+      fail("Second worker should be allowed in dev mode", {
         status: secondWorker.response.status,
         payload: secondWorker.payload,
       });
     }
 
-    if (!secondWorker.payload || secondWorker.payload.error !== "worker_limit_reached") {
-      fail("Second worker returned the wrong error payload", secondWorker.payload);
+    if (!secondWorker.payload?.worker?.id) {
+      fail("Second worker did not return a worker payload", secondWorker.payload);
     }
 
     log("Listing workers...");
@@ -324,11 +325,11 @@ async function main() {
     }
 
     const items = Array.isArray(workers.payload?.workers) ? workers.payload.workers : null;
-    if (!items || items.length !== 1) {
-      fail("Expected exactly one worker after limit enforcement", workers.payload);
+    if (!items || items.length !== 2) {
+      fail("Expected two cloud workers in dev mode", workers.payload);
     }
 
-    log("E2E worker limit check passed.");
+    log("E2E dev worker limit check passed.");
   } finally {
     await cleanup();
   }

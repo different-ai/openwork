@@ -448,7 +448,7 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     return
   }
 
-  if (parsed.data.destination === "cloud" && (await countUserCloudWorkers(session.user.id)) > 0) {
+  if (parsed.data.destination === "cloud" && !env.devMode && (await countUserCloudWorkers(session.user.id)) > 0) {
     const access = await requireCloudWorkerAccess({
       userId: session.user.id,
       email: session.user.email ?? `${session.user.id}@placeholder.local`,
