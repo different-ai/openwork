@@ -155,7 +155,7 @@ export default function WorkspaceSessionList(props: Props) {
 
   return (
     <>
-      <div class="mb-4 space-y-4">
+      <div class="mb-3 space-y-3">
         <For each={props.workspaceSessionGroups}>
           {(group) => {
             const workspace = () => group.workspace;
@@ -187,7 +187,7 @@ export default function WorkspaceSessionList(props: Props) {
                   <div
                     role="button"
                     tabIndex={0}
-                    class={`w-full flex items-center justify-between rounded-[20px] border px-4 py-3 text-left transition-[background-color,border-color,box-shadow] ${
+                    class={`w-full flex items-center justify-between rounded-[18px] border px-3.5 py-2.5 text-left transition-[background-color,border-color,box-shadow] ${
                       props.activeWorkspaceId === workspace().id
                         ? "border-dls-border bg-dls-surface shadow-[var(--dls-card-shadow)]"
                         : "border-transparent text-gray-12 hover:bg-gray-2/70"
@@ -204,14 +204,14 @@ export default function WorkspaceSessionList(props: Props) {
                       void Promise.resolve(props.onActivateWorkspace(workspace().id));
                     }}
                   >
-                    <div class="flex min-w-0 items-center gap-4">
+                    <div class="flex min-w-0 items-center gap-3.5">
                       <div
-                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full"
+                        class="flex h-6.5 w-6.5 shrink-0 items-center justify-center rounded-full"
                         style={{ "background-color": workspaceSwatchColor(workspace().id || workspaceLabel(workspace())) }}
                       />
                       <div class="min-w-0">
-                        <div class="truncate text-[16px] font-medium text-dls-text">{workspaceLabel(workspace())}</div>
-                        <div class={`mt-0.5 truncate text-[13px] ${statusTone()}`}>{statusLabel()}</div>
+                        <div class="truncate text-[14px] font-normal text-dls-text">{workspaceLabel(workspace())}</div>
+                        <div class={`mt-0.5 truncate text-[12px] ${statusTone()}`}>{statusLabel()}</div>
                       </div>
                     </div>
 
@@ -357,7 +357,7 @@ export default function WorkspaceSessionList(props: Props) {
                   </Show>
                 </div>
 
-                <div class="ml-7 mt-1 space-y-1.5 border-l-2 border-dls-border pl-4">
+                <div class="ml-6 mt-1 space-y-1 border-l-2 border-dls-border pl-3.5">
                   <Show
                     when={isWorkspaceExpanded(workspace().id)}
                     fallback={
@@ -370,7 +370,7 @@ export default function WorkspaceSessionList(props: Props) {
                               <div
                                 role="button"
                                 tabIndex={0}
-                                class={`group flex min-h-11 w-full items-center justify-between rounded-[16px] border px-3.5 py-3 transition-[background-color,border-color,box-shadow] ${
+                                class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
                                   isSelected()
                                     ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
                                     : "border-transparent text-gray-11 hover:bg-gray-2/60"
@@ -383,14 +383,14 @@ export default function WorkspaceSessionList(props: Props) {
                                   props.onOpenSession(workspace().id, session.id);
                                 }}
                               >
-                                <div class="mr-3 flex min-w-0 items-center gap-2">
+                                <div class="mr-2.5 flex min-w-0 items-center gap-2">
                                   <Show when={isSessionActive()}>
                                     <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                   </Show>
-                                  <span class="truncate text-[14px] font-medium text-current">{session.title}</span>
+                                  <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
                                 </div>
                                 <Show when={session.time?.updated}>
-                                  <span class="whitespace-nowrap text-[12px] text-gray-9 transition-colors group-hover:text-gray-10">
+                                  <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
                                     {formatRelativeTime(session.time?.updated ?? Date.now())}
                                   </span>
                                 </Show>
@@ -409,7 +409,7 @@ export default function WorkspaceSessionList(props: Props) {
                           fallback={
                             <Show when={group.status === "error"}>
                               <div
-                                class={`w-full rounded-[16px] border px-3.5 py-3 text-left text-xs ${
+                                class={`w-full rounded-[15px] border px-3 py-2.5 text-left text-[11px] ${
                                   taskLoadError().tone === "offline"
                                     ? "border-amber-7/35 bg-amber-2/50 text-amber-11"
                                     : "border-red-7/35 bg-red-1/40 text-red-11"
@@ -429,7 +429,7 @@ export default function WorkspaceSessionList(props: Props) {
                                 <div
                                   role="button"
                                   tabIndex={0}
-                                  class={`group flex min-h-11 w-full items-center justify-between rounded-[16px] border px-3.5 py-3 transition-[background-color,border-color,box-shadow] ${
+                                  class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
                                     isSelected()
                                       ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
                                       : "border-transparent text-gray-11 hover:bg-gray-2/60"
@@ -442,14 +442,14 @@ export default function WorkspaceSessionList(props: Props) {
                                     props.onOpenSession(workspace().id, session.id);
                                   }}
                                 >
-                                  <div class="mr-3 flex min-w-0 items-center gap-2">
+                                  <div class="mr-2.5 flex min-w-0 items-center gap-2">
                                     <Show when={isSessionActive()}>
                                       <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
                                     </Show>
-                                    <span class="truncate text-[14px] font-medium text-current">{session.title}</span>
+                                    <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
                                   </div>
                                   <Show when={session.time?.updated}>
-                                    <span class="whitespace-nowrap text-[12px] text-gray-9 transition-colors group-hover:text-gray-10">
+                                    <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
                                       {formatRelativeTime(session.time?.updated ?? Date.now())}
                                     </span>
                                   </Show>
@@ -461,7 +461,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={group.sessions.length === 0 && group.status === "ready"}>
                             <button
                               type="button"
-                              class="group/empty w-full rounded-[16px] border border-transparent px-3.5 py-3 text-left text-xs text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              class="group/empty w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
                               onClick={() => props.onCreateTaskInWorkspace(workspace().id)}
                               disabled={props.newTaskDisabled}
                             >
@@ -473,7 +473,7 @@ export default function WorkspaceSessionList(props: Props) {
                           <Show when={group.sessions.length > previewCount(workspace().id)}>
                             <button
                               type="button"
-                              class="w-full rounded-[16px] border border-transparent px-3.5 py-3 text-left text-xs text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
+                              class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
                               onClick={() => showMoreSessions(workspace().id, group.sessions.length)}
                             >
                               {showMoreLabel(workspace().id, group.sessions.length)}
@@ -482,7 +482,7 @@ export default function WorkspaceSessionList(props: Props) {
                         </Show>
                       }
                     >
-                      <div class="w-full rounded-[16px] px-3.5 py-3 text-left text-xs text-gray-10">
+                      <div class="w-full rounded-[15px] px-3 py-2.5 text-left text-[11px] text-gray-10">
                         Loading tasks...
                       </div>
                     </Show>
@@ -497,7 +497,7 @@ export default function WorkspaceSessionList(props: Props) {
       <div class="relative" ref={(el) => (addWorkspaceMenuRef = el)}>
         <button
           type="button"
-          class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-4 py-3 text-[13px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
+          class="w-full flex items-center justify-center gap-2 rounded-[18px] border border-dls-border bg-dls-surface px-3.5 py-2.5 text-[12px] font-medium text-gray-11 shadow-[var(--dls-card-shadow)] transition-colors hover:bg-gray-2"
           onClick={() => setAddWorkspaceMenuOpen((prev) => !prev)}
         >
           <Plus size={14} />
