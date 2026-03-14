@@ -423,8 +423,6 @@ export function collectBundleItems(bundle: NormalizedBundle, limit = 8): Preview
   return items.slice(0, limit);
 }
 
-const PREVIEW_MAX_CHARS = 2200;
-
 function slugifyPreviewFilename(value: string, fallback: string, extension: string): string {
   const stem = String(value ?? "")
     .toLowerCase()
@@ -436,13 +434,13 @@ function slugifyPreviewFilename(value: string, fallback: string, extension: stri
 
 function buildTextPreview(content: string, fallback: string): string {
   const normalized = String(content ?? "").trim();
-  return truncate(normalized || fallback, PREVIEW_MAX_CHARS);
+  return normalized || fallback;
 }
 
 function buildJsonPreview(value: unknown, fallback: string): string {
   try {
     const serialized = JSON.stringify(value, null, 2);
-    return truncate(serialized || fallback, PREVIEW_MAX_CHARS);
+    return serialized || fallback;
   } catch {
     return fallback;
   }
