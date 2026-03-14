@@ -70,7 +70,10 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.doesNotMatch(html, /Bundle details/);
   assert.doesNotMatch(html, /Raw endpoints/);
   assert.match(html, /skill\.md/);
-  assert.match(html, /Open in app/);
+  assert.match(html, /Open in OpenWork app/);
+  assert.match(html, /Open in an OpenWork den/);
+  assert.doesNotMatch(html, /Open in web app/);
+  assert.doesNotMatch(html, /Copy share link/);
 });
 
 test("renderBundlePage shows workspace profile metadata", () => {
@@ -93,7 +96,7 @@ test("renderBundlePage shows workspace profile metadata", () => {
   });
 
   assert.match(html, /Open it in OpenWork/);
-  assert.match(html, /Package Contents/);
+  assert.match(html, /Skills:/);
   assert.doesNotMatch(html, /Bundle details/);
   assert.doesNotMatch(html, /Raw endpoints/);
 });

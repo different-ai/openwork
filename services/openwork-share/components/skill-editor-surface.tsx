@@ -36,6 +36,7 @@ export default function SkillEditorSurface({
   bodyValue,
   bodyPlaceholderPreview = "",
   metadataMode = "readonly",
+  readOnly = false,
   copied,
   onCopy,
   onSkillNameChange,
@@ -51,11 +52,12 @@ export default function SkillEditorSurface({
   bodyValue: string;
   bodyPlaceholderPreview?: string;
   metadataMode?: "readonly" | "editable";
+  readOnly?: boolean;
   copied: boolean;
   onCopy: () => void;
   onSkillNameChange?: (value: string) => void;
   onSkillDescriptionChange?: (value: string) => void;
-  onBodyChange: (value: string) => void;
+  onBodyChange?: (value: string) => void;
   headerActions?: ReactNode;
 }) {
   const displayBody = bodyValue || bodyPlaceholderPreview;
@@ -124,13 +126,15 @@ export default function SkillEditorSurface({
             aria-hidden="true"
             dangerouslySetInnerHTML={{ __html: `${highlightedBody}\n` }}
           />
-          <textarea
-            className="preview-editor"
-            value={bodyValue}
-            onChange={(event) => onBodyChange(event.target.value)}
-            placeholder=""
-            spellCheck={false}
-          />
+          {readOnly ? null : (
+            <textarea
+              className="preview-editor"
+              value={bodyValue}
+              onChange={(event) => onBodyChange?.(event.target.value)}
+              placeholder=""
+              spellCheck={false}
+            />
+          )}
         </div>
 
         <div className="preview-footer">

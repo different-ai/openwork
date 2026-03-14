@@ -132,5 +132,13 @@ export interface BundlePageProps {
   previewText?: string;
   previewLabel?: string;
   previewTone?: ItemTone;
+  previewSelections?: {
+    id: string;
+    name: string;
+    filename: string;
+    text: string;
+    label: string;
+    tone: ItemTone;
+  }[];
   metadataRows?: { label: string; value: string }[];
 }

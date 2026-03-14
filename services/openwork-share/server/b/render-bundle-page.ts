@@ -8,67 +8,29 @@ import {
   collectBundleItems,
   escapeHtml,
   escapeJsonForScript,
-  getBundleCounts,
   humanizeType,
   parseBundle,
   wantsDownload,
   wantsJsonResponse,
 } from "../_lib/share-utils.ts";
 import type { RequestLike } from "../_lib/types.ts";
-import type { PreviewItem } from "../../components/share-home-types.ts";
 
 export { buildBundleUrls, wantsDownload, wantsJsonResponse } from "../_lib/share-utils.ts";
-
-function toneInitial(kind: string): string {
-  if (kind === "Config") return "config";
-  if (kind === "MCP") return "mcp";
-  if (kind === "Command") return "command";
-  if (kind === "Agent") return "agent";
-  return "skill";
-}
-
-function renderItem(item: PreviewItem): string {
-  return `
-    <div class="included-item">
-      <div class="item-left">
-        <div class="item-dot dot-${escapeHtml(toneInitial(item.kind))}"></div>
-        <span class="item-title">${escapeHtml(item.name)}</span>
-      </div>
-      <span class="item-meta">${escapeHtml(item.kind)} · ${escapeHtml(item.meta)}</span>
-    </div>`;
-}
 
 export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: string; req: RequestLike }): string {
   const bundle = parseBundle(rawJson);
   const urls = buildBundleUrls(req, id);
   const ogImageUrl = buildOgImageUrl(req, id);
-  const { openInAppDeepLink, openInWebAppUrl } = buildOpenInAppUrls(urls.shareUrl, {
+  const { openInAppDeepLink } = buildOpenInAppUrls(urls.shareUrl, {
     label: bundle.name || "Shared worker package",
   });
 
-  const counts = getBundleCounts(bundle);
   const schemaVersion = bundle.schemaVersion == null ? "unknown" : String(bundle.schemaVersion);
   const typeLabel = humanizeType(bundle.type);
   const title = bundle.name || `OpenWork ${typeLabel}`;
   const description = bundle.description || buildBundleNarrative(bundle);
   const items = collectBundleItems(bundle, 8);
   const compactItem = bundle.type === "skill" ? "skill.md" : items[0]?.name || "OpenWork bundle";
-  const metadataRows = [
-    ["ID", id],
-    ["Type", bundle.type || "unknown"],
-    ["Schema", schemaVersion],
-    counts.skillCount ? ["Skills", String(counts.skillCount)] : null,
-    counts.agentCount ? ["Agents", String(counts.agentCount)] : null,
-    counts.mcpCount ? ["MCPs", String(counts.mcpCount)] : null,
-    counts.commandCount ? ["Commands", String(counts.commandCount)] : null,
-    counts.configCount ? ["Configs", String(counts.configCount)] : null,
-  ]
-    .filter((row): row is [string, string] => row !== null)
-    .map(
-      ([label, value]) =>
-        `<div class="metadata-row"><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`,
-    )
-    .join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -461,8 +423,8 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
         <h1>${escapeHtml(title)} <em>ready</em></h1>
         <p class="hero-body">${escapeHtml(description)}</p>
         <div class="hero-actions">
-          <a class="button-primary" href="${escapeHtml(openInAppDeepLink)}">Open in app</a>
-          <a class="button-secondary" href="${escapeHtml(openInWebAppUrl)}" target="_blank" rel="noreferrer">Open in web app</a>
+          <a class="button-primary" href="${escapeHtml(openInAppDeepLink)}">Open in OpenWork app</a>
+          <a class="button-secondary" href="https://openworklabs.com/den" target="_blank" rel="noreferrer">Open in an OpenWork den</a>
         </div>
       </div>
 
@@ -478,7 +440,7 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
           </div>
           <div class="app-window-body">
             <div class="included-section">
-              <h4>Package Contents</h4>
+              <h4>Skills:</h4>
               <div class="included-list">
                 <div class="included-item"><div class="item-left"><div class="item-dot dot-skill"></div><span class="item-title">${escapeHtml(compactItem)}</span></div></div>
               </div>

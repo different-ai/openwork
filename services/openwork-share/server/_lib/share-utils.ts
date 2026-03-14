@@ -570,6 +570,63 @@ export function buildBundlePreview(bundle: NormalizedBundle): {
   });
 }
 
+export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
+  id: string;
+  name: string;
+  filename: string;
+  text: string;
+  tone: PreviewItem["tone"];
+  label: string;
+}[] {
+  if (bundle.type === "skill") {
+    return [
+      {
+        id: "skill-0",
+        name: bundle.name || "Untitled skill",
+        filename: "skill.md",
+        text: buildTextPreview(bundle.content, `# ${bundle.name || "OpenWork skill"}`),
+        tone: "skill",
+        label: bundle.trigger ? `Trigger: ${bundle.trigger}` : "Skill preview",
+      },
+    ];
+  }
+
+  if (bundle.type === "skills-set" && bundle.skills.length) {
+    return bundle.skills.map((skill, index) => ({
+      id: `skill-${index}`,
+      name: skill.name || `Skill ${index + 1}`,
+      filename: "skill.md",
+      text: buildTextPreview(skill.content, `# ${skill.name || `Skill ${index + 1}`}`),
+      tone: "skill",
+      label: bundle.skills.length > 1 ? `Skill ${index + 1} of ${bundle.skills.length}` : "Skill preview",
+    }));
+  }
+
+  const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((skill): skill is NormalizedSkillItem => skill !== null);
+  if (workspaceSkills.length) {
+    return workspaceSkills.map((skill, index) => ({
+      id: `workspace-skill-${index}`,
+      name: skill.name || `Skill ${index + 1}`,
+      filename: "skill.md",
+      text: buildTextPreview(skill.content, `# ${skill.name || `Skill ${index + 1}`}`),
+      tone: "skill",
+      label: workspaceSkills.length > 1 ? `Skill ${index + 1} of ${workspaceSkills.length}` : "Skill preview",
+    }));
+  }
+
+  const preview = buildBundlePreview(bundle);
+  return [
+    {
+      id: "preview-0",
+      name: bundle.name || "OpenWork bundle",
+      filename: preview.filename,
+      text: preview.text,
+      tone: preview.tone,
+      label: preview.label,
+    },
+  ];
+}
+
 export function prettyJson(rawJson: string): string {
   try {
     return JSON.stringify(JSON.parse(rawJson), null, 2);

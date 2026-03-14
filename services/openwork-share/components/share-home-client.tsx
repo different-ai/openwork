@@ -152,6 +152,11 @@ export default function ShareHomeClient() {
   });
   const publishDisabled = busy || !hasBody || !hasRequiredMetadata || Boolean(errorMessage) || uploadedFileCount > 1;
   const previewCopyValue = generatedSkillMarkdown;
+  const showSupportingFeedback =
+    packageStatus.severity === "warn" ||
+    packageStatus.severity === "info" ||
+    packageStatus.items.length > 0 ||
+    (statusMessage !== DEFAULT_STATUS && statusMessage !== "Skill body ready to validate.");
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -326,17 +331,31 @@ export default function ShareHomeClient() {
 
       <div className="share-home-stack">
         <div className="package-card share-card surface-soft">
-          <div className="share-home-card-header">
-            <div>
-              <h2 className="simple-app-title">Package skills in seconds</h2>
-              <p className="simple-app-copy">Set the required frontmatter values, add any markdown body, and open the finished share page directly.</p>
-            </div>
-            <span className="surface-chip">Single skill</span>
+          <div className="share-upload-row share-upload-row-metadata">
+            <label className="share-metadata-field share-metadata-field-inline">
+              <span className="share-metadata-key">name:</span>
+              <input
+                aria-label="Skill name"
+                className="share-metadata-input mono"
+                value={skillName}
+                onChange={(event) => setSkillName(event.target.value)}
+              />
+            </label>
+
+            <label className="share-metadata-field share-metadata-field-inline share-metadata-field-description">
+              <span className="share-metadata-key">description:</span>
+              <input
+                aria-label="Skill description"
+                className="share-metadata-input"
+                value={skillDescription}
+                onChange={(event) => setSkillDescription(event.target.value)}
+              />
+            </label>
           </div>
 
-          <div className="share-upload-grid">
+          <div className="share-upload-row share-upload-row-actions">
             <label
-              className={`drop-zone share-skill-drop-zone${dropActive ? " is-dragover" : ""}`}
+              className={`drop-zone share-skill-drop-zone share-skill-drop-zone-compact${dropActive ? " is-dragover" : ""}`}
               aria-busy={busy ? "true" : "false"}
               onDragEnter={(event) => {
                 event.preventDefault();
@@ -357,7 +376,7 @@ export default function ShareHomeClient() {
                 const files = await collectDroppedFiles(event.dataTransfer);
                 void assignEntries(files);
               }}
-            >
+              >
               <input
                 className="visually-hidden"
                 type="file"
@@ -374,61 +393,41 @@ export default function ShareHomeClient() {
                 </svg>
               </div>
               <div className="drop-text">
-                <p className="drop-heading">Drag and drop a file here</p>
-                <p className="drop-hint">or <span className="drop-browse">browse</span> to upload</p>
+                <p className="drop-heading">Upload skill</p>
+                <p className="drop-hint">Drop or <span className="drop-browse">browse</span></p>
               </div>
-              <p className="share-upload-note">The file name does not matter. We generate the skill frontmatter below.</p>
             </label>
 
-            <div className="share-upload-actions">
-              <div className="share-metadata-grid">
-                <label className="share-metadata-field">
-                  <span className="share-metadata-key">name:</span>
-                  <input
-                    aria-label="Skill name"
-                    className="share-metadata-input mono"
-                    value={skillName}
-                    onChange={(event) => setSkillName(event.target.value)}
-                  />
-                </label>
+            <button
+              className="button-primary publish-button share-home-generate-button"
+              type="button"
+              onClick={() => void publishBundle()}
+              disabled={publishDisabled}
+            >
+              {busyMode === "publish" ? "Generating..." : "🔗 Generate share link"}
+            </button>
+          </div>
 
-                <label className="share-metadata-field">
-                  <span className="share-metadata-key">description:</span>
-                  <input
-                    aria-label="Skill description"
-                    className="share-metadata-input"
-                    value={skillDescription}
-                    onChange={(event) => setSkillDescription(event.target.value)}
-                  />
-                </label>
-              </div>
-
+          {showSupportingFeedback ? (
+            <div className="share-upload-supporting-row">
               <div className={`package-status severity-${packageStatus.severity}`}>
                 <span className="package-status-dot"></span>
                 <span className="package-status-label">{packageStatus.label}</span>
               </div>
 
-              {packageStatus.items.length > 0 && (
+              {packageStatus.items.length > 0 ? (
                 <ul className="package-status-items">
                   {packageStatus.items.map((item) => (
                     <li key={item}>{item}</li>
                   ))}
                 </ul>
-              )}
+              ) : null}
 
-              <p className="publish-hint">Generate the share link here, then continue on the share page to copy or share it.</p>
-              <button
-                className="button-primary publish-button"
-                type="button"
-                onClick={() => void publishBundle()}
-                disabled={publishDisabled}
-              >
-                {busyMode === "publish" ? "Generating..." : "🔗 Generate share link"}
-              </button>
-
-              <p className="share-inline-status">{statusMessage}</p>
+              {statusMessage !== DEFAULT_STATUS && statusMessage !== "Skill body ready to validate." ? (
+                <p className="share-inline-status">{statusMessage}</p>
+              ) : null}
             </div>
-          </div>
+          ) : null}
         </div>
 
         <SkillEditorSurface

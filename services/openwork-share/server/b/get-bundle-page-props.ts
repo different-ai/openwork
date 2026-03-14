@@ -1,6 +1,7 @@
 import {
   buildBundleNarrative,
   buildBundlePreview,
+  buildBundlePreviewSelections,
   buildBundleUrls,
   buildOgImageUrl,
   buildOpenInAppUrls,
@@ -86,6 +87,7 @@ export async function getBundlePageProps({ id, requestLike }: { id: string; requ
       previewText: preview.text,
       previewLabel: preview.label,
       previewTone: preview.tone,
+      previewSelections: buildBundlePreviewSelections(bundle),
       metadataRows: buildMetadataRows(normalizedId, bundle, counts, schemaVersion)
     };
   } catch {

@@ -4,10 +4,11 @@ import { useMemo, useRef, useState } from "react";
 
 import type { BundlePageProps } from "../server/_lib/types.ts";
 import { ResponsiveGrain } from "./responsive-grain";
-import type { PreviewItem } from "./share-home-types";
 import ShareNav from "./share-nav";
 import SkillEditorSurface from "./skill-editor-surface";
-import { composeSkillMarkdown, DEFAULT_SKILL_DESCRIPTION, parseSkillMarkdown, resolveSkillName } from "./skill-markdown";
+import { DEFAULT_SKILL_DESCRIPTION, parseSkillMarkdown } from "./skill-markdown";
+
+const OPENWORK_DEN_URL = "https://openworklabs.com/den";
 
 function toneClass(item: { tone?: string } | null | undefined): string {
   if (item?.tone === "agent") return "dot-agent";
@@ -17,74 +18,37 @@ function toneClass(item: { tone?: string } | null | undefined): string {
   return "dot-skill";
 }
 
-function compactItemLabel(props: BundlePageProps, item: NonNullable<BundlePageProps["items"]>[number]): string {
-  if (props.bundleType === "skill") return "skill.md";
-  return item.name;
-}
-
-function buildInitialSkillState(props: BundlePageProps) {
-  const parsed = parseSkillMarkdown(props.previewText || "");
-  return {
-    name: parsed.name || props.title || "",
-    description: parsed.description || props.description || DEFAULT_SKILL_DESCRIPTION,
-    body: parsed.body || props.previewText || "",
-  };
-}
-
-const INSTALL_STEPS = [
-  "Open this share page or jump straight into OpenWork with the import action.",
-  "Choose where to add the skill inside OpenWork once the bundle is loaded.",
-  "Review the generated skill.md content, then finish the import in OpenWork.",
-];
-
 export default function ShareBundlePage(props: BundlePageProps) {
-  const [copyState, setCopyState] = useState<"ready" | "copied" | "failed">("ready");
   const [previewCopied, setPreviewCopied] = useState(false);
-  const [saveState, setSaveState] = useState<"ready" | "saving" | "failed">("ready");
-  const [saveError, setSaveError] = useState("");
-  const initialState = useMemo(() => buildInitialSkillState(props), [props]);
-  const [skillName, setSkillName] = useState(initialState.name);
-  const [skillDescription, setSkillDescription] = useState(initialState.description);
-  const [bodyValue, setBodyValue] = useState(initialState.body);
+  const [activeSelectionId, setActiveSelectionId] = useState(props.previewSelections?.[0]?.id ?? "preview-0");
   const previewCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const shareUrl = props.shareUrl || "";
   const openInAppUrl = props.openInAppDeepLink || "#";
-  const openInWebUrl = props.openInWebAppUrl || "#";
   const title = props.title || "OpenWork bundle";
   const description = props.description || "OpenWork bundle ready to import.";
-  const canEdit = props.bundleType === "skill";
-  const resolvedName = resolveSkillName(skillName, bodyValue);
-  const resolvedDescription = skillDescription.trim() || DEFAULT_SKILL_DESCRIPTION;
-  const generatedSkillMarkdown = useMemo(
-    () => composeSkillMarkdown(skillName, skillDescription, bodyValue),
-    [bodyValue, skillDescription, skillName],
-  );
-  const previewText = canEdit ? generatedSkillMarkdown : props.previewText || "";
-  const previewToneClass = props.previewTone ? toneClass({ tone: props.previewTone }) : "dot-skill";
-  const saveDisabled = !canEdit || saveState === "saving" || !resolvedDescription || !bodyValue.trim();
-  const compactItems: PreviewItem[] = props.items?.length
-    ? props.items
-    : [{ name: "skill.md", kind: "Skill", meta: "Skill bundle", tone: "skill" }];
-
-  const copyShareUrl = async () => {
-    if (!shareUrl) return;
-
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopyState("copied");
-    } catch {
-      setCopyState("failed");
-    }
-
-    window.setTimeout(() => setCopyState("ready"), 1800);
-  };
+  const previewSelections = props.previewSelections?.length
+    ? props.previewSelections
+    : [
+        {
+          id: "preview-0",
+          name: props.title || "Untitled skill",
+          filename: props.previewFilename || "skill.md",
+          text: props.previewText || "",
+          tone: props.previewTone || "skill",
+          label: props.previewLabel || "Skill preview",
+        },
+      ];
+  const activeSelection = previewSelections.find((selection) => selection.id === activeSelectionId) ?? previewSelections[0];
+  const parsedPreview = useMemo(() => parseSkillMarkdown(activeSelection?.text || ""), [activeSelection?.text]);
+  const previewName = parsedPreview.name || activeSelection?.name || title;
+  const previewDescription = parsedPreview.description || description || DEFAULT_SKILL_DESCRIPTION;
+  const previewBody = parsedPreview.body || activeSelection?.text || "";
 
   const copyPreview = async () => {
-    if (!previewText) return;
+    if (!activeSelection?.text) return;
 
     try {
-      await navigator.clipboard.writeText(previewText);
+      await navigator.clipboard.writeText(activeSelection.text);
       setPreviewCopied(true);
     } catch {
       setPreviewCopied(false);
@@ -96,54 +60,6 @@ export default function ShareBundlePage(props: BundlePageProps) {
       previewCopyTimerRef.current = null;
     }, 800);
   };
-
-  const saveChanges = async () => {
-    if (saveDisabled) return;
-
-    setSaveState("saving");
-    setSaveError("");
-
-    try {
-      const response = await fetch("/v1/bundles", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({
-          schemaVersion: 1,
-          type: "skill",
-          name: resolvedName,
-          description: resolvedDescription,
-          content: generatedSkillMarkdown,
-        }),
-      });
-
-      const result = (await response.json().catch(() => null)) as { url?: string; message?: string } | null;
-      if (!response.ok) {
-        throw new Error(result?.message || "Could not save changes.");
-      }
-
-      if (result?.url) {
-        window.location.assign(result.url);
-        return;
-      }
-
-      throw new Error("Could not save changes.");
-    } catch (error) {
-      setSaveState("failed");
-      setSaveError(error instanceof Error ? error.message : "Could not save changes.");
-    }
-  };
-
-  const headerActions = canEdit ? (
-    <div className="skill-editor-inline-actions">
-      {saveError ? <span className="save-status is-error">{saveError}</span> : null}
-      <button className="button-secondary skill-save-button" type="button" onClick={() => void saveChanges()} disabled={saveDisabled}>
-        {saveState === "saving" ? "Saving..." : "Save changes"}
-      </button>
-    </div>
-  ) : null;
 
   return (
     <>
@@ -182,70 +98,67 @@ export default function ShareBundlePage(props: BundlePageProps) {
                 <span className="eyebrow">{props.typeLabel}</span>
                 <h1>{title}</h1>
                 <p className="hero-body">{description}</p>
-                <div className="button-row">
+                <div className="button-row share-bundle-actions">
                   <a className="button-primary" href={openInAppUrl}>
-                    Open in app
+                    Open in OpenWork app
                   </a>
-                  <a className="button-secondary" href={openInWebUrl} target="_blank" rel="noreferrer">
-                    Open in web app
+                  <a className="button-secondary" href={OPENWORK_DEN_URL} target="_blank" rel="noreferrer">
+                    Open in an OpenWork den
                   </a>
-                  <button className="button-secondary" type="button" onClick={() => void copyShareUrl()}>
-                    {copyState === "copied" ? "Copied!" : "Copy share link"}
-                  </button>
                 </div>
               </div>
             </section>
 
             <section className="share-bundle-stack">
               <article className="bundle-compact-strip surface-soft">
-                <div className="bundle-strip-list" aria-label="Package contents">
-                  {compactItems.map((item) => (
-                    <span className="bundle-strip-chip" key={`${item.kind}-${item.name}`}>
-                      <span className={`preview-filename-dot ${toneClass(item)}`} />
-                      {compactItemLabel(props, item)}
-                    </span>
-                  ))}
+                <div className="bundle-strip-header">Skills:</div>
+                <div className="bundle-strip-list" aria-label="Skills">
+                  {previewSelections.map((selection) => {
+                    const isActive = selection.id === activeSelection?.id;
+                    return (
+                      <button
+                        key={selection.id}
+                        type="button"
+                        className={`bundle-strip-chip${isActive ? " is-active" : ""}`}
+                        onClick={() => setActiveSelectionId(selection.id)}
+                        disabled={isActive}
+                      >
+                        <span className={`preview-filename-dot ${toneClass(selection)}`} />
+                        {selection.name}
+                      </button>
+                    );
+                  })}
                 </div>
               </article>
 
               <SkillEditorSurface
                 className="share-bundle-editor"
-                toneClassName={previewToneClass}
+                toneClassName={toneClass(activeSelection)}
                 filename="skill.md"
-                skillName={skillName}
-                skillDescription={skillDescription}
-                bodyValue={canEdit ? bodyValue : props.previewText || ""}
-                metadataMode={canEdit ? "editable" : "readonly"}
+                skillName={previewName}
+                skillDescription={previewDescription}
+                bodyValue={previewBody}
+                metadataMode="readonly"
+                readOnly={true}
                 copied={previewCopied}
                 onCopy={() => void copyPreview()}
-                onSkillNameChange={(value) => {
-                  setSkillName(value);
-                  if (saveState === "failed") setSaveState("ready");
-                  if (saveError) setSaveError("");
-                }}
-                onSkillDescriptionChange={(value) => {
-                  setSkillDescription(value);
-                  if (saveState === "failed") setSaveState("ready");
-                  if (saveError) setSaveError("");
-                }}
-                onBodyChange={(value) => {
-                  if (!canEdit) return;
-                  setBodyValue(value);
-                  if (saveState === "failed") setSaveState("ready");
-                  if (saveError) setSaveError("");
-                }}
-                headerActions={headerActions}
               />
 
               <article className="result-card share-install-card">
                 <span className="eyebrow">Open it in OpenWork</span>
                 <div className="share-inline-steps">
-                  {INSTALL_STEPS.map((step, index) => (
-                    <div className="share-inline-step" key={step}>
-                      <span className="step-bullet">{`0${index + 1}`}</span>
-                      <span>{step}</span>
-                    </div>
-                  ))}
+                  <div className="share-inline-step">
+                    <span className="step-bullet">01</span>
+                    <span>Open the bundle in OpenWork or jump into an OpenWork den.</span>
+                  </div>
+                  <div className="share-inline-step">
+                    <span className="step-bullet">02</span>
+                    <span>Choose the destination worker or remote environment for this skill.</span>
+                  </div>
+                  <div className="share-inline-step">
+                    <span className="step-bullet">03</span>
+                    <span>Review the selected skill.md preview, then import it into OpenWork.</span>
+                  </div>
                 </div>
               </article>
             </section>

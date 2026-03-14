@@ -28,8 +28,12 @@ test("uploads a single skill and redirects to the generated share page", async (
   ]);
 
   await expect(page.locator("main")).toContainText("agent-creator");
-  await expect(page.getByLabel("Skill name")).toHaveValue("agent-creator");
-  await expect(page.getByLabel("Skill description")).toHaveValue("Create new OpenCode agents with a gpt-5.2-codex default.");
+  await expect(page.getByLabel("Skill name")).toHaveCount(0);
+  await expect(page.getByLabel("Skill description")).toHaveCount(0);
+  await expect(page.locator(".share-frontmatter-preview")).toContainText("name: agent-creator");
+  await expect(page.locator(".share-frontmatter-preview")).toContainText(
+    "description: Create new OpenCode agents with a gpt-5.2-codex default.",
+  );
   await expect(page.locator(".preview-highlight")).toContainText("Any markdown body is acceptable here.");
 });
 
