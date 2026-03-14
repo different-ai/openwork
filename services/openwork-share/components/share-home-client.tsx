@@ -156,7 +156,7 @@ export default function ShareHomeClient() {
     packageStatus.severity === "warn" ||
     packageStatus.severity === "info" ||
     packageStatus.items.length > 0 ||
-    (statusMessage !== DEFAULT_STATUS && statusMessage !== "Skill body ready to validate.");
+    statusMessage !== DEFAULT_STATUS;
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -272,7 +272,7 @@ export default function ShareHomeClient() {
       setSkillDescription(parsed.hasFrontmatter ? parsed.description : (current) => current || DEFAULT_SKILL_DESCRIPTION);
       setBodyValue(parsed.body);
       setErrorMessage("");
-      setStatusMessage(`Loaded ${entries[0].name}.`);
+      setStatusMessage(DEFAULT_STATUS);
     } catch {
       setBodyValue("");
       setErrorMessage("Could not read the uploaded file.");
@@ -423,7 +423,7 @@ export default function ShareHomeClient() {
                 </ul>
               ) : null}
 
-              {statusMessage !== DEFAULT_STATUS && statusMessage !== "Skill body ready to validate." ? (
+              {statusMessage !== DEFAULT_STATUS ? (
                 <p className="share-inline-status">{statusMessage}</p>
               ) : null}
             </div>
@@ -445,7 +445,7 @@ export default function ShareHomeClient() {
             setBodyValue(value);
             setPreview(null);
             setWarnings([]);
-            setStatusMessage(value.trim() ? "Skill body ready to validate." : DEFAULT_STATUS);
+            setStatusMessage(DEFAULT_STATUS);
           }}
         />
       </div>

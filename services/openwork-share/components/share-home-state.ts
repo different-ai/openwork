@@ -41,8 +41,8 @@ export function getPackageStatus({ errorMessage, warnings, effectiveEntryCount }
   }
 
   return {
-    severity: "success",
-    label: "Ready to share this skill.",
+    severity: "neutral",
+    label: "",
     items: [],
   };
 }
