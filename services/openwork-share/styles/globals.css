@@ -969,7 +969,7 @@ a {
 }
 
 .share-upload-row-actions {
-  grid-template-columns: minmax(180px, 220px) auto;
+  grid-template-columns: 1fr 1fr;
 }
 
 .share-upload-actions {
@@ -1022,7 +1022,24 @@ a {
 
 .share-home-generate-button {
   width: 100%;
-  min-width: 240px;
+  min-width: 0;
+}
+
+.share-home-generate-button:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+  transform: none;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  color: var(--ow-muted);
+  opacity: 1;
+  box-shadow: none;
+}
+
+.share-home-generate-button:disabled:hover {
+  background: #ffffff;
+  transform: none;
+  box-shadow: none;
 }
 
 .share-upload-supporting-row {
@@ -1819,11 +1836,10 @@ button.included-item {
   }
 
   .share-upload-row-actions {
-    grid-template-columns: minmax(180px, 220px) 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 
   .share-home-generate-button {
-    grid-column: 1 / -1;
     width: 100%;
   }
 
