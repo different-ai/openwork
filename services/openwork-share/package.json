@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start --hostname 0.0.0.0",
     "test": "node --test server/b/render-bundle-page.test.ts server/_lib/package-openwork-files.test.ts server/_lib/render-og-image.test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:debug": "PWDEBUG=1 playwright test --headed",
+    "test:e2e:trace": "playwright test --trace on"
   },
   "dependencies": {
     "@paper-design/shaders-react": "0.0.71",

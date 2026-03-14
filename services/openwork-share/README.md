@@ -104,6 +104,28 @@ Recommended project settings:
 pnpm --dir services/openwork-share test
 ```
 
+## E2E verification (share-import + app route)
+
+### Prereqs
+
+Start the OpenWork UI in web mode on `127.0.0.1:5173` and keep it running:
+
+```bash
+OPENWORK_DEV_MODE=1 pnpm --filter @different-ai/openwork-ui dev -- --host 127.0.0.1 --port 5173
+```
+
+Then run the share import specs from `services/openwork-share`.
+
+```bash
+OPENWORK_APP_URL=http://localhost:5173 pnpm --dir services/openwork-share test:e2e
+OPENWORK_APP_URL=http://localhost:5173 pnpm --dir services/openwork-share test:e2e:headed
+OPENWORK_APP_URL=http://localhost:5173 PWDEBUG=1 pnpm --dir services/openwork-share test:e2e:debug
+```
+
+The normal `test:e2e` command in this package now launches both app servers automatically when needed, so the explicit manual app start step is optional for local use.
+
+Artifacts are written to `../../tmp/openwork-share-playwright` with screenshots/videos on failure and traces retained.
+
 ## Quick checks
 
 ```bash
