@@ -393,6 +393,11 @@ a {
   gap: 18px;
 }
 
+.share-bundle-stack {
+  display: grid;
+  gap: 18px;
+}
+
 .share-bundle-grid {
   align-items: stretch;
 }
@@ -473,6 +478,13 @@ a {
   contain: initial;
 }
 
+.share-bundle-editor {
+  grid-column: auto;
+  grid-row: auto;
+  min-height: 620px;
+  contain: initial;
+}
+
 .preview-surface {
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.94);
@@ -526,6 +538,12 @@ a {
   background: rgba(248, 250, 252, 0.78);
   font-size: 12px;
   color: #64748b;
+}
+
+.share-frontmatter-editor {
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  background: rgba(248, 250, 252, 0.78);
 }
 
 .preview-editor-wrap {
@@ -971,6 +989,28 @@ a {
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
 }
 
+.skill-editor-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.skill-save-button {
+  min-height: 38px;
+  padding: 0 18px;
+}
+
+.save-status {
+  font-size: 12px;
+  color: var(--ow-muted);
+}
+
+.save-status.is-error {
+  color: #b91c1c;
+}
+
 .share-feedback,
 .warning-card {
   display: grid;
@@ -1288,6 +1328,58 @@ a {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 18px;
   margin-top: 18px;
+}
+
+.bundle-compact-strip {
+  padding: 8px 12px;
+  border-radius: 24px;
+}
+
+.bundle-strip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+}
+
+.bundle-strip-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: rgba(248, 250, 252, 0.96);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  font-family: var(--ow-mono);
+  font-size: 12px;
+  color: var(--ow-ink);
+}
+
+.share-install-card {
+  display: grid;
+  gap: 16px;
+}
+
+.share-install-card .eyebrow {
+  margin-bottom: 0;
+}
+
+.share-inline-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.share-inline-step {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 12px 0;
+  color: var(--ow-ink);
+  line-height: 1.5;
 }
 
 .step-list {
@@ -1611,6 +1703,10 @@ button.included-item {
   }
 
   .share-upload-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .share-inline-steps {
     grid-template-columns: 1fr;
   }
 

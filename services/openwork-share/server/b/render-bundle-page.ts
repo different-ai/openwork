@@ -52,12 +52,7 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
   const title = bundle.name || `OpenWork ${typeLabel}`;
   const description = bundle.description || buildBundleNarrative(bundle);
   const items = collectBundleItems(bundle, 8);
-  const installHint =
-    bundle.type === "skill"
-      ? "Open in app to choose where to add this skill."
-      : bundle.type === "skills-set"
-        ? "Open in app to add this full skills set to an existing worker or create a new worker with it attached."
-        : "Open in app to create a new worker with these skills, agents, MCPs, and config already bundled.";
+  const compactItem = bundle.type === "skill" ? "skill.md" : items[0]?.name || "OpenWork bundle";
   const metadataRows = [
     ["ID", id],
     ["Type", bundle.type || "unknown"],
@@ -469,9 +464,6 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
           <a class="button-primary" href="${escapeHtml(openInAppDeepLink)}">Open in app</a>
           <a class="button-secondary" href="${escapeHtml(openInWebAppUrl)}" target="_blank" rel="noreferrer">Open in web app</a>
         </div>
-        <p style="margin-top: 16px; font-size: 13px; color: var(--ow-muted);">
-          ${escapeHtml(installHint)}
-        </p>
       </div>
 
       <div class="hero-artifact">
@@ -488,7 +480,7 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
             <div class="included-section">
               <h4>Package Contents</h4>
               <div class="included-list">
-                ${items.length ? items.map(renderItem).join("") : `<div class="included-item"><div class="item-left"><div class="item-dot dot-skill"></div><span class="item-title">OpenWork bundle</span></div><span class="item-meta">Shared config</span></div>`}
+                <div class="included-item"><div class="item-left"><div class="item-dot dot-skill"></div><span class="item-title">${escapeHtml(compactItem)}</span></div></div>
               </div>
             </div>
           </div>
@@ -498,19 +490,11 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
 
     <section class="results-grid">
       <div class="result-card">
-        <h3>Bundle details</h3>
-        <p>Stable metadata for parsing and direct OpenWork import.</p>
-        <dl class="metadata-list">
-          ${metadataRows}
-        </dl>
-      </div>
-      <div class="result-card">
-        <h3>Raw endpoints</h3>
-        <p>Keep the human page and machine payload side by side.</p>
-        <div class="url-box"><a href="${escapeHtml(urls.jsonUrl)}">JSON payload</a></div>
-        <div style="display: flex; gap: 12px;">
-          <a class="button-secondary" href="${escapeHtml(urls.downloadUrl)}">Download JSON</a>
-          <button class="button-secondary" id="copy-link" type="button">Copy share link</button>
+        <h3>Open it in OpenWork</h3>
+        <div class="step-list">
+          <div class="step-row"><span class="step-bullet">01</span><span>Open this share page or jump straight into OpenWork with the import action.</span></div>
+          <div class="step-row"><span class="step-bullet">02</span><span>Choose where to add the skill inside OpenWork once the bundle is loaded.</span></div>
+          <div class="step-row"><span class="step-bullet">03</span><span>Review the generated skill.md content, then finish the import in OpenWork.</span></div>
         </div>
       </div>
     </section>
@@ -519,29 +503,6 @@ export function renderBundlePage({ id, rawJson, req }: { id: string; rawJson: st
 
   <script id="openwork-bundle-json" type="application/json">${escapeJsonForScript(rawJson)}</script>
   <script>
-    const shareUrl = ${JSON.stringify(urls.shareUrl)};
-    const copyButton = document.getElementById("copy-link");
-    copyButton?.addEventListener("click", async () => {
-      try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(shareUrl);
-          copyButton.textContent = "Copied!";
-          setTimeout(() => copyButton.textContent = "Copy share link", 2000);
-          return;
-        }
-      } catch {}
-
-      const input = document.createElement("textarea");
-      input.value = shareUrl;
-      input.style.position = "fixed";
-      input.style.left = "-99999px";
-      document.body.appendChild(input);
-      input.select();
-      document.execCommand("copy");
-      input.remove();
-      copyButton.textContent = "Copied!";
-      setTimeout(() => copyButton.textContent = "Copy share link", 2000);
-    });
   </script>
 </body>
 </html>`;

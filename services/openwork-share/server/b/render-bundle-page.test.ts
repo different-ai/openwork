@@ -64,9 +64,13 @@ test("renderBundlePage includes machine-readable metadata and escaped json scrip
   assert.match(html, /ow_bundle=https%3A%2F%2Fshare\.openwork\.software%2Fb%2F01TEST/);
   assert.match(html, /ow_intent=new_worker/);
   assert.match(html, /ow_source=share_service/);
-  assert.match(html, /Open in app to choose where to add this skill\./);
   assert.match(html, /id="openwork-bundle-json" type="application\/json"/);
   assert.match(html, /demo \\u003c\/script\\u003e skill/);
+  assert.doesNotMatch(html, /Open in app to choose where to add this skill\./);
+  assert.doesNotMatch(html, /Bundle details/);
+  assert.doesNotMatch(html, /Raw endpoints/);
+  assert.match(html, /skill\.md/);
+  assert.match(html, /Open in app/);
 });
 
 test("renderBundlePage shows workspace profile metadata", () => {
@@ -88,7 +92,8 @@ test("renderBundlePage shows workspace profile metadata", () => {
     req: makeReq({ accept: "text/html", host: "share.openwork.software" }),
   });
 
-  assert.match(html, /<dt>Skills<\/dt><dd>2<\/dd>/);
-  assert.match(html, /<dt>Commands<\/dt><dd>1<\/dd>/);
-  assert.match(html, /<dt>Configs<\/dt><dd>2<\/dd>/);
+  assert.match(html, /Open it in OpenWork/);
+  assert.match(html, /Package Contents/);
+  assert.doesNotMatch(html, /Bundle details/);
+  assert.doesNotMatch(html, /Raw endpoints/);
 });

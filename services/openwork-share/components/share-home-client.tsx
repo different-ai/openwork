@@ -2,12 +2,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import SkillEditorSurface from "./skill-editor-surface";
+import { composeSkillMarkdown, DEFAULT_SKILL_DESCRIPTION, DEFAULT_SKILL_NAME, parseSkillMarkdown } from "./skill-markdown";
 import type { BusyMode, EntryLike, FilePayload, PackageResponse, PreviewItem } from "./share-home-types";
-import { highlightSyntax } from "./share-preview-syntax";
 import { getPackageStatus, getPreviewFilename } from "./share-home-state";
 
-const DEFAULT_SKILL_NAME = "skill.md";
-const DEFAULT_SKILL_DESCRIPTION = "This is a skill I'm currently using.";
 const DEFAULT_STATUS = "Upload a single file or paste skill content below.";
 const MISSING_METADATA_ERROR = "Skills need name and description.";
 const MULTI_FILE_ERROR = "Upload or paste a single skill to continue.";
@@ -23,26 +22,6 @@ function toneClass(item: PreviewItem | null): string {
   if (item?.tone === "command") return "dot-command";
   if (item?.tone === "config") return "dot-config";
   return "dot-skill";
-}
-
-function yamlValue(value: string): string {
-  const normalized = String(value ?? "").trim();
-  if (/^[A-Za-z0-9._/\- ]+$/.test(normalized) && !normalized.includes(":")) {
-    return normalized;
-  }
-  return JSON.stringify(normalized);
-}
-
-function composeSkillMarkdown(name: string, description: string, body: string): string {
-  const normalizedBody = String(body ?? "").replace(/\r\n/g, "\n").trim();
-  const frontmatter = [
-    "---",
-    `name: ${yamlValue(name)}`,
-    `description: ${yamlValue(description)}`,
-    "---",
-  ].join("\n");
-
-  return normalizedBody ? `${frontmatter}\n\n${normalizedBody}\n` : `${frontmatter}\n`;
 }
 
 function buildVirtualEntry(name: string, content: string): EntryLike {
@@ -61,36 +40,6 @@ async function fileToPayload(file: EntryLike): Promise<FilePayload> {
     name: file.name,
     path: f.relativePath || f.webkitRelativePath || f.path || file.name,
     content: await file.text(),
-  };
-}
-
-function parseUploadedSkill(content: string): { name: string; description: string; body: string; hasFrontmatter: boolean } {
-  const text = String(content ?? "").replace(/\r\n/g, "\n");
-  const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
-  if (!match) {
-    return {
-      name: "",
-      description: "",
-      body: text,
-      hasFrontmatter: false,
-    };
-  }
-
-  const header = match[1] ?? "";
-  const body = text.slice(match[0].length);
-  const nameMatch = header.match(/^name:\s*(.+)$/m);
-  const descriptionMatch = header.match(/^description:\s*(.+)$/m);
-
-  const normalizeField = (value: string | undefined): string =>
-    String(value ?? "")
-      .trim()
-      .replace(/^['"]|['"]$/g, "");
-
-  return {
-    name: normalizeField(nameMatch?.[1]) || DEFAULT_SKILL_NAME,
-    description: normalizeField(descriptionMatch?.[1]) || DEFAULT_SKILL_DESCRIPTION,
-    body,
-    hasFrontmatter: true,
   };
 }
 
@@ -190,11 +139,6 @@ export default function ShareHomeClient() {
     [generatedSkillMarkdown, hasBody, hasRequiredMetadata, skillName, uploadedFileCount],
   );
   const busy = busyMode !== null;
-  const showBaseline = !bodyValue;
-  const highlightedBody = useMemo(
-    () => highlightSyntax(showBaseline ? BASELINE_BODY : bodyValue),
-    [bodyValue, showBaseline],
-  );
   const packageStatus = useMemo(
     () => getPackageStatus({ errorMessage, warnings, effectiveEntryCount: effectiveEntries.length }),
     [effectiveEntries.length, errorMessage, warnings],
@@ -208,7 +152,6 @@ export default function ShareHomeClient() {
   });
   const publishDisabled = busy || !hasBody || !hasRequiredMetadata || Boolean(errorMessage) || uploadedFileCount > 1;
   const previewCopyValue = generatedSkillMarkdown;
-  const bodyCountLabel = `${trimmedBody.length} ${trimmedBody.length === 1 ? "character" : "characters"}`;
 
   const requestPackage = async (previewOnly: boolean): Promise<PackageResponse> => {
     const files = await Promise.all(effectiveEntries.map(fileToPayload));
@@ -319,7 +262,7 @@ export default function ShareHomeClient() {
 
     try {
       const rawContent = await entries[0].text();
-      const parsed = parseUploadedSkill(rawContent);
+      const parsed = parseSkillMarkdown(rawContent);
       setSkillName(parsed.hasFrontmatter ? parsed.name : (current) => current || DEFAULT_SKILL_NAME);
       setSkillDescription(parsed.hasFrontmatter ? parsed.description : (current) => current || DEFAULT_SKILL_DESCRIPTION);
       setBodyValue(parsed.body);
@@ -332,13 +275,6 @@ export default function ShareHomeClient() {
     } finally {
       setUploadedFileCount(0);
     }
-  };
-
-  const handleBodyChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setBodyValue(event.target.value);
-    setPreview(null);
-    setWarnings([]);
-    setStatusMessage(event.target.value.trim() ? "Skill body ready to validate." : DEFAULT_STATUS);
   };
 
   const previewCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -495,63 +431,24 @@ export default function ShareHomeClient() {
           </div>
         </div>
 
-        <aside className="preview-panel share-home-preview">
-          <div className="preview-surface">
-            <div className="preview-header">
-              <span className="preview-eyebrow">Preview</span>
-              <div className="preview-header-actions">
-                <span className="preview-filename">
-                  <span className={`preview-filename-dot ${activePreviewItem ? toneClass(activePreviewItem) : "dot-pending"}`} />
-                  {previewFilename}
-                  <button
-                    type="button"
-                    className="clipboard-egg-button preview-copy-button clipboard-egg-inline"
-                    title="Copy preview"
-                    aria-label="Copy preview"
-                    onClick={() => void copyPreviewText()}
-                  >
-                    {previewCopied ? (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12"></polyline>
-                      </svg>
-                    ) : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                      </svg>
-                    )}
-                  </button>
-                </span>
-              </div>
-            </div>
-
-            <div className="share-frontmatter-preview mono">
-              <span>---</span>
-              <span>name: {yamlValue(skillName || DEFAULT_SKILL_NAME)}</span>
-              <span>description: {yamlValue(skillDescription || DEFAULT_SKILL_DESCRIPTION)}</span>
-              <span>---</span>
-            </div>
-
-            <div className="preview-editor-wrap">
-              <pre
-                className="preview-highlight"
-                aria-hidden="true"
-                dangerouslySetInnerHTML={{ __html: `${highlightedBody}\n` }}
-              />
-              <textarea
-                className="preview-editor"
-                value={bodyValue}
-                onChange={handleBodyChange}
-                placeholder=""
-                spellCheck={false}
-              />
-            </div>
-
-            <div className="preview-footer">
-              <span>{bodyCountLabel}</span>
-            </div>
-          </div>
-        </aside>
+        <SkillEditorSurface
+          className="share-home-preview"
+          toneClassName={activePreviewItem ? toneClass(activePreviewItem) : "dot-pending"}
+          filename={previewFilename}
+          skillName={skillName}
+          skillDescription={skillDescription}
+          bodyValue={bodyValue}
+          bodyPlaceholderPreview={BASELINE_BODY}
+          metadataMode="readonly"
+          copied={previewCopied}
+          onCopy={() => void copyPreviewText()}
+          onBodyChange={(value) => {
+            setBodyValue(value);
+            setPreview(null);
+            setWarnings([]);
+            setStatusMessage(value.trim() ? "Skill body ready to validate." : DEFAULT_STATUS);
+          }}
+        />
       </div>
     </section>
   );
