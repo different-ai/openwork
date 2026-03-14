@@ -332,9 +332,11 @@ test("import flow via /new-skill + /skill-creator in OpenWork chat", async ({ pa
   assertImportIntent(params, "chat");
 
   expect(params.get("ow_source"), "source should be share service").toBe("share_service");
+  await captureEvidence(page, "chat-import-before-openinapp-route.png");
   const appUrl = toWebAppUrl(openInAppHref);
   await page.goto(appUrl);
   await expect(page).toHaveURL(new RegExp(`^${escapeForRegex(openworkAppBaseUrl)}(?:/session)?(?:\\?|$|/)`));
+  await captureEvidence(page, "chat-import-after-openinapp-route.png");
   await captureEvidence(page, "chat-import-webapp-route.png");
   await assertDestinationPickerOpen(page);
 });
@@ -352,10 +354,12 @@ test("import flow via share-page paste path", async ({ page, request }) => {
   assertImportIntent(params, "share-page");
   assertFixtureLabel(params);
   await captureEvidence(page, "share-page-import-link.png");
+  await captureEvidence(page, "share-page-before-openinapp-route.png");
 
   const appUrl = toWebAppUrl(openInAppHref);
   await page.goto(appUrl);
   await expect(page).toHaveURL(new RegExp(`^${escapeForRegex(openworkAppBaseUrl)}(?:/session)?(?:\\?|$|/)`));
+  await captureEvidence(page, "share-page-after-openinapp-route.png");
   await captureEvidence(page, "share-page-import-webapp-route.png");
   await assertDestinationPickerOpen(page);
 
