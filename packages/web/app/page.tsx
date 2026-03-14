@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { CloudControlPanel } from "../components/cloud-control";
 
 export default function HomePage() {
@@ -11,9 +12,16 @@ export default function HomePage() {
 
       <header className="relative z-10 flex w-full max-w-[1180px] flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
         <div className="inline-flex items-center gap-3">
-          <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-[var(--dls-border)] bg-white shadow-[var(--dls-card-shadow)]" aria-hidden>
-            <span className="h-3 w-3 rounded-full bg-[#011627] shadow-[0_0_0_5px_rgba(1,22,39,0.08)]" />
-          </span>
+          <Image
+            src="/openwork-mark.svg"
+            alt=""
+            aria-hidden="true"
+            width={834}
+            height={649}
+            className="h-[26px] w-auto"
+            priority
+            unoptimized
+          />
           <div>
             <div className="text-[15px] font-semibold tracking-[-0.02em] text-[var(--dls-text-primary)]">OpenWork</div>
             <div className="text-[12px] text-[var(--dls-text-secondary)]">Den onboarding</div>
