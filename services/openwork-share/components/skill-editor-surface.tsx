@@ -30,6 +30,7 @@ function countLabel(text: string | undefined): string {
 export default function SkillEditorSurface({
   className,
   toneClassName,
+  eyebrow,
   filename,
   documentValue,
   documentPlaceholderPreview = "",
@@ -41,6 +42,7 @@ export default function SkillEditorSurface({
 }: {
   className?: string;
   toneClassName?: string;
+  eyebrow?: string;
   filename?: string;
   documentValue: string;
   documentPlaceholderPreview?: string;
@@ -58,7 +60,7 @@ export default function SkillEditorSurface({
     <aside className={rootClassName}>
       <div className="preview-surface">
         <div className="preview-header">
-          <span className="preview-eyebrow">Preview</span>
+          <span className="preview-eyebrow">{eyebrow || "Preview"}</span>
           <div className="preview-header-actions">
             {headerActions}
             <span className="preview-filename">

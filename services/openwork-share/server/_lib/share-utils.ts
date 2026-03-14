@@ -581,10 +581,10 @@ export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
       {
         id: "skill-0",
         name: bundle.name || "Untitled skill",
-        filename: "skill.md",
+        filename: slugifyPreviewFilename(bundle.name || "skill", "skill", "md"),
         text: buildTextPreview(bundle.content, `# ${bundle.name || "OpenWork skill"}`),
         tone: "skill",
-        label: bundle.trigger ? `Trigger: ${bundle.trigger}` : "Skill preview",
+        label: bundle.trigger ? `Trigger · ${bundle.trigger}` : "Skill",
       },
     ];
   }
@@ -593,24 +593,125 @@ export function buildBundlePreviewSelections(bundle: NormalizedBundle): {
     return bundle.skills.map((skill, index) => ({
       id: `skill-${index}`,
       name: skill.name || `Skill ${index + 1}`,
-      filename: "skill.md",
+      filename: slugifyPreviewFilename(skill.name || `skill-${index + 1}`, "skill", "md"),
       text: buildTextPreview(skill.content, `# ${skill.name || `Skill ${index + 1}`}`),
       tone: "skill",
-      label: bundle.skills.length > 1 ? `Skill ${index + 1} of ${bundle.skills.length}` : "Skill preview",
+      label: skill.trigger ? `Trigger · ${skill.trigger}` : "Skill",
     }));
   }
 
   const workspaceSkills = maybeArray(bundle.workspace?.skills).map(normalizeSkillItem).filter((skill): skill is NormalizedSkillItem => skill !== null);
+  const selections: {
+    id: string;
+    name: string;
+    filename: string;
+    text: string;
+    tone: PreviewItem["tone"];
+    label: string;
+  }[] = [];
+
   if (workspaceSkills.length) {
-    return workspaceSkills.map((skill, index) => ({
+    selections.push(...workspaceSkills.map((skill, index) => ({
       id: `workspace-skill-${index}`,
       name: skill.name || `Skill ${index + 1}`,
-      filename: "skill.md",
+      filename: slugifyPreviewFilename(skill.name || `skill-${index + 1}`, "skill", "md"),
       text: buildTextPreview(skill.content, `# ${skill.name || `Skill ${index + 1}`}`),
-      tone: "skill",
-      label: workspaceSkills.length > 1 ? `Skill ${index + 1} of ${workspaceSkills.length}` : "Skill preview",
+      tone: "skill" as const,
+      label: skill.trigger ? `Trigger · ${skill.trigger}` : "Skill",
+    })));
+  }
+
+  const commands = maybeArray(bundle.workspace?.commands).map(normalizeCommandItem).filter((command): command is NormalizedCommandItem => command !== null);
+  if (commands.length) {
+    selections.push(...commands.map((command, index) => ({
+      id: `workspace-command-${index}`,
+      name: command.name || `Command ${index + 1}`,
+      filename: slugifyPreviewFilename(command.name || `command-${index + 1}`, "command", "md"),
+      text: buildTextPreview(command.template || command.content, `# ${command.name || `Command ${index + 1}`}`),
+      tone: "command" as const,
+      label: command.agent ? `Agent · ${command.agent}` : "Command",
+    })));
+  }
+
+  const opencode = maybeObject(bundle.workspace?.opencode);
+  const agentEntries = Object.entries(maybeObject(opencode?.agent) ?? {});
+  if (agentEntries.length) {
+    selections.push(...agentEntries.map(([name, config], index) => {
+      const entry = maybeObject(config) ?? {};
+      const version = maybeString(entry.version).trim();
+      const model = maybeString(entry.model).trim();
+
+      return {
+        id: `workspace-agent-${index}`,
+        name,
+        filename: slugifyPreviewFilename(name, "agent", "json"),
+        text: buildJsonPreview({ agent: { [name]: config } }, '{\n  "agent": {}\n}'),
+        tone: "agent" as const,
+        label: version ? `v${version}` : model ? model : "Agent config",
+      };
     }));
   }
+
+  const mcpEntries = Object.entries(maybeObject(opencode?.mcp) ?? {});
+  if (mcpEntries.length) {
+    selections.push(...mcpEntries.map(([name, config], index) => {
+      const entry = maybeObject(config) ?? {};
+      const type = maybeString(entry.type).trim();
+      const url = maybeString(entry.url).trim();
+
+      return {
+        id: `workspace-mcp-${index}`,
+        name,
+        filename: slugifyPreviewFilename(name, "mcp", "json"),
+        text: buildJsonPreview({ mcp: { [name]: config } }, '{\n  "mcp": {}\n}'),
+        tone: "mcp" as const,
+        label: type ? `${humanizeType(type)} MCP` : url ? "Remote MCP" : "MCP config",
+      };
+    }));
+  }
+
+  const opencodeConfigKeys = Object.keys(opencode ?? {}).filter((key) => !["agent", "mcp"].includes(key));
+  if (opencodeConfigKeys.length) {
+    selections.push({
+      id: "workspace-opencode-config",
+      name: "OpenCode config",
+      filename: "opencode.json",
+      text: buildJsonPreview(opencode, '{\n  "opencode": {}\n}'),
+      tone: "config" as const,
+      label: "OpenCode settings",
+    });
+  }
+
+  if (maybeObject(bundle.workspace?.openwork)) {
+    selections.push({
+      id: "workspace-openwork-config",
+      name: "OpenWork config",
+      filename: "openwork.json",
+      text: buildJsonPreview(bundle.workspace?.openwork, '{\n  "openwork": {}\n}'),
+      tone: "config" as const,
+      label: "Workspace settings",
+    });
+  }
+
+  const configEntries = Object.entries(maybeObject(bundle.workspace?.config) ?? {});
+  if (configEntries.length) {
+    selections.push(...configEntries.map(([name, value], index) => {
+      const extension = name.includes(".") ? name.split(".").pop() || "json" : "json";
+
+      return {
+        id: `workspace-config-${index}`,
+        name,
+        filename: name,
+        text: buildJsonPreview(value, `{
+  "${name}": {}
+}`),
+        tone: "config" as const,
+        label: `Config file · ${extension}`,
+      };
+    }));
+  }
+
+  if (selections.length) return selections;
 
   const preview = buildBundlePreview(bundle);
   return [

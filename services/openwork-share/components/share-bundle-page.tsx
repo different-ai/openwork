@@ -7,6 +7,69 @@ import ShareNav from "./share-nav";
 import SkillEditorSurface from "./skill-editor-surface";
 import { parseSkillMarkdown } from "./skill-markdown";
 
+type BundleSelection = NonNullable<BundlePageProps["previewSelections"]>[number];
+
+const SPECIAL_TOKENS: Record<string, string> = {
+  api: "API",
+  json: "JSON",
+  jsonc: "JSONC",
+  mcp: "MCP",
+  md: "MD",
+  mdx: "MDX",
+  opencode: "OpenCode",
+  openwork: "OpenWork",
+  yaml: "YAML",
+  yml: "YAML",
+};
+
+function humanizeLabel(value: string | null | undefined): string {
+  const normalized = String(value ?? "")
+    .trim()
+    .replace(/\.[a-z0-9]+$/i, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ");
+
+  if (!normalized) return "OpenWork Bundle";
+
+  return normalized
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => {
+      const lower = part.toLowerCase();
+      if (SPECIAL_TOKENS[lower]) return SPECIAL_TOKENS[lower];
+      return `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`;
+    })
+    .join(" ");
+}
+
+function formatSurfaceEyebrow(selection: BundleSelection | undefined, parsedName: string, fallbackTitle: string | undefined): string {
+  if (selection?.tone === "skill") {
+    return humanizeLabel(parsedName || selection.name || fallbackTitle || "Skill");
+  }
+
+  if (selection?.tone === "command") {
+    return humanizeLabel(selection.name || "Command");
+  }
+
+  if (selection?.tone === "agent") {
+    const label = humanizeLabel(selection.name || "Agent");
+    return /agent$/i.test(label) ? label : `${label} Agent`;
+  }
+
+  if (selection?.tone === "mcp") {
+    const label = humanizeLabel(selection.name || "MCP");
+    return /mcp$/i.test(label) ? label : `${label} MCP`;
+  }
+
+  const filename = selection?.filename || selection?.name || fallbackTitle || "config";
+  if (/^openwork\.json$/i.test(filename)) return "OpenWork Config";
+  if (/^opencode\.jsonc?$/i.test(filename)) return "OpenCode Config";
+
+  const label = humanizeLabel(filename);
+  return /config$/i.test(label) ? label : `${label} Config`;
+}
+
 function toneClass(item: { tone?: string } | null | undefined): string {
   if (item?.tone === "agent") return "dot-agent";
   if (item?.tone === "mcp") return "dot-mcp";
@@ -35,8 +98,10 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
       ];
   const activeSelection = previewSelections.find((selection) => selection.id === activeSelectionId) ?? previewSelections[0];
   const parsedPreview = useMemo(() => parseSkillMarkdown(activeSelection?.text || ""), [activeSelection?.text]);
-  const previewName = parsedPreview.name || activeSelection?.name || props.title || "OpenWork bundle";
-  const showBundleSidebar = previewSelections.length > 1;
+  const surfaceEyebrow = formatSurfaceEyebrow(activeSelection, parsedPreview.name, props.title);
+  const previewFilename = activeSelection?.filename || props.previewFilename || "bundle.json";
+  const showBundleSidebar = previewSelections.length > 1 || Boolean(props.metadataRows?.length);
+  const isSingleSkill = props.bundleType === "skill" && previewSelections.length === 1;
 
   const copyPreview = async () => {
     if (!activeSelection?.text) return;
@@ -68,6 +133,17 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
     }
   };
 
+  const actionButtons = (
+    <>
+      <button className="button-primary" type="button" onClick={() => void copyPreview()}>
+        {previewCopied ? "Copied to clipboard" : "Copy to clipboard"}
+      </button>
+      <a className="button-secondary" href={openInAppUrl} onClick={openInOpenWork}>
+        Open in OpenWork
+      </a>
+    </>
+  );
+
   return (
     <main className="shell">
       <ShareNav stars={props.stars} />
@@ -87,55 +163,117 @@ export default function ShareBundlePage(props: BundlePageProps & { stars?: strin
         </section>
       ) : (
         <>
-          <section className="hero-layout hero-layout-share">
-            <div className="hero-copy">
-              <span className="eyebrow">{props.typeLabel}</span>
-              <h1>Skill share</h1>
-              <div className="button-row share-bundle-actions">
-                <button className="button-primary" type="button" onClick={() => void copyPreview()}>
-                  {previewCopied ? "Copied to clipboard" : "Copy to clipboard"}
-                </button>
-                <a className="button-secondary" href={openInAppUrl} onClick={openInOpenWork}>
-                  Open in OpenWork
-                </a>
-              </div>
-            </div>
-          </section>
+          {isSingleSkill ? (
+            <>
+              <section className="share-bundle-toolbar surface-shell">
+                <div className="button-row share-bundle-actions">{actionButtons}</div>
+              </section>
 
-          <section className={`share-bundle-stack${showBundleSidebar ? " has-sidebar" : ""}`}>
-            {showBundleSidebar ? (
-              <article className="bundle-compact-strip surface-soft">
-                <div className="bundle-strip-header">Skills:</div>
-                <div className="bundle-strip-list" aria-label="Skills">
-                  {previewSelections.map((selection) => {
-                    const isActive = selection.id === activeSelection?.id;
-                    return (
-                      <button
-                        key={selection.id}
-                        type="button"
-                        className={`bundle-strip-chip${isActive ? " is-active" : ""}`}
-                        onClick={() => setActiveSelectionId(selection.id)}
-                        disabled={isActive}
-                      >
-                        <span className={`preview-filename-dot ${toneClass(selection)}`} />
-                        {selection.name}
-                      </button>
-                    );
-                  })}
+              <section className="share-bundle-simple-stack">
+                <SkillEditorSurface
+                  className="share-bundle-editor share-bundle-editor-simple"
+                  toneClassName={toneClass(activeSelection)}
+                  eyebrow={surfaceEyebrow}
+                  filename={previewFilename}
+                  documentValue={activeSelection?.text || ""}
+                  readOnly={true}
+                  copied={previewCopied}
+                  onCopy={() => void copyPreview()}
+                />
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="share-bundle-hero-card surface-shell">
+                <div className="share-bundle-hero-copy">
+                  <span className="eyebrow">{props.typeLabel}</span>
+                  <h1>{props.title}</h1>
+                  {props.description ? <p className="hero-body">{props.description}</p> : null}
+                  {props.installHint ? <p className="preview-note">{props.installHint}</p> : null}
+                  <div className="button-row share-bundle-actions">{actionButtons}</div>
                 </div>
-              </article>
-            ) : null}
 
-            <SkillEditorSurface
-              className="share-bundle-editor"
-              toneClassName={toneClass(activeSelection)}
-              filename={previewName}
-              documentValue={activeSelection?.text || ""}
-              readOnly={true}
-              copied={previewCopied}
-              onCopy={() => void copyPreview()}
-            />
-          </section>
+                <aside className="share-bundle-summary surface-soft">
+                  <div className="bundle-strip-header">Bundle summary</div>
+                  <div className="summary-grid">
+                    <div className="summary-stat">
+                      <span className="summary-stat-value">{previewSelections.length}</span>
+                      <span className="summary-stat-label">Previewable items</span>
+                    </div>
+                    <div className="summary-stat">
+                      <span className="summary-stat-value">{props.typeLabel || "Bundle"}</span>
+                      <span className="summary-stat-label">Share type</span>
+                    </div>
+                    <div className="summary-stat">
+                      <span className="summary-stat-value">{props.schemaVersion || "unknown"}</span>
+                      <span className="summary-stat-label">Schema version</span>
+                    </div>
+                    <div className="summary-stat">
+                      <span className="summary-stat-value">{surfaceEyebrow}</span>
+                      <span className="summary-stat-label">Open now</span>
+                    </div>
+                  </div>
+                </aside>
+              </section>
+
+              <section className={`share-bundle-stack${showBundleSidebar ? " has-sidebar" : ""}`}>
+                {showBundleSidebar ? (
+                  <div className="share-bundle-sidebar">
+                    <article className="bundle-compact-strip surface-soft">
+                      <div className="bundle-strip-header">Included</div>
+                      <div className="bundle-strip-list" aria-label="Included bundle items">
+                        {previewSelections.map((selection) => {
+                          const isActive = selection.id === activeSelection?.id;
+                          return (
+                            <button
+                              key={selection.id}
+                              type="button"
+                              className={`included-item${isActive ? " is-active" : ""}`}
+                              onClick={() => setActiveSelectionId(selection.id)}
+                              disabled={isActive}
+                            >
+                              <span className="item-left">
+                                <span className={`item-dot ${toneClass(selection)}`} />
+                                <span className="item-text">
+                                  <span className="item-title">{formatSurfaceEyebrow(selection, selection.name, selection.name)}</span>
+                                  <span className="item-meta">{selection.label || selection.filename}</span>
+                                </span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </article>
+
+                    {props.metadataRows?.length ? (
+                      <article className="share-bundle-meta-card surface-soft">
+                        <div className="bundle-strip-header">Bundle info</div>
+                        <dl className="metadata-list share-bundle-metadata-list">
+                          {props.metadataRows.map((row) => (
+                            <div className="metadata-row" key={row.label}>
+                              <dt>{row.label}</dt>
+                              <dd>{row.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </article>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                <SkillEditorSurface
+                  className="share-bundle-editor"
+                  toneClassName={toneClass(activeSelection)}
+                  eyebrow={surfaceEyebrow}
+                  filename={previewFilename}
+                  documentValue={activeSelection?.text || ""}
+                  readOnly={true}
+                  copied={previewCopied}
+                  onCopy={() => void copyPreview()}
+                />
+              </section>
+            </>
+          )}
         </>
       )}
     </main>
