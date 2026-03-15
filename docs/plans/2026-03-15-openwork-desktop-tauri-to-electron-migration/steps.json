@@ -74,7 +74,7 @@
         "Renderer subscriptions can be individually removed.",
         "The event layer is typed and not based on raw string payload assumptions."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "007",

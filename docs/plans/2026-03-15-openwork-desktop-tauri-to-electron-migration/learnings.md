@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:35 - Step 006 - Create Electron event bus substrate
+
+- The early Electron event bus can stay decoupled from `BrowserWindow` by exposing typed event subscriptions plus separately registered renderer sinks; later main bootstrap can wire `webContents.send` in as just another sink.
+- `IPC_EVENT_CHANNELS` is a good single source for both event-bus envelopes and future preload subscription wiring, which avoids drifting channel strings between main and renderer edges.
+
 ## 2026-03-15 10:34 - Step 005 - Create IPC naming and validation helpers
 
 - `packages/desktop/src/main/ipc/` can become the shared main/preload seam early: keep channel builders in `channels.ts`, privileged argument guards in `validation.ts`, and re-export them through `index.ts` for later service bootstrap steps.
