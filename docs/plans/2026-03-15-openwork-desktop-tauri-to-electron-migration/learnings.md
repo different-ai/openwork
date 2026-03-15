@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:14 - Step 041 - Cut over runtime checks and desktop bootstrap imports
+
+- The bootstrap cutover gets much simpler once `index.tsx` and `entry.tsx` depend on `isDesktopRuntime()` plus `window.openworkDesktop` directly; top-level platform wiring no longer needs any lazy `@tauri-apps/*` imports to open links or restart the app.
+- Keeping `isTauriRuntime()` as a temporary alias in shared utils is still useful during the incremental renderer migration, but the bootstrap layer should stop naming Tauri explicitly as soon as the desktop probe exists.
+
 ## 2026-03-15 15:12 - Step 040 - Create temporary compatibility shim for lib tauri
 
 - Replacing `packages/app/src/app/lib/tauri.ts` wholesale is cleaner than patching call sites one by one: keep all the old exported names, route them through `window.openworkDesktop`, and preserve the small argument validations that callers already rely on.

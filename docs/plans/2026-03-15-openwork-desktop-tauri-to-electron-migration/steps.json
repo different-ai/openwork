@@ -459,7 +459,7 @@
         "Shared runtime helpers are Electron-neutral.",
         "Desktop bootstrap behavior still works from the renderer perspective."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "042",

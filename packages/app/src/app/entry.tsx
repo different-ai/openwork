@@ -3,12 +3,12 @@ import { GlobalSDKProvider } from "./context/global-sdk";
 import { GlobalSyncProvider } from "./context/global-sync";
 import { LocalProvider } from "./context/local";
 import { ServerProvider } from "./context/server";
-import { isTauriRuntime } from "./utils";
+import { isDesktopRuntime } from "./utils";
 
 export default function AppEntry() {
   const defaultUrl = (() => {
     // Desktop app connects to the local OpenCode engine.
-    if (isTauriRuntime()) return "http://127.0.0.1:4096";
+    if (isDesktopRuntime()) return "http://127.0.0.1:4096";
 
     // When running the web UI against an OpenWork server (e.g. Docker dev stack),
     // use the server's `/opencode` proxy instead of loopback.
