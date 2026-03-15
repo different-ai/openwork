@@ -9,6 +9,7 @@ import {
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
+import { createUpdateService, registerUpdateIpc } from "./services/update-service";
 import { createWindowService, registerWindowIpc } from "./services/window-service";
 import { createMainWindow, hasOpenWindows, loadMainWindow } from "./window/main-window";
 
@@ -105,6 +106,7 @@ export async function bootstrapMainProcess() {
   );
   registerPathIpc(createPathService());
   registerShellIpc(createShellService());
+  registerUpdateIpc(createUpdateService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {

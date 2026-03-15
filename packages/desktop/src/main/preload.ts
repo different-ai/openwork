@@ -77,8 +77,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       onOpen: (listener) => subscribeToDesktopEvent<DesktopDeepLinkEvent>(IPC_EVENT_CHANNELS.deepLinkOpen, listener),
     },
     updates: {
-      getEnvironment: notImplemented("updates.getEnvironment"),
-      check: notImplemented("updates.check"),
+      getEnvironment: () => invokeDesktopChannel(IPC_CHANNELS.updates("getEnvironment")),
+      check: (input) => invokeDesktopChannel(IPC_CHANNELS.updates("check"), input),
       download: notImplemented("updates.download"),
       installAndRelaunch: notImplemented("updates.installAndRelaunch"),
       onStatus: notImplementedSubscription<DesktopUpdateStatusEvent>("updates.onStatus"),

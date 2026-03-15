@@ -184,7 +184,7 @@
         "Update checks return stable structured results.",
         "No Tauri updater plugin APIs remain in the update check path."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "017",

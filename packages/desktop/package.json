@@ -15,6 +15,7 @@
     "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^22.10.2",
     "electron": "^35.0.0",
+    "electron-updater": "^6.6.2",
     "typescript": "^5.6.3"
   },
   "packageManager": "pnpm@10.27.0"

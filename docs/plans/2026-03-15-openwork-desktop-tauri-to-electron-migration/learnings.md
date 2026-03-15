@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:59 - Step 016 - Implement updater environment and check service
+
+- An Electron updater service can stay renderer-compatible even before packaging is finished: return a structured `available: false` result when the environment says updates are unsupported, and reserve thrown errors for genuine check failures in supported packaged builds.
+- `electron-updater` can be integrated at the service layer now, but actual runtime validation is still coupled to the pending Electron postinstall approval; packaged update checks will stay theoretical in this environment until the Electron binary download is allowed.
+
 ## 2026-03-15 10:57 - Step 015 - Implement deep-link registration and pending queue
 
 - Deep-link ownership needs a pre-ready phase in Electron: `requestSingleInstanceLock()`, `second-instance`, and macOS `open-url` listeners should be initialized before `app.whenReady()` so startup links are not lost.
