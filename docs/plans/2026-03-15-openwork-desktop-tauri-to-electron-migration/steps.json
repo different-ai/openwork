@@ -206,7 +206,7 @@
         "Persistence lives under Electron-controlled app data paths.",
         "No Rust-managed workspace state remains necessary."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "019",

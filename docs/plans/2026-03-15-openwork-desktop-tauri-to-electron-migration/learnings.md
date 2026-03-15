@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:03 - Step 018 - Implement workspace registry persistence
+
+- Keeping the persisted filename as `openwork-workspaces.json` under Electron `userData` gives the new registry store an easier migration path from the Rust shell without forcing a one-off import format change.
+- A normalization layer at load/save time is worth having early: later workspace mutations can stay focused on business logic while malformed or older on-disk state gets upgraded into a stable `WorkspaceState` shape first.
+
 ## 2026-03-15 11:01 - Step 017 - Implement updater download and install event flow
 
 - The renderer no longer needs updater plugin objects if the Electron service owns pending-update state (`checkedAt`, `version`, `notes`) and emits typed `updateStatus` events for `checking`, `available`, `downloading`, `ready`, and `error`.
