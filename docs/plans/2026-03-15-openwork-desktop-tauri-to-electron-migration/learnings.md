@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:08 - Step 019 - Implement local workspace flows
+
+- Normalized-path dedupe is an effective migration guardrail for local workspaces: it avoids hard-coding Rust's old workspace ID hash behavior while still preventing duplicate records when the same folder is re-added under Electron.
+- The starter-workspace bootstrap is really two concerns: registry persistence plus workspace seeding. Keeping file seeding in a dedicated `workspace-files.ts` module makes later remote/config/archive steps easier to extend without bloating the registry service itself.
+
 ## 2026-03-15 11:03 - Step 018 - Implement workspace registry persistence
 
 - Keeping the persisted filename as `openwork-workspaces.json` under Electron `userData` gives the new registry store an easier migration path from the Rust shell without forcing a one-off import format change.

@@ -217,7 +217,7 @@
         "Existing renderer workspace UX has equivalent backend capabilities.",
         "The new implementation does not depend on Rust commands."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "020",
