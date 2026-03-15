@@ -338,9 +338,9 @@ jobs:
           release-draft: ${{ env.RELEASE_DRAFT == 'true' }}
           prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
           args: ${{ matrix.args }}
-          uploadUpdaterJson: false
-          updaterJsonPreferNsis: true
-          releaseAssetNamePattern: openwork-desktop-[platform]-[arch][ext]
+          upload-updater-json: false
+          updater-json-prefer-nsis: true
+          release-asset-name-pattern: openwork-desktop-[platform]-[arch][ext]
 
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'

@@ -67,23 +67,23 @@ runs:
 
         $failed = $false
 
-        foreach ($host in $hosts) {
-          Write-Host "==> Resolving $host"
+        foreach ($githubHost in $hosts) {
+          Write-Host "==> Resolving $githubHost"
           try {
-            Resolve-DnsName $host -ErrorAction Stop |
+            Resolve-DnsName $githubHost -ErrorAction Stop |
               Select-Object Name, Type, IPAddress |
               Format-Table -AutoSize |
               Out-String -Width 200 |
               Write-Host
           } catch {
-            Write-Host "::error::DNS lookup failed for $host - $($_.Exception.Message)"
+            Write-Host "::error::DNS lookup failed for $githubHost - $($_.Exception.Message)"
             $failed = $true
             continue
           }
 
-          Write-Host "==> Testing TCP 443 to $host"
+          Write-Host "==> Testing TCP 443 to $githubHost"
           try {
-            $result = Test-NetConnection $host -Port 443 -WarningAction SilentlyContinue
+            $result = Test-NetConnection $githubHost -Port 443 -WarningAction SilentlyContinue
             $result |
               Select-Object ComputerName, RemoteAddress, RemotePort, TcpTestSucceeded |
               Format-Table -AutoSize |
@@ -91,11 +91,11 @@ runs:
               Write-Host
 
             if (-not $result.TcpTestSucceeded) {
-              Write-Host "::error::TCP connection failed for $host:443"
+              Write-Host "::error::TCP connection failed for $githubHost:443"
               $failed = $true
             }
           } catch {
-            Write-Host "::error::Connectivity test failed for $host - $($_.Exception.Message)"
+            Write-Host "::error::Connectivity test failed for $githubHost - $($_.Exception.Message)"
             $failed = $true
           }
         }

@@ -178,3 +178,6 @@ jobs:
           release-draft: false
           prerelease: true
           args: ${{ matrix.args }}
+          upload-updater-json: false
+          updater-json-prefer-nsis: true
+          release-asset-name-pattern: openwork-desktop-[platform]-[arch][ext]
