@@ -66,7 +66,11 @@ import {
   VARIANT_PREF_KEY,
 } from "./constants";
 import { parseMcpServersFromContent, removeMcpFromConfig, validateMcpServerName } from "./mcp";
-import { mapConfigProvidersToList } from "./utils/providers";
+import {
+  compareProviders,
+  mapConfigProvidersToList,
+  providerPriorityRank,
+} from "./utils/providers";
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "./types";
 import type {
   Client,
@@ -4699,12 +4703,7 @@ export default function App() {
       ];
     }
 
-    const sortedProviders = allProviders.slice().sort((a, b) => {
-      const aIsOpencode = a.id === "opencode";
-      const bIsOpencode = b.id === "opencode";
-      if (aIsOpencode !== bIsOpencode) return aIsOpencode ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    const sortedProviders = allProviders.slice().sort(compareProviders);
 
     const next: ModelOption[] = [];
 
@@ -4750,6 +4749,9 @@ export default function App() {
     next.sort((a, b) => {
       if (a.isConnected !== b.isConnected) return a.isConnected ? -1 : 1;
       if (a.isFree !== b.isFree) return a.isFree ? -1 : 1;
+      const providerRankDiff =
+        providerPriorityRank(a.providerID) - providerPriorityRank(b.providerID);
+      if (providerRankDiff !== 0) return providerRankDiff;
       return a.title.localeCompare(b.title);
     });
 

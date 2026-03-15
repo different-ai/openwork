@@ -3756,6 +3756,10 @@ export default function SessionView(props: SessionViewProps) {
     });
   };
 
+  const hasOpenAIProviderConnected = createMemo(() =>
+    (props.providerConnectedIds ?? []).some((id) => id.trim().toLowerCase() === "openai")
+  );
+
   const rightSidebarNavButton = (
     label: string,
     icon: any,
@@ -4263,6 +4267,20 @@ export default function SessionView(props: SessionViewProps) {
                         </p>
                       </div>
                       <div class="grid gap-3 max-w-lg mx-auto text-left">
+                        <Show when={!hasOpenAIProviderConnected()}>
+                          <button
+                            type="button"
+                            class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
+                            onClick={openProviderAuth}
+                          >
+                            <div class="text-sm font-semibold text-dls-text">
+                              Connect ChatGPT
+                            </div>
+                            <div class="mt-1 text-xs text-dls-secondary leading-relaxed">
+                              Add your OpenAI provider so ChatGPT-style models are ready in new sessions.
+                            </div>
+                          </button>
+                        </Show>
                         <button
                           type="button"
                           class="rounded-2xl border border-dls-border bg-dls-hover p-4 transition-all hover:bg-dls-active hover:border-gray-7"
