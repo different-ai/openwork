@@ -146,3 +146,30 @@ select:disabled {
 @utility animate-progress-shimmer {
   animation: progress-shimmer 2s infinite linear;
 }
+
+@keyframes stream-word-reveal {
+  0% {
+    opacity: 0;
+    filter: blur(6px);
+    transform: translateY(0.18em);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.stream-reveal-word {
+  display: inline;
+  animation: stream-word-reveal 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  will-change: opacity, filter, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-reveal-word {
+    animation: none;
+    filter: none;
+    transform: none;
+  }
+}

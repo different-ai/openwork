@@ -24,6 +24,13 @@ type TextSegment =
   | { kind: "text"; value: string }
   | { kind: "link"; value: string; href: string; type: LinkType };
 
+type StreamRevealChunk = {
+  id: number;
+  text: string;
+  delayMs: number;
+  animate: boolean;
+};
+
 const WEB_LINK_RE = /^(?:https?:\/\/|www\.)/i;
 const FILE_URI_RE = /^file:\/\//i;
 const URI_SCHEME_RE = /^[A-Za-z][A-Za-z0-9+.-]*:/;
@@ -361,13 +368,27 @@ function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) =
   return state;
 }
 
-function smoothStreamStep(remainingChars: number) {
-  if (remainingChars >= 1_600) return 320;
-  if (remainingChars >= 800) return 192;
-  if (remainingChars >= 320) return 96;
-  if (remainingChars >= 120) return 48;
-  if (remainingChars >= 40) return 18;
-  return 6;
+const STREAM_REVEAL_GROUP_RE = /[^\s]+(?:\s+)?|\s+/g;
+const STREAM_REVEAL_MAX_STAGGER_MS = 90;
+const STREAM_REVEAL_STAGGER_MS = 18;
+
+function tokenizeStreamRevealGroups(text: string) {
+  return text.match(STREAM_REVEAL_GROUP_RE) ?? (text ? [text] : []);
+}
+
+function streamRevealGroupBudget(pendingText: string) {
+  const groups = tokenizeStreamRevealGroups(pendingText).length;
+  if (pendingText.length >= 1_600 || groups >= 70) return 14;
+  if (pendingText.length >= 900 || groups >= 40) return 10;
+  if (pendingText.length >= 420 || groups >= 18) return 6;
+  if (pendingText.length >= 160 || groups >= 8) return 3;
+  return 1;
+}
+
+function takeNextStreamRevealGroups(text: string) {
+  const groups = tokenizeStreamRevealGroups(text);
+  if (!groups.length) return [];
+  return groups.slice(0, Math.max(1, streamRevealGroupBudget(text)));
 }
 
 const MARKDOWN_CACHE_MAX_ENTRIES = 100;
@@ -524,54 +545,109 @@ export default function PartView(props: Props) {
     if (p().type !== "text") return "";
     return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
   });
-  const [displayedText, setDisplayedText] = createSignal(rawText());
-  let displayedTextValue = rawText();
+  const [revealedText, setRevealedText] = createSignal(rawText());
+  const [revealedChunks, setRevealedChunks] = createSignal<StreamRevealChunk[]>(
+    rawText()
+      ? [{ id: 1, text: rawText(), delayMs: 0, animate: false }]
+      : [],
+  );
+  let nextRevealChunkId = rawText() ? 1 : 0;
+  let revealedTextValue = rawText();
   let latestTextValue = rawText();
-  let smoothTextFrame: number | undefined;
+  let revealTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingRevealGroups: string[] = [];
 
-  const commitDisplayedText = (next: string) => {
-    displayedTextValue = next;
-    setDisplayedText(next);
+  const replaceRevealedText = (next: string) => {
+    revealedTextValue = next;
+    setRevealedText(next);
+
+    if (!next) {
+      setRevealedChunks([]);
+      return;
+    }
+
+    nextRevealChunkId += 1;
+    setRevealedChunks([{ id: nextRevealChunkId, text: next, delayMs: 0, animate: false }]);
+    pendingRevealGroups = [];
   };
 
-  const cancelSmoothTextFrame = () => {
-    if (smoothTextFrame === undefined || typeof window === "undefined") return;
-    window.cancelAnimationFrame(smoothTextFrame);
-    smoothTextFrame = undefined;
-  };
+  const appendRevealedGroups = (groups: string[]) => {
+    if (!groups.length) return;
 
-  const scheduleSmoothTextFrame = () => {
-    if (smoothTextFrame !== undefined || typeof window === "undefined") return;
-    smoothTextFrame = window.requestAnimationFrame(() => {
-      smoothTextFrame = undefined;
+    let nextText = revealedTextValue;
+    setRevealedChunks((current) => {
+      const next = current.slice();
+      let staggerIndex = 0;
 
-      const source = latestTextValue;
-      if (!smoothStream() || !source.startsWith(displayedTextValue)) {
-        commitDisplayedText(source);
-        return;
+      for (const groupText of groups) {
+        if (!groupText) continue;
+
+        nextText += groupText;
+        const last = next[next.length - 1];
+        const shouldMergeIntoLast = Boolean(last && /\S$/.test(last.text) && /^\S/.test(groupText));
+
+        if (shouldMergeIntoLast && last) {
+          next[next.length - 1] = {
+            ...last,
+            text: `${last.text}${groupText}`,
+          };
+          continue;
+        }
+
+        nextRevealChunkId += 1;
+        next.push({
+          id: nextRevealChunkId,
+          text: groupText,
+          delayMs: Math.min(staggerIndex * STREAM_REVEAL_STAGGER_MS, STREAM_REVEAL_MAX_STAGGER_MS),
+          animate: /\S/.test(groupText),
+        });
+        staggerIndex += 1;
       }
 
-      const remainingChars = source.length - displayedTextValue.length;
-      if (remainingChars <= 0) return;
-
-      const next = source.slice(
-        0,
-        displayedTextValue.length + Math.min(remainingChars, smoothStreamStep(remainingChars)),
-      );
-      commitDisplayedText(next);
-
-      if (next.length < source.length) {
-        scheduleSmoothTextFrame();
-      }
+      return next;
     });
+
+    revealedTextValue = nextText;
+    setRevealedText(nextText);
+  };
+
+  const cancelRevealTimer = () => {
+    if (revealTimer === undefined) return;
+    clearTimeout(revealTimer);
+    revealTimer = undefined;
+  };
+
+  const drainRevealQueue = () => {
+    revealTimer = undefined;
+
+    if (!smoothStream()) {
+      pendingRevealGroups = [];
+      replaceRevealedText(latestTextValue);
+      return;
+    }
+
+    if (pendingRevealGroups.length === 0) return;
+
+    const budget = Math.max(1, streamRevealGroupBudget(pendingRevealGroups.join("")));
+    const nextGroups = pendingRevealGroups.splice(0, budget);
+    appendRevealedGroups(nextGroups);
+
+    if (pendingRevealGroups.length > 0) {
+      scheduleRevealTimer();
+    }
+  };
+
+  const scheduleRevealTimer = () => {
+    if (revealTimer !== undefined) return;
+    revealTimer = setTimeout(drainRevealQueue, 16);
   };
 
   createEffect(() => {
     if (p().type !== "text") {
       latestTextValue = "";
-      cancelSmoothTextFrame();
-      if (displayedTextValue) {
-        commitDisplayedText("");
+      cancelRevealTimer();
+      if (revealedTextValue) {
+        replaceRevealedText("");
       }
       return;
     }
@@ -580,32 +656,36 @@ export default function PartView(props: Props) {
     latestTextValue = next;
 
     if (!smoothStream()) {
-      cancelSmoothTextFrame();
-      if (displayedTextValue !== next) {
-        commitDisplayedText(next);
+      cancelRevealTimer();
+      if (revealedTextValue !== next) {
+        replaceRevealedText(next);
       }
       return;
     }
 
-    if (!next.startsWith(displayedTextValue) || next.length < displayedTextValue.length) {
-      cancelSmoothTextFrame();
-      commitDisplayedText(next);
+    if (!next.startsWith(revealedTextValue) || next.length < revealedTextValue.length) {
+      cancelRevealTimer();
+      replaceRevealedText(next);
       return;
     }
 
-    if (next.length > displayedTextValue.length) {
-      scheduleSmoothTextFrame();
+    if (next.length > revealedTextValue.length) {
+      const pendingText = next.slice(revealedTextValue.length + pendingRevealGroups.join("").length);
+      if (pendingText) {
+        pendingRevealGroups.push(...tokenizeStreamRevealGroups(pendingText));
+      }
+      scheduleRevealTimer();
     }
   });
 
   onCleanup(() => {
-    cancelSmoothTextFrame();
+    cancelRevealTimer();
   });
 
   const adaptiveMarkdownThrottleMs = createMemo(() => {
     if (!smoothStream()) return markdownThrottleMs();
 
-    const chars = displayedText().length;
+    const chars = revealedText().length;
     if (chars < 600) return 24;
     if (chars < 1_800) return 40;
     if (chars < 3_600) return 56;
@@ -668,10 +748,17 @@ export default function PartView(props: Props) {
   const panelBgClass = () => (tone() === "dark" ? "bg-gray-2/10" : "bg-gray-2/30");
   const toolOnly = () => true;
   const showToolOutput = () => developerMode();
+  const animatedTailChunks = createMemo(() => {
+    if (!smoothStream() || p().type !== "text") return [] as StreamRevealChunk[];
+    if (collapsedLongText()) return [] as StreamRevealChunk[];
+    return revealedChunks();
+  });
+  const hasAnimatedTail = createMemo(() => animatedTailChunks().some((chunk) => chunk.text.length > 0));
   const markdownSource = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return "";
     if (collapsedLongText()) return "";
-    return displayedText();
+    if (smoothStream()) return "";
+    return revealedText();
   });
   const throttledMarkdownSource = useThrottledValue(markdownSource, adaptiveMarkdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
@@ -758,7 +845,7 @@ export default function PartView(props: Props) {
   };
 
   const renderTextWithLinks = () => {
-    const text = displayedText();
+    const text = revealedText();
     if (!text) return <span>{""}</span>;
 
     const tokens = splitTextTokens(text);
@@ -784,6 +871,54 @@ export default function PartView(props: Props) {
               token.value
             )
           }
+        </For>
+      </span>
+    );
+  };
+
+  const renderAnimatedTail = () => {
+    const chunks = animatedTailChunks();
+    if (!chunks.length) return <span>{""}</span>;
+
+    return (
+      <span class="whitespace-pre-wrap break-words">
+        <For each={chunks}>
+          {(chunk) => {
+            const tokens = splitTextTokens(chunk.text);
+            const shouldAnimateChunk = chunk.animate && /\S/.test(chunk.text);
+            return (
+              <span
+                class={shouldAnimateChunk ? "stream-reveal-word" : undefined}
+                style={
+                  shouldAnimateChunk && chunk.delayMs > 0
+                    ? { "animation-delay": `${chunk.delayMs}ms` }
+                    : undefined
+                }
+              >
+                <For each={tokens}>
+                  {(token) =>
+                    token.kind === "link" ? (
+                      <a
+                        href={token.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="underline underline-offset-2 text-dls-accent hover:text-[var(--dls-accent-hover)]"
+                        onClick={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void openLink(token.href, token.type);
+                        }}
+                      >
+                        {token.value}
+                      </a>
+                    ) : (
+                      token.value
+                    )
+                  }
+                </For>
+              </span>
+            );
+          }}
         </For>
       </span>
     );
@@ -998,36 +1133,51 @@ export default function PartView(props: Props) {
             </div>
           }
         >
-          {/* null = parse error → plain text; "" = empty/pending → nothing; string = rendered HTML */}
-          <Show when={renderedMarkdown() === null}>
+          <Show
+            when={smoothStream() && hasAnimatedTail()}
+            fallback={
+              /* null = parse error → plain text; "" = empty/pending → nothing; string = rendered HTML */
+              <Show
+                when={typeof renderedMarkdown() === "string" && !smoothStream()}
+                fallback={
+                  <div
+                    ref={(el) => { textContainerEl = el; }}
+                    class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
+                  >
+                    {renderTextWithLinks()}
+                  </div>
+                }
+              >
+                <div
+                  ref={(el) => { textContainerEl = el; }}
+                  class={`markdown-content max-w-none ${textClass()}
+                    [&_strong]:font-semibold
+                    [&_em]:italic
+                    [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
+                    [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
+                    [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
+                    [&_p]:my-3 [&_p]:leading-relaxed
+                    [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
+                    [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
+                    [&_li]:my-1
+                    [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
+                    [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
+                    [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
+                    [&_td]:border [&_td]:border-dls-border [&_td]:p-2
+                  `.trim()}
+                  onClick={openMarkdownLink}
+                >
+                  <div innerHTML={renderedMarkdown()!} />
+                </div>
+              </Show>
+            }
+          >
             <div
               ref={(el) => { textContainerEl = el; }}
               class={`whitespace-pre-wrap break-words ${textClass()}`.trim()}
             >
-              {renderTextWithLinks()}
+              {renderAnimatedTail()}
             </div>
-          </Show>
-          <Show when={typeof renderedMarkdown() === "string" && renderedMarkdown()}>
-            <div
-              ref={(el) => { textContainerEl = el; }}
-              class={`markdown-content max-w-none ${textClass()}
-                [&_strong]:font-semibold
-                [&_em]:italic
-                [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:my-4
-                [&_h2]:text-xl [&_h2]:font-bold [&_h2]:my-3
-                [&_h3]:text-lg [&_h3]:font-bold [&_h3]:my-2
-                [&_p]:my-3 [&_p]:leading-relaxed
-                [&_ul]:list-disc [&_ul]:pl-6 [&_ul]:my-3
-                [&_ol]:list-decimal [&_ol]:pl-6 [&_ol]:my-3
-                [&_li]:my-1
-                [&_blockquote]:border-l-4 [&_blockquote]:border-dls-border [&_blockquote]:pl-4 [&_blockquote]:my-4 [&_blockquote]:italic
-                [&_table]:w-full [&_table]:border-collapse [&_table]:my-4
-                [&_th]:border [&_th]:border-dls-border [&_th]:p-2 [&_th]:bg-dls-hover
-                [&_td]:border [&_td]:border-dls-border [&_td]:p-2
-              `.trim()}
-              innerHTML={renderedMarkdown()!}
-              onClick={openMarkdownLink}
-            />
           </Show>
         </Show>
       </Match>
