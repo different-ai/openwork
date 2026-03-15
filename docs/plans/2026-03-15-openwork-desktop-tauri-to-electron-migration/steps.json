@@ -239,7 +239,7 @@
         "The config schema and field behavior remain intact.",
         "Errors are surfaced in a stable structured way."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "022",

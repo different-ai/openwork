@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:12 - Step 021 - Implement workspace OpenWork config read and write
+
+- Treating a missing `.opencode/openwork.json` as a generated default with `authorizedRoots: [workspacePath]` preserves the current desktop behavior and keeps later authorization mutations simple.
+- Returning the same `ExecResult` shape for writes makes the workspace service easier to extend: config, archive, and authorized-root mutations can all reuse one success/error contract instead of inventing special cases.
+
 ## 2026-03-15 11:10 - Step 020 - Implement remote workspace flows
 
 - Remote workspace identity is cleaner when it keys off the actual remote tuple (`baseUrl` + `directory`, or `openworkHostUrl` + `workspaceId`) instead of the display path field; that keeps OpenWork-hosted and plain OpenCode remotes stable even when friendly labels change.

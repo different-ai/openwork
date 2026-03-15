@@ -1,9 +1,14 @@
 import { app, ipcMain } from "electron";
 import { createHash } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { WorkspaceInfo, WorkspaceList } from "../../../../app/src/app/lib/desktop-contract";
+import type {
+  ExecResult,
+  WorkspaceInfo,
+  WorkspaceList,
+  WorkspaceOpenworkConfig,
+} from "../../../../app/src/app/lib/desktop-contract";
 import { IPC_CHANNELS } from "../ipc/channels";
 import { validatePathInput, validateUrlInput, validateWorkspaceId } from "../ipc/validation";
 import {
@@ -32,6 +37,10 @@ function normalizeOpenworkRemoteKey(hostUrl: string, workspaceId?: string | null
 function normalizeOptionalText(value?: string | null) {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function resolveOpenworkConfigPath(workspacePath: string) {
+  return path.join(workspacePath, ".opencode", "openwork.json");
 }
 
 export function createWorkspaceService() {
@@ -330,6 +339,51 @@ export function createWorkspaceService() {
       await store.save(state);
       return toWorkspaceList(state);
     },
+
+    async openworkRead(input: { workspacePath: string }): Promise<WorkspaceOpenworkConfig> {
+      const workspacePath = path.resolve(
+        validatePathInput(input.workspacePath, { label: "workspacePath", allowRelative: false }),
+      );
+      const openworkPath = resolveOpenworkConfigPath(workspacePath);
+
+      try {
+        const raw = await readFile(openworkPath, "utf8");
+        return JSON.parse(raw) as WorkspaceOpenworkConfig;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return {
+            version: 1,
+            workspace: null,
+            authorizedRoots: [workspacePath],
+            reload: null,
+          };
+        }
+
+        throw new Error(
+          `Failed to read ${openworkPath}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+
+    async openworkWrite(input: {
+      workspacePath: string;
+      config: WorkspaceOpenworkConfig;
+    }): Promise<ExecResult> {
+      const workspacePath = path.resolve(
+        validatePathInput(input.workspacePath, { label: "workspacePath", allowRelative: false }),
+      );
+      const openworkPath = resolveOpenworkConfigPath(workspacePath);
+
+      await mkdir(path.dirname(openworkPath), { recursive: true });
+      await writeFile(openworkPath, `${JSON.stringify(input.config, null, 2)}\n`, "utf8");
+
+      return {
+        ok: true,
+        status: 0,
+        stdout: `Wrote ${openworkPath}`,
+        stderr: "",
+      };
+    },
   };
 }
 
@@ -356,5 +410,13 @@ export function registerWorkspaceIpc(service: WorkspaceService) {
   ipcMain.handle(
     IPC_CHANNELS.workspace("updateRemote"),
     (_event, input: Parameters<WorkspaceService["updateRemote"]>[0]) => service.updateRemote(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.workspace("openworkRead"),
+    (_event, input: Parameters<WorkspaceService["openworkRead"]>[0]) => service.openworkRead(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.workspace("openworkWrite"),
+    (_event, input: Parameters<WorkspaceService["openworkWrite"]>[0]) => service.openworkWrite(input),
   );
 }
