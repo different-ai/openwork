@@ -1040,7 +1040,7 @@ export default function DashboardView(props: DashboardViewProps) {
   };
 
   return (
-    <div class="h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-dls-text font-sans">
+    <div class="h-[100dvh] min-h-screen w-full overflow-hidden bg-[var(--dls-app-bg)] p-3 md:p-4 text-dls-text font-sans">
       <div class="flex h-full w-full gap-3 md:gap-4">
       <aside
         class="relative hidden md:flex shrink-0 flex-col rounded-[24px] border border-dls-border bg-dls-sidebar p-2.5"
