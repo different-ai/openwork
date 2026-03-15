@@ -229,6 +229,24 @@ async function routerVersion(command: string) {
   }
 }
 
+async function resolveRouterGroupsHealthPort(state: RouterState) {
+  if (state.healthPort) {
+    return state.healthPort;
+  }
+
+  const command = resolveRouterCommand();
+  try {
+    const status = await routerJson(command, ["status", "--json"], "get status");
+    if (typeof status.healthPort === "number") {
+      return status.healthPort;
+    }
+  } catch {
+    // ignore and fall back
+  }
+
+  return DEFAULT_OPENCODE_ROUTER_HEALTH_PORT;
+}
+
 export function createRouterService() {
   const state = defaultState();
 
@@ -399,6 +417,43 @@ export function createRouterService() {
       };
       return result;
     },
+
+    async getGroupsEnabled(): Promise<boolean | null> {
+      // Intentionally narrow bridge: this only talks to the router's localhost health/config port
+      // and does not expose a generic HTTP proxy to the renderer.
+      const healthPort = await resolveRouterGroupsHealthPort(state);
+      try {
+        const response = await fetch(`http://127.0.0.1:${healthPort}/config/groups`, {
+          method: "GET",
+          headers: { "Content-Type": "application/json" },
+        });
+        if (!response.ok) {
+          return null;
+        }
+        const data = (await response.json()) as { groupsEnabled?: unknown };
+        return typeof data.groupsEnabled === "boolean" ? data.groupsEnabled : null;
+      } catch {
+        return null;
+      }
+    },
+
+    async setGroupsEnabled(input: { enabled: boolean }): Promise<ExecResult> {
+      const healthPort = await resolveRouterGroupsHealthPort(state);
+      try {
+        const response = await fetch(`http://127.0.0.1:${healthPort}/config/groups`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: input.enabled }),
+        });
+        if (!response.ok) {
+          const message = await response.text();
+          return { ok: false, status: response.status, stdout: "", stderr: message };
+        }
+        return { ok: true, status: 0, stdout: "", stderr: "" };
+      } catch (error) {
+        return { ok: false, status: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
+      }
+    },
   };
 
   return service;
@@ -412,4 +467,6 @@ export function registerRouterIpc(service: RouterService) {
   ipcMain.handle(IPC_CHANNELS.router("start"), (_event, input: RouterStartInput) => service.start(input));
   ipcMain.handle(IPC_CHANNELS.router("stop"), () => service.stop());
   ipcMain.handle(IPC_CHANNELS.router("restart"), (_event, input: RouterStartInput) => service.restart(input));
+  ipcMain.handle(IPC_CHANNELS.router("getGroupsEnabled"), () => service.getGroupsEnabled());
+  ipcMain.handle(IPC_CHANNELS.router("setGroupsEnabled"), (_event, input: { enabled: boolean }) => service.setGroupsEnabled(input));
 }

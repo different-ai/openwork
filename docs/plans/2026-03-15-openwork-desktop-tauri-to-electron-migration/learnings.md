@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:00 - Step 035 - Implement router localhost groups config path
+
+- The groups-enabled path does not need a generic loopback proxy: a router-owned Electron method that only talks to `http://127.0.0.1:<healthPort>/config/groups` is narrow enough to preserve security while keeping the existing caller semantics.
+- Documenting that restriction in the router service itself helps future steps avoid widening the contract accidentally when more localhost-only router helpers get added.
+
 ## 2026-03-15 14:58 - Step 034 - Implement opencode-router lifecycle service
 
 - The router shell fits the same Electron service pattern as engine/openwork-server: keep a child-process-backed state snapshot for `info`, but use the router CLI's `status --json` output to preserve the richer identity/channel DTO used by the UI.

@@ -149,8 +149,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       start: (input) => invokeDesktopChannel(IPC_CHANNELS.router("start"), input),
       stop: () => invokeDesktopChannel(IPC_CHANNELS.router("stop")),
       restart: (input) => invokeDesktopChannel(IPC_CHANNELS.router("restart"), input),
-      getGroupsEnabled: notImplemented("router.getGroupsEnabled"),
-      setGroupsEnabled: notImplemented("router.setGroupsEnabled"),
+      getGroupsEnabled: () => invokeDesktopChannel(IPC_CHANNELS.router("getGroupsEnabled")),
+      setGroupsEnabled: (input) => invokeDesktopChannel(IPC_CHANNELS.router("setGroupsEnabled"), input),
     },
     cache: {
       resetOpenworkState: notImplemented("cache.resetOpenworkState"),

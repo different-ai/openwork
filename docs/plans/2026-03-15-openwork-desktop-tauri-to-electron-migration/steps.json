@@ -393,7 +393,7 @@
         "The solution does not introduce an unrestricted HTTP proxy.",
         "The chosen ownership model is documented in code comments or adjacent docs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "036",
