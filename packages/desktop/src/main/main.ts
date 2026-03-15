@@ -11,6 +11,7 @@ import {
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createEngineService, registerEngineIpc } from "./services/engine-service";
 import { createOrchestratorService, registerOrchestratorIpc } from "./services/orchestrator-service";
+import { createOpenworkServerService, registerOpenworkServerIpc } from "./services/openwork-server-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
@@ -97,6 +98,9 @@ export async function bootstrapMainProcess() {
 
   const activeDeepLinkService = getOrCreateDeepLinkService();
   const engineService = createEngineService();
+  const openworkServerService = createOpenworkServerService({
+    getEngineInfo: () => engineService.info(),
+  });
   registerAppIpc(createDefaultAppService());
   registerDeepLinkIpc(activeDeepLinkService);
   registerEngineIpc(engineService);
@@ -133,6 +137,7 @@ export async function bootstrapMainProcess() {
       },
     }),
   );
+  registerOpenworkServerIpc(openworkServerService);
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;
@@ -160,6 +165,7 @@ export async function bootstrapMainProcess() {
 
   app.on("before-quit", () => {
     engineService.cleanupOnQuit();
+    openworkServerService.cleanupOnQuit();
   });
 
   await openMainWindow(context);

@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 14:12 - Step 033 - Implement local OpenWork server lifecycle service
+
+- The local OpenWork server service can stay thin if it derives restart inputs from the current engine state: project directory, OpenCode base URL, and auth fields are already the core contract the existing UI expects.
+- Preserving `connectUrl`, `lanUrl`, and `mdnsUrl` behavior does not require native mDNS APIs in the desktop shell; deriving them from `hostname()` plus the first non-internal IPv4 interface is enough to keep the same outward DTO shape.
+
 ## 2026-03-15 14:09 - Step 032 - Implement sandbox doctor, cleanup, and debug probe
 
 - The Docker diagnostic path is easiest to keep support-friendly when every command returns structured debug payloads (`status`, `stdout`, `stderr`, selected binary, candidate list) instead of collapsing failures into a single opaque string.

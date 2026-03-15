@@ -140,8 +140,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
         subscribeToDesktopEvent<SandboxCreateProgressEvent>(IPC_EVENT_CHANNELS.sandboxCreateProgress, listener),
     },
     openworkServer: {
-      info: notImplemented("openworkServer.info"),
-      restart: notImplemented("openworkServer.restart"),
+      info: () => invokeDesktopChannel(IPC_CHANNELS.openworkServer("info")),
+      restart: () => invokeDesktopChannel(IPC_CHANNELS.openworkServer("restart")),
     },
     router: {
       info: notImplemented("router.info"),
