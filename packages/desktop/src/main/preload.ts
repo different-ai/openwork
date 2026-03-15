@@ -131,10 +131,11 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       activateWorkspace: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("activateWorkspace"), input),
       disposeInstance: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("disposeInstance"), input),
       startDetached: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("startDetached"), input),
-      sandboxDoctor: notImplemented("orchestrator.sandboxDoctor"),
-      sandboxStop: notImplemented("orchestrator.sandboxStop"),
-      sandboxCleanupOpenworkContainers: notImplemented("orchestrator.sandboxCleanupOpenworkContainers"),
-      sandboxDebugProbe: notImplemented("orchestrator.sandboxDebugProbe"),
+      sandboxDoctor: () => invokeDesktopChannel(IPC_CHANNELS.orchestrator("sandboxDoctor")),
+      sandboxStop: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("sandboxStop"), input),
+      sandboxCleanupOpenworkContainers: () =>
+        invokeDesktopChannel(IPC_CHANNELS.orchestrator("sandboxCleanupOpenworkContainers")),
+      sandboxDebugProbe: () => invokeDesktopChannel(IPC_CHANNELS.orchestrator("sandboxDebugProbe")),
       onSandboxCreateProgress: (listener) =>
         subscribeToDesktopEvent<SandboxCreateProgressEvent>(IPC_EVENT_CHANNELS.sandboxCreateProgress, listener),
     },

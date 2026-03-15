@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 14:09 - Step 032 - Implement sandbox doctor, cleanup, and debug probe
+
+- The Docker diagnostic path is easiest to keep support-friendly when every command returns structured debug payloads (`status`, `stdout`, `stderr`, selected binary, candidate list) instead of collapsing failures into a single opaque string.
+- The debug probe becomes much cheaper to maintain if it composes existing capabilities: run `sandboxDoctor`, reuse `startDetached` for the actual sandbox bring-up, then collect `docker inspect` / `docker logs` and cleanup results into one final report.
+
 ## 2026-03-15 14:03 - Step 031 - Implement detached orchestrator start and sandbox progress events
 
 - The detached-host flow can stay orchestration-first in Electron: launch `openwork start --detach ...`, then treat renderer-visible progress as a typed event stream driven by health polling rather than by exposing the spawned process itself.

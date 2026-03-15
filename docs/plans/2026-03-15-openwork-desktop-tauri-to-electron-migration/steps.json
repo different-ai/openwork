@@ -360,7 +360,7 @@
         "Sandbox stop and container cleanup still work.",
         "Debug probe still captures enough detail for troubleshooting."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "033",

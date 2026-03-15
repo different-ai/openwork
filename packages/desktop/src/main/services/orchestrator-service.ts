@@ -1,14 +1,20 @@
 import { ipcMain } from "electron";
 import { existsSync, readFileSync } from "node:fs";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 
 import type {
+  ExecResult,
+  OpenworkDockerCleanupResult,
   OrchestratorDetachedHost,
   OrchestratorStatus,
   OrchestratorWorkspace,
+  SandboxDebugProbeResult,
+  SandboxDoctorResult,
 } from "../../../../app/src/app/lib/desktop-contract";
 import type { SandboxCreateProgressEvent } from "../../../../app/src/app/lib/openwork-desktop";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -173,6 +179,177 @@ async function waitForOpenworkHealth(baseUrl: string, timeoutMs: number, onTick:
   throw new Error(lastError ?? "Timed out waiting for OpenWork server");
 }
 
+type DockerCommandResult = {
+  status: number;
+  stdout: string;
+  stderr: string;
+  program: string;
+};
+
+function truncateForDebug(input: string, max = 1200) {
+  const trimmed = input.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max)}...[truncated]`;
+}
+
+function truncateForReport(input: string, max = 48_000) {
+  const trimmed = input.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max)}...[truncated]`;
+}
+
+function resolveDockerCandidates() {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+
+  for (const key of ["OPENWORK_DOCKER_BIN", "OPENWRK_DOCKER_BIN", "DOCKER_BIN"] as const) {
+    const value = process.env[key]?.trim();
+    if (value && !seen.has(value)) {
+      seen.add(value);
+      candidates.push(value);
+    }
+  }
+
+  for (const dir of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(dir, process.platform === "win32" ? "docker.exe" : "docker");
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  }
+
+  for (const candidate of [
+    "/opt/homebrew/bin/docker",
+    "/usr/local/bin/docker",
+    "/Applications/Docker.app/Contents/Resources/bin/docker",
+  ]) {
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      candidates.push(candidate);
+    }
+  }
+
+  return candidates.filter((candidate) => existsSync(candidate));
+}
+
+function runLocalCommandWithTimeout(program: string, args: string[], timeoutMs: number) {
+  return new Promise<{ status: number; stdout: string; stderr: string }>((resolve, reject) => {
+    const child = spawn(program, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill();
+      reject(new Error(`Timed out after ${timeoutMs}ms running ${program} ${args.join(" ")}`));
+    }, timeoutMs);
+
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve({ status: code ?? -1, stdout, stderr });
+    });
+  });
+}
+
+async function runDockerCommandDetailed(args: string[], timeoutMs: number): Promise<DockerCommandResult> {
+  const candidates = [...resolveDockerCandidates(), process.platform === "win32" ? "docker.exe" : "docker"];
+  const errors: string[] = [];
+
+  for (const program of candidates) {
+    try {
+      const result = await runLocalCommandWithTimeout(program, args, timeoutMs);
+      return {
+        ...result,
+        program,
+      };
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  throw new Error(
+    `Failed to run docker: ${errors.join("; ")} (Set OPENWORK_DOCKER_BIN or OPENWRK_DOCKER_BIN to your docker binary)`,
+  );
+}
+
+async function runDockerCommand(args: string[], timeoutMs: number) {
+  const result = await runDockerCommandDetailed(args, timeoutMs);
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+function parseDockerClientVersion(stdout: string) {
+  const line = stdout.split(/\r?\n/)[0]?.trim() ?? "";
+  return line.toLowerCase().startsWith("docker version") ? line : null;
+}
+
+function parseDockerServerVersion(stdout: string) {
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("Server Version:")) {
+      const value = trimmed.slice("Server Version:".length).trim();
+      if (value) {
+        return value;
+      }
+    }
+  }
+  return null;
+}
+
+function isOpenworkManagedContainer(name: string) {
+  return name.startsWith("openwork-orchestrator-") || name.startsWith("openwork-dev-") || name.startsWith("openwrk-");
+}
+
+async function listOpenworkManagedContainers() {
+  const result = await runDockerCommand(["ps", "-a", "--format", "{{.Names}}"], 8000);
+  if (result.status !== 0) {
+    const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
+    throw new Error(combined ? `docker ps -a failed (status ${result.status}): ${combined}` : `docker ps -a failed (status ${result.status})`);
+  }
+
+  return result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((name) => name && isOpenworkManagedContainer(name))
+    .sort();
+}
+
+async function dockerContainerState(containerName: string) {
+  const result = await runDockerCommand(["inspect", "-f", "{{.State.Status}}", containerName], 4000);
+  if (result.status !== 0) {
+    return null;
+  }
+
+  const value = result.stdout.trim();
+  return value || null;
+}
+
 function fallbackStatusFromState(dataDir: string, lastError: string | null): OrchestratorStatus {
   const state = readOrchestratorState(dataDir);
   const workspaces = state?.workspaces ?? [];
@@ -238,7 +415,7 @@ function resolveBaseUrlFromStatus(status: OrchestratorStatus) {
 }
 
 export function createOrchestratorService(options: OrchestratorServiceOptions = {}) {
-  return {
+  const service = {
     async status() {
       return resolveOrchestratorStatus(resolveOrchestratorDataDir(), null);
     },
@@ -409,7 +586,261 @@ export function createOrchestratorService(options: OrchestratorServiceOptions = 
         sandboxContainerName,
       };
     },
+
+    async sandboxDoctor(): Promise<SandboxDoctorResult> {
+      const candidates = resolveDockerCandidates();
+      const debug: NonNullable<SandboxDoctorResult["debug"]> = {
+        candidates,
+        selectedBin: null,
+        versionCommand: null,
+        infoCommand: null,
+      };
+
+      let versionResult: DockerCommandResult;
+      try {
+        versionResult = await runDockerCommandDetailed(["--version"], 2000);
+      } catch (error) {
+        return {
+          installed: false,
+          daemonRunning: false,
+          permissionOk: false,
+          ready: false,
+          clientVersion: null,
+          serverVersion: null,
+          error: error instanceof Error ? error.message : String(error),
+          debug,
+        };
+      }
+
+      debug.selectedBin = versionResult.program;
+      debug.versionCommand = {
+        status: versionResult.status,
+        stdout: truncateForDebug(versionResult.stdout),
+        stderr: truncateForDebug(versionResult.stderr),
+      };
+
+      if (versionResult.status !== 0) {
+        return {
+          installed: false,
+          daemonRunning: false,
+          permissionOk: false,
+          ready: false,
+          clientVersion: null,
+          serverVersion: null,
+          error: `docker --version failed (status ${versionResult.status}): ${versionResult.stderr.trim()}`,
+          debug,
+        };
+      }
+
+      const clientVersion = parseDockerClientVersion(versionResult.stdout);
+
+      let infoResult: DockerCommandResult;
+      try {
+        infoResult = await runDockerCommandDetailed(["info"], 8000);
+      } catch (error) {
+        return {
+          installed: true,
+          daemonRunning: false,
+          permissionOk: false,
+          ready: false,
+          clientVersion,
+          serverVersion: null,
+          error: error instanceof Error ? error.message : String(error),
+          debug,
+        };
+      }
+
+      debug.infoCommand = {
+        status: infoResult.status,
+        stdout: truncateForDebug(infoResult.stdout),
+        stderr: truncateForDebug(infoResult.stderr),
+      };
+
+      if (infoResult.status === 0) {
+        return {
+          installed: true,
+          daemonRunning: true,
+          permissionOk: true,
+          ready: true,
+          clientVersion,
+          serverVersion: parseDockerServerVersion(infoResult.stdout),
+          error: null,
+          debug,
+        };
+      }
+
+      const combined = `${infoResult.stdout.trim()}\n${infoResult.stderr.trim()}`.trim();
+      const lower = combined.toLowerCase();
+      const permissionOk =
+        !lower.includes("permission denied") &&
+        !lower.includes("got permission denied") &&
+        !lower.includes("access is denied");
+      const daemonRunning =
+        !lower.includes("cannot connect to the docker daemon") &&
+        !lower.includes("is the docker daemon running") &&
+        !lower.includes("error during connect") &&
+        !lower.includes("connection refused") &&
+        !lower.includes("failed to connect to the docker api") &&
+        !lower.includes("dial unix") &&
+        !lower.includes("no such file or directory");
+
+      return {
+        installed: true,
+        daemonRunning,
+        permissionOk,
+        ready: false,
+        clientVersion,
+        serverVersion: null,
+        error: combined || `docker info failed (status ${infoResult.status})`,
+        debug,
+      };
+    },
+
+    async sandboxStop(input: { containerName: string }): Promise<ExecResult> {
+      const name = input.containerName.trim();
+      if (!name) {
+        throw new Error("containerName is required");
+      }
+      if (!name.startsWith("openwork-orchestrator-")) {
+        throw new Error("Refusing to stop container: expected name starting with 'openwork-orchestrator-'");
+      }
+      if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+        throw new Error("containerName contains invalid characters");
+      }
+
+      const result = await runDockerCommand(["stop", name], 15000);
+      return {
+        ok: result.status === 0,
+        status: result.status,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      };
+    },
+
+    async sandboxCleanupOpenworkContainers(): Promise<OpenworkDockerCleanupResult> {
+      const candidates = await listOpenworkManagedContainers();
+      if (candidates.length === 0) {
+        return { candidates, removed: [], errors: [] };
+      }
+
+      const removed: string[] = [];
+      const errors: string[] = [];
+      for (const name of candidates) {
+        try {
+          const result = await runDockerCommand(["rm", "-f", name], 20000);
+          if (result.status === 0) {
+            removed.push(name);
+          } else {
+            const combined = `${result.stdout.trim()}\n${result.stderr.trim()}`.trim();
+            errors.push(`${name}: ${combined ? `exit ${result.status}: ${truncateForDebug(combined)}` : `exit ${result.status}`}`);
+          }
+        } catch (error) {
+          errors.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      return { candidates, removed, errors };
+    },
+
+    async sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
+      const startedAt = Date.now();
+      const runId = `probe-${randomUUID()}`;
+      const workspacePath = path.join(os.tmpdir(), `openwork-sandbox-probe-${randomUUID()}`);
+      await mkdir(workspacePath, { recursive: true });
+
+      let workspaceRemoved = false;
+      const cleanupErrors: string[] = [];
+      const doctor = await service.sandboxDoctor();
+      let detachedHost: OrchestratorDetachedHost | null = null;
+      let dockerInspect: SandboxDebugProbeResult["dockerInspect"] = null;
+      let dockerLogs: SandboxDebugProbeResult["dockerLogs"] = null;
+      let error: string | null = null;
+
+      if (doctor.ready) {
+        try {
+          detachedHost = await service.startDetached({
+            workspacePath,
+            sandboxBackend: "docker",
+            runId,
+          });
+
+          const containerName = detachedHost.sandboxContainerName ?? deriveOrchestratorContainerName(runId);
+
+          try {
+            const inspectResult = await runDockerCommandDetailed(["inspect", containerName], 6000);
+            dockerInspect = {
+              status: inspectResult.status,
+              stdout: truncateForReport(inspectResult.stdout),
+              stderr: truncateForReport(inspectResult.stderr),
+            };
+          } catch (inspectError) {
+            cleanupErrors.push(`docker inspect failed: ${inspectError instanceof Error ? inspectError.message : String(inspectError)}`);
+          }
+
+          try {
+            const logsResult = await runDockerCommandDetailed(["logs", "--timestamps", "--tail", "400", containerName], 8000);
+            dockerLogs = {
+              status: logsResult.status,
+              stdout: truncateForReport(logsResult.stdout),
+              stderr: truncateForReport(logsResult.stderr),
+            };
+          } catch (logsError) {
+            cleanupErrors.push(`docker logs failed: ${logsError instanceof Error ? logsError.message : String(logsError)}`);
+          }
+        } catch (probeError) {
+          error = `Sandbox probe failed to start: ${probeError instanceof Error ? probeError.message : String(probeError)}`;
+        }
+      } else {
+        error = doctor.error ?? "Docker is not ready for sandbox creation";
+      }
+
+      const containerName = detachedHost?.sandboxContainerName ?? (doctor.ready ? deriveOrchestratorContainerName(runId) : null);
+      let containerRemoved = false;
+      let removeResult: SandboxDebugProbeResult["cleanup"]["removeResult"] = null;
+      if (containerName) {
+        try {
+          const result = await runDockerCommandDetailed(["rm", "-f", containerName], 20000);
+          containerRemoved = result.status === 0;
+          removeResult = {
+            status: result.status,
+            stdout: truncateForReport(result.stdout),
+            stderr: truncateForReport(result.stderr),
+          };
+        } catch (removeError) {
+          cleanupErrors.push(`docker rm -f ${containerName} failed: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+        }
+      }
+
+      try {
+        await rm(workspacePath, { recursive: true, force: true });
+        workspaceRemoved = true;
+      } catch (workspaceError) {
+        cleanupErrors.push(`Failed to remove probe workspace: ${workspaceError instanceof Error ? workspaceError.message : String(workspaceError)}`);
+      }
+
+      return {
+        startedAt,
+        finishedAt: Date.now(),
+        runId,
+        workspacePath,
+        ready: doctor.ready && !error,
+        doctor,
+        detachedHost,
+        dockerInspect,
+        dockerLogs,
+        cleanup: {
+          containerName,
+          containerRemoved,
+          removeResult,
+          workspaceRemoved,
+          errors: cleanupErrors,
+        },
+        error,
+      };
+    },
   };
+
+  return service;
 }
 
 export type OrchestratorService = ReturnType<typeof createOrchestratorService>;
@@ -428,4 +859,14 @@ export function registerOrchestratorIpc(service: OrchestratorService) {
     IPC_CHANNELS.orchestrator("startDetached"),
     (_event, input: Parameters<OrchestratorService["startDetached"]>[0]) => service.startDetached(input),
   );
+  ipcMain.handle(IPC_CHANNELS.orchestrator("sandboxDoctor"), () => service.sandboxDoctor());
+  ipcMain.handle(
+    IPC_CHANNELS.orchestrator("sandboxStop"),
+    (_event, input: { containerName: string }) => service.sandboxStop(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.orchestrator("sandboxCleanupOpenworkContainers"),
+    () => service.sandboxCleanupOpenworkContainers(),
+  );
+  ipcMain.handle(IPC_CHANNELS.orchestrator("sandboxDebugProbe"), () => service.sandboxDebugProbe());
 }
