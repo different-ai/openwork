@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:10 - Step 020 - Implement remote workspace flows
+
+- Remote workspace identity is cleaner when it keys off the actual remote tuple (`baseUrl` + `directory`, or `openworkHostUrl` + `workspaceId`) instead of the display path field; that keeps OpenWork-hosted and plain OpenCode remotes stable even when friendly labels change.
+- Mirroring the current Rust semantics means remote-update IPC should be conservative: treat omitted or `null` fields as "no change" for most optional values, and only overwrite fields when the renderer supplies a real non-empty string.
+
 ## 2026-03-15 11:08 - Step 019 - Implement local workspace flows
 
 - Normalized-path dedupe is an effective migration guardrail for local workspaces: it avoids hard-coding Rust's old workspace ID hash behavior while still preventing duplicate records when the same folder is re-added under Electron.

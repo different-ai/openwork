@@ -228,7 +228,7 @@
         "OpenWork-specific token and workspace metadata are preserved.",
         "Sandbox metadata still round-trips through the workspace model."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "021",

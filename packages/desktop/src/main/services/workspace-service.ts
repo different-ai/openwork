@@ -5,7 +5,7 @@ import path from "node:path";
 
 import type { WorkspaceInfo, WorkspaceList } from "../../../../app/src/app/lib/desktop-contract";
 import { IPC_CHANNELS } from "../ipc/channels";
-import { validatePathInput, validateWorkspaceId } from "../ipc/validation";
+import { validatePathInput, validateUrlInput, validateWorkspaceId } from "../ipc/validation";
 import {
   createDefaultWorkspaceRegistryStore,
   type WorkspaceState,
@@ -19,6 +19,19 @@ function stableWorkspaceId(key: string) {
 function normalizeWorkspacePathKey(value: string) {
   const normalized = path.resolve(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function normalizeRemoteKey(baseUrl: string, directory?: string | null) {
+  return `remote::${baseUrl}${directory ? `::${directory.trim()}` : ""}`;
+}
+
+function normalizeOpenworkRemoteKey(hostUrl: string, workspaceId?: string | null) {
+  return `openwork::${hostUrl}${workspaceId ? `::${workspaceId.trim()}` : ""}`;
+}
+
+function normalizeOptionalText(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
 }
 
 export function createWorkspaceService() {
@@ -170,6 +183,153 @@ export function createWorkspaceService() {
       await store.save(state);
       return toWorkspaceList(state);
     },
+
+    async createRemote(input: {
+      baseUrl: string;
+      directory?: string | null;
+      displayName?: string | null;
+      remoteType?: "openwork" | "opencode" | null;
+      openworkHostUrl?: string | null;
+      openworkToken?: string | null;
+      openworkWorkspaceId?: string | null;
+      openworkWorkspaceName?: string | null;
+      sandboxBackend?: "docker" | null;
+      sandboxRunId?: string | null;
+      sandboxContainerName?: string | null;
+    }): Promise<WorkspaceList> {
+      const baseUrl = validateUrlInput(input.baseUrl, { label: "baseUrl", protocols: ["http:", "https:"] });
+      const remoteType = input.remoteType ?? "opencode";
+      const directory = normalizeOptionalText(input.directory);
+      const displayName = normalizeOptionalText(input.displayName);
+      const openworkHostUrl = normalizeOptionalText(input.openworkHostUrl);
+      const openworkToken = normalizeOptionalText(input.openworkToken);
+      const openworkWorkspaceId = normalizeOptionalText(input.openworkWorkspaceId);
+      const openworkWorkspaceName = normalizeOptionalText(input.openworkWorkspaceName);
+
+      if (remoteType === "openwork") {
+        if (!openworkHostUrl) {
+          throw new Error("openworkHostUrl is required for OpenWork remote");
+        }
+
+        validateUrlInput(openworkHostUrl, { label: "openworkHostUrl", protocols: ["http:", "https:"] });
+      }
+
+      const id = stableWorkspaceId(
+        remoteType === "openwork"
+          ? normalizeOpenworkRemoteKey(openworkHostUrl ?? "", openworkWorkspaceId)
+          : normalizeRemoteKey(baseUrl, directory),
+      );
+      const name = openworkWorkspaceName ?? displayName ?? (remoteType === "openwork" ? openworkHostUrl ?? baseUrl : baseUrl);
+      const workspacePath = directory ?? "";
+
+      const state = await store.load();
+      state.workspaces = state.workspaces.filter((workspace) => workspace.id !== id);
+      state.workspaces.push({
+        id,
+        name,
+        path: workspacePath,
+        preset: "remote",
+        workspaceType: "remote",
+        remoteType,
+        baseUrl,
+        directory,
+        displayName,
+        openworkHostUrl,
+        openworkToken,
+        openworkWorkspaceId,
+        openworkWorkspaceName,
+        sandboxBackend: input.sandboxBackend ?? null,
+        sandboxRunId: normalizeOptionalText(input.sandboxRunId),
+        sandboxContainerName: normalizeOptionalText(input.sandboxContainerName),
+      });
+      state.activeId = id;
+      await store.save(state);
+      return toWorkspaceList(state);
+    },
+
+    async updateRemote(input: {
+      workspaceId: string;
+      baseUrl?: string | null;
+      directory?: string | null;
+      displayName?: string | null;
+      remoteType?: "openwork" | "opencode" | null;
+      openworkHostUrl?: string | null;
+      openworkToken?: string | null;
+      openworkWorkspaceId?: string | null;
+      openworkWorkspaceName?: string | null;
+      sandboxBackend?: "docker" | null;
+      sandboxRunId?: string | null;
+      sandboxContainerName?: string | null;
+    }): Promise<WorkspaceList> {
+      const workspaceId = validateWorkspaceId(input.workspaceId);
+      const state = await store.load();
+      const workspace = state.workspaces.find((entry) => entry.id === workspaceId);
+      if (!workspace) {
+        throw new Error("Unknown workspaceId");
+      }
+
+      if (workspace.workspaceType !== "remote") {
+        throw new Error("workspaceId is not remote");
+      }
+
+      if (input.baseUrl?.trim()) {
+        workspace.baseUrl = validateUrlInput(input.baseUrl, { label: "baseUrl", protocols: ["http:", "https:"] });
+      }
+
+      if (input.directory !== undefined && input.directory !== null) {
+        const nextDirectory = normalizeOptionalText(input.directory);
+        workspace.directory = nextDirectory;
+        workspace.path = nextDirectory ?? "";
+      }
+
+      if (input.displayName?.trim()) {
+        const nextDisplayName = normalizeOptionalText(input.displayName);
+        workspace.displayName = nextDisplayName;
+        workspace.name = nextDisplayName ?? workspace.name;
+      }
+
+      if (input.remoteType) {
+        workspace.remoteType = input.remoteType;
+      }
+
+      if (input.openworkHostUrl?.trim()) {
+        workspace.openworkHostUrl = validateUrlInput(input.openworkHostUrl, {
+          label: "openworkHostUrl",
+          protocols: ["http:", "https:"],
+        });
+      }
+
+      if (input.openworkToken?.trim()) {
+        workspace.openworkToken = normalizeOptionalText(input.openworkToken);
+      }
+
+      if (input.openworkWorkspaceId?.trim()) {
+        workspace.openworkWorkspaceId = normalizeOptionalText(input.openworkWorkspaceId);
+      }
+
+      if (input.openworkWorkspaceName?.trim()) {
+        const nextWorkspaceName = normalizeOptionalText(input.openworkWorkspaceName);
+        workspace.openworkWorkspaceName = nextWorkspaceName;
+        if (!workspace.displayName) {
+          workspace.name = nextWorkspaceName ?? workspace.name;
+        }
+      }
+
+      if (input.sandboxBackend) {
+        workspace.sandboxBackend = input.sandboxBackend;
+      }
+
+      if (input.sandboxRunId?.trim()) {
+        workspace.sandboxRunId = normalizeOptionalText(input.sandboxRunId);
+      }
+
+      if (input.sandboxContainerName?.trim()) {
+        workspace.sandboxContainerName = normalizeOptionalText(input.sandboxContainerName);
+      }
+
+      await store.save(state);
+      return toWorkspaceList(state);
+    },
   };
 }
 
@@ -188,5 +348,13 @@ export function registerWorkspaceIpc(service: WorkspaceService) {
   ipcMain.handle(
     IPC_CHANNELS.workspace("updateDisplayName"),
     (_event, input: { workspaceId: string; displayName?: string | null }) => service.updateDisplayName(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.workspace("createRemote"),
+    (_event, input: Parameters<WorkspaceService["createRemote"]>[0]) => service.createRemote(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.workspace("updateRemote"),
+    (_event, input: Parameters<WorkspaceService["updateRemote"]>[0]) => service.updateRemote(input),
   );
 }
