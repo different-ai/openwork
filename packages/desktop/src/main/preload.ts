@@ -104,8 +104,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       delete: (input) => invokeDesktopChannel(IPC_CHANNELS.commandFiles("delete"), input),
     },
     config: {
-      readOpencode: notImplemented("config.readOpencode"),
-      writeOpencode: notImplemented("config.writeOpencode"),
+      readOpencode: (input) => invokeDesktopChannel(IPC_CHANNELS.config("readOpencode"), input),
+      writeOpencode: (input) => invokeDesktopChannel(IPC_CHANNELS.config("writeOpencode"), input),
     },
     skills: {
       listLocal: notImplemented("skills.listLocal"),

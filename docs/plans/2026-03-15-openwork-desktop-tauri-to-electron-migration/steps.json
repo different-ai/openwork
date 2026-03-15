@@ -283,7 +283,7 @@
         "Project and global config writes still work.",
         "No Tauri command is needed for config mutation anymore."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "026",

@@ -2,6 +2,7 @@ import { app, type BrowserWindow } from "electron";
 import { createDesktopEventBus } from "./services/event-bus";
 import { createDefaultAppService, registerAppIpc } from "./services/app-service";
 import { createCommandFileService, registerCommandFileIpc } from "./services/command-file-service";
+import { createConfigService, registerConfigIpc } from "./services/config-service";
 import {
   createDefaultDeepLinkService,
   registerDeepLinkIpc,
@@ -116,6 +117,7 @@ export async function bootstrapMainProcess() {
     }),
   );
   registerCommandFileIpc(createCommandFileService());
+  registerConfigIpc(createConfigService());
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;

@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:19 - Step 025 - Implement opencode config CRUD service
+
+- Keeping config-path resolution in its own service preserves the current `.jsonc`-first behavior: prefer `opencode.jsonc`, fall back to `opencode.json`, and create a new `opencode.jsonc` file when neither exists.
+- The global config path logic is intentionally shared with command files (`XDG_CONFIG_HOME` first, then `HOME/.config`), so matching that resolution order avoids subtle scope mismatches between desktop config and desktop commands.
+
 ## 2026-03-15 11:17 - Step 024 - Implement command file CRUD service
 
 - Reusing the same command-name sanitization and frontmatter serializer for both seeded commands and user-authored command files keeps command markdown stable across workspace bootstrap and later CRUD edits.
