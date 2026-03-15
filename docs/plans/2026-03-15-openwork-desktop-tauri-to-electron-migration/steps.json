@@ -129,7 +129,7 @@
         "Window decorations can be toggled from the renderer-facing API.",
         "No Tauri webview APIs are left in the zoom path."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "012",

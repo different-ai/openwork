@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:47 - Step 011 - Implement window zoom and decorations service
+
+- Electron gives a straightforward `webContents.getZoomFactor()` / `setZoomFactor()` path, but frame decorations are effectively constructor-time state; a practical parity strategy is to recreate the main window with the new `frame` value while preserving bounds and current URL.
+- Keeping decoration state inside the main-window bootstrap module avoids leaking Electron window details into the preload or renderer contract; the IPC-facing `window-service.ts` can stay small and delegate replacement mechanics to `window/main-window.ts`.
+
 ## 2026-03-15 10:44 - Step 010 - Implement app metadata and relaunch service
 
 - The first real Electron service establishes a useful migration pattern: keep the privileged logic in `services/<name>-service.ts`, export a `register<Name>Ipc()` helper for `ipcMain.handle`, and replace only that namespace in `preload.ts` while the rest stay stubbed.

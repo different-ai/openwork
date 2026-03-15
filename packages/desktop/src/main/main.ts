@@ -1,6 +1,7 @@
 import { app, type BrowserWindow } from "electron";
 import { createDesktopEventBus } from "./services/event-bus";
 import { createDefaultAppService, registerAppIpc } from "./services/app-service";
+import { createWindowService, registerWindowIpc } from "./services/window-service";
 import { createMainWindow, hasOpenWindows, loadMainWindow } from "./window/main-window";
 
 export type MainProcessContext = {
@@ -40,6 +41,14 @@ export async function bootstrapMainProcess() {
 
   const context = createMainProcessContext();
   registerAppIpc(createDefaultAppService());
+  registerWindowIpc(
+    createWindowService({
+      getMainWindow: () => context.mainWindow,
+      setMainWindow: (window) => {
+        context.mainWindow = window;
+      },
+    }),
+  );
 
   app.on("activate", () => {
     if (hasOpenWindows()) {

@@ -1,14 +1,20 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, type Rectangle } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const MAIN_WINDOW_WIDTH = 1180;
 const MAIN_WINDOW_HEIGHT = 820;
 const DEV_RENDERER_URL = "http://localhost:5173";
+let mainWindowDecorations = true;
 
 type RendererTarget =
   | { kind: "url"; value: string }
   | { kind: "file"; value: string };
+
+type CreateMainWindowOptions = {
+  bounds?: Rectangle;
+  decorations?: boolean;
+};
 
 function resolveSiblingPath(tsRelativePath: string, jsRelativePath: string) {
   const currentFile = fileURLToPath(import.meta.url);
@@ -36,11 +42,22 @@ export function resolveRendererTarget(): RendererTarget {
 }
 
 export function createMainWindow() {
+  return createConfiguredMainWindow();
+}
+
+function createConfiguredMainWindow(options: CreateMainWindowOptions = {}) {
+  const bounds = options.bounds;
+  const decorations = options.decorations ?? mainWindowDecorations;
+  mainWindowDecorations = decorations;
+
   return new BrowserWindow({
     title: app.isPackaged ? "OpenWork" : "OpenWork - Dev",
-    width: MAIN_WINDOW_WIDTH,
-    height: MAIN_WINDOW_HEIGHT,
+    width: bounds?.width ?? MAIN_WINDOW_WIDTH,
+    height: bounds?.height ?? MAIN_WINDOW_HEIGHT,
+    x: bounds?.x,
+    y: bounds?.y,
     resizable: true,
+    frame: decorations,
     webPreferences: {
       preload: resolvePreloadPath(),
       contextIsolation: true,
@@ -62,4 +79,29 @@ export async function loadMainWindow(window: BrowserWindow) {
 
 export function hasOpenWindows() {
   return BrowserWindow.getAllWindows().length > 0;
+}
+
+export function getMainWindowDecorations() {
+  return mainWindowDecorations;
+}
+
+export async function replaceMainWindow(currentWindow: BrowserWindow, decorations: boolean) {
+  const currentUrl = currentWindow.webContents.getURL();
+  const bounds = currentWindow.getBounds();
+  const wasFocused = currentWindow.isFocused();
+  const replacement = createConfiguredMainWindow({ bounds, decorations });
+
+  if (currentUrl && currentUrl !== "about:blank") {
+    await replacement.loadURL(currentUrl);
+  } else {
+    await loadMainWindow(replacement);
+  }
+
+  currentWindow.destroy();
+
+  if (wasFocused) {
+    replacement.focus();
+  }
+
+  return replacement;
 }

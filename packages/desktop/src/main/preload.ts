@@ -41,9 +41,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       nukeDevConfigAndExit: () => invokeDesktopChannel<void>(IPC_CHANNELS.app("nukeDevConfigAndExit")),
     },
     window: {
-      setDecorations: notImplemented("window.setDecorations"),
-      getZoomFactor: notImplemented("window.getZoomFactor"),
-      setZoomFactor: notImplemented("window.setZoomFactor"),
+      setDecorations: (input) => invokeDesktopChannel<void>(IPC_CHANNELS.window("setDecorations"), input),
+      getZoomFactor: () => invokeDesktopChannel<number>(IPC_CHANNELS.window("getZoomFactor")),
+      setZoomFactor: (input) => invokeDesktopChannel<number>(IPC_CHANNELS.window("setZoomFactor"), input),
     },
     dialogs: {
       pickDirectory: notImplemented("dialogs.pickDirectory"),
