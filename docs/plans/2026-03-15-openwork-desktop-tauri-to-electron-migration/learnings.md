@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:03 - Step 036 - Implement cache and app-state reset service
+
+- A cache/reset service can stay explicit without exposing generic delete APIs: keep `resetOpenworkState` limited to known desktop-owned directories (`sessionData`, `userData`, and optionally orchestrator data), and keep `resetOpencodeCache` limited to the known OpenCode cache candidate list.
+- Wiring resets through a shared `stopHostServices` callback is cleaner than letting the cache service know about every child-process manager directly; it preserves the narrow renderer contract while still making destructive resets safe.
+
 ## 2026-03-15 15:00 - Step 035 - Implement router localhost groups config path
 
 - The groups-enabled path does not need a generic loopback proxy: a router-owned Electron method that only talks to `http://127.0.0.1:<healthPort>/config/groups` is narrow enough to preserve security while keeping the existing caller semantics.

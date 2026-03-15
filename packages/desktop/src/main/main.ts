@@ -3,6 +3,7 @@ import { createDesktopEventBus } from "./services/event-bus";
 import { createDefaultAppService, registerAppIpc } from "./services/app-service";
 import { createCommandFileService, registerCommandFileIpc } from "./services/command-file-service";
 import { createConfigService, registerConfigIpc } from "./services/config-service";
+import { createCacheService, registerCacheIpc } from "./services/cache-service";
 import {
   createDefaultDeepLinkService,
   registerDeepLinkIpc,
@@ -102,6 +103,12 @@ export async function bootstrapMainProcess() {
   const openworkServerService = createOpenworkServerService({
     getEngineInfo: () => engineService.info(),
   });
+  const routerService = createRouterService();
+  const stopHostServices = () => {
+    engineService.cleanupOnQuit();
+    openworkServerService.cleanupOnQuit();
+    routerService.cleanupOnQuit?.();
+  };
   registerAppIpc(createDefaultAppService());
   registerDeepLinkIpc(activeDeepLinkService);
   registerEngineIpc(engineService);
@@ -139,7 +146,8 @@ export async function bootstrapMainProcess() {
     }),
   );
   registerOpenworkServerIpc(openworkServerService);
-  registerRouterIpc(createRouterService());
+  registerRouterIpc(routerService);
+  registerCacheIpc(createCacheService({ stopHostServices }));
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;
@@ -166,8 +174,7 @@ export async function bootstrapMainProcess() {
   });
 
   app.on("before-quit", () => {
-    engineService.cleanupOnQuit();
-    openworkServerService.cleanupOnQuit();
+    stopHostServices();
   });
 
   await openMainWindow(context);

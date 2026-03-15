@@ -418,6 +418,11 @@ export function createRouterService() {
       return result;
     },
 
+    cleanupOnQuit() {
+      stopChild(state);
+      resetState(state);
+    },
+
     async getGroupsEnabled(): Promise<boolean | null> {
       // Intentionally narrow bridge: this only talks to the router's localhost health/config port
       // and does not expose a generic HTTP proxy to the renderer.

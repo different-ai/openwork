@@ -404,7 +404,7 @@
         "OpenCode cache reset still reports removed/missing/errors.",
         "No generic file deletion API is exposed to the renderer."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "037",

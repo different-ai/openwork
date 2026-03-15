@@ -153,8 +153,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       setGroupsEnabled: (input) => invokeDesktopChannel(IPC_CHANNELS.router("setGroupsEnabled"), input),
     },
     cache: {
-      resetOpenworkState: notImplemented("cache.resetOpenworkState"),
-      resetOpencodeCache: notImplemented("cache.resetOpencodeCache"),
+      resetOpenworkState: (input) => invokeDesktopChannel(IPC_CHANNELS.cache("resetOpenworkState"), input),
+      resetOpencodeCache: () => invokeDesktopChannel(IPC_CHANNELS.cache("resetOpencodeCache")),
     },
     obsidian: {
       isAvailable: notImplemented("obsidian.isAvailable"),
