@@ -1,0 +1,93 @@
+name: Setup desktop build environment
+description: Prepare Node, pnpm, Bun, Rust, and target-specific system dependencies for desktop release builds.
+
+inputs:
+  os-type:
+    description: Target operating system family.
+    required: true
+  rust-target:
+    description: Rust target triple for the desktop build.
+    required: true
+  node-version:
+    description: Node.js version to install.
+    required: false
+    default: "20"
+  pnpm-version:
+    description: pnpm version to install.
+    required: false
+    default: "10.27.0"
+  bun-version:
+    description: Bun version to install.
+    required: false
+    default: "1.3.6"
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: ${{ inputs.pnpm-version }}
+
+    - name: Get pnpm store path
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      continue-on-error: true
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v1
+      with:
+        bun-version: ${{ inputs.bun-version }}
+
+    - name: Install dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile --prefer-offline
+
+    - name: Install OpenTUI x64 core (macOS x86_64)
+      if: ${{ inputs.rust-target == 'x86_64-apple-darwin' }}
+      shell: bash
+      run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77
+
+    - name: Install Linux build dependencies
+      if: ${{ inputs.os-type == 'linux' }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          libgtk-3-dev \
+          libglib2.0-dev \
+          libayatana-appindicator3-dev \
+          libsoup-3.0-dev \
+          libwebkit2gtk-4.1-dev \
+          libssl-dev \
+          lld \
+          rpm \
+          libdbus-1-dev \
+          librsvg2-dev
+
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ inputs.rust-target }}
+
+    - name: Cache cargo
+      uses: Swatinem/rust-cache@v2
+      continue-on-error: true
+      with:
+        key: ${{ inputs.rust-target }}
+        workspaces: |
+          packages/desktop/src-tauri -> target

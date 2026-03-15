@@ -1,0 +1,161 @@
+name: Run Tauri release build
+description: Run optional Windows GitHub network diagnostics, then build and upload a Tauri desktop release.
+
+inputs:
+  os-type:
+    description: Target operating system family.
+    required: true
+  notarize:
+    description: Whether to run the notarized macOS path.
+    required: true
+  release-tag:
+    description: GitHub release tag.
+    required: true
+  release-name:
+    description: GitHub release title.
+    required: true
+  release-body:
+    description: GitHub release notes body.
+    required: true
+  release-draft:
+    description: Whether the release should remain a draft.
+    required: true
+  prerelease:
+    description: Whether the release is marked as a prerelease.
+    required: true
+  args:
+    description: CLI args for `tauri build`.
+    required: true
+  project-path:
+    description: Tauri project path.
+    required: false
+    default: packages/desktop
+  tauri-script:
+    description: Command used to invoke Tauri.
+    required: false
+    default: pnpm exec tauri
+  retry-attempts:
+    description: Upload retry attempts.
+    required: false
+    default: "3"
+  upload-updater-json:
+    description: Whether to upload updater JSON from tauri-action.
+    required: false
+    default: "false"
+  updater-json-prefer-nsis:
+    description: Whether updater JSON should prefer NSIS artifacts.
+    required: false
+    default: "true"
+  release-asset-name-pattern:
+    description: Release asset naming pattern.
+    required: false
+    default: openwork-desktop-[platform]-[arch][ext]
+
+runs:
+  using: composite
+  steps:
+    - name: Diagnose Windows GitHub connectivity
+      if: ${{ inputs.os-type == 'windows' }}
+      shell: pwsh
+      run: |
+        $hosts = @(
+          "github.com",
+          "api.github.com",
+          "uploads.github.com",
+          "objects.githubusercontent.com"
+        )
+
+        $failed = $false
+
+        foreach ($host in $hosts) {
+          Write-Host "==> Resolving $host"
+          try {
+            Resolve-DnsName $host -ErrorAction Stop |
+              Select-Object Name, Type, IPAddress |
+              Format-Table -AutoSize |
+              Out-String -Width 200 |
+              Write-Host
+          } catch {
+            Write-Host "::error::DNS lookup failed for $host - $($_.Exception.Message)"
+            $failed = $true
+            continue
+          }
+
+          Write-Host "==> Testing TCP 443 to $host"
+          try {
+            $result = Test-NetConnection $host -Port 443 -WarningAction SilentlyContinue
+            $result |
+              Select-Object ComputerName, RemoteAddress, RemotePort, TcpTestSucceeded |
+              Format-Table -AutoSize |
+              Out-String -Width 200 |
+              Write-Host
+
+            if (-not $result.TcpTestSucceeded) {
+              Write-Host "::error::TCP connection failed for $host:443"
+              $failed = $true
+            }
+          } catch {
+            Write-Host "::error::Connectivity test failed for $host - $($_.Exception.Message)"
+            $failed = $true
+          }
+        }
+
+        if ($failed) {
+          throw "Windows runner cannot resolve or reach required GitHub hosts."
+        }
+
+    - name: Build and upload (notarized)
+      if: ${{ inputs.os-type == 'macos' && inputs.notarize == 'true' }}
+      uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
+      env:
+        CI: true
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+        TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        APPLE_CERTIFICATE: ${{ env.APPLE_CERTIFICATE }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ env.APPLE_CERTIFICATE_PASSWORD }}
+        APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
+        APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
+        APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+      with:
+        tagName: ${{ inputs.release-tag }}
+        releaseName: ${{ inputs.release-name }}
+        releaseBody: ${{ inputs.release-body }}
+        releaseDraft: ${{ inputs.release-draft }}
+        prerelease: ${{ inputs.prerelease }}
+        projectPath: ${{ inputs.project-path }}
+        tauriScript: ${{ inputs.tauri-script }}
+        args: ${{ inputs.args }}
+        retryAttempts: ${{ inputs.retry-attempts }}
+        uploadUpdaterJson: ${{ inputs.upload-updater-json }}
+        updaterJsonPreferNsis: ${{ inputs.updater-json-prefer-nsis }}
+        releaseAssetNamePattern: ${{ inputs.release-asset-name-pattern }}
+
+    - name: Build and upload
+      if: ${{ inputs.os-type != 'macos' || inputs.notarize != 'true' }}
+      uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
+      env:
+        CI: true
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+        TAURI_SIGNING_PRIVATE_KEY: ${{ env.TAURI_SIGNING_PRIVATE_KEY }}
+        TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+        APPLE_CERTIFICATE: ${{ env.APPLE_CERTIFICATE }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ env.APPLE_CERTIFICATE_PASSWORD }}
+        APPLE_API_KEY: ${{ env.APPLE_API_KEY }}
+        APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
+        APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
+      with:
+        tagName: ${{ inputs.release-tag }}
+        releaseName: ${{ inputs.release-name }}
+        releaseBody: ${{ inputs.release-body }}
+        releaseDraft: ${{ inputs.release-draft }}
+        prerelease: ${{ inputs.prerelease }}
+        projectPath: ${{ inputs.project-path }}
+        tauriScript: ${{ inputs.tauri-script }}
+        args: ${{ inputs.args }}
+        retryAttempts: ${{ inputs.retry-attempts }}
+        uploadUpdaterJson: ${{ inputs.upload-updater-json }}
+        updaterJsonPreferNsis: ${{ inputs.updater-json-prefer-nsis }}
+        releaseAssetNamePattern: ${{ inputs.release-asset-name-pattern }}

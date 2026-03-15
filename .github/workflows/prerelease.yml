@@ -84,6 +84,7 @@ jobs:
       RELEASE_NAME: ${{ needs.prepare-release.outputs.release_name }}
       RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
       MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
+      RUSTFLAGS: ${{ matrix.os_type == 'linux' && '-C link-arg=-fuse-ld=lld' || '' }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
       OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
 
@@ -101,15 +102,15 @@ jobs:
             args: "--target x86_64-apple-darwin --bundles dmg,app"
           - os_type: linux
             target: x86_64-unknown-linux-gnu
-            runs_on: blacksmith-4vcpu-ubuntu-2404
+            runs_on: blacksmith-16vcpu-ubuntu-2404
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
           - os_type: linux
             target: aarch64-unknown-linux-gnu
-            runs_on: blacksmith-4vcpu-ubuntu-2404-arm
+            runs_on: blacksmith-16vcpu-ubuntu-2404-arm
             args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - os_type: windows
             target: x86_64-pc-windows-msvc
-            runs_on: blacksmith-4vcpu-windows-2025
+            runs_on: blacksmith-16vcpu-windows-2025
             args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
@@ -127,187 +128,21 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - name: Setup desktop build environment
+        uses: ./.github/actions/setup-desktop-build-env
         with:
-          node-version: 20
+          os-type: ${{ matrix.os_type }}
+          rust-target: ${{ matrix.target }}
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: "1.3.6"
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Install OpenTUI x64 core (macOS x86_64)
-        if: matrix.os_type == 'macos' && matrix.target == 'x86_64-apple-darwin'
-        run: pnpm add -w --ignore-workspace-root-check @opentui/core-darwin-x64@0.1.77
-
-      - name: Install Linux build dependencies
-        if: matrix.os_type == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            libayatana-appindicator3-dev \
-            libsoup-3.0-dev \
-            libwebkit2gtk-4.1-dev \
-            libssl-dev \
-            rpm \
-            libdbus-1-dev \
-            librsvg2-dev
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Resolve OpenCode version
-        id: opencode-version
-        shell: bash
+      - name: Install OpenCode sidecar
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+          TARGET: ${{ matrix.target }}
+          OS_TYPE: ${{ matrix.os_type }}
         run: |
-          node <<'NODE' >> "$GITHUB_OUTPUT"
-          const fs = require('fs');
-          const repo = (process.env.OPENCODE_GITHUB_REPO || 'anomalyco/opencode').trim() || 'anomalyco/opencode';
-
-          async function resolveLatest() {
-            const token = (process.env.GITHUB_TOKEN || '').trim();
-            const headers = {
-              'Accept': 'application/vnd.github+json',
-              'X-GitHub-Api-Version': '2022-11-28',
-              'User-Agent': 'openwork-ci',
-            };
-            if (token) headers.Authorization = `Bearer ${token}`;
-
-            // Prefer API, but fall back to the web "latest" redirect if rate-limited (403) or otherwise blocked.
-            try {
-              const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, { headers });
-              if (res.ok) {
-                const data = await res.json();
-                const tag = (typeof data.tag_name === 'string' ? data.tag_name : '').trim();
-                let v = tag.startsWith('v') ? tag.slice(1) : tag;
-                v = v.trim();
-                if (v) return v;
-              }
-              if (res.status !== 403) {
-                throw new Error(`Failed to resolve latest OpenCode version (HTTP ${res.status})`);
-              }
-            } catch {
-              // continue to fallback
-            }
-
-            const web = await fetch(`https://github.com/${repo}/releases/latest`, {
-              headers: { 'User-Agent': 'openwork-ci' },
-              redirect: 'follow',
-            });
-            const url = (web && web.url) ? String(web.url) : '';
-            const match = url.match(/\/tag\/v([^/?#]+)/);
-            if (!match) throw new Error('Failed to resolve latest OpenCode version (web redirect).');
-            return match[1];
-          }
-
-          async function main() {
-            const pkg = JSON.parse(fs.readFileSync('./packages/desktop/package.json', 'utf8'));
-            const configuredRaw = (process.env.OPENCODE_VERSION || pkg.opencodeVersion || '').toString().trim();
-            if (configuredRaw && configuredRaw.toLowerCase() !== 'latest') {
-              const normalized = configuredRaw.startsWith('v') ? configuredRaw.slice(1) : configuredRaw;
-              const resolved = normalized.trim();
-              if (process.env.GITHUB_ENV) {
-                fs.appendFileSync(process.env.GITHUB_ENV, `OPENCODE_VERSION=${resolved}\n`);
-              }
-              console.log('version=' + resolved);
-              return;
-            }
-            const latest = await resolveLatest();
-            if (process.env.GITHUB_ENV) {
-              fs.appendFileSync(process.env.GITHUB_ENV, `OPENCODE_VERSION=${latest}\n`);
-            }
-            console.log('version=' + latest);
-          }
-
-          main().catch((err) => {
-            console.error(err);
-            process.exit(1);
-          });
-          NODE
-
-      - name: Download OpenCode sidecar
-        shell: bash
-        env:
-          OPENCODE_VERSION: ${{ steps.opencode-version.outputs.version }}
-        run: |
-          set -euo pipefail
-
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin)
-              opencode_asset="opencode-darwin-arm64.zip"
-              ;;
-            x86_64-apple-darwin)
-              opencode_asset="opencode-darwin-x64-baseline.zip"
-              ;;
-            x86_64-unknown-linux-gnu)
-              opencode_asset="opencode-linux-x64-baseline.tar.gz"
-              ;;
-            aarch64-unknown-linux-gnu)
-              opencode_asset="opencode-linux-arm64.tar.gz"
-              ;;
-            x86_64-pc-windows-msvc)
-              opencode_asset="opencode-windows-x64-baseline.zip"
-              ;;
-            *)
-              echo "Unsupported target: ${{ matrix.target }}"
-              exit 1
-              ;;
-          esac
-
-          repo="${OPENCODE_GITHUB_REPO:-anomalyco/opencode}"
-          url="https://github.com/${repo}/releases/download/v${OPENCODE_VERSION}/${opencode_asset}"
-          tmp_dir="$RUNNER_TEMP/opencode"
-          extract_dir="$tmp_dir/extracted"
-          rm -rf "$tmp_dir"
-          mkdir -p "$extract_dir"
-          curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$tmp_dir/$opencode_asset" "$url"
-
-          if [[ "$opencode_asset" == *.tar.gz ]]; then
-            tar -xzf "$tmp_dir/$opencode_asset" -C "$extract_dir"
-          else
-            if command -v unzip >/dev/null 2>&1; then
-              unzip -q "$tmp_dir/$opencode_asset" -d "$extract_dir"
-            elif command -v 7z >/dev/null 2>&1; then
-              7z x "$tmp_dir/$opencode_asset" -o"$extract_dir" >/dev/null
-            else
-              echo "No unzip utility available"
-              exit 1
-            fi
-          fi
-
-          if [ -f "$extract_dir/opencode" ]; then
-            bin_path="$extract_dir/opencode"
-          elif [ -f "$extract_dir/opencode.exe" ]; then
-            bin_path="$extract_dir/opencode.exe"
-          else
-            echo "OpenCode binary not found in archive"
-            ls -la "$extract_dir"
-            exit 1
-          fi
-
-          target_name="opencode-${{ matrix.target }}"
-          if [ "${{ matrix.os_type }}" = "windows" ]; then
-            target_name="${target_name}.exe"
-          fi
-
-          mkdir -p packages/desktop/src-tauri/sidecars
-          cp "$bin_path" "packages/desktop/src-tauri/sidecars/${target_name}"
-          chmod 755 "packages/desktop/src-tauri/sidecars/${target_name}"
+          node scripts/release/install-opencode-sidecar.mjs
 
       - name: Write notary API key
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -322,59 +157,24 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload (notarized)
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
-        uses: tauri-apps/tauri-action@v0.5.17
+      - name: Build + upload desktop artifacts
+        uses: ./.github/actions/run-tauri-release-build
         env:
-          CI: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS signing
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-
-          # macOS notarization (App Store Connect API key)
           APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
+          os-type: ${{ matrix.os_type }}
+          notarize: ${{ matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true' }}
+          release-tag: ${{ env.RELEASE_TAG }}
+          release-name: ${{ env.RELEASE_NAME }}
+          release-body: ${{ env.RELEASE_BODY }}
+          release-draft: false
           prerelease: true
-          releaseDraft: false
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
           args: ${{ matrix.args }}
-          retryAttempts: 3
-
-      - name: Build + upload
-        if: matrix.os_type != 'macos' || env.MACOS_NOTARIZE != 'true'
-        uses: tauri-apps/tauri-action@v0.5.17
-        env:
-          CI: true
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # Tauri updater signing
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-          # macOS signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ${{ env.RELEASE_NAME }}
-          releaseBody: ${{ env.RELEASE_BODY }}
-          prerelease: true
-          releaseDraft: false
-          projectPath: packages/desktop
-          tauriScript: pnpm exec tauri -vvv
-          args: ${{ matrix.args }}
-          retryAttempts: 3
