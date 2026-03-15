@@ -52,7 +52,7 @@
         "The declared API matches the contract doc closely.",
         "Renderer code can import the types without importing Electron."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "005",

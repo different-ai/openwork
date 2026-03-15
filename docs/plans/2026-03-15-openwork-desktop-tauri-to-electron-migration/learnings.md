@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:30 - Step 004 - Add preload global type declarations
+
+- `packages/app/src/app/lib/openwork-desktop.ts` can hold both the importable preload contract types and the global `Window` augmentation, so renderer code gets one shared desktop typing seam before the preload implementation exists.
+- In this UI package, `DesktopRuntimeInfo` should use `NodeJS.Platform` and `NodeJS.Architecture`; `node:process` does not export named `Platform` or `Architecture` types for direct import here.
+
 ## 2026-03-15 10:27 - Step 003 - Define desktop runtime detection primitive
 
 - `packages/app/src/app/utils/index.ts` can expose `isDesktopRuntime()` backed by `window.openworkDesktop` while keeping `isTauriRuntime()` as a temporary alias, which lets later cutover steps remove the old name without forcing a repo-wide runtime-branch rewrite immediately.

@@ -9,6 +9,7 @@ import type {
   PlaceholderAssistantMessage,
   ProviderListItem,
 } from "../types";
+import type { OpenWorkDesktopAPI } from "../lib/openwork-desktop";
 import type { WorkspaceInfo } from "../lib/tauri";
 
 export function formatModelRef(model: ModelRef) {
@@ -68,16 +69,12 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   return `${providerLabel} · ${modelLabel}`;
 }
 
-type DesktopWindow = Window & {
-  openworkDesktop?: unknown;
-};
-
 function getDesktopRuntimeBridge() {
   if (typeof window === "undefined") {
     return null;
   }
 
-  return (window as DesktopWindow).openworkDesktop ?? null;
+  return (window as Window & { openworkDesktop?: OpenWorkDesktopAPI }).openworkDesktop ?? null;
 }
 
 export function isDesktopRuntime() {
