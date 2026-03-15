@@ -1,6 +1,5 @@
 import { createSignal } from "solid-js";
 
-import type { UpdateHandle } from "../types";
 import type { UpdaterEnvironment } from "../lib/tauri";
 
 export type UpdateStatus =
@@ -18,7 +17,7 @@ export type UpdateStatus =
   | { state: "ready"; lastCheckedAt: number; version: string; notes?: string }
   | { state: "error"; lastCheckedAt: number | null; message: string };
 
-export type PendingUpdate = { update: UpdateHandle; version: string; notes?: string } | null;
+export type PendingUpdate = { version: string; date?: string; notes?: string } | null;
 
 export function createUpdaterState() {
   const [updateAutoCheck, setUpdateAutoCheck] = createSignal(true);

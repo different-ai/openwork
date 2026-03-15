@@ -3,16 +3,12 @@ import { createEffect, createMemo, createSignal, type Accessor } from "solid-js"
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { ProviderListItem } from "./types";
 
-import { check } from "@tauri-apps/plugin-updater";
-import { relaunch } from "@tauri-apps/plugin-process";
-
 import type {
   Client,
   PluginScope,
   ReloadReason,
   ReloadTrigger,
   ResetOpenworkMode,
-  UpdateHandle,
 } from "./types";
 import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
@@ -105,6 +101,72 @@ export function createSystemState(options: {
   const [resetModalText, setResetModalText] = createSignal("");
   const [resetModalBusy, setResetModalBusy] = createSignal(false);
 
+  createEffect(() => {
+    if (!isTauriRuntime()) return;
+    if (typeof window === "undefined" || !window.openworkDesktop) return;
+
+    const unsubscribe = window.openworkDesktop.updates.onStatus((event) => {
+      switch (event.state) {
+        case "checking":
+          setUpdateStatus({ state: "checking", startedAt: Date.now() });
+          return;
+        case "idle":
+          setPendingUpdate(null);
+          setUpdateStatus({ state: "idle", lastCheckedAt: event.checkedAt });
+          return;
+        case "available":
+          setPendingUpdate({
+            version: event.version,
+            date: event.date ?? undefined,
+            notes: event.notes ?? undefined,
+          });
+          setUpdateStatus({
+            state: "available",
+            lastCheckedAt: event.checkedAt,
+            version: event.version,
+            date: event.date ?? undefined,
+            notes: event.notes ?? undefined,
+          });
+          return;
+        case "downloading":
+          setPendingUpdate({
+            version: event.version,
+            notes: event.notes ?? undefined,
+          });
+          setUpdateStatus({
+            state: "downloading",
+            lastCheckedAt: event.checkedAt,
+            version: event.version,
+            downloadedBytes: event.downloadedBytes,
+            totalBytes: event.totalBytes,
+            notes: event.notes ?? undefined,
+          });
+          return;
+        case "ready":
+          setPendingUpdate({
+            version: event.version,
+            notes: event.notes ?? undefined,
+          });
+          setUpdateStatus({
+            state: "ready",
+            lastCheckedAt: event.checkedAt,
+            version: event.version,
+            notes: event.notes ?? undefined,
+          });
+          return;
+        case "error":
+          setUpdateStatus({
+            state: "error",
+            lastCheckedAt: event.checkedAt,
+            message: event.message,
+          });
+          return;
+      }
+    });
+
+    return unsubscribe;
+  });
+
   const resetModalTextValue = resetModalText;
 
   const anyActiveRuns = createMemo(() => {
@@ -167,7 +229,7 @@ export function createSystemState(options: {
       clearOpenworkLocalStorage(resetModalMode());
 
       if (isTauriRuntime()) {
-        await relaunch();
+        await window.openworkDesktop?.app.relaunch();
       } else {
         window.location.reload();
       }
@@ -472,22 +534,22 @@ export function createSystemState(options: {
     setUpdateStatus({ state: "checking", startedAt: Date.now() });
 
     try {
-      const update = (await check({ timeout: 8_000 })) as unknown as UpdateHandle | null;
+      const update = await window.openworkDesktop?.updates.check({ timeoutMs: 8_000 });
       const checkedAt = Date.now();
 
-      if (!update) {
+      if (!update?.available) {
         setPendingUpdate(null);
         setUpdateStatus({ state: "idle", lastCheckedAt: checkedAt });
         return;
       }
 
-      const notes = typeof update.body === "string" ? update.body : undefined;
-      setPendingUpdate({ update, version: update.version, notes });
+      const notes = typeof update.notes === "string" ? update.notes : undefined;
+      setPendingUpdate({ version: update.version, date: update.date ?? undefined, notes });
       setUpdateStatus({
         state: "available",
         lastCheckedAt: checkedAt,
         version: update.version,
-        date: update.date,
+        date: update.date ?? undefined,
         notes,
       });
     } catch (e) {
@@ -537,35 +599,8 @@ export function createSystemState(options: {
     }, 100);
 
     try {
-      await pending.update.download((event: any) => {
-        if (!event || typeof event !== "object") return;
-        const record = event as Record<string, any>;
-
-        if (record.event === "Started") {
-          const newTotal =
-            record.data && typeof record.data.contentLength === "number"
-              ? record.data.contentLength
-              : null;
-          totalBytes = newTotal;
-          throttledUpdateProgress();
-        }
-
-        if (record.event === "Progress") {
-          const chunk =
-            record.data && typeof record.data.chunkLength === "number"
-              ? record.data.chunkLength
-              : 0;
-          accumulatedBytes += chunk;
-          throttledUpdateProgress();
-        }
-      });
-
-      setUpdateStatus({
-        state: "ready",
-        lastCheckedAt,
-        version: pending.version,
-        notes: pending.notes,
-      });
+      await window.openworkDesktop?.updates.download();
+      throttledUpdateProgress();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setUpdateStatus({ state: "error", lastCheckedAt, message });
@@ -583,9 +618,7 @@ export function createSystemState(options: {
 
     options.setError(null);
     try {
-      await pending.update.install();
-      await pending.update.close();
-      await relaunch();
+      await window.openworkDesktop?.updates.installAndRelaunch();
     } catch (e) {
       const message = e instanceof Error ? e.message : safeStringify(e);
       setUpdateStatus({ state: "error", lastCheckedAt: null, message });

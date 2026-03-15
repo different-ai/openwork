@@ -470,7 +470,7 @@
         "system-state.ts no longer imports the updater or process plugins directly.",
         "Update, deep-link, and zoom UX still have full parity."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "043",

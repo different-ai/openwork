@@ -21,10 +21,6 @@ import type {
   AgentPartInput,
   SubtaskPartInput,
 } from "@opencode-ai/sdk/v2/client";
-
-import { getVersion } from "@tauri-apps/api/app";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { parse } from "jsonc-parser";
 
 import ModelPickerModal from "./components/model-picker-modal";
@@ -100,7 +96,6 @@ import type {
   ComposerPart,
   ProviderListItem,
   SessionErrorTurn,
-  UpdateHandle,
   OpencodeConnectStatus,
   ScheduledJob,
   WorkspacePreset,
@@ -139,8 +134,6 @@ import {
   type ThemeMode,
 } from "./theme";
 import { createSystemState } from "./system-state";
-import { relaunch } from "@tauri-apps/plugin-process";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { createSessionStore } from "./context/session";
 
 const fileToDataUrl = (file: File) =>
@@ -173,7 +166,6 @@ import {
 } from "./lib/tauri";
 import {
   FONT_ZOOM_STEP,
-  applyWebviewZoom,
   applyFontZoom,
   normalizeFontZoom,
   parseFontZoomShortcut,
@@ -428,17 +420,11 @@ async function fetchSharedBundle(bundleUrl: string): Promise<SharedBundleV1> {
   try {
     let response: Response;
     try {
-      response = isTauriRuntime()
-        ? await tauriFetch(targetUrl.toString(), {
-            method: "GET",
-            headers: { Accept: "application/json" },
-            signal: controller.signal,
-          })
-        : await fetch(targetUrl.toString(), {
-            method: "GET",
-            headers: { Accept: "application/json" },
-            signal: controller.signal,
-          });
+      response = await fetch(targetUrl.toString(), {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : safeStringify(error);
       throw new Error(`Failed to load shared bundle from ${targetUrl.toString()}: ${message}`);
@@ -973,18 +959,14 @@ export default function App() {
       const next = normalizeFontZoom(value);
       persistFontZoom(window.localStorage, next);
 
-      try {
-        const webview = getCurrentWebview();
-        void applyWebviewZoom(webview, next)
-          .then(() => {
-            document.documentElement.style.removeProperty("--openwork-font-size");
-          })
-          .catch(() => {
-            applyFontZoom(document.documentElement.style, next);
-          });
-      } catch {
-        applyFontZoom(document.documentElement.style, next);
-      }
+      void window.openworkDesktop?.window
+        .setZoomFactor({ factor: next })
+        .then(() => {
+          document.documentElement.style.removeProperty("--openwork-font-size");
+        })
+        .catch(() => {
+          applyFontZoom(document.documentElement.style, next);
+        });
 
       return next;
     };
@@ -5777,7 +5759,7 @@ export default function App() {
 
     if (isTauriRuntime()) {
       try {
-        setAppVersion(await getVersion());
+        setAppVersion((await window.openworkDesktop?.app.getVersion()) ?? null);
       } catch {
         // ignore
       }
@@ -5794,7 +5776,6 @@ export default function App() {
       }
 
       try {
-        const { getCurrent, onOpenUrl } = await import("@tauri-apps/plugin-deep-link");
         const recentDeepLinkEvents = new Map<string, number>();
         let lastObservedDeepLinkSignature: string | null = null;
 
@@ -5836,27 +5817,12 @@ export default function App() {
           }
         };
 
-        const syncCurrentDeepLinks = async () => {
-          consumeUrls(await getCurrent(), "current");
-        };
-
-        await syncCurrentDeepLinks();
-        const unlisten = await onOpenUrl((urls) => {
-          consumeUrls(urls, "event");
+        consumeUrls(await window.openworkDesktop?.deepLinks.getPending(), "current");
+        const unlisten = window.openworkDesktop?.deepLinks.onOpen((event) => {
+          consumeUrls(event.urls, event.source === "initial" ? "current" : "event");
         });
-        const handleWindowFocus = () => {
-          void syncCurrentDeepLinks().catch(() => undefined);
-        };
-        const handleVisibilityChange = () => {
-          if (document.visibilityState !== "visible") return;
-          void syncCurrentDeepLinks().catch(() => undefined);
-        };
-        window.addEventListener("focus", handleWindowFocus);
-        document.addEventListener("visibilitychange", handleVisibilityChange);
         onCleanup(() => {
-          unlisten();
-          window.removeEventListener("focus", handleWindowFocus);
-          document.removeEventListener("visibilitychange", handleVisibilityChange);
+          unlisten?.();
         });
       } catch {
         // ignore

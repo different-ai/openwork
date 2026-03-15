@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:20 - Step 042 - Cut over app update, deep-link, and zoom flows
+
+- The renderer-side update migration works best if `system-state.ts` treats pending updates as plain metadata and lets the Electron main service own the actual download/install lifecycle, with progress flowing back through typed update-status events.
+- The app shell no longer needs any native Tauri helpers once zoom, version, and deep links all come through `window.openworkDesktop`; the remaining logic in `app.tsx` is just state management and dedupe.
+
 ## 2026-03-15 15:14 - Step 041 - Cut over runtime checks and desktop bootstrap imports
 
 - The bootstrap cutover gets much simpler once `index.tsx` and `entry.tsx` depend on `isDesktopRuntime()` plus `window.openworkDesktop` directly; top-level platform wiring no longer needs any lazy `@tauri-apps/*` imports to open links or restart the app.
