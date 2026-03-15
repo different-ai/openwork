@@ -1015,7 +1015,7 @@ export default function MessageList(props: MessageListProps) {
                       props.isStreaming &&
                       block.messageId === latestAssistantMessageId();
                     const markdownThrottleMs = isStreamingLatestAssistant
-                      ? 120
+                      ? 80
                       : 100;
                     return (
                       <PartView
@@ -1034,6 +1034,7 @@ export default function MessageList(props: MessageListProps) {
                         tone={block.isUser ? "dark" : "light"}
                         renderMarkdown={!block.isUser}
                         markdownThrottleMs={markdownThrottleMs}
+                        smoothStream={isStreamingLatestAssistant}
                         highlightQuery={
                           hasSearchMatch
                             ? props.searchHighlightQuery

@@ -14,6 +14,7 @@ type Props = {
   workspaceRoot?: string;
   renderMarkdown?: boolean;
   markdownThrottleMs?: number;
+  smoothStream?: boolean;
   highlightQuery?: string;
 };
 
@@ -360,6 +361,15 @@ function useThrottledValue<T>(value: () => T, delayMs: number | (() => number) =
   return state;
 }
 
+function smoothStreamStep(remainingChars: number) {
+  if (remainingChars >= 1_600) return 320;
+  if (remainingChars >= 800) return 192;
+  if (remainingChars >= 320) return 96;
+  if (remainingChars >= 120) return 48;
+  if (remainingChars >= 40) return 18;
+  return 6;
+}
+
 const MARKDOWN_CACHE_MAX_ENTRIES = 100;
 const LARGE_TEXT_COLLAPSE_CHAR_THRESHOLD = 12_000;
 const LARGE_TEXT_PREVIEW_CHARS = 3_200;
@@ -487,6 +497,7 @@ export default function PartView(props: Props) {
   const tone = () => props.tone ?? "light";
   const showThinking = () => props.showThinking ?? true;
   const renderMarkdown = () => props.renderMarkdown ?? false;
+  const smoothStream = () => props.smoothStream ?? false;
   const markdownThrottleMs = () => Math.max(0, props.markdownThrottleMs ?? 100);
   const textPartStableId = createMemo(() => {
     if (p().type !== "text") return "";
@@ -512,6 +523,93 @@ export default function PartView(props: Props) {
   const rawText = createMemo(() => {
     if (p().type !== "text") return "";
     return "text" in p() ? String((p() as { text: string }).text ?? "") : "";
+  });
+  const [displayedText, setDisplayedText] = createSignal(rawText());
+  let displayedTextValue = rawText();
+  let latestTextValue = rawText();
+  let smoothTextFrame: number | undefined;
+
+  const commitDisplayedText = (next: string) => {
+    displayedTextValue = next;
+    setDisplayedText(next);
+  };
+
+  const cancelSmoothTextFrame = () => {
+    if (smoothTextFrame === undefined || typeof window === "undefined") return;
+    window.cancelAnimationFrame(smoothTextFrame);
+    smoothTextFrame = undefined;
+  };
+
+  const scheduleSmoothTextFrame = () => {
+    if (smoothTextFrame !== undefined || typeof window === "undefined") return;
+    smoothTextFrame = window.requestAnimationFrame(() => {
+      smoothTextFrame = undefined;
+
+      const source = latestTextValue;
+      if (!smoothStream() || !source.startsWith(displayedTextValue)) {
+        commitDisplayedText(source);
+        return;
+      }
+
+      const remainingChars = source.length - displayedTextValue.length;
+      if (remainingChars <= 0) return;
+
+      const next = source.slice(
+        0,
+        displayedTextValue.length + Math.min(remainingChars, smoothStreamStep(remainingChars)),
+      );
+      commitDisplayedText(next);
+
+      if (next.length < source.length) {
+        scheduleSmoothTextFrame();
+      }
+    });
+  };
+
+  createEffect(() => {
+    if (p().type !== "text") {
+      latestTextValue = "";
+      cancelSmoothTextFrame();
+      if (displayedTextValue) {
+        commitDisplayedText("");
+      }
+      return;
+    }
+
+    const next = rawText();
+    latestTextValue = next;
+
+    if (!smoothStream()) {
+      cancelSmoothTextFrame();
+      if (displayedTextValue !== next) {
+        commitDisplayedText(next);
+      }
+      return;
+    }
+
+    if (!next.startsWith(displayedTextValue) || next.length < displayedTextValue.length) {
+      cancelSmoothTextFrame();
+      commitDisplayedText(next);
+      return;
+    }
+
+    if (next.length > displayedTextValue.length) {
+      scheduleSmoothTextFrame();
+    }
+  });
+
+  onCleanup(() => {
+    cancelSmoothTextFrame();
+  });
+
+  const adaptiveMarkdownThrottleMs = createMemo(() => {
+    if (!smoothStream()) return markdownThrottleMs();
+
+    const chars = displayedText().length;
+    if (chars < 600) return 24;
+    if (chars < 1_800) return 40;
+    if (chars < 3_600) return 56;
+    return 80;
   });
   const shouldCollapseLongText = createMemo(
     () => renderMarkdown() && p().type === "text" && rawText().length >= LARGE_TEXT_COLLAPSE_CHAR_THRESHOLD,
@@ -573,9 +671,9 @@ export default function PartView(props: Props) {
   const markdownSource = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return "";
     if (collapsedLongText()) return "";
-    return rawText();
+    return displayedText();
   });
-  const throttledMarkdownSource = useThrottledValue(markdownSource, markdownThrottleMs);
+  const throttledMarkdownSource = useThrottledValue(markdownSource, adaptiveMarkdownThrottleMs);
   const renderedMarkdown = createMemo(() => {
     if (!renderMarkdown() || p().type !== "text") return null;
     if (collapsedLongText()) return null;
@@ -660,7 +758,7 @@ export default function PartView(props: Props) {
   };
 
   const renderTextWithLinks = () => {
-    const text = "text" in p() ? String((p() as { text: string }).text) : "";
+    const text = displayedText();
     if (!text) return <span>{""}</span>;
 
     const tokens = splitTextTokens(text);
