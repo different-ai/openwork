@@ -25,14 +25,14 @@ const LEGACY_HEADER = [
 const V2_HEADER = [
   "# Download Stats V2",
   "",
-  "Classified GitHub release asset snapshots. `Manual installs` counts installer downloads (`.dmg`, `.msi`, `.deb`, `.rpm`). `Updater` counts updater artifacts (`latest.json`, macOS updater bundles, updater signatures). `Other` captures signatures, sidecars, and uncategorized assets.",
+  "Classified GitHub release asset snapshots. `Manual installs` counts installer downloads (`.dmg`, `.msi`, `.deb`, `.rpm`, `.appimage`, `.exe`). `Updater` counts Electron updater metadata and payloads (`latest*.yml`, `.blockmap`, `.zip`). `Other` captures sidecars, signatures, and uncategorized assets.",
   "",
   "| Date | Manual Installs | Updater | Other | All Release Assets |",
   "|------|-----------------|---------|-------|--------------------|",
 ].join("\n")
 
 const MANUAL_INSTALL_SUFFIXES = [".dmg", ".msi", ".deb", ".rpm", ".pkg", ".appimage", ".exe"]
-const UPDATER_SUFFIXES = ["latest.json", ".blockmap", ".app.tar.gz", ".app.tar.gz.sig"]
+const UPDATER_SUFFIXES = ["latest.yml", "latest-mac.yml", ".blockmap", ".zip"]
 const V2_BUCKETS = ["manual_install", "updater", "other", "all"]
 
 async function sendToPostHog(event, properties, distinctId = POSTHOG_DISTINCT_ID) {

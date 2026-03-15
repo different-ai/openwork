@@ -514,7 +514,7 @@
         "Release workflows build and publish Electron artifacts correctly.",
         "Updater metadata is generated in the Electron-compatible format."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "047",

@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:41 - Step 046 - Replace dev build CI and release workflows
+
+- The release scripts no longer need to reason about Cargo or Tauri version alignment; checking package versions plus Electron packaging config presence is enough to keep the release gate meaningful during the migration.
+- For Electron updater metadata, it is cleaner to let Electron Builder emit `latest*.yml` and related files as normal build artifacts and update downstream stats/release tooling to recognize those asset names instead of generating a Tauri-style `latest.json` side channel.
+
 ## 2026-03-15 15:33 - Step 045 - Replace desktop packaging and sidecar resource flow
 
 - The packaging migration can be staged before the final cleanup by introducing an Electron-native build path in parallel: compile main/preload to `dist`, stage sidecars into `resources/sidecars`, and point packaged renderer loading at `process.resourcesPath/app-dist/index.html`.

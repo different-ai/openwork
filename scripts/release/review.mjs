@@ -10,28 +10,22 @@ const strict = args.includes("--strict");
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const readText = (path) => readFileSync(path, "utf8");
 
-const readCargoVersion = (path) => {
-  const content = readText(path);
-  const match = content.match(/^version\s*=\s*"([^"]+)"/m);
-  return match ? match[1] : null;
-};
-
 const appPkg = readJson(resolve(root, "packages", "app", "package.json"));
 const desktopPkg = readJson(resolve(root, "packages", "desktop", "package.json"));
 const orchestratorPkg = readJson(resolve(root, "packages", "orchestrator", "package.json"));
 const serverPkg = readJson(resolve(root, "packages", "server", "package.json"));
 const opencodeRouterPkg = readJson(resolve(root, "packages", "opencode-router", "package.json"));
-const tauriConfig = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json"));
-const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
+const electronBuilderConfigExists = existsSync(resolve(root, "packages", "desktop", "electron-builder.yml"));
+const desktopMainPath = desktopPkg.main ?? null;
 
 const versions = {
   app: appPkg.version ?? null,
   desktop: desktopPkg.version ?? null,
-  tauri: tauriConfig.version ?? null,
-  cargo: cargoVersion ?? null,
   server: serverPkg.version ?? null,
   orchestrator: orchestratorPkg.version ?? null,
   opencodeRouter: opencodeRouterPkg.version ?? null,
+  desktopMain: desktopMainPath,
+  electronBuilderConfigExists,
   opencode: {
     desktop: desktopPkg.opencodeVersion ?? null,
     orchestrator: orchestratorPkg.opencodeVersion ?? null,
@@ -72,19 +66,19 @@ addCheck(
   `${versions.app ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
 );
 addCheck(
-  "Desktop/Tauri versions match",
-  versions.desktop && versions.tauri && versions.desktop === versions.tauri,
-  `${versions.desktop ?? "?"} vs ${versions.tauri ?? "?"}`,
-);
-addCheck(
-  "Desktop/Cargo versions match",
-  versions.desktop && versions.cargo && versions.desktop === versions.cargo,
-  `${versions.desktop ?? "?"} vs ${versions.cargo ?? "?"}`,
-);
-addCheck(
   "OpenCodeRouter version pinned in desktop",
   versions.opencodeRouter && versions.opencodeRouterVersionPinned && versions.opencodeRouter === versions.opencodeRouterVersionPinned,
   `${versions.opencodeRouterVersionPinned ?? "?"} vs ${versions.opencodeRouter ?? "?"}`,
+);
+addCheck(
+  "Electron builder config exists",
+  versions.electronBuilderConfigExists === true,
+  versions.electronBuilderConfigExists ? "present" : "missing",
+);
+addCheck(
+  "Desktop main entry points at Electron build output",
+  typeof versions.desktopMain === "string" && versions.desktopMain === "dist/main/main.js",
+  String(versions.desktopMain ?? "missing"),
 );
 if (versions.opencode.desktop || versions.opencode.orchestrator) {
   addCheck(

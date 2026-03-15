@@ -18,20 +18,12 @@ const version = tag.startsWith("v") ? tag.slice(1) : tag;
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const readText = (path) => readFileSync(path, "utf8");
 
-const readCargoVersion = (path) => {
-  const content = readText(path);
-  const match = content.match(/^version\s*=\s*"([^"]+)"/m);
-  return match ? match[1] : null;
-};
-
 const appVersion = readJson(resolve(root, "packages", "app", "package.json")).version ?? null;
 const desktopVersion = readJson(resolve(root, "packages", "desktop", "package.json")).version ?? null;
 const orchestratorVersion =
   readJson(resolve(root, "packages", "orchestrator", "package.json")).version ?? null;
 const serverVersion = readJson(resolve(root, "packages", "server", "package.json")).version ?? null;
 const opencodeRouterVersion = readJson(resolve(root, "packages", "opencode-router", "package.json")).version ?? null;
-const tauriVersion = readJson(resolve(root, "packages", "desktop", "src-tauri", "tauri.conf.json")).version ?? null;
-const cargoVersion = readCargoVersion(resolve(root, "packages", "desktop", "src-tauri", "Cargo.toml"));
 
 const mismatches = [];
 const check = (label, actual) => {
@@ -49,8 +41,6 @@ check("desktop", desktopVersion);
 check("openwork-orchestrator", orchestratorVersion);
 check("openwork-server", serverVersion);
 check("opencode-router", opencodeRouterVersion);
-check("tauri", tauriVersion);
-check("cargo", cargoVersion);
 
 if (mismatches.length) {
   console.error(`Release tag ${tag} does not match package versions:`);
@@ -60,4 +50,4 @@ if (mismatches.length) {
   process.exit(1);
 }
 
-console.log(`Release tag ${tag} matches app/desktop/openwork-orchestrator versions.`);
+console.log(`Release tag ${tag} matches app/desktop/openwork-orchestrator/openwork-server/opencode-router versions.`);

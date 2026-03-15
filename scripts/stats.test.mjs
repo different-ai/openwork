@@ -15,9 +15,9 @@ test("classifyAsset buckets updater and non-desktop assets separately", () => {
   const desktopRelease = { tag_name: "v0.11.135" }
   const sidecarRelease = { tag_name: "openwork-orchestrator-v0.11.135" }
 
-  assert.equal(classifyAsset(desktopRelease, { name: "latest.json" }), "updater")
-  assert.equal(classifyAsset(desktopRelease, { name: "openwork-desktop-darwin-aarch64.app.tar.gz" }), "updater")
-  assert.equal(classifyAsset(desktopRelease, { name: "openwork-desktop-darwin-aarch64.app.tar.gz.sig" }), "updater")
+  assert.equal(classifyAsset(desktopRelease, { name: "latest-mac.yml" }), "updater")
+  assert.equal(classifyAsset(desktopRelease, { name: "openwork-desktop-darwin-aarch64.zip" }), "updater")
+  assert.equal(classifyAsset(desktopRelease, { name: "openwork-desktop-darwin-aarch64.blockmap" }), "updater")
   assert.equal(classifyAsset(desktopRelease, { name: "openwork-desktop-linux-aarch64.rpm.sig" }), "other")
   assert.equal(classifyAsset(sidecarRelease, { name: "openwork-server-darwin-arm64" }), "other")
 })
@@ -28,8 +28,8 @@ test("calculate aggregates legacy total and v2 buckets", () => {
       tag_name: "v0.11.135",
       assets: [
         { name: "openwork-desktop-darwin-aarch64.dmg", download_count: 10 },
-        { name: "openwork-desktop-darwin-aarch64.app.tar.gz", download_count: 4 },
-        { name: "latest.json", download_count: 6 },
+        { name: "openwork-desktop-darwin-aarch64.zip", download_count: 4 },
+        { name: "latest-mac.yml", download_count: 6 },
         { name: "openwork-desktop-linux-aarch64.rpm.sig", download_count: 3 },
       ],
     },

@@ -1,0 +1,42 @@
+name: Build Electron workflow artifacts
+description: Build Electron desktop bundles and upload workflow artifacts.
+
+inputs:
+  os-type:
+    description: Target operating system family.
+    required: true
+  args:
+    description: Extra CLI args for electron-builder.
+    required: false
+    default: ""
+  project-path:
+    description: Electron project path.
+    required: false
+    default: packages/desktop
+  artifact-name:
+    description: Workflow artifact name.
+    required: false
+    default: desktop-release
+
+runs:
+  using: composite
+  steps:
+    - name: Build Electron bundles
+      shell: bash
+      run: |
+        set -euo pipefail
+        pnpm -w build:ui
+        pnpm --dir "${{ inputs.project-path }}" prepare:electron-resources
+        pnpm --dir "${{ inputs.project-path }}" build:main
+        if [ -n "${{ inputs.args }}" ]; then
+          pnpm --dir "${{ inputs.project-path }}" exec electron-builder --config electron-builder.yml ${{ inputs.args }}
+        else
+          pnpm --dir "${{ inputs.project-path }}" exec electron-builder --config electron-builder.yml
+        fi
+
+    - name: Upload Electron workflow artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ inputs.project-path }}/release
+        if-no-files-found: error

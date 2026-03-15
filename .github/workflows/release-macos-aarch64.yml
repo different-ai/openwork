@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       release_body:
-        description: "Release notes body in Markdown (defaults to a short placeholder)"
+        description: "Release notes body in Markdown"
         required: false
         type: string
       draft:
@@ -29,22 +29,12 @@ on:
         type: boolean
         default: false
       notarize:
-        description: "Notarize macOS builds (requires Apple team configured)"
+        description: "Notarize macOS builds when signing secrets are configured"
         required: false
         type: boolean
         default: false
-      build_tauri:
-        description: "Build desktop (Tauri) artifacts"
-        required: false
-        type: boolean
-        default: true
-      publish_sidecars:
-        description: "Build + upload openwork-orchestrator sidecar release assets"
-        required: false
-        type: boolean
-        default: true
-      publish_npm:
-        description: "Publish openwork-orchestrator/openwork-server/opencode-router to npm if versions changed"
+      build_desktop:
+        description: "Build Electron desktop artifacts"
         required: false
         type: boolean
         default: true
@@ -60,7 +50,7 @@ concurrency:
 jobs:
   resolve-release:
     name: Resolve Release Metadata
-    runs-on: blacksmith-4vcpu-ubuntu-2404
+    runs-on: ubuntu-24.04
     outputs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_name: ${{ steps.resolve.outputs.release_name }}
@@ -68,9 +58,7 @@ jobs:
       draft: ${{ steps.resolve.outputs.draft }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       notarize: ${{ steps.resolve.outputs.notarize }}
-      build_tauri: ${{ steps.resolve.outputs.build_tauri }}
-      publish_sidecars: ${{ steps.resolve.outputs.publish_sidecars }}
-      publish_npm: ${{ steps.resolve.outputs.publish_npm }}
+      build_desktop: ${{ steps.resolve.outputs.build_desktop }}
     steps:
       - name: Resolve metadata
         id: resolve
@@ -82,13 +70,9 @@ jobs:
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
           INPUT_NOTARIZE: ${{ github.event.inputs.notarize }}
-          INPUT_BUILD_TAURI: ${{ github.event.inputs.build_tauri }}
-          INPUT_PUBLISH_SIDECARS: ${{ github.event.inputs.publish_sidecars }}
-          INPUT_PUBLISH_NPM: ${{ github.event.inputs.publish_npm }}
-          DEFAULT_PUBLISH_SIDECARS: ${{ vars.RELEASE_PUBLISH_SIDECARS }}
-          DEFAULT_PUBLISH_NPM: ${{ vars.RELEASE_PUBLISH_NPM }}
+          INPUT_BUILD_DESKTOP: ${{ github.event.inputs.build_desktop }}
           DEFAULT_NOTARIZE: ${{ vars.MACOS_NOTARIZE }}
-          DEFAULT_BUILD_TAURI: ${{ vars.RELEASE_BUILD_TAURI }}
+          DEFAULT_BUILD_DESKTOP: ${{ vars.RELEASE_BUILD_DESKTOP }}
         run: |
           set -euo pipefail
 
@@ -108,62 +92,19 @@ jobs:
             exit 1
           fi
 
-          RELEASE_NAME_INPUT="${INPUT_RELEASE_NAME:-}"
-          if [ -n "$RELEASE_NAME_INPUT" ]; then
-            RELEASE_NAME="$RELEASE_NAME_INPUT"
-          else
-            RELEASE_NAME="OpenWork $TAG"
-          fi
-
-          RELEASE_BODY_INPUT="${INPUT_RELEASE_BODY:-}"
-          if [ -n "$RELEASE_BODY_INPUT" ]; then
-            RELEASE_BODY="$RELEASE_BODY_INPUT"
-          else
-            RELEASE_BODY="See the assets to download this version and install."
-          fi
-
-          draft="${INPUT_DRAFT:-}"
-          if [ -z "$draft" ]; then
-            if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-              # Keep tag-triggered releases out of /releases/latest until assets + latest.json are ready.
-              draft="true"
-            else
-              draft="false"
-            fi
-          fi
-          prerelease="${INPUT_PRERELEASE:-false}"
-          notarize="${INPUT_NOTARIZE:-}"
-          if [ -z "$notarize" ]; then
-            notarize="${DEFAULT_NOTARIZE:-true}"
-          fi
-
-          build_tauri="${INPUT_BUILD_TAURI:-}"
-          if [ -z "$build_tauri" ]; then
-            build_tauri="${DEFAULT_BUILD_TAURI:-true}"
-          fi
-
-          publish_sidecars="${INPUT_PUBLISH_SIDECARS:-}"
-          if [ -z "$publish_sidecars" ]; then
-            publish_sidecars="${DEFAULT_PUBLISH_SIDECARS:-true}"
-          fi
-          publish_npm="${INPUT_PUBLISH_NPM:-}"
-          if [ -z "$publish_npm" ]; then
-            publish_npm="${DEFAULT_PUBLISH_NPM:-true}"
-          fi
-
-          TAG="${TAG//$'\n'/}"
-          TAG="${TAG//$'\r'/}"
-          RELEASE_NAME="${RELEASE_NAME//$'\n'/ }"
-          RELEASE_NAME="${RELEASE_NAME//$'\r'/ }"
+          RELEASE_NAME="${INPUT_RELEASE_NAME:-OpenWork $TAG}"
+          RELEASE_BODY="${INPUT_RELEASE_BODY:-See the assets to download this version and install.}"
+          DRAFT="${INPUT_DRAFT:-false}"
+          PRERELEASE="${INPUT_PRERELEASE:-false}"
+          NOTARIZE="${INPUT_NOTARIZE:-${DEFAULT_NOTARIZE:-false}}"
+          BUILD_DESKTOP="${INPUT_BUILD_DESKTOP:-${DEFAULT_BUILD_DESKTOP:-true}}"
 
           echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
-          echo "draft=$draft" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
-          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
-          echo "build_tauri=$build_tauri" >> "$GITHUB_OUTPUT"
-          echo "publish_sidecars=$publish_sidecars" >> "$GITHUB_OUTPUT"
-          echo "publish_npm=$publish_npm" >> "$GITHUB_OUTPUT"
+          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "notarize=$NOTARIZE" >> "$GITHUB_OUTPUT"
+          echo "build_desktop=$BUILD_DESKTOP" >> "$GITHUB_OUTPUT"
           {
             echo "release_body<<__OPENWORK_RELEASE_BODY_EOF__"
             printf '%s\n' "$RELEASE_BODY"
@@ -176,7 +117,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
           BODY_FILE="$RUNNER_TEMP/release_body.md"
           printf '%s\n' "${{ steps.resolve.outputs.release_body }}" > "$BODY_FILE"
 
@@ -203,14 +143,12 @@ jobs:
   verify-release:
     name: Verify Release Versions
     needs: resolve-release
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-release.outputs.release_tag }}
           fetch-depth: 0
 
       - name: Setup Node
@@ -219,61 +157,42 @@ jobs:
           node-version: 20
 
       - name: Verify tag matches app versions
-        run: node scripts/release/verify-tag.mjs --tag "$RELEASE_TAG"
+        run: node scripts/release/verify-tag.mjs --tag "${{ needs.resolve-release.outputs.release_tag }}"
 
       - name: Release review (strict)
         run: node scripts/release/review.mjs --strict
 
-  publish-tauri:
+  publish-electron:
     name: Build + Package (${{ matrix.target }})
     needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    # Use explicit per-target runner labels so each release build can scale independently.
+    if: needs.resolve-release.outputs.build_desktop == 'true'
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
-    env:
-      MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
-      RUSTFLAGS: ${{ matrix.os_type == 'linux' && '-C link-arg=-fuse-ld=lld' || '' }}
-      # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
-      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-
     strategy:
       fail-fast: false
       matrix:
         include:
           - os_type: macos
-            target: aarch64-apple-darwin
+            target: darwin-arm64
             runs_on: macos-latest
-            args: "--target aarch64-apple-darwin --bundles dmg,app"
+            args: --mac dmg zip --arm64
+            artifact_name: desktop-release-darwin-arm64
           - os_type: macos
-            target: x86_64-apple-darwin
-            runs_on: macos-26-intel
-            args: "--target x86_64-apple-darwin --bundles dmg,app"
+            target: darwin-x64
+            runs_on: macos-13
+            args: --mac dmg zip --x64
+            artifact_name: desktop-release-darwin-x64
           - os_type: linux
-            target: x86_64-unknown-linux-gnu
-            runs_on: blacksmith-16vcpu-ubuntu-2404
-            args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
+            target: linux-x64
+            runs_on: ubuntu-24.04
+            args: --linux AppImage tar.gz --x64
+            artifact_name: desktop-release-linux-x64
           - os_type: windows
-            target: x86_64-pc-windows-msvc
-            runs_on: blacksmith-16vcpu-windows-2025
-            args: "--target x86_64-pc-windows-msvc --bundles msi"
-
+            target: windows-x64
+            runs_on: windows-2022
+            args: --win nsis --x64
+            artifact_name: desktop-release-windows-x64
     steps:
-      - name: Log runner selection
-        shell: bash
-        run: |
-          echo "Configured runs-on: ${RUNS_ON}"
-          echo "Build target: ${TARGET}"
-        env:
-          RUNS_ON: ${{ matrix.runs_on }}
-          TARGET: ${{ matrix.target }}
-
-      - name: Enable git long paths (Windows)
-        if: matrix.os_type == 'windows'
-        shell: pwsh
-        run: git config --global core.longpaths true
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -284,191 +203,32 @@ jobs:
         uses: ./.github/actions/setup-desktop-build-env
         with:
           os-type: ${{ matrix.os_type }}
-          rust-target: ${{ matrix.target }}
 
-      - name: Install OpenCode sidecar
+      - name: Build Electron workflow artifacts
+        uses: ./.github/actions/run-electron-release-build
         env:
-          GITHUB_TOKEN: ${{ github.token }}
-          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-          TARGET: ${{ matrix.target }}
-          OS_TYPE: ${{ matrix.os_type }}
-        run: node scripts/release/install-opencode-sidecar.mjs
-
-      - name: Write notary API key
-        if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
-        env:
-          APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
-        run: |
-          set -euo pipefail
-
-          NOTARY_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          printf '%s' "$APPLE_NOTARY_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
-          chmod 600 "$NOTARY_KEY_PATH"
-
-          echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
-
-      - name: Build desktop workflow artifacts
-        uses: ./.github/actions/run-tauri-release-build
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ secrets.APPLE_CODESIGN_CERT_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.APPLE_CODESIGN_CERT_PASSWORD }}
+          APPLE_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER_ID }}
           APPLE_API_KEY_PATH: ${{ env.NOTARY_KEY_PATH }}
         with:
           os-type: ${{ matrix.os_type }}
-          notarize: ${{ matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true' }}
           args: ${{ matrix.args }}
-          upload-updater-json: false
-          updater-json-prefer-nsis: true
-          workflow-artifact-name-pattern: desktop-release-[platform]-[arch]-[bundle]
+          artifact-name: ${{ matrix.artifact_name }}
 
-      - name: Verify versions.json bundled (macOS)
-        if: success() && matrix.os_type == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
-          app_path="packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenWork.app"
-          manifest_path="$app_path/Contents/MacOS/versions.json"
-
-          if [ ! -f "$manifest_path" ]; then
-            echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
-            echo "Hint: ensure packages/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
-            exit 1
-          fi
-
-          echo "Found bundled versions.json at $manifest_path"
-
-  build-tauri-linux-arm64:
-    name: Build ARM64 Linux binary
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
-    timeout-minutes: 360
-    env:
-      RUSTFLAGS: -C link-arg=-fuse-ld=lld
-      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-    steps:
-      - name: Log runner selection
-        shell: bash
-        run: |
-          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404-arm"
-          echo "Build target: aarch64-unknown-linux-gnu"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve-release.outputs.release_tag }}
-          fetch-depth: 0
-
-      - name: Setup desktop build environment
-        uses: ./.github/actions/setup-desktop-build-env
-        with:
-          os-type: linux
-          rust-target: aarch64-unknown-linux-gnu
-
-      - name: Install OpenCode sidecar
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-          TARGET: aarch64-unknown-linux-gnu
-          OS_TYPE: linux
-        run: node scripts/release/install-opencode-sidecar.mjs
-
-      - name: Build ARM64 binary without bundling
-        run: pnpm --dir packages/desktop exec tauri build --target aarch64-unknown-linux-gnu --no-bundle
-
-      - name: Upload ARM64 target directory
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-build-linux-arm64-target-dir
-          path: packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu
-          if-no-files-found: error
-
-  bundle-tauri-linux-arm64:
-    name: Bundle ARM64 Linux packages
-    needs: [resolve-release, verify-release, build-tauri-linux-arm64]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: blacksmith-16vcpu-ubuntu-2404
-    timeout-minutes: 360
-    env:
-      RUSTFLAGS: -C link-arg=-fuse-ld=lld
-      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-    steps:
-      - name: Log runner selection
-        shell: bash
-        run: |
-          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404"
-          echo "Bundle target: aarch64-unknown-linux-gnu"
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve-release.outputs.release_tag }}
-          fetch-depth: 0
-
-      - name: Setup desktop build environment
-        uses: ./.github/actions/setup-desktop-build-env
-        with:
-          os-type: linux
-          rust-target: aarch64-unknown-linux-gnu
-
-      - name: Install OpenCode sidecar
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
-          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
-          TARGET: aarch64-unknown-linux-gnu
-          OS_TYPE: linux
-        run: node scripts/release/install-opencode-sidecar.mjs
-
-      - name: Restore ARM64 target directory
-        uses: actions/download-artifact@v4
-        with:
-          name: desktop-build-linux-arm64-target-dir
-          path: packages/desktop/src-tauri/target
-
-      - name: Bundle ARM64 Linux packages on x86 runner
-        run: pnpm --dir packages/desktop exec tauri bundle --target aarch64-unknown-linux-gnu --bundles deb,rpm
-
-      - name: Upload ARM64 deb workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-release-linux-arm64-deb
-          path: |
-            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
-            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb.sig
-          if-no-files-found: error
-
-      - name: Upload ARM64 rpm workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-release-linux-aarch64-rpm
-          path: |
-            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
-            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm.sig
-          if-no-files-found: error
-
-  upload-tauri-release-assets:
+  upload-electron-release-assets:
     name: Upload desktop release assets
-    needs: [resolve-release, verify-release, publish-tauri, bundle-tauri-linux-arm64]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    needs: [resolve-release, verify-release, publish-electron]
+    if: needs.resolve-release.outputs.build_desktop == 'true'
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-release.outputs.release_tag }}
           fetch-depth: 0
 
       - name: Download desktop workflow artifacts
@@ -484,372 +244,5 @@ jobs:
           set -euo pipefail
           node scripts/release/upload-desktop-release-assets.mjs \
             --repo "$GITHUB_REPOSITORY" \
-            --tag "$RELEASE_TAG" \
+            --tag "${{ needs.resolve-release.outputs.release_tag }}" \
             --artifacts-dir "$RUNNER_TEMP/desktop-release-artifacts"
-
-  publish-updater-json:
-    name: Publish consolidated latest.json
-    needs: [resolve-release, verify-release, upload-tauri-release-assets]
-    if: needs.resolve-release.outputs.build_tauri == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Generate latest.json from release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          node scripts/release/generate-latest-json.mjs \
-            --tag "$RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --output "$RUNNER_TEMP/latest.json"
-
-      - name: Upload latest.json
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" "$RUNNER_TEMP/latest.json#latest.json" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
-
-  release-orchestrator-sidecars:
-    name: Build + Upload openwork-orchestrator Sidecars
-    needs: [resolve-release, verify-release]
-    if: needs.resolve-release.outputs.publish_sidecars == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: "1.3.6"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Resolve sidecar versions
-        id: sidecar-versions
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('packages/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
-
-      - name: Resolve SOURCE_DATE_EPOCH
-        id: source-date
-        shell: bash
-        run: |
-          epoch=$(git show -s --format=%ct "${RELEASE_TAG}")
-          echo "epoch=$epoch" >> "$GITHUB_OUTPUT"
-
-      - name: Check openwork-orchestrator release
-        id: orchestrator-release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Build sidecar artifacts
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: pnpm --filter openwork-orchestrator build:sidecars
-
-      - name: Release review (strict)
-        env:
-          SOURCE_DATE_EPOCH: ${{ steps.source-date.outputs.epoch }}
-        run: node scripts/release/review.mjs --strict
-
-      - name: Create openwork-orchestrator release
-        if: steps.orchestrator-release.outputs.exists != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          version="${{ steps.sidecar-versions.outputs.orchestrator }}"
-          tag="openwork-orchestrator-v${version}"
-          notes="Sidecar bundle for openwork-orchestrator v${version}.\n\nopenwork-server: ${{ steps.sidecar-versions.outputs.server }}\nopencodeRouter: ${{ steps.sidecar-versions.outputs.opencodeRouter }}"
-          gh release create "$tag" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "openwork-orchestrator v${version}" \
-            --notes "$notes" \
-            --latest=false
-
-      - name: Upload sidecar assets
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="openwork-orchestrator-v${{ steps.sidecar-versions.outputs.orchestrator }}"
-          gh release upload "$tag" packages/orchestrator/dist/sidecars/* --repo "$GITHUB_REPOSITORY" --clobber
-
-  publish-npm:
-    name: Publish npm packages
-    needs: [resolve-release, verify-release, release-orchestrator-sidecars]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
-      needs.resolve-release.outputs.publish_npm == 'true'
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ env.RELEASE_TAG }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10.27.0
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
-        with:
-          bun-version: "1.3.6"
-
-      - name: Get pnpm store path
-        id: pnpm-store
-        shell: bash
-        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache pnpm store
-        uses: actions/cache@v4
-        continue-on-error: true
-        with:
-          path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Resolve package versions
-        id: package-versions
-        shell: bash
-        run: |
-          node -e "const fs=require('fs'); const orchestrator=JSON.parse(fs.readFileSync('packages/orchestrator/package.json','utf8')); const server=JSON.parse(fs.readFileSync('packages/server/package.json','utf8')); const opencodeRouter=JSON.parse(fs.readFileSync('packages/opencode-router/package.json','utf8')); console.log('orchestrator=' + orchestrator.version); console.log('server=' + server.version); console.log('opencodeRouter=' + opencodeRouter.version);" >> "$GITHUB_OUTPUT"
-
-      - name: Check npm versions
-        id: npm-versions
-        shell: bash
-        env:
-          ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
-          SERVER_VERSION: ${{ steps.package-versions.outputs.server }}
-          OPENCODE_ROUTER_VERSION: ${{ steps.package-versions.outputs.opencodeRouter }}
-        run: |
-          set -euo pipefail
-          # npm view exits non-zero for packages that don't exist yet (404).
-          # Treat missing packages as "not published" so release can publish them.
-          orchestrator_current="$(npm view openwork-orchestrator version 2>/dev/null || true)"
-          server_current="$(npm view openwork-server version 2>/dev/null || true)"
-          opencodeRouter_current="$(npm view opencode-router version 2>/dev/null || true)"
-
-          if [ "$orchestrator_current" = "$ORCHESTRATOR_VERSION" ]; then
-            echo "publish_orchestrator=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_orchestrator=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "$server_current" = "$SERVER_VERSION" ]; then
-            echo "publish_server=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_server=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "$opencodeRouter_current" = "$OPENCODE_ROUTER_VERSION" ]; then
-            echo "publish_opencodeRouter=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish_opencodeRouter=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          publish_any=false
-          if [ "$orchestrator_current" != "$ORCHESTRATOR_VERSION" ] || [ "$server_current" != "$SERVER_VERSION" ] || [ "$opencodeRouter_current" != "$OPENCODE_ROUTER_VERSION" ]; then
-            publish_any=true
-          fi
-          echo "publish_any=$publish_any" >> "$GITHUB_OUTPUT"
-
-      - name: Ensure npm auth
-        id: npm-auth
-        shell: bash
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          PUBLISH_ANY: ${{ steps.npm-versions.outputs.publish_any }}
-        run: |
-          set -euo pipefail
-
-          if [ "${PUBLISH_ANY}" != "true" ]; then
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if [ -z "${NPM_TOKEN:-}" ]; then
-            echo "NPM_TOKEN not set; skipping npm publish."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-
-      - name: Publish openwork-server
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_server == 'true'
-        run: pnpm --filter openwork-server publish --access public --no-git-checks
-
-      - name: Publish opencode-router
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_opencodeRouter == 'true'
-        run: pnpm --filter opencode-router publish --access public --no-git-checks
-
-      - name: Publish openwork-orchestrator
-        if: steps.npm-auth.outputs.enabled == 'true' && steps.npm-versions.outputs.publish_orchestrator == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ORCHESTRATOR_VERSION: ${{ steps.package-versions.outputs.orchestrator }}
-        run: |
-          set -euo pipefail
-          tag="openwork-orchestrator-v${ORCHESTRATOR_VERSION}"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "openwork-orchestrator sidecar release $tag not found. Publish sidecars before openwork-orchestrator." >&2
-            exit 1
-          fi
-          pnpm --filter openwork-orchestrator build:bin:all
-          node packages/orchestrator/scripts/publish-npm.mjs
-
-  aur-publish:
-    name: Publish AUR
-    needs: [resolve-release, publish-tauri, publish-release]
-    if: |
-      always() &&
-      needs.resolve-release.result == 'success' &&
-      (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
-      (needs.publish-release.result == 'success' || needs.publish-release.result == 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    permissions:
-      contents: write
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-    steps:
-      - name: Checkout dev
-        uses: actions/checkout@v4
-        with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Update AUR packaging files
-        run: scripts/aur/update-aur.sh "$RELEASE_TAG"
-
-      - name: Commit packaging update to dev
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if ! git status --porcelain -- packaging/aur/PKGBUILD packaging/aur/.SRCINFO | grep -q .; then
-            echo "AUR packaging already up to date in dev."
-            exit 0
-          fi
-
-          version="${RELEASE_TAG#v}"
-          git add packaging/aur/PKGBUILD packaging/aur/.SRCINFO
-          git -c user.name="OpenWork Release Bot" \
-              -c user.email="release-bot@users.noreply.github.com" \
-              commit -m "chore(aur): update PKGBUILD for ${version}"
-          git push origin HEAD:dev
-
-      - name: Publish to AUR
-        env:
-          AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          AUR_REPO: ${{ vars.AUR_REPO || 'openwork' }}
-          AUR_SKIP_UPDATE: "1"
-        run: |
-          set -euo pipefail
-          if [ -z "${AUR_SSH_PRIVATE_KEY:-}" ]; then
-            echo "AUR_SSH_PRIVATE_KEY not set; skipping publish to AUR."
-            exit 0
-          fi
-          scripts/aur/publish-aur.sh "$RELEASE_TAG"
-
-  publish-release:
-    name: Publish GitHub Release
-    needs:
-      - resolve-release
-      - verify-release
-      - publish-tauri
-      - publish-updater-json
-      - release-orchestrator-sidecars
-      - publish-npm
-    if: |
-      always() &&
-      needs.resolve-release.outputs.draft == 'true' &&
-      needs.resolve-release.result == 'success' &&
-      needs.verify-release.result == 'success' &&
-      (needs.publish-tauri.result == 'success' || needs.publish-tauri.result == 'skipped') &&
-      (needs.publish-updater-json.result == 'success' || needs.publish-updater-json.result == 'skipped') &&
-      (needs.release-orchestrator-sidecars.result == 'success' || needs.release-orchestrator-sidecars.result == 'skipped') &&
-      (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped')
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
-    steps:
-      - name: Publish release after assets are ready
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-
-          if [ "${RELEASE_PRERELEASE}" = "true" ]; then
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease
-          else
-            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-          fi
