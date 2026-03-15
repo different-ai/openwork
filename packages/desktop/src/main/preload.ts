@@ -51,9 +51,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       saveFile: (input) => invokeDesktopChannel<string | null>(IPC_CHANNELS.dialogs("saveFile"), input),
     },
     shell: {
-      openExternal: notImplemented("shell.openExternal"),
-      openPath: notImplemented("shell.openPath"),
-      revealItemInDir: notImplemented("shell.revealItemInDir"),
+      openExternal: (input) => invokeDesktopChannel<void>(IPC_CHANNELS.shell("openExternal"), input),
+      openPath: (input) => invokeDesktopChannel<void>(IPC_CHANNELS.shell("openPath"), input),
+      revealItemInDir: (input) => invokeDesktopChannel<void>(IPC_CHANNELS.shell("revealItemInDir"), input),
     },
     paths: {
       home: notImplemented("paths.home"),

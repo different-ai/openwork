@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:51 - Step 013 - Implement shell opener and reveal service
+
+- Electron's shell APIs split cleanly into URL and path flows, so keeping `openExternal` behind protocol validation and `openPath`/`showItemInFolder` behind absolute-path validation preserves the least-privilege boundary without complicating the renderer API.
+- `shell.openPath()` reports failures as a returned error string instead of throwing, so the service layer should normalize that into an exception before the IPC boundary.
+
 ## 2026-03-15 10:49 - Step 012 - Implement dialogs service
 
 - Electron's dialog helpers work well for parity if the service normalizes `filePaths` back to the current wrapper shape (`string | string[] | null`) and validates `defaultPath` centrally before opening anything.

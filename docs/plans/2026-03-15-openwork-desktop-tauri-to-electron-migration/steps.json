@@ -151,7 +151,7 @@
         "Local files and folders can be opened and revealed from the renderer.",
         "Path validation happens in main instead of relying on renderer trust."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "014",
