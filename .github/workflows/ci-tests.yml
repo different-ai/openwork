@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-14]
+        os: [blacksmith-4vcpu-ubuntu-2204, macos-14]
 
     steps:
       - name: Checkout
