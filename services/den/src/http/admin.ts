@@ -1,6 +1,6 @@
 import express from "express"
 import { fromNodeHeaders } from "better-auth/node"
-import { asc, desc, eq, isNotNull, sql } from "drizzle-orm"
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm"
 import { ensureAdminAllowlistSeeded } from "../admin-allowlist.js"
 import { auth } from "../auth.js"
 import { getCloudWorkerAdminBillingStatus } from "../billing/polar.js"
@@ -92,6 +92,11 @@ async function requireAdminSession(req: express.Request, res: express.Response) 
     return null
   }
 
+  if (session.user.emailVerified !== true) {
+    res.status(403).json({ error: "email_verification_required" })
+    return null
+  }
+
   const email = normalizeEmail(session.user.email)
   if (!email) {
     res.status(403).json({ error: "admin_email_required" })
@@ -101,7 +106,7 @@ async function requireAdminSession(req: express.Request, res: express.Response) 
   await ensureAdminAllowlistSeeded()
 
   const allowed = await db
-    .select({ id: AdminAllowlistTable.id })
+    .select({ id: AdminAllowlistTable.id, userId: AdminAllowlistTable.user_id })
     .from(AdminAllowlistTable)
     .where(eq(AdminAllowlistTable.email, email))
     .limit(1)
@@ -109,6 +114,33 @@ async function requireAdminSession(req: express.Request, res: express.Response) 
   if (allowed.length === 0) {
     res.status(403).json({ error: "forbidden" })
     return null
+  }
+
+  const [entry] = allowed
+  if (entry.userId && entry.userId !== session.user.id) {
+    res.status(403).json({ error: "forbidden" })
+    return null
+  }
+
+  if (!entry.userId) {
+    await db
+      .update(AdminAllowlistTable)
+      .set({
+        user_id: session.user.id,
+        updated_at: sql`CURRENT_TIMESTAMP(3)`,
+      })
+      .where(and(eq(AdminAllowlistTable.id, entry.id), isNull(AdminAllowlistTable.user_id)))
+
+    const rebound = await db
+      .select({ userId: AdminAllowlistTable.user_id })
+      .from(AdminAllowlistTable)
+      .where(eq(AdminAllowlistTable.id, entry.id))
+      .limit(1)
+
+    if (rebound[0]?.userId !== session.user.id) {
+      res.status(403).json({ error: "forbidden" })
+      return null
+    }
   }
 
   return session
@@ -125,6 +157,7 @@ adminRouter.get("/overview", asyncRoute(async (req, res) => {
     db
       .select({
         email: AdminAllowlistTable.email,
+        userId: AdminAllowlistTable.user_id,
         note: AdminAllowlistTable.note,
         createdAt: AdminAllowlistTable.created_at,
       })

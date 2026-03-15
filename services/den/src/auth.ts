@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth"
 import { drizzleAdapter } from "better-auth/adapters/drizzle"
 import { db } from "./db/index.js"
 import * as schema from "./db/schema.js"
+import { sendVerificationEmail } from "./email-verification.js"
 import { env } from "./env.js"
 import { ensureDefaultOrg } from "./orgs.js"
 
@@ -35,6 +36,16 @@ export const auth = betterAuth({
   }),
   emailAndPassword: {
     enabled: true,
+    autoSignIn: false,
+    disableSignUp: !env.openworkDevMode,
+    requireEmailVerification: true,
+  },
+  emailVerification: {
+    autoSignInAfterVerification: true,
+    sendOnSignUp: true,
+    sendVerificationEmail: async ({ user, url }) => {
+      await sendVerificationEmail({ user, url })
+    },
   },
   databaseHooks: {
     user: {

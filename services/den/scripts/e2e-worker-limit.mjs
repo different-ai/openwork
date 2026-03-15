@@ -96,22 +96,6 @@ async function waitForHttp(url, attempts = 60) {
   throw new Error(`http_not_ready:${url}`);
 }
 
-function extractAuthToken(payload) {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-
-  if (typeof payload.token === "string" && payload.token.trim()) {
-    return payload.token;
-  }
-
-  if (payload.session && typeof payload.session === "object" && typeof payload.session.token === "string") {
-    return payload.session.token;
-  }
-
-  return null;
-}
-
 async function requestJson(baseUrl, path, { method = "GET", body, token, cookie } = {}) {
   const headers = new Headers();
   const origin = new URL(baseUrl).origin;
@@ -161,6 +145,7 @@ async function main() {
   const databaseUrl = `mysql://root:${dbPassword}@127.0.0.1:${mysqlPort}/${dbName}`;
   const env = {
     ...process.env,
+    OPENWORK_DEV_MODE: "1",
     DATABASE_URL: databaseUrl,
     BETTER_AUTH_SECRET: "openwork-den-e2e-secret-000000000000",
     BETTER_AUTH_URL: baseUrl,
@@ -250,10 +235,34 @@ async function main() {
       fail("Signup failed", signup.payload);
     }
 
-    const token = extractAuthToken(signup.payload);
-    const cookie = signup.cookie;
-    if (!token && !cookie) {
-      fail("Signup did not return a bearer token or session cookie", signup.payload);
+    log("Fetching dev verification link...");
+    const verification = await requestJson(
+      baseUrl,
+      `/v1/dev/email-verification?email=${encodeURIComponent(email)}`,
+      { method: "GET" },
+    );
+
+    if (!verification.response.ok || typeof verification.payload?.url !== "string") {
+      fail("Could not load dev verification link", verification.payload);
+    }
+
+    log("Verifying email...");
+    await fetch(verification.payload.url, { redirect: "manual" });
+
+    log("Signing in with verified account...");
+    const signin = await requestJson(baseUrl, "/api/auth/sign-in/email", {
+      method: "POST",
+      body: { email, password },
+    });
+
+    if (!signin.response.ok) {
+      fail("Sign-in failed", signin.payload);
+    }
+
+    const token = null;
+    const cookie = signin.cookie;
+    if (!cookie) {
+      fail("Sign-in did not return a session cookie", signin.payload);
     }
 
     log("Validating authenticated session...");

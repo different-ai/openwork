@@ -5,6 +5,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { fromNodeHeaders, toNodeHandler } from "better-auth/node"
 import { auth } from "./auth.js"
+import { getLatestDevVerification } from "./email-verification.js"
 import { env } from "./env.js"
 import { adminRouter } from "./http/admin.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
@@ -40,7 +41,38 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
     res.status(401).json({ error: "unauthorized" })
     return
   }
-  res.json(session)
+  res.json({
+    user: {
+      id: session.user.id,
+      name: session.user.name,
+      email: session.user.email,
+      emailVerified: session.user.emailVerified,
+      image: session.user.image,
+      createdAt: session.user.createdAt,
+      updatedAt: session.user.updatedAt,
+    },
+  })
+}))
+
+app.get("/v1/dev/email-verification", asyncRoute(async (req, res) => {
+  if (!env.openworkDevMode) {
+    res.status(404).json({ error: "not_found" })
+    return
+  }
+
+  const email = typeof req.query.email === "string" ? req.query.email.trim().toLowerCase() : ""
+  if (!email) {
+    res.status(400).json({ error: "email_required" })
+    return
+  }
+
+  const verification = getLatestDevVerification(email)
+  if (!verification) {
+    res.status(404).json({ error: "verification_not_found" })
+    return
+  }
+
+  res.json(verification)
 }))
 
 app.use("/v1/admin", adminRouter)

@@ -132,10 +132,14 @@ export const AdminAllowlistTable = mysqlTable(
   {
     id: id().primaryKey(),
     email: varchar("email", { length: 255 }).notNull(),
+    user_id: varchar("user_id", { length: 64 }),
     note: varchar("note", { length: 255 }),
     ...timestamps,
   },
-  (table) => [uniqueIndex("admin_allowlist_email").on(table.email)],
+  (table) => [
+    uniqueIndex("admin_allowlist_email").on(table.email),
+    uniqueIndex("admin_allowlist_user_id").on(table.user_id),
+  ],
 )
 
 export const WorkerTable = mysqlTable(

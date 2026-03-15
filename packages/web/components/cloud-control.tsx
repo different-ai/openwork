@@ -67,7 +67,6 @@ type WorkerLaunch = {
   openworkUrl: string | null;
   workspaceId: string | null;
   clientToken: string | null;
-  hostToken: string | null;
 };
 
 type WorkerSummary = {
@@ -81,7 +80,6 @@ type WorkerSummary = {
 
 type WorkerTokens = {
   clientToken: string | null;
-  hostToken: string | null;
   openworkUrl: string | null;
   workspaceId: string | null;
 };
@@ -154,7 +152,6 @@ function getAuthInfoForMode(mode: AuthMode): string {
 
 const LAST_WORKER_STORAGE_KEY = "openwork:web:last-worker";
 const PENDING_SOCIAL_SIGNUP_STORAGE_KEY = "openwork:web:pending-social-signup";
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
@@ -459,13 +456,6 @@ function getUser(payload: unknown): AuthUser | null {
   };
 }
 
-function getToken(payload: unknown): string | null {
-  if (!isRecord(payload)) {
-    return null;
-  }
-  return typeof payload.token === "string" ? payload.token : null;
-}
-
 function getCheckoutUrl(payload: unknown): string | null {
   if (!isRecord(payload) || !isRecord(payload.polar)) {
     return null;
@@ -494,8 +484,7 @@ function getWorker(payload: unknown): WorkerLaunch | null {
     instanceUrl: instance && typeof instance.url === "string" ? instance.url : null,
     openworkUrl: instance && typeof instance.url === "string" ? instance.url : null,
     workspaceId: null,
-    clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null,
-    hostToken: tokens && typeof tokens.host === "string" ? tokens.host : null
+    clientToken: tokens && typeof tokens.client === "string" ? tokens.client : null
   };
 }
 
@@ -529,15 +518,14 @@ function getWorkerTokens(payload: unknown): WorkerTokens | null {
   const tokens = payload.tokens;
   const connect = isRecord(payload.connect) ? payload.connect : null;
   const clientToken = typeof tokens.client === "string" ? tokens.client : null;
-  const hostToken = typeof tokens.host === "string" ? tokens.host : null;
   const openworkUrl = connect && typeof connect.openworkUrl === "string" ? connect.openworkUrl : null;
   const workspaceId = connect && typeof connect.workspaceId === "string" ? connect.workspaceId : null;
 
-  if (!clientToken && !hostToken) {
+  if (!clientToken) {
     return null;
   }
 
-  return { clientToken, hostToken, openworkUrl, workspaceId };
+  return { clientToken, openworkUrl, workspaceId };
 }
 
 function getWorkerRuntimeSnapshot(payload: unknown): WorkerRuntimeSnapshot | null {
@@ -765,8 +753,7 @@ function isWorkerLaunch(value: unknown): value is WorkerLaunch {
     (typeof value.instanceUrl === "string" || value.instanceUrl === null) &&
     (typeof value.openworkUrl === "string" || value.openworkUrl === null || typeof value.openworkUrl === "undefined") &&
     (typeof value.workspaceId === "string" || value.workspaceId === null || typeof value.workspaceId === "undefined") &&
-    (typeof value.clientToken === "string" || value.clientToken === null) &&
-    (typeof value.hostToken === "string" || value.hostToken === null)
+    (typeof value.clientToken === "string" || value.clientToken === null)
   );
 }
 
@@ -779,8 +766,7 @@ function listItemToWorker(item: WorkerListItem, current: WorkerLaunch | null = n
     instanceUrl: item.instanceUrl,
     openworkUrl: item.instanceUrl,
     workspaceId: null,
-    clientToken: current?.workerId === item.workerId ? current.clientToken : null,
-    hostToken: current?.workerId === item.workerId ? current.hostToken : null
+    clientToken: current?.workerId === item.workerId ? current.clientToken : null
   };
 }
 
@@ -1079,18 +1065,7 @@ export function CloudControlPanel() {
   const [authInfo, setAuthInfo] = useState(getAuthInfoForMode("sign-up"));
   const [authError, setAuthError] = useState<string | null>(null);
   const [user, setUser] = useState<AuthUser | null>(null);
-  const [authToken, setAuthToken] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-    if (!token || token.trim().length === 0) {
-      return null;
-    }
-
-    return token;
-  });
+  const [authToken, setAuthToken] = useState<string | null>(null);
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
   const [workerIntent, setWorkerIntent] = useState("");
@@ -1671,18 +1646,6 @@ export function CloudControlPanel() {
   }
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    if (authToken) {
-      window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, authToken);
-    } else {
-      window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-    }
-  }, [authToken]);
-
-  useEffect(() => {
     void refreshSession(true);
   }, [authToken]);
 
@@ -1844,8 +1807,7 @@ export function CloudControlPanel() {
         ...parsed,
         openworkUrl: parsed.openworkUrl ?? parsed.instanceUrl,
         workspaceId: parsed.workspaceId ?? parseWorkspaceIdFromUrl(parsed.instanceUrl ?? ""),
-        clientToken: null,
-        hostToken: null
+        clientToken: null
       };
 
       setWorker(restored);
@@ -1865,8 +1827,7 @@ export function CloudControlPanel() {
 
     const serializable: WorkerLaunch = {
       ...worker,
-      clientToken: null,
-      hostToken: null
+      clientToken: null
     };
 
     window.localStorage.setItem(LAST_WORKER_STORAGE_KEY, JSON.stringify(serializable));
@@ -2016,18 +1977,19 @@ export function CloudControlPanel() {
       });
 
       if (!response.ok) {
-        setAuthError(getErrorMessage(payload, `Authentication failed with ${response.status}.`));
+        const fallbackMessage =
+          authMode === "sign-up" && response.status === 403
+            ? "Email/password sign-up is temporarily disabled here. Use Google or GitHub to create an account."
+            : authMode === "sign-in" && response.status === 403
+              ? "Verify your email before signing in."
+              : `Authentication failed with ${response.status}.`;
+        setAuthError(getErrorMessage(payload, fallbackMessage));
         trackPosthogEvent("den_auth_failed", {
           mode: authMode,
           method: "email",
           status: response.status
         });
         return;
-      }
-
-      const token = getToken(payload);
-      if (token) {
-        setAuthToken(token);
       }
 
       let authenticatedUser: AuthUser | null = null;
@@ -2040,7 +2002,7 @@ export function CloudControlPanel() {
       } else {
         const refreshed = await refreshSession(true);
         if (!refreshed) {
-          setAuthInfo("Authentication succeeded, but session details are still syncing.");
+          setAuthInfo("Check your email for a verification link, then sign in to continue.");
         } else {
           authenticatedUser = refreshed;
           appendEvent("success", authMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
@@ -2067,6 +2029,15 @@ export function CloudControlPanel() {
         } else {
           trackPosthogEvent("den_signin_completed", analyticsPayload);
         }
+      }
+
+      if (authMode === "sign-up" && !authenticatedUser) {
+        setSignupOnboardingActive(false);
+        setAutoLaunchPending(false);
+        setLaunchStatus("Verify your email, then sign in to start your first worker.");
+        setAuthMode("sign-in");
+        setStep("auth");
+        return;
       }
 
       if (authMode === "sign-up") {
@@ -2551,8 +2522,7 @@ export function CloudControlPanel() {
               instanceUrl: summary.instanceUrl,
               openworkUrl: summary.instanceUrl,
               workspaceId: null,
-              clientToken: null,
-              hostToken: null
+              clientToken: null
             };
 
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });
@@ -2636,8 +2606,7 @@ export function CloudControlPanel() {
               ...worker,
               openworkUrl: tokens.openworkUrl ?? worker.openworkUrl,
               workspaceId: tokens.workspaceId ?? worker.workspaceId,
-              clientToken: tokens.clientToken,
-              hostToken: tokens.hostToken
+              clientToken: tokens.clientToken
             }
           : {
               workerId: id,
@@ -2647,8 +2616,7 @@ export function CloudControlPanel() {
               instanceUrl: null,
               openworkUrl: tokens.openworkUrl,
               workspaceId: tokens.workspaceId,
-              clientToken: tokens.clientToken,
-              hostToken: tokens.hostToken
+              clientToken: tokens.clientToken
             };
 
       const resolvedWorker = await withResolvedOpenworkCredentials(nextWorker, { quiet: true });

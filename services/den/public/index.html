@@ -74,7 +74,7 @@
   </head>
   <body>
     <h1>Den Control Plane Demo</h1>
-    <p class="muted">Sign up, verify auth, and launch a cloud worker end-to-end.</p>
+    <p class="muted">Create a dev account, verify it, sign in, and launch a cloud worker end-to-end.</p>
 
     <div class="grid">
       <section class="card">
@@ -95,14 +95,19 @@
       </section>
 
       <section class="card">
-        <h2>2) Verify auth/session</h2>
-        <button id="me-button" type="button">GET /v1/me (cookie session)</button>
-        <button id="me-bearer-button" type="button">GET /v1/me (Bearer token)</button>
-        <p class="muted">Bearer token comes from sign-up/sign-in response.</p>
+        <h2>2) Verify the latest dev email</h2>
+        <button id="verify-button" type="button">GET /v1/dev/email-verification + visit link</button>
+        <p class="muted">Works only with <code>OPENWORK_DEV_MODE=1</code>.</p>
       </section>
 
       <section class="card">
-        <h2>3) Launch worker</h2>
+        <h2>3) Sign in + verify auth/session</h2>
+        <button id="signin-button" type="button">Sign in with email/password</button>
+        <button id="me-button" type="button">GET /v1/me (cookie session)</button>
+      </section>
+
+      <section class="card">
+        <h2>4) Launch worker</h2>
         <label>
           Name
           <input id="worker-name" value="web-flow-worker" />
@@ -129,7 +134,6 @@
 
     <script>
       const output = document.getElementById("output")
-      let bearerToken = ""
 
       const print = (value) => {
         output.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2)
@@ -141,18 +145,6 @@
           return clone
         }
 
-        if (clone?.body?.token) {
-          clone.body.token = "REDACTED_SESSION_TOKEN"
-        }
-        if (clone?.body?.session?.token) {
-          clone.body.session.token = "REDACTED_SESSION_TOKEN"
-        }
-        if (clone?.body?.session?.id) {
-          clone.body.session.id = "REDACTED_SESSION_ID"
-        }
-        if (clone?.body?.session?.ipAddress) {
-          clone.body.session.ipAddress = "REDACTED_IP"
-        }
         if (clone?.body?.tokens?.host) {
           clone.body.tokens.host = "REDACTED_HOST_TOKEN"
         }
@@ -200,28 +192,38 @@
           }),
         })
 
-        bearerToken = result.body?.token || ""
-        print(redact({ step: "signup", ...result, bearerTokenPresent: Boolean(bearerToken) }))
+        print(redact({ step: "signup", ...result }))
+      })
+
+      document.getElementById("verify-button").addEventListener("click", async () => {
+        const email = document.getElementById("signup-email").value
+        const result = await request(`/v1/dev/email-verification?email=${encodeURIComponent(email)}`, { method: "GET" })
+        if (result.status !== 200 || !result.body?.url) {
+          print(redact({ step: "verify-email", ...result }))
+          return
+        }
+
+        await fetch(result.body.url, {
+          credentials: "include",
+          redirect: "manual",
+        })
+        print(redact({ step: "verify-email", verified: true, email, url: result.body.url }))
+      })
+
+      document.getElementById("signin-button").addEventListener("click", async () => {
+        const result = await request("/api/auth/sign-in/email", {
+          method: "POST",
+          body: JSON.stringify({
+            email: document.getElementById("signup-email").value,
+            password: document.getElementById("signup-password").value,
+          }),
+        })
+        print(redact({ step: "signin", ...result }))
       })
 
       document.getElementById("me-button").addEventListener("click", async () => {
         const result = await request("/v1/me", { method: "GET", headers: {} })
         print(redact({ step: "me-cookie", ...result }))
-      })
-
-      document.getElementById("me-bearer-button").addEventListener("click", async () => {
-        if (!bearerToken) {
-          print({ error: "missing_bearer_token", hint: "Sign up first to capture token." })
-          return
-        }
-
-        const result = await request("/v1/me", {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${bearerToken}`,
-          },
-        })
-        print(redact({ step: "me-bearer", ...result }))
       })
 
       document.getElementById("worker-button").addEventListener("click", async () => {

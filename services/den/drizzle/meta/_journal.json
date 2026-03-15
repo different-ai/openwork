@@ -29,6 +29,13 @@
       "when": 1773353100000,
       "tag": "0003_admin_allowlist",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1773546000000,
+      "tag": "0004_admin_allowlist_user_binding",
+      "breakpoints": true
     }
   ]
 }
