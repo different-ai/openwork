@@ -8,7 +8,7 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import type { Agent, Part } from "@opencode-ai/sdk/v2/client";
+import type { Agent, Part, Session } from "@opencode-ai/sdk/v2/client";
 import type {
   ArtifactItem,
   DashboardTab,
@@ -175,6 +175,10 @@ export type SessionViewProps = {
   openRenameWorkspace: (workspaceId: string) => void;
   selectSession: (sessionId: string) => Promise<void> | void;
   messages: MessageWithParts[];
+  getSessionById: (sessionId: string | null) => Session | null;
+  getMessagesBySessionId: (sessionId: string | null) => MessageWithParts[];
+  ensureSessionLoaded: (sessionId: string) => Promise<void> | void;
+  sessionLoadingById: (sessionId: string | null) => boolean;
   todos: TodoItem[];
   busyLabel: string | null;
   developerMode: boolean;
@@ -4394,6 +4398,10 @@ export default function SessionView(props: SessionViewProps) {
                     isStreaming={showRunIndicator()}
                     developerMode={props.developerMode}
                     showThinking={props.showThinking}
+                    getSessionById={props.getSessionById}
+                    getMessagesBySessionId={props.getMessagesBySessionId}
+                    ensureSessionLoaded={props.ensureSessionLoaded}
+                    sessionLoadingById={props.sessionLoadingById}
                     workspaceRoot={props.activeWorkspaceRoot}
                     expandedStepIds={props.expandedStepIds}
                     setExpandedStepIds={props.setExpandedStepIds}
