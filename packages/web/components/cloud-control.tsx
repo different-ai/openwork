@@ -1,9 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { DenMarketingRail } from "./den-marketing-rail";
 
-type Step = "auth" | "name" | "intent" | "initializing" | "workspace";
+type Step = "auth" | "name" | "initializing" | "connect" | "workspace";
 type AuthMode = "sign-in" | "sign-up";
 type SocialAuthProvider = "github" | "google";
 type ShellView = "workers" | "billing";
@@ -162,13 +161,6 @@ const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONN
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
 const OPENWORK_DISCORD_URL = "https://discord.gg/VEhNQXxYMB";
-const INTENT_SUGGESTIONS = [
-  "Handle customer support triage",
-  "Review pull requests and summarize",
-  "Run sales follow-ups from CRM",
-  "Prepare weekly operations reports"
-];
-
 function getEmailDomain(email: string): string {
   const atIndex = email.lastIndexOf("@");
   if (atIndex === -1 || atIndex + 1 >= email.length) {
@@ -250,10 +242,6 @@ function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
 }
 
-function normalizeIntent(input: string): string {
-  return input.trim().replace(/\s+/g, " ");
-}
-
 function normalizeWorkerName(input: string): string {
   const normalized = input.trim().replace(/\s+/g, " ");
   return normalized || "Founder Ops Pilot";
@@ -266,17 +254,6 @@ function isDesktopContext(): boolean {
 
   const ua = window.navigator.userAgent || "";
   return !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-}
-
-function getAdditionalWorkerRequestHref(): string {
-  const subject = "requesting an additional worker";
-  const body = [
-    "Hey Ben,",
-    "",
-    "I would like to create an additional worker in order to {INSERT REASON}"
-  ].join("\n");
-
-  return `mailto:ben@openwork.software?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 function GitHubLogo() {
@@ -1076,9 +1053,9 @@ export function CloudControlPanel() {
 
     return token;
   });
+  const [sessionHydrated, setSessionHydrated] = useState(false);
 
   const [workerName, setWorkerName] = useState("Founder Ops Pilot");
-  const [workerIntent, setWorkerIntent] = useState("");
   const [worker, setWorker] = useState<WorkerLaunch | null>(null);
   const [workerLookupId, setWorkerLookupId] = useState("");
   const [workers, setWorkers] = useState<WorkerListItem[]>([]);
@@ -1658,7 +1635,20 @@ export function CloudControlPanel() {
   }, [authToken]);
 
   useEffect(() => {
-    void refreshSession(true);
+    let cancelled = false;
+
+    const hydrateSession = async () => {
+      await refreshSession(true);
+      if (!cancelled) {
+        setSessionHydrated(true);
+      }
+    };
+
+    void hydrateSession();
+
+    return () => {
+      cancelled = true;
+    };
   }, [authToken]);
 
   useEffect(() => {
@@ -1845,10 +1835,14 @@ export function CloudControlPanel() {
       return;
     }
 
+    if (!sessionHydrated) {
+      return;
+    }
+
     setStep("auth");
     setSignupOnboardingActive(false);
     setAutoLaunchPending(false);
-  }, [checkoutUrl, signupOnboardingActive, step, user]);
+  }, [checkoutUrl, sessionHydrated, signupOnboardingActive, step, user]);
 
   useEffect(() => {
     if (step !== "workspace") {
@@ -1881,9 +1875,8 @@ export function CloudControlPanel() {
       return;
     }
 
-    setStep("workspace");
-    setSignupOnboardingActive(false);
-  }, [step, worker?.status, worker?.workerId]);
+    setStep(signupOnboardingActive ? "connect" : "workspace");
+  }, [signupOnboardingActive, step, worker?.status, worker?.workerId]);
 
   useEffect(() => {
     if (!user || !worker) {
@@ -2172,7 +2165,6 @@ export function CloudControlPanel() {
     setAutoLaunchPending(false);
     setNameStepBusy(false);
     setWorkerName("Founder Ops Pilot");
-    setWorkerIntent("");
     setWorkerQuery("");
     setWorkerStatusFilter("all");
     setShowLaunchForm(false);
@@ -2331,26 +2323,6 @@ export function CloudControlPanel() {
     }
   }
 
-  function applyIntentSuggestion(value: string) {
-    setWorkerIntent((current) => {
-      const normalized = normalizeIntent(current);
-      if (!normalized) {
-        return value;
-      }
-
-      const currentLines = normalized
-        .split(/\n+/)
-        .map((entry) => entry.trim())
-        .filter(Boolean);
-
-      if (currentLines.some((entry) => entry.toLowerCase() === value.toLowerCase())) {
-        return current;
-      }
-
-      return `${current.replace(/\s+$/, "")}\n${value}`;
-    });
-  }
-
   async function continueFromName() {
     const normalizedName = normalizeWorkerName(workerName);
     setWorkerName(normalizedName);
@@ -2407,26 +2379,7 @@ export function CloudControlPanel() {
       appendEvent("warning", "Worker naming deferred", message);
     } finally {
       setNameStepBusy(false);
-      setStep("intent");
-    }
-  }
-
-  function continueFromIntent(skip: boolean) {
-    const normalizedIntent = normalizeIntent(workerIntent);
-
-    trackPosthogEvent("den_worker_intent_submitted", {
-      skipped: skip || normalizedIntent.length === 0,
-      intent_length: normalizedIntent.length
-    });
-
-    if (normalizedIntent) {
-      appendEvent("info", "Worker intent", normalizedIntent);
-    }
-
-    setStep("initializing");
-
-    if (!worker && !launchBusy && !autoLaunchPending && user) {
-      void handleLaunchWorker({ source: "onboarding_continue", workerNameOverride: normalizeWorkerName(workerName) });
+      setStep("initializing");
     }
   }
 
@@ -2785,108 +2738,122 @@ export function CloudControlPanel() {
           ? "flex min-h-0 w-full flex-1"
           : step === "auth"
             ? "mx-auto w-full max-w-[32rem] rounded-[32px] border border-[var(--dls-border)] bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] md:p-6"
-            : "mx-auto w-full max-w-[48rem] rounded-[32px] border border-[var(--dls-border)] bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] md:p-6"
+            : "mx-auto w-full max-w-[48rem] rounded-[32px] border border-[var(--dls-border)] bg-white/95 p-5 shadow-[0_20px_60px_rgba(15,23,42,0.08)] md:max-w-none md:p-6"
       }
     >
       <div className={isShellStep ? "flex min-h-0 w-full flex-1" : ""}>
 
         {step === "auth" ? (
-          <div className="mx-auto grid w-full max-w-[28rem] gap-6 px-1 py-2">
-            <div className="grid gap-3 text-center">
-              <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
-                {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
-              </h1>
-            </div>
+          <div className="mx-auto grid w-full max-w-[32rem] gap-6 px-1 py-2">
+            {sessionHydrated ? (
+              <div className="grid gap-6 rounded-[32px] border border-white/70 bg-white/92 p-5 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)] backdrop-blur md:p-6">
+                <div className="grid gap-3 text-center">
+                  <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
+                    {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
+                  </h1>
+                  <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                    {authMode === "sign-up"
+                      ? "Sign up to launch your first worker and connect it in minutes."
+                      : "Sign in to launch and connect your worker."}
+                  </p>
+                </div>
 
-            <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
-              <button
-                type="button"
-                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handleSocialSignIn("github")}
-                disabled={authBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </button>
+                <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleSocialSignIn("github")}
+                    disabled={authBusy}
+                  >
+                    <GitHubLogo />
+                    <span>Continue with GitHub</span>
+                  </button>
 
-              <button
-                type="button"
-                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handleSocialSignIn("google")}
-                disabled={authBusy}
-              >
-                <GoogleLogo />
-                <span>Continue with Google</span>
-              </button>
+                  <button
+                    type="button"
+                    className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                    onClick={() => void handleSocialSignIn("google")}
+                    disabled={authBusy}
+                  >
+                    <GoogleLogo />
+                    <span>Continue with Google</span>
+                  </button>
 
-              <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
-                <span className="h-px flex-1 bg-slate-200" />
-                <span>or</span>
-                <span className="h-px flex-1 bg-slate-200" />
+                  <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
+                    <span className="h-px flex-1 bg-slate-200" />
+                    <span>or</span>
+                    <span className="h-px flex-1 bg-slate-200" />
+                  </div>
+
+                  <label className="grid gap-2">
+                    <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                      type="email"
+                      value={email}
+                      onChange={(event) => setEmail(event.target.value)}
+                      autoComplete="email"
+                      required
+                    />
+                  </label>
+
+                  <label className="grid gap-2">
+                    <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
+                    <input
+                      className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                      type="password"
+                      value={password}
+                      onChange={(event) => setPassword(event.target.value)}
+                      autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                      required
+                    />
+                  </label>
+
+                  <button
+                    type="submit"
+                    className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={authBusy}
+                  >
+                    {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+                  </button>
+                </form>
+
+                <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
+                  <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
+                  <button
+                    type="button"
+                    className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                    onClick={() => {
+                      const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
+                      setAuthMode(nextMode);
+                      setAuthInfo(getAuthInfoForMode(nextMode));
+                      setAuthError(null);
+                    }}
+                  >
+                    {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
+                  </button>
+                </div>
+
+                {showAuthFeedback ? (
+                  <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
+                    {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                    {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+                  </div>
+                ) : null}
               </div>
-
-              <label className="grid gap-2">
-                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  required
-                />
-              </label>
-
-              <label className="grid gap-2">
-                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                />
-              </label>
-
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={authBusy}
-              >
-                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-              </button>
-            </form>
-
-            <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
-              <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
-              <button
-                type="button"
-                className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-                onClick={() => {
-                  const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
-                  setAuthMode(nextMode);
-                  setAuthInfo(getAuthInfoForMode(nextMode));
-                  setAuthError(null);
-                }}
-              >
-                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
-              </button>
-            </div>
-
-            {showAuthFeedback ? (
-              <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
-                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
-                {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+            ) : (
+              <div className="grid gap-3 rounded-[32px] border border-white/70 bg-white/92 p-6 text-center shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)]">
+                <p className="text-sm text-slate-500">Checking your session...</p>
               </div>
-            ) : null}
+            )}
           </div>
         ) : null}
 
         {step === "name" ? (
-          <div className="mx-auto grid w-full max-w-[46rem] gap-6 px-1 py-2 md:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
+          <div className="mx-auto grid w-full max-w-[46rem] gap-6 px-1 py-2 md:max-w-none md:grid-cols-[minmax(0,1.05fr)_minmax(260px,0.95fr)]">
             <div className="grid gap-5 rounded-[30px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
               <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 1 of 3 - Account ready</p>
                 <h2 className="text-[1.9rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.35rem]">
                   Name your worker.
                 </h2>
@@ -2940,80 +2907,11 @@ export function CloudControlPanel() {
           </div>
         ) : null}
 
-        {step === "intent" ? (
-          <div className="mx-auto grid w-full max-w-[42rem] gap-6 px-1 py-1 md:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
-            <div className="grid gap-5 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6">
-              <div className="grid gap-3">
-                <h2 className="text-[1.8rem] font-semibold leading-[1.08] tracking-[-0.035em] text-[var(--dls-text-primary)] md:text-[2.15rem]">What do you want it to do?</h2>
-                <p className="text-[15px] leading-7 text-[var(--dls-text-secondary)]">
-                  Keep it short. You can tap multiple suggestions to chain them together.
-                </p>
-              </div>
-
-              <div className="flex flex-wrap gap-2" role="list" aria-label="Worker intent suggestions">
-                {INTENT_SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    className="rounded-full border border-[var(--dls-border)] bg-[var(--dls-hover)] px-3 py-2 text-left text-[13px] font-medium text-[var(--dls-text-primary)] transition hover:border-slate-300 hover:bg-white"
-                    onClick={() => applyIntentSuggestion(suggestion)}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-
-              <label className="grid gap-2">
-                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Optional context</span>
-                <textarea
-                  className="min-h-[9rem] w-full resize-y rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  value={workerIntent}
-                  onChange={(event) => setWorkerIntent(event.target.value)}
-                  placeholder="Example: Monitor new inbound leads, enrich them, and post a daily summary."
-                  rows={5}
-                  maxLength={300}
-                />
-              </label>
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-                  onClick={() => continueFromIntent(true)}
-                >
-                  Skip for now
-                </button>
-                <button
-                  type="button"
-                  className="inline-flex items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black"
-                  onClick={() => continueFromIntent(false)}
-                >
-                  Continue
-                </button>
-              </div>
-            </div>
-
-            <div className="grid content-start gap-4 rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] p-5 md:p-6">
-              <div className="rounded-[22px] border border-white bg-white p-4 shadow-sm">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-2xl bg-slate-900 text-white inline-flex items-center justify-center text-[11px] font-semibold">AI</div>
-                  <div>
-                    <div className="text-sm font-semibold text-[var(--dls-text-primary)]">{normalizeWorkerName(workerName)}</div>
-                    <div className="text-[13px] text-[var(--dls-text-secondary)]">Provisioning in the background</div>
-                  </div>
-                </div>
-              </div>
-              <p className="text-[14px] leading-6 text-[var(--dls-text-secondary)]">
-                Add one idea or stack a few suggestions together. You can still refine everything later once the worker is live.
-              </p>
-            </div>
-          </div>
-        ) : null}
-
         {step === "initializing" ? (
           <div className="mx-auto grid w-full max-w-[44rem] gap-6 px-1 py-1 md:grid-cols-[minmax(0,1.1fr)_minmax(250px,0.9fr)]">
             <div className="grid gap-5 rounded-[28px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
               <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 2 of 3 - Launching worker</p>
                 <div className="inline-flex items-center gap-2 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-medium text-amber-700">
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
                   Provisioning in progress
@@ -3091,6 +2989,56 @@ export function CloudControlPanel() {
                   First run is warming up. This usually takes around 1-2 minutes.
                 </div>
               )}
+            </div>
+          </div>
+        ) : null}
+
+        {step === "connect" ? (
+          <div className="mx-auto grid w-full max-w-[46rem] gap-6 px-1 py-2">
+            <div className="grid gap-5 rounded-[30px] border border-[var(--dls-border)] bg-white p-6 shadow-[var(--dls-card-shadow)] md:p-7">
+              <div className="grid gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Step 3 of 3 - Connect</p>
+                <h2 className="text-[1.9rem] font-semibold leading-[1.04] tracking-[-0.04em] text-[var(--dls-text-primary)] md:text-[2.35rem]">
+                  Your worker is live.
+                </h2>
+                <p className="max-w-[32rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                  Connect now to start using it in OpenWork.
+                </p>
+              </div>
+
+              <div className="grid gap-3">
+                <a
+                  href={openworkDeepLink ?? "#"}
+                  className={`inline-flex items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition ${
+                    openworkDeepLink ? "bg-[#011627] hover:bg-black" : "pointer-events-none cursor-not-allowed bg-slate-300"
+                  }`}
+                  aria-disabled={!openworkDeepLink}
+                >
+                  {openworkDeepLink ? "Open in OpenWork" : "Preparing connection..."}
+                </a>
+
+                {openworkAppConnectUrl ? (
+                  <a
+                    href={openworkAppConnectUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  >
+                    Open in Web
+                  </a>
+                ) : null}
+
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+                  onClick={() => {
+                    setSignupOnboardingActive(false);
+                    setStep("workspace");
+                  }}
+                >
+                  Go to dashboard
+                </button>
+              </div>
             </div>
           </div>
         ) : null}
@@ -3247,12 +3195,13 @@ export function CloudControlPanel() {
                         ) : null}
 
                         {ownedWorkerCount > 0 ? (
-                          <a
-                            href={getAdditionalWorkerRequestHref()}
+                          <button
+                            type="button"
+                            onClick={() => setShellView("billing")}
                             className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
                           >
                             Request an additional worker
-                          </a>
+                          </button>
                         ) : null}
 
                         {effectiveCheckoutUrl ? (
@@ -3367,12 +3316,13 @@ export function CloudControlPanel() {
                       ) : null}
 
                       {ownedWorkerCount > 0 ? (
-                        <a
-                          href={getAdditionalWorkerRequestHref()}
+                        <button
+                          type="button"
+                          onClick={() => setShellView("billing")}
                           className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
                         >
                           Request an additional worker
-                        </a>
+                        </button>
                       ) : null}
 
                       {effectiveCheckoutUrl ? (
@@ -3796,8 +3746,13 @@ export function CloudControlPanel() {
                       </div>
                     </>
                   ) : (
-                    <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-5 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
-                      <DenMarketingRail compact />
+                    <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+                      <div className="mx-auto max-w-[30rem] text-center">
+                        <h2 className="text-2xl font-semibold tracking-tight text-slate-900">No workers yet</h2>
+                        <p className="mt-3 text-sm leading-6 text-slate-600">
+                          Create your first worker to unlock connection details and runtime controls.
+                        </p>
+                      </div>
                     </div>
                   )}
                 </section>

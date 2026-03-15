@@ -29,10 +29,6 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div className="hidden items-center gap-2 text-[12px] font-medium text-slate-600 md:flex">
-          <span className="rounded-full border border-white/70 bg-white/75 px-3 py-1.5 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.4)]">Free first worker</span>
-          <span className="rounded-full border border-white/70 bg-white/75 px-3 py-1.5 shadow-[0_10px_24px_-20px_rgba(15,23,42,0.4)]">Polar billing for scale</span>
-        </div>
       </header>
 
       <div className="relative z-10 flex min-h-[calc(100vh-72px)] min-h-[calc(100dvh-72px)] w-full px-3 pb-3 pt-4 md:px-6 md:pb-6 md:pt-5">

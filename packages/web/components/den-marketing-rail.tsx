@@ -123,8 +123,6 @@ export function DenMarketingRail({ compact = false }: DenMarketingRailProps) {
         <div className="flex flex-wrap items-center gap-2.5 text-[13px] font-medium text-slate-700">
           <span className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.32)]">Open source</span>
           <span className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.32)]">50+ integrations and LLMs</span>
-          <span className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.32)]">Free first worker</span>
-          <span className="rounded-full border border-slate-200 bg-white/80 px-4 py-2 shadow-[0_10px_20px_-18px_rgba(15,23,42,0.32)]">Polar billing for scaling</span>
         </div>
       </div>
 
