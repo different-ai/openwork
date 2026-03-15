@@ -72,7 +72,10 @@ function buildOpenWorkStartCommand(input: ProvisionInput) {
   const orchestratorPackage = env.daytona.openworkVersion?.trim()
     ? `openwork-orchestrator@${env.daytona.openworkVersion.trim()}`
     : "openwork-orchestrator"
-  const installStep = `if ! command -v openwork >/dev/null 2>&1; then npm install -g ${shellQuote(orchestratorPackage)}; fi`
+  const installStep = [
+    `if ! command -v openwork >/dev/null 2>&1; then npm install -g ${shellQuote(orchestratorPackage)}; fi`,
+    "if ! command -v opencode >/dev/null 2>&1; then echo 'opencode binary missing from Daytona runtime; bake it into the snapshot image and expose it on PATH' >&2; exit 1; fi",
+  ].join("; ")
   const openworkServe = [
     "OPENWORK_DATA_DIR=",
     shellQuote(env.daytona.runtimeDataPath),
@@ -91,6 +94,9 @@ function buildOpenWorkStartCommand(input: ProvisionInput) {
     ` --connect-host 127.0.0.1`,
     ` --cors '*'`,
     ` --approval manual`,
+    ` --allow-external`,
+    ` --opencode-source external`,
+    ` --opencode-bin $(command -v opencode)`,
     ` --no-opencode-router`,
     ` --verbose`,
   ].join("")

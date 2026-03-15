@@ -15,7 +15,7 @@
 #   DEN_CORS_ORIGINS        — comma-separated trusted origins for Express CORS (auto-populated by den-dev-up.sh)
 #   DEN_PROVISIONER_MODE    — stub or render (default: stub)
 #   DEN_WORKER_URL_TEMPLATE — worker URL template used by stub provisioning
-#   DAYTONA_API_URL / DAYTONA_API_KEY / DAYTONA_TARGET / DAYTONA_OPENWORK_VERSION
+#   DAYTONA_API_URL / DAYTONA_API_KEY / DAYTONA_TARGET / DAYTONA_SNAPSHOT / DAYTONA_OPENWORK_VERSION
 #                           — optional Daytona passthrough vars when DEN_PROVISIONER_MODE=daytona
 
 x-shared: &shared
@@ -76,6 +76,7 @@ services:
       DAYTONA_API_URL: ${DAYTONA_API_URL:-}
       DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
       DAYTONA_TARGET: ${DAYTONA_TARGET:-}
+      DAYTONA_SNAPSHOT: ${DAYTONA_SNAPSHOT:-}
       DAYTONA_OPENWORK_VERSION: ${DAYTONA_OPENWORK_VERSION:-}
 
   web:

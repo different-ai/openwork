@@ -157,6 +157,7 @@ if ! DEN_API_PORT="$DEN_API_PORT" \
   DAYTONA_API_URL="${DAYTONA_API_URL:-}" \
   DAYTONA_API_KEY="${DAYTONA_API_KEY:-}" \
   DAYTONA_TARGET="${DAYTONA_TARGET:-}" \
+  DAYTONA_SNAPSHOT="${DAYTONA_SNAPSHOT:-}" \
   DAYTONA_OPENWORK_VERSION="${DAYTONA_OPENWORK_VERSION:-}" \
   docker compose -p "$PROJECT" -f "$COMPOSE_FILE" up -d --build --wait; then
   echo "Den Docker stack failed to start. Recent logs:" >&2
