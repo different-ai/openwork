@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:30 - Step 044 - Cut over auth modal and small shell-action components
+
+- Leaf UI components should not import opener plugins directly once the shell bridge exists; swapping those final auth/browser launches to `window.openworkDesktop.shell.openExternal()` removes the last component-level native dependency without changing UX.
+- Small shell actions embedded in larger views (like the Docker Desktop CTA in `app.tsx`) are worth cleaning up in the same pass, otherwise Tauri opener imports linger outside the obvious modal components.
+
 ## 2026-03-15 15:28 - Step 043 - Cut over workspace and session related renderer code
 
 - Most renderer cutovers get simpler once you stop chasing one-for-one native imports and instead rely on the compatibility shim plus the small typed shell/path bridge: local file open/reveal flows can all route through `window.openworkDesktop.shell` and `window.openworkDesktop.paths`.

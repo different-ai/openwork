@@ -87,8 +87,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
 
   const openAuthorizationUrl = async (url: string) => {
     if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
+      await window.openworkDesktop?.shell.openExternal({ url });
       return;
     }
 

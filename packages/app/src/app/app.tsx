@@ -7118,8 +7118,7 @@ export default function App() {
         onWorkerCta={async () => {
           const url = "https://www.docker.com/products/docker-desktop/";
           if (isTauriRuntime()) {
-            const { openUrl } = await import("@tauri-apps/plugin-opener");
-            await openUrl(url);
+            await window.openworkDesktop?.shell.openExternal({ url });
           } else {
             window.open(url, "_blank", "noopener,noreferrer");
           }

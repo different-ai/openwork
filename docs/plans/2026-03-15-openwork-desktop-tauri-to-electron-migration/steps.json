@@ -492,7 +492,7 @@
         "Auth URLs still open in the external browser.",
         "The small component layer is fully Electron-neutral."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "045",

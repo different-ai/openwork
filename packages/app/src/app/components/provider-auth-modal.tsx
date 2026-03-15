@@ -270,8 +270,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const openOauthUrl = async (url: string) => {
     if (!url) return;
     if (isTauriRuntime()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
-      await openUrl(url);
+      await window.openworkDesktop?.shell.openExternal({ url });
       return;
     }
     window.open(url, "_blank", "noopener,noreferrer");
