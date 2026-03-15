@@ -68,6 +68,7 @@ pub struct OrchestratorSpawnOptions {
     pub daemon_host: String,
     pub daemon_port: u16,
     pub opencode_bin: String,
+    pub opencode_source: Option<String>,
     pub opencode_host: String,
     pub opencode_workdir: String,
     pub opencode_port: Option<u16>,
@@ -235,6 +236,13 @@ pub fn spawn_orchestrator_daemon(
         options.opencode_workdir.clone(),
         "--allow-external".to_string(),
     ];
+
+    if let Some(source) = &options.opencode_source {
+        if !source.trim().is_empty() {
+            args.push("--opencode-source".to_string());
+            args.push(source.to_string());
+        }
+    }
 
     if let Some(port) = options.opencode_port {
         args.push("--opencode-port".to_string());

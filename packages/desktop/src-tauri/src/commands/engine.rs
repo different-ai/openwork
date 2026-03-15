@@ -377,6 +377,11 @@ pub fn engine_start(
         && sidecar_candidate
             .as_ref()
             .is_some_and(|candidate| candidate == &program);
+    let opencode_source = if use_sidecar {
+        Some("bundled".to_string())
+    } else {
+        Some("external".to_string())
+    };
 
     if runtime == EngineRuntime::Orchestrator {
         drop(state);
@@ -390,6 +395,7 @@ pub fn engine_start(
             daemon_host: daemon_host.clone(),
             daemon_port,
             opencode_bin,
+            opencode_source,
             opencode_host: bind_host.clone(),
             opencode_workdir: project_dir.clone(),
             opencode_port: Some(port),

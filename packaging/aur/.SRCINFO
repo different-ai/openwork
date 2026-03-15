@@ -6,6 +6,8 @@ pkgbase = openwork
 	arch = x86_64
 	arch = aarch64
 	license = MIT
+	options = !strip
+	options = !debug
 	depends = gtk3
 	depends = glib2
 	depends = libayatana-appindicator
@@ -14,6 +16,7 @@ pkgbase = openwork
 	depends = openssl
 	depends = dbus
 	depends = librsvg
+	depends = opencode>=1.2.26
 	noextract = openwork-0.11.150.deb
 	source_x86_64 = openwork-0.11.150.deb::https://github.com/different-ai/openwork/releases/download/v0.11.150/openwork-desktop-linux-amd64.deb
 	sha256sums_x86_64 = 10375db43207fd6564e400418b9d7f8ffba8be88db08508e44adae33348a92a7
