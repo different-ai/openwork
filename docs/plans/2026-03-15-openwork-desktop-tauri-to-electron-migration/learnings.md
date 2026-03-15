@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:34 - Step 005 - Create IPC naming and validation helpers
+
+- `packages/desktop/src/main/ipc/` can become the shared main/preload seam early: keep channel builders in `channels.ts`, privileged argument guards in `validation.ts`, and re-export them through `index.ts` for later service bootstrap steps.
+- Until `packages/desktop` gets its own TypeScript setup, the new desktop `.ts` helpers can be sanity-checked with `pnpm --filter openwork-orchestrator exec tsc ...` because that package already carries `typescript` and `@types/node`.
+
 ## 2026-03-15 10:30 - Step 004 - Add preload global type declarations
 
 - `packages/app/src/app/lib/openwork-desktop.ts` can hold both the importable preload contract types and the global `Window` augmentation, so renderer code gets one shared desktop typing seam before the preload implementation exists.

@@ -63,7 +63,7 @@
         "Common validation helpers exist for privileged arguments.",
         "Future main/preload services can share the same naming and validation layer."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "006",
