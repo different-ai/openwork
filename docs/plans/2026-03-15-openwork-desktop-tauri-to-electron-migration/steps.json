@@ -118,7 +118,7 @@
         "App relaunch works through Electron main rather than plugin-process.",
         "The dev-config nuke flow remains possible without Tauri."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "011",

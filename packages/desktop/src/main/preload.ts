@@ -1,4 +1,4 @@
-import { contextBridge } from "electron";
+import { contextBridge, ipcRenderer } from "electron";
 import type {
   DesktopDeepLinkEvent,
   DesktopUnsubscribe,
@@ -7,6 +7,8 @@ import type {
   ReloadRequiredEvent,
   SandboxCreateProgressEvent,
 } from "../../../app/src/app/lib/openwork-desktop";
+import type { AppBuildInfo } from "../../../app/src/app/lib/desktop-contract";
+import { IPC_CHANNELS } from "./ipc/channels";
 
 const noopUnsubscribe: DesktopUnsubscribe = () => {};
 
@@ -23,16 +25,20 @@ function notImplementedSubscription<T>(name: string): (listener: (event: T) => v
   };
 }
 
+function invokeDesktopChannel<T>(channel: string, input?: unknown): Promise<T> {
+  return ipcRenderer.invoke(channel, input) as Promise<T>;
+}
+
 export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
   return {
     runtime: {
       getInfo: notImplemented("runtime.getInfo"),
     },
     app: {
-      getVersion: notImplemented("app.getVersion"),
-      getBuildInfo: notImplemented("app.getBuildInfo"),
-      relaunch: notImplemented("app.relaunch"),
-      nukeDevConfigAndExit: notImplemented("app.nukeDevConfigAndExit"),
+      getVersion: () => invokeDesktopChannel<string>(IPC_CHANNELS.app("getVersion")),
+      getBuildInfo: () => invokeDesktopChannel<AppBuildInfo>(IPC_CHANNELS.app("getBuildInfo")),
+      relaunch: () => invokeDesktopChannel<void>(IPC_CHANNELS.app("relaunch")),
+      nukeDevConfigAndExit: () => invokeDesktopChannel<void>(IPC_CHANNELS.app("nukeDevConfigAndExit")),
     },
     window: {
       setDecorations: notImplemented("window.setDecorations"),

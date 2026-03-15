@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:44 - Step 010 - Implement app metadata and relaunch service
+
+- The first real Electron service establishes a useful migration pattern: keep the privileged logic in `services/<name>-service.ts`, export a `register<Name>Ipc()` helper for `ipcMain.handle`, and replace only that namespace in `preload.ts` while the rest stay stubbed.
+- The old Tauri dev-config nuke flow deletes `userData/opencode-dev` plus orchestrator state under `OPENWORK_DATA_DIR` or `~/.openwork/openwork-orchestrator`; later service shutdown hooks can plug into the `beforeExit` callback without changing the renderer contract.
+
 ## 2026-03-15 10:42 - Step 009 - Bootstrap BrowserWindow creation
 
 - Keeping BrowserWindow creation in `packages/desktop/src/main/window/main-window.ts` makes the Electron shell easier to grow: the main entrypoint can stay lifecycle-focused while window defaults, preload resolution, and renderer target rules live together.
