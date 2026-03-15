@@ -448,7 +448,7 @@
         "The wrapper no longer imports @tauri-apps/api or Tauri plugins.",
         "The file is now acting as a compatibility shim rather than a Tauri bridge."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "041",

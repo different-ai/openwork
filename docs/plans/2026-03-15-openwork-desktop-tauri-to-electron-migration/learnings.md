@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:12 - Step 040 - Create temporary compatibility shim for lib tauri
+
+- Replacing `packages/app/src/app/lib/tauri.ts` wholesale is cleaner than patching call sites one by one: keep all the old exported names, route them through `window.openworkDesktop`, and preserve the small argument validations that callers already rely on.
+- Once the shim re-exports the neutral DTO module and no longer imports any `@tauri-apps/*` packages, the renderer migration can proceed incrementally without dragging Tauri runtime dependencies through every desktop-facing file.
+
 ## 2026-03-15 15:09 - Step 039 - Implement OpenCode admin wrapper service
 
 - The admin wrapper layer should validate in main before it ever reaches a subprocess: `projectDir` must resolve inside an authorized local root, and `serverName` should keep the same conservative MCP-name validation the renderer already expects.
