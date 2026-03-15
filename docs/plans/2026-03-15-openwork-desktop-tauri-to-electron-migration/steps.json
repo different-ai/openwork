@@ -316,7 +316,7 @@
         "Sidecar and PATH resolution both still work.",
         "The logic no longer depends on Rust helpers."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "029",

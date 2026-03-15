@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:27 - Step 028 - Implement engine binary resolution and doctor service
+
+- Engine doctor logic stays testable if binary resolution is kept as a pure note-producing helper: evaluate `OPENCODE_BIN_PATH`, optional sidecar candidates, PATH lookups, and common GUI-missing tool directories in a deterministic order and return the full note trail alongside the chosen binary.
+- GUI apps often miss shell PATH customizations, so the doctor probe should execute with a PATH rebuilt from common tool directories plus the inherited PATH; otherwise Electron can falsely report that a working CLI install is missing.
+
 ## 2026-03-15 11:23 - Step 027 - Implement skill import and opkg install service
 
 - Constrained process execution is easiest to enforce by encoding the exact fallback command list in the service (`opkg`, `openpackage`, `pnpm dlx opkg`, `npx opkg`) instead of building a generic command runner and trying to lock it down later.

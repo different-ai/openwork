@@ -123,7 +123,7 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       start: notImplemented("engine.start"),
       stop: notImplemented("engine.stop"),
       restart: notImplemented("engine.restart"),
-      doctor: notImplemented("engine.doctor"),
+      doctor: (input) => invokeDesktopChannel(IPC_CHANNELS.engine("doctor"), input),
       install: notImplemented("engine.install"),
     },
     orchestrator: {

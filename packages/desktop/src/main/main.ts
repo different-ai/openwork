@@ -9,6 +9,7 @@ import {
   type DeepLinkService,
 } from "./services/deep-link-service";
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
+import { createEngineService, registerEngineIpc } from "./services/engine-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
@@ -96,6 +97,7 @@ export async function bootstrapMainProcess() {
   const activeDeepLinkService = getOrCreateDeepLinkService();
   registerAppIpc(createDefaultAppService());
   registerDeepLinkIpc(activeDeepLinkService);
+  registerEngineIpc(createEngineService());
   registerWindowIpc(
     createWindowService({
       getMainWindow: () => context.mainWindow,
