@@ -118,6 +118,25 @@ const upsertPartInfo = (list: Part[], next: Part) => {
 
 const removePartInfo = (list: Part[], partID: string) => list.filter((part) => part.id !== partID);
 
+const appendPartDelta = (list: Part[], partID: string, field: string, delta: string) => {
+  if (!delta) return list;
+  const index = list.findIndex((part) => part.id === partID);
+  if (index === -1) return list;
+
+  const existing = list[index] as Part & Record<string, unknown>;
+  const current = existing[field];
+  if (current !== undefined && typeof current !== "string") {
+    return list;
+  }
+
+  const nextValue = `${typeof current === "string" ? current : ""}${delta}`;
+  if (nextValue === current) return list;
+
+  const copy = list.slice();
+  copy[index] = { ...existing, [field]: nextValue } as Part;
+  return copy;
+};
+
 export function createSessionStore(options: {
   client: () => Client | null;
   activeWorkspaceRoot: () => string;
@@ -985,6 +1004,21 @@ export function createSessionStore(options: {
       };
     }
 
+    if (event.type === "message.part.delta") {
+      const record = event.properties as Record<string, unknown> | undefined;
+      const delta = typeof record?.delta === "string" ? record.delta : "";
+      return {
+        type: event.type,
+        properties: {
+          sessionID: typeof record?.sessionID === "string" ? record.sessionID : null,
+          messageID: typeof record?.messageID === "string" ? record.messageID : null,
+          partID: typeof record?.partID === "string" ? record.partID : null,
+          field: typeof record?.field === "string" ? record.field : null,
+          deltaLength: delta.length,
+        },
+      };
+    }
+
     return {
       type: event.type,
       properties: event.properties,
@@ -998,7 +1032,7 @@ export function createSessionStore(options: {
 
     if (options.developerMode()) {
       const compact = compactDebugEvent(event);
-      if (event.type === "message.part.updated") {
+      if (event.type === "message.part.updated" || event.type === "message.part.delta") {
         const now = Date.now();
         if (now - lastPartDebugEventAt < 250) {
           suppressedPartDebugEvents += 1;
@@ -1016,7 +1050,7 @@ export function createSessionStore(options: {
       } else {
         if (suppressedPartDebugEvents > 0) {
           appendDebugEvent({
-            type: "message.part.updated.sample",
+            type: "message.part.stream.sample",
             properties: { suppressed: suppressedPartDebugEvents },
           });
           suppressedPartDebugEvents = 0;
@@ -1218,6 +1252,31 @@ export function createSessionStore(options: {
       }
     }
 
+    if (event.type === "message.part.delta") {
+      if (event.properties && typeof event.properties === "object") {
+        const record = event.properties as Record<string, unknown>;
+        const messageID = typeof record.messageID === "string" ? record.messageID : null;
+        const partID = typeof record.partID === "string" ? record.partID : null;
+        const field = typeof record.field === "string" ? record.field : null;
+        const delta = typeof record.delta === "string" ? record.delta : null;
+        const partDeltaStartedAt = perfNow();
+
+        if (messageID && partID && field && delta) {
+          setStore("parts", messageID, (current = []) => appendPartDelta(current, partID, field, delta));
+          const partDeltaMs = Math.round((perfNow() - partDeltaStartedAt) * 100) / 100;
+          if (sessionDebugEnabled() && (partDeltaMs >= 8 || delta.length >= 120)) {
+            recordPerfLog(true, "session.event", "message.part.delta", {
+              messageID,
+              partID,
+              field,
+              deltaLength: delta.length,
+              ms: partDeltaMs,
+            });
+          }
+        }
+      }
+    }
+
     if (event.type === "message.part.removed") {
       if (event.properties && typeof event.properties === "object") {
         const record = event.properties as Record<string, unknown>;
@@ -1323,7 +1382,7 @@ export function createSessionStore(options: {
       batch(() => {
         for (const event of eventsToApply) {
           if (!event) continue;
-          if (event.type === "message.part.updated") partUpdates += 1;
+          if (event.type === "message.part.updated" || event.type === "message.part.delta") partUpdates += 1;
           if (event.type === "message.updated") messageUpdates += 1;
           applied += 1;
           void applyEvent(event);
@@ -1398,7 +1457,7 @@ export function createSessionStore(options: {
           if (queue.length === 0) {
             queueStartedAt = Date.now();
           }
-          if (event.type === "message.part.updated") {
+          if (event.type === "message.part.updated" || event.type === "message.part.delta") {
             queueHasPartUpdates = true;
           }
           queue.push(event);

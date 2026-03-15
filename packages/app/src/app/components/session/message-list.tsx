@@ -1015,7 +1015,7 @@ export default function MessageList(props: MessageListProps) {
                       props.isStreaming &&
                       block.messageId === latestAssistantMessageId();
                     const markdownThrottleMs = isStreamingLatestAssistant
-                      ? 550
+                      ? 120
                       : 100;
                     return (
                       <PartView

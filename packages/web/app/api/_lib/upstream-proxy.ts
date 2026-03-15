@@ -168,7 +168,7 @@ async function fetchUpstream(
   targetUrl: string,
   contentType: string | null,
   body: Uint8Array | null,
-): Promise<{ response: Response; body: ArrayBuffer }> {
+): Promise<Response> {
   const init: RequestInit = {
     method: request.method,
     headers: buildHeaders(request, contentType),
@@ -179,9 +179,33 @@ async function fetchUpstream(
     init.body = body;
   }
 
-  const response = await fetch(targetUrl, init);
-  const responseBody = await response.arrayBuffer();
-  return { response, body: responseBody };
+  return fetch(targetUrl, init);
+}
+
+async function readUpstreamBody(response: Response): Promise<ArrayBuffer> {
+  return response.arrayBuffer();
+}
+
+function isEventStreamRequest(request: NextRequest): boolean {
+  const accept = request.headers.get("accept")?.toLowerCase() ?? "";
+  return accept.includes("text/event-stream");
+}
+
+function isEventStreamResponse(response: Response): boolean {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  return contentType.includes("text/event-stream");
+}
+
+function shouldFallbackToAuthBaseForStream(response: Response, targetPath: string): boolean {
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    return true;
+  }
+
+  if (response.status === 404 && isAdminTargetPath(targetPath)) {
+    return true;
+  }
+
+  return false;
 }
 
 function rewriteLocationHeader(location: string, request: NextRequest): string {
@@ -210,53 +234,12 @@ function rewriteLocationHeader(location: string, request: NextRequest): string {
   return `${requestOrigin}${parsedLocation.pathname}${parsedLocation.search}${parsedLocation.hash}`;
 }
 
-export async function proxyUpstream(
+function buildProxyResponse(
   request: NextRequest,
-  segments: string[] = [],
+  upstream: Response,
   options: ProxyOptions,
-): Promise<Response> {
-  const targetPath = getTargetPath(request, segments, options.routePrefix);
-  const primaryTargetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
-  const fallbackTargetUrl = buildTargetUrl(authFallbackBase, request, targetPath, options.upstreamPathPrefix);
-  const contentType = request.headers.get("content-type");
-  const requestBody = request.method !== "GET" && request.method !== "HEAD"
-    ? new Uint8Array(await request.arrayBuffer())
-    : null;
-
-  let upstream: Response | null = null;
-  let body: ArrayBuffer | null = null;
-
-  try {
-    const primary = await fetchUpstream(request, primaryTargetUrl, contentType, requestBody);
-    upstream = primary.response;
-    body = primary.body;
-  } catch {
-    if (apiBase !== authFallbackBase) {
-      try {
-        const fallback = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
-        upstream = fallback.response;
-        body = fallback.body;
-      } catch {}
-    }
-  }
-
-  if (!upstream || !body) {
-    return buildUpstreamErrorResponse(502, "Upstream request failed.");
-  }
-
-  if (apiBase !== authFallbackBase && shouldFallbackToAuthBase(upstream, body, targetPath)) {
-    try {
-      const fallback = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
-      upstream = fallback.response;
-      body = fallback.body;
-    } catch {}
-  }
-
-  const responseContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
-  if (upstream.status >= 500 && (responseContentType.includes("text/html") || isLikelyHtmlBody(body))) {
-    return buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
-  }
-
+  body?: BodyInit | null,
+): Response {
   const responseHeaders = new Headers();
   const passThroughHeaders = ["content-type", "location", "cache-control"];
 
@@ -278,8 +261,63 @@ export async function proxyUpstream(
 
   const shouldDropBody = request.method === "HEAD" || NO_BODY_STATUS.has(upstream.status);
 
-  return new Response(shouldDropBody ? null : body, {
+  return new Response(shouldDropBody ? null : (body ?? upstream.body), {
     status: upstream.status,
     headers: responseHeaders,
   });
+}
+
+export async function proxyUpstream(
+  request: NextRequest,
+  segments: string[] = [],
+  options: ProxyOptions,
+): Promise<Response> {
+  const targetPath = getTargetPath(request, segments, options.routePrefix);
+  const primaryTargetUrl = buildTargetUrl(apiBase, request, targetPath, options.upstreamPathPrefix);
+  const fallbackTargetUrl = buildTargetUrl(authFallbackBase, request, targetPath, options.upstreamPathPrefix);
+  const contentType = request.headers.get("content-type");
+  const requestBody = request.method !== "GET" && request.method !== "HEAD"
+    ? new Uint8Array(await request.arrayBuffer())
+    : null;
+
+  let upstream: Response | null = null;
+
+  try {
+    upstream = await fetchUpstream(request, primaryTargetUrl, contentType, requestBody);
+  } catch {
+    if (apiBase !== authFallbackBase) {
+      try {
+        upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
+      } catch {}
+    }
+  }
+
+  if (!upstream) {
+    return buildUpstreamErrorResponse(502, "Upstream request failed.");
+  }
+
+  if (isEventStreamRequest(request) || isEventStreamResponse(upstream)) {
+    if (apiBase !== authFallbackBase && shouldFallbackToAuthBaseForStream(upstream, targetPath)) {
+      try {
+        upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
+      } catch {}
+    }
+    return buildProxyResponse(request, upstream, options);
+  }
+
+  let body = await readUpstreamBody(upstream);
+
+  if (apiBase !== authFallbackBase && shouldFallbackToAuthBase(upstream, body, targetPath)) {
+    try {
+      upstream = await fetchUpstream(request, fallbackTargetUrl, contentType, requestBody);
+      body = await readUpstreamBody(upstream);
+    } catch {}
+  }
+
+  const responseContentType = upstream.headers.get("content-type")?.toLowerCase() ?? "";
+  if (upstream.status >= 500 && (responseContentType.includes("text/html") || isLikelyHtmlBody(body))) {
+    return buildUpstreamErrorResponse(upstream.status, "Upstream service unavailable.");
+  }
+
+  return buildProxyResponse(request, upstream, options, body);
 }

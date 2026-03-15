@@ -316,8 +316,7 @@ const MESSAGE_WINDOW_LOAD_CHUNK = 120;
 const MAX_SEARCH_MESSAGE_CHARS = 4_000;
 const MAX_SEARCH_HITS = 2_000;
 const STREAM_SCROLL_MIN_INTERVAL_MS = 90;
-const LATEST_MESSAGE_TOP_OFFSET_PX = 200;
-const STREAM_RENDER_BATCH_MS = 220;
+const STREAM_RENDER_BATCH_MS = 48;
 const MAIN_THREAD_LAG_INTERVAL_MS = 200;
 const MAIN_THREAD_LAG_WARN_MS = 180;
 
@@ -370,6 +369,8 @@ export default function SessionView(props: SessionViewProps) {
   );
   const [agentOptions, setAgentOptions] = createSignal<Agent[]>([]);
   const [isViewingLatest, setIsViewingLatest] = createSignal(true);
+  const [topClippedMessageId, setTopClippedMessageId] = createSignal<string | null>(null);
+  const [jumpControlsSuppressed, setJumpControlsSuppressed] = createSignal(false);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [searchQueryDebounced, setSearchQueryDebounced] = createSignal("");
@@ -1648,6 +1649,7 @@ export default function SessionView(props: SessionViewProps) {
   let initialAnchorRafA: number | undefined;
   let initialAnchorRafB: number | undefined;
   let initialAnchorGuardTimer: ReturnType<typeof setTimeout> | undefined;
+  let jumpControlsSuppressTimer: ReturnType<typeof setTimeout> | undefined;
   const attachmentsEnabled = createMemo(() => {
     if (props.activeWorkspaceDisplay.workspaceType !== "remote") return true;
     return props.openworkServerStatus === "connected";
@@ -1664,25 +1666,41 @@ export default function SessionView(props: SessionViewProps) {
     messagesEndEl?.scrollIntoView({ behavior, block: "end" });
   };
 
-  const scrollToLatestMessageAnchor = (behavior: ScrollBehavior = "auto") => {
+  const refreshTopClippedMessage = () => {
     const container = chatContainerEl;
-    if (!container) return false;
-    const messageEls = container.querySelectorAll("[data-message-id]");
-    const latestMessageEl = messageEls[messageEls.length - 1] as
-      | HTMLElement
-      | undefined;
-    if (!latestMessageEl) return false;
+    if (!container) {
+      setTopClippedMessageId(null);
+      return;
+    }
 
     const containerRect = container.getBoundingClientRect();
-    const targetRect = latestMessageEl.getBoundingClientRect();
-    const desiredTop =
-      container.scrollTop +
-      (targetRect.top - containerRect.top) -
-      LATEST_MESSAGE_TOP_OFFSET_PX;
-    const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-    const nextTop = Math.max(0, Math.min(desiredTop, maxTop));
-    container.scrollTo({ top: nextTop, behavior });
-    return true;
+    const messageEls = container.querySelectorAll("[data-message-id]");
+    const latestMessageEl = messageEls[messageEls.length - 1] as HTMLElement | undefined;
+    const latestMessageId = latestMessageEl?.getAttribute("data-message-id")?.trim() ?? "";
+    let nextId: string | null = null;
+
+    for (const node of messageEls) {
+      const el = node as HTMLElement;
+      const rect = el.getBoundingClientRect();
+      if (rect.bottom <= containerRect.top + 1) continue;
+      if (rect.top >= containerRect.bottom - 1) break;
+
+      if (
+        rect.top < containerRect.top - 1
+      ) {
+        const id = el.getAttribute("data-message-id")?.trim() ?? "";
+        if (id) {
+          const isLatestMessage = id === latestMessageId;
+          const fillsViewportTail = rect.bottom >= containerRect.bottom - 1;
+          if (isLatestMessage || fillsViewportTail) {
+            nextId = id;
+          }
+        }
+      }
+      break;
+    }
+
+    setTopClippedMessageId(nextId);
   };
 
   const pinToLatestNow = () => {
@@ -1690,10 +1708,19 @@ export default function SessionView(props: SessionViewProps) {
     messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
   };
 
-  const shouldUseLatestMessageAnchor = () => {
-    const latestMessage = props.messages[props.messages.length - 1];
-    const info = latestMessage?.info as { role?: string } | undefined;
-    return info?.role === "assistant";
+  const pinToLatestAfterLayout = () => {
+    setIsViewingLatest(true);
+    setTopClippedMessageId(null);
+    messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
+    queueMicrotask(() => {
+      messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
+    });
+    window.requestAnimationFrame(() => {
+      messagesEndEl?.scrollIntoView({ behavior: "auto", block: "end" });
+      window.requestAnimationFrame(() => {
+        pinToLatestNow();
+      });
+    });
   };
 
   const scheduleScrollToLatest = (behavior: ScrollBehavior = "auto") => {
@@ -1709,17 +1736,12 @@ export default function SessionView(props: SessionViewProps) {
       if (
         nextBehavior === "auto" &&
         now - lastAutoScrollAt < STREAM_SCROLL_MIN_INTERVAL_MS
-      ) {
-        return;
-      }
-      lastAutoScrollAt = now;
-      if (
-        shouldUseLatestMessageAnchor() &&
-        scrollToLatestMessageAnchor(nextBehavior)
-      )
-        return;
-      scrollToLatest(nextBehavior);
-    });
+        ) {
+          return;
+        }
+        lastAutoScrollAt = now;
+        scrollToLatest(nextBehavior);
+      });
   };
 
   const cancelInitialAnchorFrames = () => {
@@ -1734,6 +1756,10 @@ export default function SessionView(props: SessionViewProps) {
     if (initialAnchorGuardTimer) {
       clearTimeout(initialAnchorGuardTimer);
       initialAnchorGuardTimer = undefined;
+    }
+    if (jumpControlsSuppressTimer !== undefined) {
+      clearTimeout(jumpControlsSuppressTimer);
+      jumpControlsSuppressTimer = undefined;
     }
   };
 
@@ -2126,6 +2152,32 @@ export default function SessionView(props: SessionViewProps) {
     scheduleScrollToLatest(behavior);
   };
 
+  const jumpToStartOfMessage = (behavior: ScrollBehavior = "smooth") => {
+    const messageId = topClippedMessageId();
+    const container = chatContainerEl;
+    if (!messageId || !container) return;
+
+    const escapedId = messageId.replace(/"/g, '\\"');
+    const target = container.querySelector(
+      `[data-message-id="${escapedId}"]`,
+    ) as HTMLElement | null;
+    if (!target) return;
+
+    setIsViewingLatest(false);
+    target.scrollIntoView({ behavior, block: "start" });
+  };
+
+  const suppressJumpControlsTemporarily = () => {
+    if (jumpControlsSuppressTimer !== undefined) {
+      clearTimeout(jumpControlsSuppressTimer);
+    }
+    setJumpControlsSuppressed(true);
+    jumpControlsSuppressTimer = setTimeout(() => {
+      jumpControlsSuppressTimer = undefined;
+      setJumpControlsSuppressed(false);
+    }, 1000);
+  };
+
   onMount(() => {
     const container = chatContainerEl;
     const sentinel = bottomVisibilityEl;
@@ -2138,6 +2190,7 @@ export default function SessionView(props: SessionViewProps) {
         if (atBottom) {
           setIsViewingLatest(true);
         }
+        refreshTopClippedMessage();
       },
       {
         root: container,
@@ -2164,6 +2217,7 @@ export default function SessionView(props: SessionViewProps) {
 
         if (!sessionId) return;
         setIsViewingLatest(true);
+        setTopClippedMessageId(null);
         const firstVisit = !topInitializedSessionIds.has(sessionId);
         topInitializedSessionIds.add(sessionId);
         setInitialAnchorPending(true);
@@ -2338,6 +2392,9 @@ export default function SessionView(props: SessionViewProps) {
     if (status === "running" || status === "retry") {
       startRun();
       setRunHasBegun(true);
+      if (isViewingLatest()) {
+        pinToLatestAfterLayout();
+      }
     }
   });
 
@@ -2369,8 +2426,13 @@ export default function SessionView(props: SessionViewProps) {
     runProgressSignature();
     if (initialAnchorPending()) return;
     if (!isViewingLatest()) return;
-    if (!shouldUseLatestMessageAnchor()) return;
     scheduleScrollToLatest("auto");
+  });
+
+  createEffect(() => {
+    batchedRenderedMessages();
+    initialAnchorPending();
+    queueMicrotask(refreshTopClippedMessage);
   });
 
   createEffect(
@@ -3374,6 +3436,8 @@ export default function SessionView(props: SessionViewProps) {
   });
 
   const handleSendPrompt = (draft: ComposerDraft) => {
+    suppressJumpControlsTemporarily();
+    pinToLatestAfterLayout();
     startRun();
     props.sendPromptAsync(draft).catch(() => undefined);
   };
@@ -4210,11 +4274,13 @@ export default function SessionView(props: SessionViewProps) {
                     setIsViewingLatest(false);
                   }
                   lastKnownScrollTop = container.scrollTop;
+                  refreshTopClippedMessage();
                 }}
                 ref={(el) => {
                   chatContainerEl = el;
                   setIsChatContainerReady(Boolean(el));
                   lastKnownScrollTop = el?.scrollTop ?? 0;
+                  queueMicrotask(refreshTopClippedMessage);
                 }}
               >
                 <div class="mx-auto w-full max-w-[800px]">
@@ -4381,16 +4447,33 @@ export default function SessionView(props: SessionViewProps) {
                 </div>
               </div>
 
-              <Show when={props.messages.length > 0 && !isViewingLatest()}>
+              <Show when={props.messages.length > 0 && !jumpControlsSuppressed() && (!isViewingLatest() || Boolean(topClippedMessageId()))}>
                 <div class="absolute bottom-4 left-0 right-0 z-20 flex justify-center pointer-events-none">
                   <div class="pointer-events-auto flex items-center gap-2 rounded-full border border-dls-border bg-dls-surface/95 p-1 shadow-[var(--dls-card-shadow)] backdrop-blur-md">
-                    <button
-                      type="button"
-                      class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
-                      onClick={() => jumpToLatest("smooth")}
-                    >
-                      Jump to latest
-                    </button>
+                    <Show when={Boolean(topClippedMessageId())}>
+                      <button
+                        type="button"
+                        class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
+                        onClick={() => {
+                          suppressJumpControlsTemporarily();
+                          jumpToStartOfMessage("smooth");
+                        }}
+                      >
+                        Jump to start of message
+                      </button>
+                    </Show>
+                    <Show when={!isViewingLatest()}>
+                      <button
+                        type="button"
+                        class="rounded-full px-3 py-1.5 text-xs text-gray-11 transition-colors hover:bg-gray-2"
+                        onClick={() => {
+                          suppressJumpControlsTemporarily();
+                          jumpToLatest("smooth");
+                        }}
+                      >
+                        Jump to latest
+                      </button>
+                    </Show>
                   </div>
                 </div>
               </Show>
