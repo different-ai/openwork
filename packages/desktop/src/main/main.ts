@@ -1,8 +1,10 @@
-import { app } from "electron";
+import { app, type BrowserWindow } from "electron";
 import { createDesktopEventBus } from "./services/event-bus";
+import { createMainWindow, hasOpenWindows, loadMainWindow } from "./window/main-window";
 
 export type MainProcessContext = {
   eventBus: ReturnType<typeof createDesktopEventBus>;
+  mainWindow: BrowserWindow | null;
   startedAt: number;
 };
 
@@ -11,8 +13,23 @@ let mainProcessContext: MainProcessContext | null = null;
 export function createMainProcessContext(): MainProcessContext {
   return {
     eventBus: createDesktopEventBus(),
+    mainWindow: null,
     startedAt: Date.now(),
   };
+}
+
+async function openMainWindow(context: MainProcessContext) {
+  const window = createMainWindow();
+  context.mainWindow = window;
+
+  window.on("closed", () => {
+    if (context.mainWindow === window) {
+      context.mainWindow = null;
+    }
+  });
+
+  await loadMainWindow(window);
+  return window;
 }
 
 export async function bootstrapMainProcess() {
@@ -23,7 +40,11 @@ export async function bootstrapMainProcess() {
   const context = createMainProcessContext();
 
   app.on("activate", () => {
-    // BrowserWindow creation gets wired in the next scaffold step.
+    if (hasOpenWindows()) {
+      return;
+    }
+
+    void openMainWindow(context);
   });
 
   app.on("window-all-closed", () => {
@@ -31,6 +52,8 @@ export async function bootstrapMainProcess() {
       app.quit();
     }
   });
+
+  await openMainWindow(context);
 
   mainProcessContext = context;
   return context;

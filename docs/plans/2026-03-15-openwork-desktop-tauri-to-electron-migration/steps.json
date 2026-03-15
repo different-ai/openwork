@@ -107,7 +107,7 @@
         "Preload is wired into the main window.",
         "Window title and baseline dimensions match current desktop expectations."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "010",

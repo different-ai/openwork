@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:42 - Step 009 - Bootstrap BrowserWindow creation
+
+- Keeping BrowserWindow creation in `packages/desktop/src/main/window/main-window.ts` makes the Electron shell easier to grow: the main entrypoint can stay lifecycle-focused while window defaults, preload resolution, and renderer target rules live together.
+- A small `resolveSiblingPath(tsRelative, jsRelative)` helper is enough for the source-phase scaffold to point at `.ts` files during development scaffolding and `.js` files after future build output exists.
+
 ## 2026-03-15 10:40 - Step 008 - Scaffold Electron preload entrypoint
 
 - A typed stub preload bridge is a safe intermediate state: `contextBridge.exposeInMainWorld("openworkDesktop", createOpenworkDesktopBridge())` lets renderer/runtime detection switch over early while each namespace can be implemented incrementally in later steps.
