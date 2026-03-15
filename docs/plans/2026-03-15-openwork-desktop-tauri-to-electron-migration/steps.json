@@ -415,7 +415,7 @@
         "The app can still open a file in Obsidian.",
         "Mirror file read/write semantics are preserved."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "038",

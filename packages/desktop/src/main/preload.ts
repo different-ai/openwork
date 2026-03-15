@@ -157,10 +157,10 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       resetOpencodeCache: () => invokeDesktopChannel(IPC_CHANNELS.cache("resetOpencodeCache")),
     },
     obsidian: {
-      isAvailable: notImplemented("obsidian.isAvailable"),
-      open: notImplemented("obsidian.open"),
-      writeMirrorFile: notImplemented("obsidian.writeMirrorFile"),
-      readMirrorFile: notImplemented("obsidian.readMirrorFile"),
+      isAvailable: () => invokeDesktopChannel(IPC_CHANNELS.obsidian("isAvailable")),
+      open: (input) => invokeDesktopChannel(IPC_CHANNELS.obsidian("open"), input),
+      writeMirrorFile: (input) => invokeDesktopChannel(IPC_CHANNELS.obsidian("writeMirrorFile"), input),
+      readMirrorFile: (input) => invokeDesktopChannel(IPC_CHANNELS.obsidian("readMirrorFile"), input),
     },
     scheduler: {
       listJobs: notImplemented("scheduler.listJobs"),

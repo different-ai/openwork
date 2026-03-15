@@ -13,6 +13,7 @@ import { createDialogService, registerDialogIpc } from "./services/dialog-servic
 import { createEngineService, registerEngineIpc } from "./services/engine-service";
 import { createOrchestratorService, registerOrchestratorIpc } from "./services/orchestrator-service";
 import { createOpenworkServerService, registerOpenworkServerIpc } from "./services/openwork-server-service";
+import { createObsidianService, registerObsidianIpc } from "./services/obsidian-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createRouterService, registerRouterIpc } from "./services/router-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
@@ -138,6 +139,7 @@ export async function bootstrapMainProcess() {
   );
   registerCommandFileIpc(createCommandFileService());
   registerConfigIpc(createConfigService());
+  registerObsidianIpc(createObsidianService());
   registerOrchestratorIpc(
     createOrchestratorService({
       emitSandboxProgress: (event) => {

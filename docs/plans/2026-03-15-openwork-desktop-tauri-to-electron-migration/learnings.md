@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:05 - Step 037 - Implement Obsidian integration service
+
+- The Obsidian bridge stays narrow if it only exposes three concerns: availability probing, a macOS-only `open -a Obsidian <file>` handoff, and mirror-file storage under Electron `userData`.
+- Mirror files need stricter validation than ordinary paths because they represent worker-relative content: stripping `workspace/` prefixes and rejecting absolute or `..` segments preserves the current portability guarantees.
+
 ## 2026-03-15 15:03 - Step 036 - Implement cache and app-state reset service
 
 - A cache/reset service can stay explicit without exposing generic delete APIs: keep `resetOpenworkState` limited to known desktop-owned directories (`sessionData`, `userData`, and optionally orchestrator data), and keep `resetOpencodeCache` limited to the known OpenCode cache candidate list.
