@@ -16,7 +16,7 @@ pkgbase = openwork
 	depends = openssl
 	depends = dbus
 	depends = librsvg
-	depends = opencode>=1.2.26
+	depends = opencode
 	noextract = openwork-0.11.155.deb
 	source_x86_64 = openwork-0.11.155.deb::https://github.com/different-ai/openwork/releases/download/v0.11.155/openwork-desktop-linux-amd64.deb
 	sha256sums_x86_64 = 418c02d9cd09d7d569011f5cbecd1cd673e855cd6c1e3e4c0685158ae3a37191
