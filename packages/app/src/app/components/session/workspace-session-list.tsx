@@ -9,6 +9,7 @@ type Props = {
   workspaceSessionGroups: WorkspaceSessionGroup[];
   activeWorkspaceId: string;
   selectedSessionId: string | null;
+  showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
   connectingWorkspaceId: string | null;
   workspaceConnectionStateById: Record<string, WorkspaceConnectionState>;
@@ -17,6 +18,8 @@ type Props = {
   onActivateWorkspace: (workspaceId: string) => Promise<boolean> | boolean | void;
   onOpenSession: (workspaceId: string, sessionId: string) => void;
   onCreateTaskInWorkspace: (workspaceId: string) => void;
+  onOpenRenameSession?: () => void;
+  onOpenDeleteSession?: () => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
   onShareWorkspace: (workspaceId: string) => void;
   onRevealWorkspace: (workspaceId: string) => void;
@@ -66,8 +69,10 @@ export default function WorkspaceSessionList(props: Props) {
   const [previewCountByWorkspaceId, setPreviewCountByWorkspaceId] = createSignal<Record<string, number>>({});
   const [workspaceMenuId, setWorkspaceMenuId] = createSignal<string | null>(null);
   const [addWorkspaceMenuOpen, setAddWorkspaceMenuOpen] = createSignal(false);
+  const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   let workspaceMenuRef: HTMLDivElement | undefined;
   let addWorkspaceMenuRef: HTMLDivElement | undefined;
+  let sessionMenuRef: HTMLDivElement | undefined;
 
   const isWorkspaceExpanded = (workspaceId: string) => expandedWorkspaceIds().has(workspaceId);
 
@@ -152,6 +157,124 @@ export default function WorkspaceSessionList(props: Props) {
     window.addEventListener("pointerdown", closeMenu);
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
+
+  createEffect(() => {
+    props.selectedSessionId;
+    setSessionMenuOpen(false);
+  });
+
+  createEffect(() => {
+    if (!sessionMenuOpen()) return;
+    const closeMenu = (event: PointerEvent) => {
+      if (!sessionMenuRef) return;
+      const target = event.target as Node | null;
+      if (target && sessionMenuRef.contains(target)) return;
+      setSessionMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", closeMenu);
+    onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
+  });
+
+  const renderSessionRow = (workspaceId: string, session: WorkspaceSessionGroup["sessions"][number]) => {
+    const isSelected = () => props.selectedSessionId === session.id;
+    const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
+    const canManageSession = () =>
+      Boolean(
+        props.showSessionActions &&
+          isSelected() &&
+          (props.onOpenRenameSession || props.onOpenDeleteSession),
+      );
+
+    const openSession = () => {
+      setSessionMenuOpen(false);
+      props.onOpenSession(workspaceId, session.id);
+    };
+
+    return (
+      <div class="relative">
+        <div
+          role="button"
+          tabIndex={0}
+          class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
+            isSelected()
+              ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
+              : "border-transparent text-gray-11 hover:bg-gray-2/60"
+          }`}
+          onClick={openSession}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            if (event.isComposing || event.keyCode === 229) return;
+            event.preventDefault();
+            openSession();
+          }}
+        >
+          <div class="mr-2.5 flex min-w-0 items-center gap-2">
+            <Show when={isSessionActive()}>
+              <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
+            </Show>
+            <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
+          </div>
+
+          <div class="ml-auto flex shrink-0 items-center gap-1">
+            <Show when={session.time?.updated}>
+              <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
+                {formatRelativeTime(session.time?.updated ?? Date.now())}
+              </span>
+            </Show>
+
+            <Show when={canManageSession()}>
+              <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-md text-gray-9 transition-colors hover:bg-gray-3/80 hover:text-gray-11"
+                aria-label="Session actions"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setSessionMenuOpen((current) => !current);
+                }}
+              >
+                <MoreHorizontal size={14} />
+              </button>
+            </Show>
+          </div>
+        </div>
+
+        <Show when={canManageSession() && sessionMenuOpen()}>
+          <div
+            ref={(el) => (sessionMenuRef = el)}
+            class="absolute right-0 top-[calc(100%+6px)] z-20 w-48 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Show when={props.onOpenRenameSession}>
+              <button
+                type="button"
+                class="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2"
+                onClick={() => {
+                  setSessionMenuOpen(false);
+                  props.onOpenRenameSession?.();
+                }}
+              >
+                Rename session
+              </button>
+            </Show>
+
+            <Show when={props.onOpenDeleteSession}>
+              <button
+                type="button"
+                class="w-full rounded-xl px-3 py-2 text-left text-sm text-red-11 transition-colors hover:bg-red-1/40"
+                onClick={() => {
+                  setSessionMenuOpen(false);
+                  props.onOpenDeleteSession?.();
+                }}
+              >
+                Delete session
+              </button>
+            </Show>
+          </div>
+        </Show>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -363,40 +486,7 @@ export default function WorkspaceSessionList(props: Props) {
                     fallback={
                       <Show when={group.sessions.length > 0}>
                         <For each={previewSessions(workspace().id, group.sessions)}>
-                          {(session) => {
-                            const isSelected = () => props.selectedSessionId === session.id;
-                            const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
-                            return (
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
-                                  isSelected()
-                                    ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-                                    : "border-transparent text-gray-11 hover:bg-gray-2/60"
-                                }`}
-                                onClick={() => props.onOpenSession(workspace().id, session.id)}
-                                onKeyDown={(event) => {
-                                  if (event.key !== "Enter" && event.key !== " ") return;
-                                  if (event.isComposing || event.keyCode === 229) return;
-                                  event.preventDefault();
-                                  props.onOpenSession(workspace().id, session.id);
-                                }}
-                              >
-                                <div class="mr-2.5 flex min-w-0 items-center gap-2">
-                                  <Show when={isSessionActive()}>
-                                    <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                  </Show>
-                                  <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
-                                </div>
-                                <Show when={session.time?.updated}>
-                                  <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
-                                    {formatRelativeTime(session.time?.updated ?? Date.now())}
-                                  </span>
-                                </Show>
-                              </div>
-                            );
-                          }}
+                          {(session) => renderSessionRow(workspace().id, session)}
                         </For>
                       </Show>
                     }
@@ -422,40 +512,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }
                         >
                           <For each={previewSessions(workspace().id, group.sessions)}>
-                            {(session) => {
-                              const isSelected = () => props.selectedSessionId === session.id;
-                              const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
-                              return (
-                                <div
-                                  role="button"
-                                  tabIndex={0}
-                                  class={`group flex min-h-10 w-full items-center justify-between rounded-[15px] border px-3 py-2.5 transition-[background-color,border-color,box-shadow] ${
-                                    isSelected()
-                                      ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
-                                      : "border-transparent text-gray-11 hover:bg-gray-2/60"
-                                  }`}
-                                  onClick={() => props.onOpenSession(workspace().id, session.id)}
-                                  onKeyDown={(event) => {
-                                    if (event.key !== "Enter" && event.key !== " ") return;
-                                    if (event.isComposing || event.keyCode === 229) return;
-                                    event.preventDefault();
-                                    props.onOpenSession(workspace().id, session.id);
-                                  }}
-                                >
-                                  <div class="mr-2.5 flex min-w-0 items-center gap-2">
-                                    <Show when={isSessionActive()}>
-                                      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
-                                    </Show>
-                                    <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
-                                  </div>
-                                  <Show when={session.time?.updated}>
-                                    <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
-                                      {formatRelativeTime(session.time?.updated ?? Date.now())}
-                                    </span>
-                                  </Show>
-                                </div>
-                              );
-                            }}
+                            {(session) => renderSessionRow(workspace().id, session)}
                           </For>
 
                           <Show when={group.sessions.length === 0 && group.status === "ready"}>

@@ -56,7 +56,6 @@ import {
   MessageCircle,
   Maximize2,
   Minimize2,
-  MoreHorizontal,
   Redo2,
   Search,
   Shield,
@@ -340,7 +339,6 @@ export default function SessionView(props: SessionViewProps) {
     | null = null;
   const [isChatContainerReady, setIsChatContainerReady] = createSignal(false);
   let agentPickerRef: HTMLDivElement | undefined;
-  let sessionMenuRef: HTMLDivElement | undefined;
   let searchInputEl: HTMLInputElement | undefined;
   let scrollFrame: number | undefined;
   let pendingScrollBehavior: ScrollBehavior = "auto";
@@ -355,11 +353,12 @@ export default function SessionView(props: SessionViewProps) {
   const [providerAuthActionBusy, setProviderAuthActionBusy] =
     createSignal(false);
   const [renameModalOpen, setRenameModalOpen] = createSignal(false);
+  const [renameSessionId, setRenameSessionId] = createSignal<string | null>(null);
   const [renameTitle, setRenameTitle] = createSignal("");
   const [renameBusy, setRenameBusy] = createSignal(false);
 
-  const [sessionMenuOpen, setSessionMenuOpen] = createSignal(false);
   const [deleteSessionOpen, setDeleteSessionOpen] = createSignal(false);
+  const [deleteSessionId, setDeleteSessionId] = createSignal<string | null>(null);
   const [deleteSessionBusy, setDeleteSessionBusy] = createSignal(false);
   const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
   const [agentPickerBusy, setAgentPickerBusy] = createSignal(false);
@@ -2791,14 +2790,18 @@ export default function SessionView(props: SessionViewProps) {
     return () => window.clearTimeout(id);
   });
 
-  const selectedSessionTitle = createMemo(() => {
-    const id = props.selectedSessionId;
+  function sessionTitleForId(id: string | null | undefined) {
     if (!id) return "";
     for (const group of props.workspaceSessionGroups) {
       const match = group.sessions.find((session) => session.id === id);
       if (match) return match.title ?? "";
     }
     return "";
+  }
+  const selectedSessionTitle = createMemo(() => {
+    const id = props.selectedSessionId;
+    if (!id) return "";
+    return sessionTitleForId(id);
   });
   const hasWorkspaceConfigured = createMemo(() => props.workspaces.length > 0);
   const showWorkspaceSetupEmptyState = createMemo(
@@ -2812,26 +2815,28 @@ export default function SessionView(props: SessionViewProps) {
     if (renameBusy()) return false;
     const next = renameTitle().trim();
     if (!next) return false;
-    return next !== selectedSessionTitle().trim();
+    return next !== sessionTitleForId(renameSessionId()).trim();
   });
 
   const openRenameModal = () => {
-    setSessionMenuOpen(false);
-    if (!props.selectedSessionId) {
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) {
       setToastMessage("No session selected");
       return;
     }
-    setRenameTitle(selectedSessionTitle());
+    setRenameSessionId(sessionId);
+    setRenameTitle(sessionTitleForId(sessionId));
     setRenameModalOpen(true);
   };
 
   const closeRenameModal = () => {
     if (renameBusy()) return;
     setRenameModalOpen(false);
+    setRenameSessionId(null);
   };
 
   const submitRename = async () => {
-    const sessionId = props.selectedSessionId;
+    const sessionId = renameSessionId();
     if (!sessionId) return;
     const next = renameTitle().trim();
     if (!next || !renameCanSave()) return;
@@ -2839,6 +2844,7 @@ export default function SessionView(props: SessionViewProps) {
     try {
       await props.renameSession(sessionId, next);
       setRenameModalOpen(false);
+      setRenameSessionId(null);
     } catch (error) {
       const message =
         error instanceof Error ? error.message : props.safeStringify(error);
@@ -2849,27 +2855,30 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const openDeleteSessionModal = () => {
-    setSessionMenuOpen(false);
-    if (!props.selectedSessionId) {
+    const sessionId = props.selectedSessionId;
+    if (!sessionId) {
       setToastMessage("No session selected");
       return;
     }
+    setDeleteSessionId(sessionId);
     setDeleteSessionOpen(true);
   };
 
   const closeDeleteSessionModal = () => {
     if (deleteSessionBusy()) return;
     setDeleteSessionOpen(false);
+    setDeleteSessionId(null);
   };
 
   const confirmDeleteSession = async () => {
     if (deleteSessionBusy()) return;
-    const sessionId = props.selectedSessionId;
+    const sessionId = deleteSessionId();
     if (!sessionId) return;
     setDeleteSessionBusy(true);
     try {
       await props.deleteSession(sessionId);
       setDeleteSessionOpen(false);
+      setDeleteSessionId(null);
       setToastMessage("Session deleted");
       // Route away from the deleted session id.
       props.setView("session");
@@ -2914,17 +2923,6 @@ export default function SessionView(props: SessionViewProps) {
       if (!agentPickerRef) return;
       if (agentPickerRef.contains(event.target as Node)) return;
       setAgentPickerOpen(false);
-    };
-    window.addEventListener("mousedown", handler);
-    onCleanup(() => window.removeEventListener("mousedown", handler));
-  });
-
-  createEffect(() => {
-    if (!sessionMenuOpen()) return;
-    const handler = (event: MouseEvent) => {
-      if (!sessionMenuRef) return;
-      if (sessionMenuRef.contains(event.target as Node)) return;
-      setSessionMenuOpen(false);
     };
     window.addEventListener("mousedown", handler);
     onCleanup(() => window.removeEventListener("mousedown", handler));
@@ -3899,6 +3897,7 @@ export default function SessionView(props: SessionViewProps) {
               workspaceSessionGroups={props.workspaceSessionGroups}
               activeWorkspaceId={props.activeWorkspaceId}
               selectedSessionId={props.selectedSessionId}
+              showSessionActions
               sessionStatusById={props.sessionStatusById}
               connectingWorkspaceId={props.connectingWorkspaceId}
               workspaceConnectionStateById={props.workspaceConnectionStateById}
@@ -3907,6 +3906,8 @@ export default function SessionView(props: SessionViewProps) {
               onActivateWorkspace={props.activateWorkspace}
               onOpenSession={openSessionFromList}
               onCreateTaskInWorkspace={createTaskInWorkspace}
+              onOpenRenameSession={openRenameModal}
+              onOpenDeleteSession={openDeleteSessionModal}
               onOpenRenameWorkspace={props.openRenameWorkspace}
               onShareWorkspace={(workspaceId) =>
                 setShareWorkspaceId(workspaceId)
@@ -4085,65 +4086,6 @@ export default function SessionView(props: SessionViewProps) {
                   <Loader2 size={16} class="animate-spin" />
                 </Show>
               </button>
-              <div ref={(el) => (sessionMenuRef = el)} class="relative">
-                <button
-                  type="button"
-                  class="flex h-9 w-9 items-center justify-center rounded-md text-gray-10 transition-colors hover:bg-gray-2/70 hover:text-dls-text disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={!props.selectedSessionId}
-                  title={
-                    props.selectedSessionId
-                      ? "Session actions"
-                      : "Select a session to manage it"
-                  }
-                  aria-label={
-                    props.selectedSessionId
-                      ? "Session actions"
-                      : "Select a session to manage it"
-                  }
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    setSessionMenuOpen((current) => !current);
-                  }}
-                >
-                  <MoreHorizontal size={18} />
-                </button>
-
-                <Show when={sessionMenuOpen() && props.selectedSessionId}>
-                  <div
-                    class="absolute right-0 top-[calc(100%+6px)] z-20 w-52 rounded-[18px] border border-dls-border bg-dls-surface p-1.5 shadow-[var(--dls-shell-shadow)]"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      class="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2 disabled:opacity-60"
-                      onClick={() => {
-                        setSessionMenuOpen(false);
-                        void compactSessionHistory();
-                      }}
-                      disabled={
-                        !canCompactSession() || historyActionBusy() !== null
-                      }
-                    >
-                      Compact session context
-                    </button>
-                    <button
-                      type="button"
-                      class="w-full rounded-xl px-3 py-2 text-left text-sm text-gray-11 transition-colors hover:bg-gray-2"
-                      onClick={openRenameModal}
-                    >
-                      Rename session
-                    </button>
-                    <button
-                      type="button"
-                      class="w-full rounded-xl px-3 py-2 text-left text-sm text-red-11 transition-colors hover:bg-red-1/40"
-                      onClick={openDeleteSessionModal}
-                    >
-                      Delete session
-                    </button>
-                  </div>
-                </Show>
-              </div>
             </div>
           </header>
 
@@ -4875,8 +4817,8 @@ export default function SessionView(props: SessionViewProps) {
         open={deleteSessionOpen()}
         title="Delete session?"
         message={
-          selectedSessionTitle().trim()
-            ? `This will permanently delete \"${selectedSessionTitle().trim()}\" and its messages.`
+          sessionTitleForId(deleteSessionId()).trim()
+            ? `This will permanently delete \"${sessionTitleForId(deleteSessionId()).trim()}\" and its messages.`
             : "This will permanently delete the selected session and its messages."
         }
         confirmLabel={deleteSessionBusy() ? "Deleting..." : "Delete"}
