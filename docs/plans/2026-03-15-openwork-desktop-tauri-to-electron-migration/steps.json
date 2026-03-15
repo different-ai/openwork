@@ -85,7 +85,7 @@
         "App startup reaches a controlled main-process bootstrap path.",
         "No Tauri runtime is required for the scaffold to exist."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "008",

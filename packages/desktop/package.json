@@ -8,10 +8,14 @@
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "build": "tauri build",
-    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs"
+    "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
+    "typecheck:electron": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0"
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/node": "^22.10.2",
+    "electron": "^35.0.0",
+    "typescript": "^5.6.3"
   },
   "packageManager": "pnpm@10.27.0"
 }

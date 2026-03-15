@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:38 - Step 007 - Scaffold Electron main entrypoint
+
+- `packages/desktop/tsconfig.json` plus `pnpm --filter @different-ai/openwork typecheck:electron` gives the desktop package its own TypeScript verification path, so later Electron-main steps no longer need to piggyback on another workspace package's compiler setup.
+- `pnpm install` added `electron@35.7.5`, but pnpm's build-script approval flow skipped Electron's postinstall download in this environment; actual Electron runtime execution may require approving that build later with `pnpm approve-builds`.
+
 ## 2026-03-15 10:35 - Step 006 - Create Electron event bus substrate
 
 - The early Electron event bus can stay decoupled from `BrowserWindow` by exposing typed event subscriptions plus separately registered renderer sinks; later main bootstrap can wire `webContents.send` in as just another sink.
