@@ -14,6 +14,7 @@ import { createEngineService, registerEngineIpc } from "./services/engine-servic
 import { createOrchestratorService, registerOrchestratorIpc } from "./services/orchestrator-service";
 import { createOpenworkServerService, registerOpenworkServerIpc } from "./services/openwork-server-service";
 import { createObsidianService, registerObsidianIpc } from "./services/obsidian-service";
+import { createOpencodeAdminService, registerOpencodeAdminIpc } from "./services/opencode-admin-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createRouterService, registerRouterIpc } from "./services/router-service";
 import { createSchedulerService, registerSchedulerIpc } from "./services/scheduler-service";
@@ -141,6 +142,7 @@ export async function bootstrapMainProcess() {
   registerCommandFileIpc(createCommandFileService());
   registerConfigIpc(createConfigService());
   registerObsidianIpc(createObsidianService());
+  registerOpencodeAdminIpc(createOpencodeAdminService());
   registerOrchestratorIpc(
     createOrchestratorService({
       emitSandboxProgress: (event) => {

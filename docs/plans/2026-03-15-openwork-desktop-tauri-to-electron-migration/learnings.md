@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:09 - Step 039 - Implement OpenCode admin wrapper service
+
+- The admin wrapper layer should validate in main before it ever reaches a subprocess: `projectDir` must resolve inside an authorized local root, and `serverName` should keep the same conservative MCP-name validation the renderer already expects.
+- Reusing the engine binary-resolution logic for admin commands keeps `db migrate` and `mcp auth` aligned with the same sidecar/PATH/custom-binary selection rules instead of inventing a second OpenCode binary policy.
+
 ## 2026-03-15 15:07 - Step 038 - Implement scheduler list and delete service
 
 - Scheduler state is mostly file-based, so Electron can preserve parity without a separate daemon: read scoped and legacy JSON job files first, then perform OS-specific uninstall cleanup (`launchctl` or `systemctl`) only when deleting.

@@ -167,8 +167,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       deleteJob: (input) => invokeDesktopChannel(IPC_CHANNELS.scheduler("deleteJob"), input),
     },
     opencode: {
-      dbMigrate: notImplemented("opencode.dbMigrate"),
-      mcpAuth: notImplemented("opencode.mcpAuth"),
+      dbMigrate: (input) => invokeDesktopChannel(IPC_CHANNELS.opencode("dbMigrate"), input),
+      mcpAuth: (input) => invokeDesktopChannel(IPC_CHANNELS.opencode("mcpAuth"), input),
     },
   };
 }

@@ -437,7 +437,7 @@
         "MCP auth still works from the app.",
         "Main validates inputs before invoking any privileged command."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "040",
