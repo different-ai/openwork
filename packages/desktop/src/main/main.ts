@@ -13,6 +13,7 @@ import { createEngineService, registerEngineIpc } from "./services/engine-servic
 import { createOrchestratorService, registerOrchestratorIpc } from "./services/orchestrator-service";
 import { createOpenworkServerService, registerOpenworkServerIpc } from "./services/openwork-server-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
+import { createRouterService, registerRouterIpc } from "./services/router-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
 import { createSkillService, registerSkillIpc } from "./services/skill-service";
@@ -138,6 +139,7 @@ export async function bootstrapMainProcess() {
     }),
   );
   registerOpenworkServerIpc(openworkServerService);
+  registerRouterIpc(createRouterService());
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;

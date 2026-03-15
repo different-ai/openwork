@@ -382,7 +382,7 @@
         "The router DTOs remain compatible with current UI usage.",
         "No Rust process manager remains required for router lifecycle."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "035",

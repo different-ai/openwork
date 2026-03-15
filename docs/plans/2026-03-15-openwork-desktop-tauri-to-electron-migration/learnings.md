@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 14:58 - Step 034 - Implement opencode-router lifecycle service
+
+- The router shell fits the same Electron service pattern as engine/openwork-server: keep a child-process-backed state snapshot for `info`, but use the router CLI's `status --json` output to preserve the richer identity/channel DTO used by the UI.
+- Router startup reliability depends on separating two concerns: process supervision with log capture, and health-port polling with retry-on-port-collision when the caller did not pin a port explicitly.
+
 ## 2026-03-15 14:12 - Step 033 - Implement local OpenWork server lifecycle service
 
 - The local OpenWork server service can stay thin if it derives restart inputs from the current engine state: project directory, OpenCode base URL, and auth fields are already the core contract the existing UI expects.
