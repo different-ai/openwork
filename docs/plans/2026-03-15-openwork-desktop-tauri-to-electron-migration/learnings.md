@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:52 - Step 014 - Implement path helper service
+
+- For file-system helpers, validating for null bytes without trimming is safer than normalizing aggressively: legitimate path segments can contain leading or trailing spaces, and the renderer already decides when user-input cleanup is appropriate.
+- Returning `""` for an empty join segment list avoids Electron/Node's `path.join()` default of `"."`, which would be surprising if a caller expects "no path" rather than the current directory sentinel.
+
 ## 2026-03-15 10:51 - Step 013 - Implement shell opener and reveal service
 
 - Electron's shell APIs split cleanly into URL and path flows, so keeping `openExternal` behind protocol validation and `openPath`/`showItemInFolder` behind absolute-path validation preserves the least-privilege boundary without complicating the renderer API.

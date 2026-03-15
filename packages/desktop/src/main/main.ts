@@ -2,6 +2,7 @@ import { app, type BrowserWindow } from "electron";
 import { createDesktopEventBus } from "./services/event-bus";
 import { createDefaultAppService, registerAppIpc } from "./services/app-service";
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
+import { createPathService, registerPathIpc } from "./services/path-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
 import { createWindowService, registerWindowIpc } from "./services/window-service";
 import { createMainWindow, hasOpenWindows, loadMainWindow } from "./window/main-window";
@@ -56,6 +57,7 @@ export async function bootstrapMainProcess() {
       getMainWindow: () => context.mainWindow,
     }),
   );
+  registerPathIpc(createPathService());
   registerShellIpc(createShellService());
 
   app.on("activate", () => {

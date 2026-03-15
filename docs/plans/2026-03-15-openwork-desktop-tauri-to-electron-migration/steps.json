@@ -162,7 +162,7 @@
         "join semantics are available through a typed preload method.",
         "Tilde expansion works for workspace path inputs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "015",

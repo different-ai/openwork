@@ -56,10 +56,10 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       revealItemInDir: (input) => invokeDesktopChannel<void>(IPC_CHANNELS.shell("revealItemInDir"), input),
     },
     paths: {
-      home: notImplemented("paths.home"),
-      downloads: notImplemented("paths.downloads"),
-      join: notImplemented("paths.join"),
-      expandUser: notImplemented("paths.expandUser"),
+      home: () => invokeDesktopChannel<string>(IPC_CHANNELS.paths("home")),
+      downloads: () => invokeDesktopChannel<string>(IPC_CHANNELS.paths("downloads")),
+      join: (input) => invokeDesktopChannel<string>(IPC_CHANNELS.paths("join"), input),
+      expandUser: (input) => invokeDesktopChannel<string>(IPC_CHANNELS.paths("expandUser"), input),
     },
     deepLinks: {
       getPending: notImplemented("deepLinks.getPending"),
