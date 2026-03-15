@@ -94,8 +94,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       addAuthorizedRoot: notImplemented("workspace.addAuthorizedRoot"),
       openworkRead: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("openworkRead"), input),
       openworkWrite: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("openworkWrite"), input),
-      exportConfig: notImplemented("workspace.exportConfig"),
-      importConfig: notImplemented("workspace.importConfig"),
+      exportConfig: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("exportConfig"), input),
+      importConfig: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("importConfig"), input),
       onReloadRequired: notImplementedSubscription<ReloadRequiredEvent>("workspace.onReloadRequired"),
     },
     commandFiles: {

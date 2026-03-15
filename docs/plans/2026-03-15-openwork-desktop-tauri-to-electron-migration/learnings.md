@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:14 - Step 022 - Implement workspace archive import/export
+
+- The workspace archive path is easiest to keep compatible when the service itself owns both halves: export only the allowed config files plus `manifest.json`, and import only `opencode.json` / `.opencode/**` entries after a strict archive-path safety check.
+- Rewriting imported `authorizedRoots` to `[targetDir]` is an important portability fix, not just bookkeeping; otherwise imported local workspaces keep stale source-machine paths and immediately violate later authorization checks.
+
 ## 2026-03-15 11:12 - Step 021 - Implement workspace OpenWork config read and write
 
 - Treating a missing `.opencode/openwork.json` as a generated default with `authorizedRoots: [workspacePath]` preserves the current desktop behavior and keeps later authorization mutations simple.

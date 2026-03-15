@@ -250,7 +250,7 @@
         "Workspace import can restore a worker configuration into a target directory.",
         "The workflow still integrates cleanly with save and pick dialogs."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "023",
