@@ -1,0 +1,564 @@
+{
+  "planFile": "docs/plans/2026-03-15-openwork-desktop-tauri-to-electron-migration.md",
+  "supportingPlanFiles": [
+    "docs/plans/2026-03-15-openwork-electron-preload-main-api.md"
+  ],
+  "notes": [
+    "Each step is intended to be small enough for a focused subagent run.",
+    "Before starting any step, the agent must read learnings.md in this folder.",
+    "After completing a step, the agent should prepend any durable new learnings to learnings.md if there are any.",
+    "completed stays false until a human or orchestrating agent verifies the step is done."
+  ],
+  "steps": [
+    {
+      "serialNumber": "001",
+      "name": "Freeze canonical migration docs",
+      "description": "Make the main migration audit and the Electron preload/main API spec the canonical references for the migration. Add any missing cross-links or scope notes so later subagents are working from one agreed source of truth.",
+      "successFactors": [
+        "The migration audit is clearly marked as the program-level plan.",
+        "The Electron API spec is clearly marked as the contract-level plan.",
+        "A later subagent can discover both docs without repo archaeology."
+      ],
+      "completed": true
+    },
+    {
+      "serialNumber": "002",
+      "name": "Extract shared desktop DTO module",
+      "description": "Move the shared request/response and state types out of the Tauri-specific wrapper file into an Electron-neutral contract module. Keep field names and semantics unchanged so the renderer migration has a stable typing layer.",
+      "successFactors": [
+        "Shared desktop types no longer live only in the Tauri wrapper file.",
+        "The extracted module is Electron-neutral in naming and location.",
+        "No type shape changes are introduced in this extraction step."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "003",
+      "name": "Define desktop runtime detection primitive",
+      "description": "Replace the current Tauri-specific runtime detection strategy with a generic desktop capability probe based on the future preload global. Keep existing web behavior intact.",
+      "successFactors": [
+        "Renderer runtime detection no longer depends on __TAURI_INTERNALS__.",
+        "Desktop and web mode can still be distinguished reliably.",
+        "No Tauri-specific detection logic remains in the shared runtime helper."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "004",
+      "name": "Add preload global type declarations",
+      "description": "Create the TypeScript declarations for window.openworkDesktop and its event unsubscribe type. This should mirror the agreed contract doc exactly so renderer code can compile against the future Electron bridge.",
+      "successFactors": [
+        "window.openworkDesktop is declared in a shared type location.",
+        "The declared API matches the contract doc closely.",
+        "Renderer code can import the types without importing Electron."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "005",
+      "name": "Create IPC naming and validation helpers",
+      "description": "Introduce the centralized constants and helper utilities for openwork:<namespace>:<method> channels and openwork:event:<name> events. Add input validation helpers for common primitives like paths, URLs, workspace IDs, and server names.",
+      "successFactors": [
+        "IPC channel names are no longer ad hoc strings spread across files.",
+        "Common validation helpers exist for privileged arguments.",
+        "Future main/preload services can share the same naming and validation layer."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "006",
+      "name": "Create Electron event bus substrate",
+      "description": "Implement the shared event bus layer in Electron main that will fan out deep-link, updater, reload, and sandbox progress events to subscribed renderer listeners. Keep the API typed and individually unsubscribable.",
+      "successFactors": [
+        "Main process has one reusable event-bus abstraction.",
+        "Renderer subscriptions can be individually removed.",
+        "The event layer is typed and not based on raw string payload assumptions."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "007",
+      "name": "Scaffold Electron main entrypoint",
+      "description": "Create the Electron main-process entry file and minimal startup flow. Do not port features yet; just establish the new desktop process root and app lifecycle shell.",
+      "successFactors": [
+        "There is a clear Electron main entry file in packages/desktop.",
+        "App startup reaches a controlled main-process bootstrap path.",
+        "No Tauri runtime is required for the scaffold to exist."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "008",
+      "name": "Scaffold Electron preload entrypoint",
+      "description": "Create the Electron preload entry file that will expose window.openworkDesktop through contextBridge. Stub the namespaces without implementing behavior yet.",
+      "successFactors": [
+        "A preload entry file exists and is wired to the BrowserWindow bootstrap.",
+        "window.openworkDesktop is exposed through contextBridge.",
+        "The preload file does not leak raw Electron or Node primitives."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "009",
+      "name": "Bootstrap BrowserWindow creation",
+      "description": "Create the initial BrowserWindow bootstrap with the right security defaults, renderer URL loading rules, and preload wiring. Match current desktop sizing and title behavior where reasonable.",
+      "successFactors": [
+        "BrowserWindow uses contextIsolation and nodeIntegration false.",
+        "Preload is wired into the main window.",
+        "Window title and baseline dimensions match current desktop expectations."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "010",
+      "name": "Implement app metadata and relaunch service",
+      "description": "Build the app service methods for version, build metadata, relaunch, and the destructive dev-config nuke-and-exit flow. Mirror current behavior without exposing raw app access to the renderer.",
+      "successFactors": [
+        "Renderer can request app version and build info through preload.",
+        "App relaunch works through Electron main rather than plugin-process.",
+        "The dev-config nuke flow remains possible without Tauri."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "011",
+      "name": "Implement window zoom and decorations service",
+      "description": "Port the desktop-specific zoom and decorations controls to Electron main. Support the current font zoom workflow and the window decorations toggle used by Linux tiling window setups.",
+      "successFactors": [
+        "Renderer can get and set zoom through preload methods.",
+        "Window decorations can be toggled from the renderer-facing API.",
+        "No Tauri webview APIs are left in the zoom path."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "012",
+      "name": "Implement dialogs service",
+      "description": "Port directory picking, file picking, and save-file dialogs to Electron. Preserve current argument shapes closely so higher-level renderer code can migrate with minimal semantic drift.",
+      "successFactors": [
+        "Directory, file, and save dialogs are available through preload.",
+        "Current title/defaultPath/filter semantics still work.",
+        "Renderer no longer imports any dialog plugin directly."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "013",
+      "name": "Implement shell opener and reveal service",
+      "description": "Port openExternal, openPath, and revealItemInDir behavior to Electron shell helpers. Validate input paths and URLs in main before performing the action.",
+      "successFactors": [
+        "External URLs open through a preload-safe method.",
+        "Local files and folders can be opened and revealed from the renderer.",
+        "Path validation happens in main instead of relying on renderer trust."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "014",
+      "name": "Implement path helper service",
+      "description": "Port the small but important path helpers used by the renderer: home dir, downloads dir, path join, and tilde expansion. Keep behavior cross-platform and deterministic.",
+      "successFactors": [
+        "Renderer can resolve home and downloads directories without Tauri path APIs.",
+        "join semantics are available through a typed preload method.",
+        "Tilde expansion works for workspace path inputs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "015",
+      "name": "Implement deep-link registration and pending queue",
+      "description": "Create the Electron deep-link service that owns protocol registration, startup URL capture, second-instance/open-url handling, and a pending URL queue that the renderer can read and subscribe to.",
+      "successFactors": [
+        "Electron main owns openwork:// deep-link ingress.",
+        "The renderer can fetch pending deep links and subscribe to runtime ones.",
+        "Duplicate event delivery is controlled similarly to the current app behavior."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "016",
+      "name": "Implement updater environment and check service",
+      "description": "Create the updater service methods for environment support detection and update checks. Keep it separate from download/install so the renderer can preserve its current state transitions.",
+      "successFactors": [
+        "Renderer can ask whether updates are supported in the current environment.",
+        "Update checks return stable structured results.",
+        "No Tauri updater plugin APIs remain in the update check path."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "017",
+      "name": "Implement updater download and install event flow",
+      "description": "Add the download/install/relaunch half of the updater service plus status events for checking, downloading progress, ready, and error. Match the needs of the existing renderer state machine in system-state.ts.",
+      "successFactors": [
+        "Download progress is emitted as structured status events.",
+        "Install and relaunch can happen without renderer plugin objects.",
+        "The current renderer update UX can be rebuilt without semantic gaps."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "018",
+      "name": "Implement workspace registry persistence",
+      "description": "Port the local workspace state store from the Rust desktop shell into an Electron-owned persistence layer under userData. Keep active workspace tracking and migration safety in mind.",
+      "successFactors": [
+        "Workspace list and active workspace state persist across app restarts.",
+        "Persistence lives under Electron-controlled app data paths.",
+        "No Rust-managed workspace state remains necessary."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "019",
+      "name": "Implement local workspace create forget and activate flows",
+      "description": "Port the local workspace bootstrap, create, forget, set-active, and display-name update flows. Keep seeded workspace behavior aligned with current desktop behavior.",
+      "successFactors": [
+        "Local workspaces can be bootstrapped, created, renamed, selected, and forgotten.",
+        "Existing renderer workspace UX has equivalent backend capabilities.",
+        "The new implementation does not depend on Rust commands."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "020",
+      "name": "Implement remote workspace create and update flows",
+      "description": "Port the remote workspace record creation and update flows, including OpenWork and OpenCode-specific metadata fields and sandbox metadata. Keep compatibility with current workspace DTOs.",
+      "successFactors": [
+        "Remote workspaces can be created and updated with the existing metadata fields.",
+        "OpenWork-specific token and workspace metadata are preserved.",
+        "Sandbox metadata still round-trips through the workspace model."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "021",
+      "name": "Implement workspace openwork config read and write",
+      "description": "Port the .opencode/openwork.json read and write helpers into Electron main or a shared desktop file service. Preserve current file shapes and validation semantics.",
+      "successFactors": [
+        "Renderer can read and write workspace OpenWork config without Tauri commands.",
+        "The config schema and field behavior remain intact.",
+        "Errors are surfaced in a stable structured way."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "022",
+      "name": "Implement workspace import and export archives",
+      "description": "Port the workspace config archive export and import logic, including the openwork-workspace file workflow. Keep the save dialog and archive semantics aligned with current UX.",
+      "successFactors": [
+        "Workspace export still produces the expected archive format.",
+        "Workspace import can restore a worker configuration into a target directory.",
+        "The workflow still integrates cleanly with save and pick dialogs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "023",
+      "name": "Implement authorized roots mutation",
+      "description": "Port the workspace authorized roots update logic so desktop users can still add allowed folders to a local workspace config. Keep path normalization and safety checks in main.",
+      "successFactors": [
+        "Authorized root additions still work for local workspaces.",
+        "Path normalization is handled centrally.",
+        "Renderer no longer depends on Rust commands for this mutation."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "024",
+      "name": "Implement command file CRUD service",
+      "description": "Port workspace/global command markdown listing, writing, and deletion into Electron main. Keep scope resolution and projectDir behavior the same as today.",
+      "successFactors": [
+        "Workspace and global command files can be listed, written, and deleted.",
+        "Current scope semantics are preserved.",
+        "The renderer can retire the corresponding Tauri wrappers."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "025",
+      "name": "Implement opencode config CRUD service",
+      "description": "Port project/global opencode.json and opencode.jsonc read/write flows. Keep error behavior understandable and preserve any current config resolution logic.",
+      "successFactors": [
+        "Project and global config reads still work.",
+        "Project and global config writes still work.",
+        "No Tauri command is needed for config mutation anymore."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "026",
+      "name": "Implement local skills CRUD and template install service",
+      "description": "Port the local skills list/read/write/uninstall and install-template flows. Preserve project-local and global scope behavior and existing card/content DTOs.",
+      "successFactors": [
+        "Skill cards and skill content can be listed and read through Electron.",
+        "Skills can be written, uninstalled, and installed from a template.",
+        "The UI no longer depends on Rust-backed skill commands."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "027",
+      "name": "Implement skill import and opkg install service",
+      "description": "Port the desktop-only importSkill and opkgInstall flows. Keep process execution constrained and explicit in Electron main.",
+      "successFactors": [
+        "Skill import from a source directory still works.",
+        "opkg install still works from the desktop shell.",
+        "No generic arbitrary process execution is exposed to the renderer."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "028",
+      "name": "Implement engine binary resolution and doctor service",
+      "description": "Port the logic that resolves the OpenCode binary, detects sidecar vs PATH usage, probes version/help output, and reports doctor results. Keep it deterministic and testable.",
+      "successFactors": [
+        "Doctor output matches the current EngineDoctorResult shape.",
+        "Sidecar and PATH resolution both still work.",
+        "The logic no longer depends on Rust helpers."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "029",
+      "name": "Implement engine lifecycle service",
+      "description": "Port engine start, stop, restart, info, and install flows into an Electron-managed child-process supervisor. Preserve runtime selection and auth field behavior.",
+      "successFactors": [
+        "OpenCode can still be started, stopped, restarted, and inspected from the app.",
+        "Existing EngineInfo semantics are preserved.",
+        "Cleanup on app exit is handled in Electron main."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "030",
+      "name": "Implement orchestrator status activate and dispose service",
+      "description": "Port the lighter orchestrator lifecycle flows: status queries, workspace activation, and instance disposal. Keep the returned workspace and daemon state aligned with today\'s DTOs.",
+      "successFactors": [
+        "Renderer can still query orchestrator status.",
+        "Workspace activation and instance disposal still work.",
+        "The implementation is Electron-owned instead of Rust-owned."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "031",
+      "name": "Implement detached orchestrator start and sandbox progress events",
+      "description": "Port the detached host startup flow and structured sandbox progress event emission. Match the current event payload closely so the workspace context can be migrated cleanly.",
+      "successFactors": [
+        "Detached orchestrator start still returns the expected host metadata.",
+        "Sandbox progress events can be subscribed to through preload.",
+        "The current sandbox create UX has a drop-in event replacement."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "032",
+      "name": "Implement sandbox doctor stop cleanup and debug probe",
+      "description": "Port the Docker sandbox diagnostic and cleanup helpers. Keep candidate binary probing, container cleanup, and debug payload detail useful for future support flows.",
+      "successFactors": [
+        "Sandbox doctor still reports readiness and debug context.",
+        "Sandbox stop and container cleanup still work.",
+        "Debug probe still captures enough detail for troubleshooting."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "033",
+      "name": "Implement local OpenWork server lifecycle service",
+      "description": "Port openwork-server info and restart into Electron main. Preserve connect URL, LAN URL, mDNS URL, token, PID, and stderr/stdout field behavior.",
+      "successFactors": [
+        "The app can still inspect local OpenWork server state.",
+        "The app can still restart the local OpenWork server.",
+        "Returned info remains compatible with current renderer usage."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "034",
+      "name": "Implement opencode-router lifecycle service",
+      "description": "Port router info, start, stop, restart, and detailed status flows into Electron main. Preserve current health-port and identity/channel semantics.",
+      "successFactors": [
+        "Router start/stop/restart/info/status all still work.",
+        "The router DTOs remain compatible with current UI usage.",
+        "No Rust process manager remains required for router lifecycle."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "035",
+      "name": "Implement router localhost groups config path",
+      "description": "Decide whether plain renderer fetch is sufficient for the router groups config endpoint; if not, add a narrowly scoped Electron bridge for localhost-only access. Keep the final API shape compatible with current renderer callers.",
+      "successFactors": [
+        "Groups-enabled reads and writes still work.",
+        "The solution does not introduce an unrestricted HTTP proxy.",
+        "The chosen ownership model is documented in code comments or adjacent docs."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "036",
+      "name": "Implement cache and app-state reset service",
+      "description": "Port resetOpenworkState and resetOpencodeCache into Electron main. Preserve destructive safeguards and keep the renderer-facing API small and explicit.",
+      "successFactors": [
+        "OpenWork state reset still works for onboarding and all modes.",
+        "OpenCode cache reset still reports removed/missing/errors.",
+        "No generic file deletion API is exposed to the renderer."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "037",
+      "name": "Implement Obsidian integration service",
+      "description": "Port Obsidian availability probing, open-in-Obsidian, and mirror file read/write. Keep the feature behavior intact even if the underlying implementation changes per platform.",
+      "successFactors": [
+        "The app can still detect whether Obsidian is available.",
+        "The app can still open a file in Obsidian.",
+        "Mirror file read/write semantics are preserved."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "038",
+      "name": "Implement scheduler list and delete service",
+      "description": "Port local scheduler job listing and deletion into an Electron-owned service or a delegated scheduler package integration. Preserve current ScheduledJob shapes.",
+      "successFactors": [
+        "Scheduled jobs can still be listed for the desktop source.",
+        "Scheduled jobs can still be deleted from the UI.",
+        "The current ScheduledJob DTO remains usable by the renderer."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "039",
+      "name": "Implement OpenCode admin wrapper service",
+      "description": "Port the db migrate and MCP auth helper actions that currently wrap OpenCode CLI behavior. Keep server-name validation and project-dir validation in the main process.",
+      "successFactors": [
+        "db migrate still works from the app.",
+        "MCP auth still works from the app.",
+        "Main validates inputs before invoking any privileged command."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "040",
+      "name": "Create temporary compatibility shim for lib tauri",
+      "description": "Reimplement packages/app/src/app/lib/tauri.ts on top of the new preload API as a temporary compatibility layer. Keep the existing exported function names so renderer migration can be incremental.",
+      "successFactors": [
+        "Existing wrapper callers can run through Electron without broad renderer rewrites.",
+        "The wrapper no longer imports @tauri-apps/api or Tauri plugins.",
+        "The file is now acting as a compatibility shim rather than a Tauri bridge."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "041",
+      "name": "Cut over runtime checks and desktop bootstrap imports",
+      "description": "Remove direct Tauri runtime checks and plugin imports from the top-level bootstrap files, especially index.tsx and shared runtime utilities. Keep desktop routing and restart/open-link behavior intact.",
+      "successFactors": [
+        "index.tsx no longer dynamically imports Tauri plugins.",
+        "Shared runtime helpers are Electron-neutral.",
+        "Desktop bootstrap behavior still works from the renderer perspective."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "042",
+      "name": "Cut over app update deep-link and zoom flows",
+      "description": "Replace the direct Tauri usage in app.tsx and system-state.ts with the new app, updates, deepLinks, and window preload namespaces. Keep the current UX state transitions working.",
+      "successFactors": [
+        "app.tsx no longer imports Tauri app, event, webview, process, or deep-link APIs.",
+        "system-state.ts no longer imports the updater or process plugins directly.",
+        "Update, deep-link, and zoom UX still have full parity."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "043",
+      "name": "Cut over workspace and session related renderer code",
+      "description": "Migrate the desktop-specific logic in workspace.ts, extensions.ts, session.tsx, settings.tsx, mcp.tsx, dashboard.tsx, and part-view.tsx to the preload API and compatibility shim. Keep path, reveal, dialog, and sandbox event behavior intact.",
+      "successFactors": [
+        "These renderer files no longer import Tauri packages directly.",
+        "Dialogs, path joins, reveal/open actions, and sandbox events still work.",
+        "The workspace and session UX remain functionally complete."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "044",
+      "name": "Cut over auth modal and small shell-action components",
+      "description": "Remove remaining direct Tauri opener imports from the smaller components such as provider-auth-modal and mcp-auth-modal. Route them through the shared shell namespace.",
+      "successFactors": [
+        "No leaf UI component imports a Tauri plugin directly.",
+        "Auth URLs still open in the external browser.",
+        "The small component layer is fully Electron-neutral."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "045",
+      "name": "Replace desktop packaging and sidecar resource flow",
+      "description": "Replace the Tauri packaging layout with an Electron packaging strategy, including unpacked executable resources, protocol registration, icons, entitlements, and sidecar staging. Preserve all shipped sidecars the product still requires.",
+      "successFactors": [
+        "Electron packaging configuration exists for desktop targets.",
+        "Required sidecars are staged in Electron-friendly resource locations.",
+        "No Tauri bundle configuration is required for packaged desktop builds."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "046",
+      "name": "Replace dev build CI and release workflows",
+      "description": "Port the dev/build/release automation from Tauri and Cargo to Electron-native tooling. Cover desktop CI builds, release publishing, updater metadata generation, signing/notarization, and artifact taxonomy.",
+      "successFactors": [
+        "Desktop CI no longer installs Rust or runs cargo test for the desktop shell.",
+        "Release workflows build and publish Electron artifacts correctly.",
+        "Updater metadata is generated in the Electron-compatible format."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "047",
+      "name": "Remove Tauri Rust and Cargo artifacts",
+      "description": "After Electron parity is in place, remove the obsolete Tauri/Rust desktop shell files, dependencies, configs, scripts, and generated schemas. This is the cleanup step that makes the migration final instead of hybrid.",
+      "successFactors": [
+        "No runtime path depends on Tauri or Rust desktop code anymore.",
+        "Cargo.toml Cargo.lock src-tauri configs and Tauri plugin dependencies are removed where appropriate.",
+        "The repository no longer has stale desktop shell artifacts that suggest a hybrid architecture."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "048",
+      "name": "Update contributor docs skills and architecture docs",
+      "description": "Rewrite README, AGENTS, ARCHITECTURE, RELEASE, skill docs, and any desktop setup instructions so the documented system matches the Electron reality. Remove Tauri and Rust setup references from the desktop path.",
+      "successFactors": [
+        "Contributor setup no longer references Rust, Cargo, Tauri CLI, or WebKitGTK for the desktop shell.",
+        "Architecture docs describe Electron preload/main instead of Tauri commands and events.",
+        "Internal skills and release docs reflect the new desktop stack."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "049",
+      "name": "Run Tauri artifact parity audit",
+      "description": "Search the repo for remaining Tauri, src-tauri, Cargo, plugin, and Tauri-origin references that should no longer exist after the migration. Triage the remaining matches into valid historical docs versus true leftovers.",
+      "successFactors": [
+        "A repo-wide audit of Tauri-specific references is performed after implementation.",
+        "Every remaining Tauri reference is either intentionally historical or removed.",
+        "The desktop product path is clean of accidental Tauri leftovers."
+      ],
+      "completed": false
+    },
+    {
+      "serialNumber": "050",
+      "name": "Run full desktop parity verification",
+      "description": "Verify the migrated Electron desktop app end to end: local engine flows, workspace creation, remote connect, updater gating, deep links, router, scheduler, config mutation, skills, command files, Docker sandbox tools, and Obsidian integration as applicable. Capture evidence for the migration PR.",
+      "successFactors": [
+        "All desktop-critical user flows have an explicit verification pass.",
+        "Any feature gaps are documented before the migration is considered complete.",
+        "Review artifacts exist to prove Electron parity, not just build success."
+      ],
+      "completed": false
+    }
+  ]
+}
