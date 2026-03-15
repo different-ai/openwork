@@ -5,10 +5,15 @@
   "opencodeVersion": "1.2.26",
   "opencodeRouterVersion": "0.11.156",
   "type": "module",
+  "main": "dist/main/main.js",
   "scripts": {
     "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
     "build": "tauri build",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
+    "prepare:electron-resources": "node ./scripts/prepare-electron-resources.mjs",
+    "build:main": "tsc -p tsconfig.build.json",
+    "build:electron": "pnpm -w build:ui && pnpm prepare:electron-resources && pnpm build:main && electron-builder --config electron-builder.yml",
+    "pack:electron": "pnpm -w build:ui && pnpm prepare:electron-resources && pnpm build:main && electron-builder --config electron-builder.yml --dir",
     "typecheck:electron": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
@@ -17,6 +22,7 @@
     "@types/adm-zip": "^0.5.7",
     "adm-zip": "^0.5.16",
     "electron": "^35.0.0",
+    "electron-builder": "^24.13.3",
     "electron-updater": "^6.6.2",
     "jsonc-parser": "^3.2.1",
     "typescript": "^5.6.3"

@@ -1,0 +1,37 @@
+appId: com.differentai.openwork
+productName: OpenWork
+directories:
+  output: release
+files:
+  - dist/**
+  - package.json
+extraResources:
+  - from: ../app/dist
+    to: app-dist
+  - from: resources/sidecars
+    to: sidecars
+protocols:
+  - name: OpenWork
+    schemes:
+      - openwork
+asarUnpack:
+  - resources/sidecars/**
+mac:
+  category: public.app-category.productivity
+  icon: src-tauri/icons/icon.icns
+  entitlements: src-tauri/entitlements.plist
+  hardenedRuntime: true
+  target:
+    - dmg
+    - zip
+win:
+  icon: src-tauri/icons/icon.ico
+  target:
+    - nsis
+linux:
+  icon: src-tauri/icons
+  target:
+    - AppImage
+    - tar.gz
+publish:
+  provider: github

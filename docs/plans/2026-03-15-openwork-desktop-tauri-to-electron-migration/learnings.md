@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:33 - Step 045 - Replace desktop packaging and sidecar resource flow
+
+- The packaging migration can be staged before the final cleanup by introducing an Electron-native build path in parallel: compile main/preload to `dist`, stage sidecars into `resources/sidecars`, and point packaged renderer loading at `process.resourcesPath/app-dist/index.html`.
+- Electron Builder setup is now present, but packaging remains partially gated by pnpm's blocked Electron postinstall approval in this environment; config and scripts can be verified, but a real packaged build still needs the Electron binary download approved.
+
 ## 2026-03-15 15:30 - Step 044 - Cut over auth modal and small shell-action components
 
 - Leaf UI components should not import opener plugins directly once the shell bridge exists; swapping those final auth/browser launches to `window.openworkDesktop.shell.openExternal()` removes the last component-level native dependency without changing UX.

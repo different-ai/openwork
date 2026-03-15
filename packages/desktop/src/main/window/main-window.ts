@@ -37,7 +37,7 @@ export function resolveRendererTarget(): RendererTarget {
 
   return {
     kind: "file",
-    value: resolveSiblingPath("../../../../app/dist/index.html", "../../../app/dist/index.html"),
+    value: path.join(process.resourcesPath, "app-dist", "index.html"),
   };
 }
 

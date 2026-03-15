@@ -503,7 +503,7 @@
         "Required sidecars are staged in Electron-friendly resource locations.",
         "No Tauri bundle configuration is required for packaged desktop builds."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "046",
