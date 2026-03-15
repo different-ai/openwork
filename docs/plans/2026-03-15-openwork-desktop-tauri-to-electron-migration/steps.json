@@ -96,7 +96,7 @@
         "window.openworkDesktop is exposed through contextBridge.",
         "The preload file does not leak raw Electron or Node primitives."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "009",

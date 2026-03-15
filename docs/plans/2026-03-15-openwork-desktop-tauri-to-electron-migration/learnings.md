@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:40 - Step 008 - Scaffold Electron preload entrypoint
+
+- A typed stub preload bridge is a safe intermediate state: `contextBridge.exposeInMainWorld("openworkDesktop", createOpenworkDesktopBridge())` lets renderer/runtime detection switch over early while each namespace can be implemented incrementally in later steps.
+- For broad stubbed method factories in TypeScript, the generic function cast needs to go through `unknown` first (`as unknown as T`) to satisfy `strict` mode.
+
 ## 2026-03-15 10:38 - Step 007 - Scaffold Electron main entrypoint
 
 - `packages/desktop/tsconfig.json` plus `pnpm --filter @different-ai/openwork typecheck:electron` gives the desktop package its own TypeScript verification path, so later Electron-main steps no longer need to piggyback on another workspace package's compiler setup.
