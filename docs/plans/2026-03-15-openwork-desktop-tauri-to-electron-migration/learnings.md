@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:25 - Step 002 - Extract shared desktop DTO module
+
+- `packages/app/src/app/lib/desktop-contract.ts` can become the neutral typing seam while `packages/app/src/app/lib/tauri.ts` re-exports those types, which avoids a broad import churn during the early migration steps.
+- The clean worktree needed `pnpm install --frozen-lockfile` before UI typecheck would run; after install, `pnpm --filter @different-ai/openwork-ui typecheck` succeeds.
+
 ## 2026-03-15 10:20 - Step 001 - Freeze canonical migration docs
 
 - Treat the migration bundle as four linked artifacts: the program plan, the Electron contract, the execution queue, and the shared learnings log.

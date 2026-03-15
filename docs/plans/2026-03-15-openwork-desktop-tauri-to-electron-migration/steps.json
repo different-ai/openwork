@@ -30,7 +30,7 @@
         "The extracted module is Electron-neutral in naming and location.",
         "No type shape changes are introduced in this extraction step."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "003",

@@ -1,140 +1,36 @@
 import { invoke } from "@tauri-apps/api/core";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { isTauriRuntime } from "../utils";
 import { validateMcpServerName } from "../mcp";
+import { isTauriRuntime } from "../utils";
+import type {
+  AppBuildInfo,
+  CacheResetResult,
+  EngineDoctorResult,
+  EngineInfo,
+  ExecResult,
+  LocalSkillCard,
+  LocalSkillContent,
+  ObsidianMirrorFileContent,
+  OpenCodeRouterInfo,
+  OpenCodeRouterStatus,
+  OpenCodeRouterStatusResult,
+  OpencodeCommandDraft,
+  OpencodeConfigFile,
+  OpenworkDockerCleanupResult,
+  OpenworkServerInfo,
+  OrchestratorDetachedHost,
+  OrchestratorStatus,
+  OrchestratorWorkspace,
+  SandboxDebugProbeResult,
+  SandboxDoctorResult,
+  ScheduledJob,
+  UpdaterEnvironment,
+  WorkspaceExportSummary,
+  WorkspaceList,
+  WorkspaceOpenworkConfig,
+} from "./desktop-contract";
 
-export type EngineInfo = {
-  running: boolean;
-  runtime: "direct" | "openwork-orchestrator";
-  baseUrl: string | null;
-  projectDir: string | null;
-  hostname: string | null;
-  port: number | null;
-  opencodeUsername: string | null;
-  opencodePassword: string | null;
-  pid: number | null;
-  lastStdout: string | null;
-  lastStderr: string | null;
-};
-
-export type OpenworkServerInfo = {
-  running: boolean;
-  host: string | null;
-  port: number | null;
-  baseUrl: string | null;
-  connectUrl: string | null;
-  mdnsUrl: string | null;
-  lanUrl: string | null;
-  clientToken: string | null;
-  hostToken: string | null;
-  pid: number | null;
-  lastStdout: string | null;
-  lastStderr: string | null;
-};
-
-export type OrchestratorDaemonState = {
-  pid: number;
-  port: number;
-  baseUrl: string;
-  startedAt: number;
-};
-
-export type OrchestratorOpencodeState = {
-  pid: number;
-  port: number;
-  baseUrl: string;
-  startedAt: number;
-};
-
-export type OrchestratorBinaryInfo = {
-  path: string;
-  source: string;
-  expectedVersion?: string | null;
-  actualVersion?: string | null;
-};
-
-export type OrchestratorBinaryState = {
-  opencode?: OrchestratorBinaryInfo | null;
-};
-
-export type OrchestratorSidecarInfo = {
-  dir?: string | null;
-  baseUrl?: string | null;
-  manifestUrl?: string | null;
-  target?: string | null;
-  source?: string | null;
-  opencodeSource?: string | null;
-  allowExternal?: boolean | null;
-};
-
-export type OrchestratorWorkspace = {
-  id: string;
-  name: string;
-  path: string;
-  workspaceType: string;
-  baseUrl?: string | null;
-  directory?: string | null;
-  createdAt?: number | null;
-  lastUsedAt?: number | null;
-};
-
-export type OrchestratorStatus = {
-  running: boolean;
-  dataDir: string;
-  daemon: OrchestratorDaemonState | null;
-  opencode: OrchestratorOpencodeState | null;
-  cliVersion?: string | null;
-  sidecar?: OrchestratorSidecarInfo | null;
-  binaries?: OrchestratorBinaryState | null;
-  activeId: string | null;
-  workspaceCount: number;
-  workspaces: OrchestratorWorkspace[];
-  lastError: string | null;
-};
-
-export type EngineDoctorResult = {
-  found: boolean;
-  inPath: boolean;
-  resolvedPath: string | null;
-  version: string | null;
-  supportsServe: boolean;
-  notes: string[];
-  serveHelpStatus: number | null;
-  serveHelpStdout: string | null;
-  serveHelpStderr: string | null;
-};
-
-export type WorkspaceInfo = {
-  id: string;
-  name: string;
-  path: string;
-  preset: string;
-  workspaceType: "local" | "remote";
-  remoteType?: "openwork" | "opencode" | null;
-  baseUrl?: string | null;
-  directory?: string | null;
-  displayName?: string | null;
-  openworkHostUrl?: string | null;
-  openworkToken?: string | null;
-  openworkWorkspaceId?: string | null;
-  openworkWorkspaceName?: string | null;
-
-  // Sandbox lifecycle metadata (desktop-managed)
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
-};
-
-export type WorkspaceList = {
-  activeId: string;
-  workspaces: WorkspaceInfo[];
-};
-
-export type WorkspaceExportSummary = {
-  outputPath: string;
-  included: number;
-  excluded: string[];
-};
+export type * from "./desktop-contract";
 
 export async function engineStart(
   projectDir: string,
@@ -282,29 +178,6 @@ export async function workspaceImportConfig(input: {
   });
 }
 
-export type OpencodeCommandDraft = {
-  name: string;
-  description?: string;
-  template: string;
-  agent?: string;
-  model?: string;
-  subtask?: boolean;
-};
-
-export type WorkspaceOpenworkConfig = {
-  version: number;
-  workspace?: {
-    name?: string | null;
-    createdAt?: number | null;
-    preset?: string | null;
-  } | null;
-  authorizedRoots: string[];
-  reload?: {
-    auto?: boolean;
-    resume?: boolean;
-  } | null;
-};
-
 export async function workspaceOpenworkRead(input: {
   workspacePath: string;
 }): Promise<WorkspaceOpenworkConfig> {
@@ -383,13 +256,6 @@ export async function orchestratorInstanceDispose(workspacePath: string): Promis
   return invoke<boolean>("orchestrator_instance_dispose", { workspacePath });
 }
 
-export type AppBuildInfo = {
-  version: string;
-  gitSha?: string | null;
-  buildEpoch?: string | null;
-  openworkDevMode?: boolean;
-};
-
 export async function appBuildInfo(): Promise<AppBuildInfo> {
   return invoke<AppBuildInfo>("app_build_info");
 }
@@ -397,16 +263,6 @@ export async function appBuildInfo(): Promise<AppBuildInfo> {
 export async function nukeOpencodeDevConfigAndExit(): Promise<void> {
   return invoke<void>("nuke_opencode_dev_config_and_exit");
 }
-
-export type OrchestratorDetachedHost = {
-  openworkUrl: string;
-  token: string;
-  hostToken: string;
-  port: number;
-  sandboxBackend?: "docker" | null;
-  sandboxRunId?: string | null;
-  sandboxContainerName?: string | null;
-};
 
 export async function orchestratorStartDetached(input: {
   workspacePath: string;
@@ -424,30 +280,6 @@ export async function orchestratorStartDetached(input: {
   });
 }
 
-export type SandboxDoctorResult = {
-  installed: boolean;
-  daemonRunning: boolean;
-  permissionOk: boolean;
-  ready: boolean;
-  clientVersion?: string | null;
-  serverVersion?: string | null;
-  error?: string | null;
-  debug?: {
-    candidates: string[];
-    selectedBin?: string | null;
-    versionCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    infoCommand?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-  } | null;
-};
-
 export async function sandboxDoctor(): Promise<SandboxDoctorResult> {
   return invoke<SandboxDoctorResult>("sandbox_doctor");
 }
@@ -456,47 +288,9 @@ export async function sandboxStop(containerName: string): Promise<ExecResult> {
   return invoke<ExecResult>("sandbox_stop", { containerName });
 }
 
-export type OpenworkDockerCleanupResult = {
-  candidates: string[];
-  removed: string[];
-  errors: string[];
-};
-
 export async function sandboxCleanupOpenworkContainers(): Promise<OpenworkDockerCleanupResult> {
   return invoke<OpenworkDockerCleanupResult>("sandbox_cleanup_openwork_containers");
 }
-
-export type SandboxDebugProbeResult = {
-  startedAt: number;
-  finishedAt: number;
-  runId: string;
-  workspacePath: string;
-  ready: boolean;
-  doctor: SandboxDoctorResult;
-  detachedHost?: OrchestratorDetachedHost | null;
-  dockerInspect?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  dockerLogs?: {
-    status: number;
-    stdout: string;
-    stderr: string;
-  } | null;
-  cleanup: {
-    containerName?: string | null;
-    containerRemoved: boolean;
-    removeResult?: {
-      status: number;
-      stdout: string;
-      stderr: string;
-    } | null;
-    workspaceRemoved: boolean;
-    errors: string[];
-  };
-  error?: string | null;
-};
 
 export async function sandboxDebugProbe(): Promise<SandboxDebugProbeResult> {
   return invoke<SandboxDebugProbeResult>("sandbox_debug_probe");
@@ -567,51 +361,6 @@ export async function saveFile(options?: {
   });
 }
 
-export type ExecResult = {
-  ok: boolean;
-  status: number;
-  stdout: string;
-  stderr: string;
-};
-
-export type ScheduledJobRun = {
-  prompt?: string;
-  command?: string;
-  arguments?: string;
-  files?: string[];
-  agent?: string;
-  model?: string;
-  variant?: string;
-  title?: string;
-  share?: boolean;
-  continue?: boolean;
-  session?: string;
-  runFormat?: string;
-  attachUrl?: string;
-  port?: number;
-};
-
-export type ScheduledJob = {
-  scopeId?: string;
-  timeoutSeconds?: number;
-  invocation?: { command: string; args: string[] };
-  slug: string;
-  name: string;
-  schedule: string;
-  prompt?: string;
-  attachUrl?: string;
-  run?: ScheduledJobRun;
-  source?: string;
-  workdir?: string;
-  createdAt: string;
-  updatedAt?: string;
-  lastRunAt?: string;
-  lastRunExitCode?: number;
-  lastRunError?: string;
-  lastRunSource?: string;
-  lastRunStatus?: string;
-};
-
 export async function engineInstall(): Promise<ExecResult> {
   return invoke<ExecResult>("engine_install");
 }
@@ -646,18 +395,6 @@ export async function installSkillTemplate(
   });
 }
 
-export type LocalSkillCard = {
-  name: string;
-  path: string;
-  description?: string;
-  trigger?: string;
-};
-
-export type LocalSkillContent = {
-  path: string;
-  content: string;
-};
-
 export async function listLocalSkills(projectDir: string): Promise<LocalSkillCard[]> {
   return invoke<LocalSkillCard[]>("list_local_skills", { projectDir });
 }
@@ -673,19 +410,6 @@ export async function writeLocalSkill(projectDir: string, name: string, content:
 export async function uninstallSkill(projectDir: string, name: string): Promise<ExecResult> {
   return invoke<ExecResult>("uninstall_skill", { projectDir, name });
 }
-
-export type OpencodeConfigFile = {
-  path: string;
-  exists: boolean;
-  content: string | null;
-};
-
-export type UpdaterEnvironment = {
-  supported: boolean;
-  reason: string | null;
-  executablePath: string | null;
-  appBundlePath: string | null;
-};
 
 export async function updaterEnvironment(): Promise<UpdaterEnvironment> {
   return invoke<UpdaterEnvironment>("updater_environment");
@@ -709,12 +433,6 @@ export async function writeOpencodeConfig(
 export async function resetOpenworkState(mode: "onboarding" | "all"): Promise<void> {
   return invoke<void>("reset_openwork_state", { mode });
 }
-
-export type CacheResetResult = {
-  removed: string[];
-  missing: string[];
-  errors: string[];
-};
 
 export async function resetOpencodeCache(): Promise<CacheResetResult> {
   return invoke<CacheResetResult>("reset_opencode_cache");
@@ -752,13 +470,6 @@ export async function writeObsidianMirrorFile(
   });
 }
 
-export type ObsidianMirrorFileContent = {
-  exists: boolean;
-  path: string;
-  content: string | null;
-  updatedAtMs: number | null;
-};
-
 export async function readObsidianMirrorFile(
   workspaceId: string,
   filePath: string,
@@ -784,41 +495,6 @@ export async function schedulerListJobs(scopeRoot?: string): Promise<ScheduledJo
 export async function schedulerDeleteJob(name: string, scopeRoot?: string): Promise<ScheduledJob> {
   return invoke<ScheduledJob>("scheduler_delete_job", { name, scopeRoot });
 }
-
-// OpenCodeRouter types
-export type OpenCodeRouterIdentityItem = {
-  id: string;
-  enabled: boolean;
-  running?: boolean;
-};
-
-export type OpenCodeRouterChannelStatus = {
-  items: OpenCodeRouterIdentityItem[];
-};
-
-export type OpenCodeRouterStatus = {
-  running: boolean;
-  config: string;
-  healthPort?: number | null;
-  telegram: OpenCodeRouterChannelStatus;
-  slack: OpenCodeRouterChannelStatus;
-  opencode: { url: string; directory?: string };
-};
-
-export type OpenCodeRouterStatusResult =
-  | { ok: true; status: OpenCodeRouterStatus }
-  | { ok: false; error: string };
-
-export type OpenCodeRouterInfo = {
-  running: boolean;
-  version: string | null;
-  workspacePath: string | null;
-  opencodeUrl: string | null;
-  healthPort: number | null;
-  pid: number | null;
-  lastStdout: string | null;
-  lastStderr: string | null;
-};
 
 // OpenCodeRouter functions - call Tauri commands that wrap opencodeRouter CLI
 export async function getOpenCodeRouterStatus(): Promise<OpenCodeRouterStatus | null> {
