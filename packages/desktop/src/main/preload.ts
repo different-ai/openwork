@@ -108,11 +108,11 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       writeOpencode: (input) => invokeDesktopChannel(IPC_CHANNELS.config("writeOpencode"), input),
     },
     skills: {
-      listLocal: notImplemented("skills.listLocal"),
-      readLocal: notImplemented("skills.readLocal"),
-      writeLocal: notImplemented("skills.writeLocal"),
-      installTemplate: notImplemented("skills.installTemplate"),
-      uninstall: notImplemented("skills.uninstall"),
+      listLocal: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("listLocal"), input),
+      readLocal: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("readLocal"), input),
+      writeLocal: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("writeLocal"), input),
+      installTemplate: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("installTemplate"), input),
+      uninstall: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("uninstall"), input),
       importFromDirectory: notImplemented("skills.importFromDirectory"),
     },
     packages: {

@@ -11,6 +11,7 @@ import {
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
+import { createSkillService, registerSkillIpc } from "./services/skill-service";
 import { createUpdateService, registerUpdateIpc } from "./services/update-service";
 import { createWorkspaceService, registerWorkspaceIpc } from "./services/workspace-service";
 import { createWindowService, registerWindowIpc } from "./services/window-service";
@@ -109,6 +110,7 @@ export async function bootstrapMainProcess() {
   );
   registerPathIpc(createPathService());
   registerShellIpc(createShellService());
+  registerSkillIpc(createSkillService());
   registerUpdateIpc(
     createUpdateService({
       emitStatus: (event) => {

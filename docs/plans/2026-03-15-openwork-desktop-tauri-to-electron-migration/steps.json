@@ -294,7 +294,7 @@
         "Skills can be written, uninstalled, and installed from a template.",
         "The UI no longer depends on Rust-backed skill commands."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "027",

@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:22 - Step 026 - Implement local skills CRUD and template install service
+
+- Skill discovery is broader than a single folder: preserve the current search order across project ancestry (`.opencode/skills`, legacy `.opencode/skill`, `.claude/skills`) and global roots (`XDG`, `.claude`, `.agents`, `.agent`) before deduping by skill name.
+- Skill directories can be either flat (`skills/<name>/SKILL.md`) or one level nested by domain (`skills/<domain>/<name>/SKILL.md`), so both listing and uninstall logic need to scan one level deeper to avoid silently missing valid skills.
+
 ## 2026-03-15 11:19 - Step 025 - Implement opencode config CRUD service
 
 - Keeping config-path resolution in its own service preserves the current `.jsonc`-first behavior: prefer `opencode.jsonc`, fall back to `opencode.json`, and create a new `opencode.jsonc` file when neither exists.
