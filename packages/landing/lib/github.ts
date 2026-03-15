@@ -112,6 +112,9 @@ export const getGithubData = async () => {
   const macosIntel = selectAsset(assets, [".dmg"], ["darwin-x64"]);
   const windowsX64 =
     selectAsset(assets, [".msi", ".exe"], ["windows-x64"]) || exe;
+  const windowsArm64 =
+    selectAsset(assets, [".msi", ".exe"], ["windows-arm64", "win-arm64"]) ||
+    selectAsset(assets, [".msi", ".exe"], ["aarch64", "arm64", "windows"]);
 
   const linuxDebX64 = selectAsset(assets, [".deb"], ["linux-amd64", "linux-x64"]);
   const linuxDebArm64 = selectAsset(assets, [".deb"], ["linux-arm64", "linux-aarch64"]);
@@ -137,7 +140,11 @@ export const getGithubData = async () => {
         intel: macosIntel?.browser_download_url || dmg?.browser_download_url || releaseUrl
       },
       windows: {
-        x64: windowsX64?.browser_download_url || releaseUrl
+        x64: windowsX64?.browser_download_url || releaseUrl,
+        arm64:
+          windowsArm64?.browser_download_url ||
+          windowsX64?.browser_download_url ||
+          releaseUrl
       },
       linux: {
         aur: "https://aur.archlinux.org/packages/openwork",

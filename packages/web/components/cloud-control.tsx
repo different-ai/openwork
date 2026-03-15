@@ -2791,104 +2791,95 @@ export function CloudControlPanel() {
       <div className={isShellStep ? "flex min-h-0 w-full flex-1" : ""}>
 
         {step === "auth" ? (
-          <div className="mx-auto grid w-full max-w-[78rem] gap-8 px-1 py-2 xl:grid-cols-[minmax(0,1.18fr)_minmax(360px,0.82fr)] xl:items-start">
-            <DenMarketingRail />
-
-            <div className="grid gap-6 rounded-[32px] border border-white/70 bg-white/92 p-5 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)] backdrop-blur md:p-6">
-              <div className="grid gap-3 text-center">
-                <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
-                  {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
-                </h1>
-                <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
-                  {authMode === "sign-up"
-                    ? "Sign up to launch your first worker now. Additional workers unlock through Den Cloud billing when you need them."
-                    : "Pick up your workers, billing status, and Polar checkout return state right from app.openwork.software."}
-                </p>
-              </div>
-
-              <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
-                <button
-                  type="button"
-                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => void handleSocialSignIn("github")}
-                  disabled={authBusy}
-                >
-                  <GitHubLogo />
-                  <span>Continue with GitHub</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                  onClick={() => void handleSocialSignIn("google")}
-                  disabled={authBusy}
-                >
-                  <GoogleLogo />
-                  <span>Continue with Google</span>
-                </button>
-
-                <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
-                  <span className="h-px flex-1 bg-slate-200" />
-                  <span>or</span>
-                  <span className="h-px flex-1 bg-slate-200" />
-                </div>
-
-                <label className="grid gap-2">
-                  <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                    type="email"
-                    value={email}
-                    onChange={(event) => setEmail(event.target.value)}
-                    autoComplete="email"
-                    required
-                  />
-                </label>
-
-                <label className="grid gap-2">
-                  <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
-                  <input
-                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                    type="password"
-                    value={password}
-                    onChange={(event) => setPassword(event.target.value)}
-                    autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                    required
-                  />
-                </label>
-
-                <button
-                  type="submit"
-                  className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={authBusy}
-                >
-                  {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-                </button>
-              </form>
-
-              <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
-                <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
-                <button
-                  type="button"
-                  className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-                  onClick={() => {
-                    const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
-                    setAuthMode(nextMode);
-                    setAuthInfo(getAuthInfoForMode(nextMode));
-                    setAuthError(null);
-                  }}
-                >
-                  {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
-                </button>
-              </div>
-
-              {showAuthFeedback ? (
-                <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
-                  {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
-                  {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
-                </div>
-              ) : null}
+          <div className="mx-auto grid w-full max-w-[28rem] gap-6 px-1 py-2">
+            <div className="grid gap-3 text-center">
+              <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
+                {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
+              </h1>
             </div>
+
+            <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void handleSocialSignIn("github")}
+                disabled={authBusy}
+              >
+                <GitHubLogo />
+                <span>Continue with GitHub</span>
+              </button>
+
+              <button
+                type="button"
+                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => void handleSocialSignIn("google")}
+                disabled={authBusy}
+              >
+                <GoogleLogo />
+                <span>Continue with Google</span>
+              </button>
+
+              <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
+                <span className="h-px flex-1 bg-slate-200" />
+                <span>or</span>
+                <span className="h-px flex-1 bg-slate-200" />
+              </div>
+
+              <label className="grid gap-2">
+                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
+                <input
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                  type="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  autoComplete="email"
+                  required
+                />
+              </label>
+
+              <label className="grid gap-2">
+                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
+                <input
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                  required
+                />
+              </label>
+
+              <button
+                type="submit"
+                className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={authBusy}
+              >
+                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+              </button>
+            </form>
+
+            <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
+              <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
+              <button
+                type="button"
+                className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                onClick={() => {
+                  const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
+                  setAuthMode(nextMode);
+                  setAuthInfo(getAuthInfoForMode(nextMode));
+                  setAuthError(null);
+                }}
+              >
+                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
+              </button>
+            </div>
+
+            {showAuthFeedback ? (
+              <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
+                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 

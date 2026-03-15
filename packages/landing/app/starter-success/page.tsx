@@ -1,6 +1,8 @@
 import { SiteFooter } from "../../components/site-footer";
 import { SiteNav } from "../../components/site-nav";
+import { resolveDownloadHref } from "../../lib/download-target";
 import { getGithubData } from "../../lib/github";
+import { headers } from "next/headers";
 
 export const metadata = {
   title: "OpenWork - Starter Success",
@@ -9,6 +11,7 @@ export const metadata = {
 
 export default async function StarterSuccessPage() {
   const github = await getGithubData();
+  const downloadHref = resolveDownloadHref(github, headers());
   const calBase = process.env.NEXT_PUBLIC_CAL_URL ?? "";
   const calHref = (() => {
     if (!calBase) return "/enterprise#book";
@@ -25,7 +28,7 @@ export default async function StarterSuccessPage() {
 
   return (
     <div className="min-h-screen">
-      <SiteNav stars={github.stars} downloadHref={github.downloads.macos} />
+      <SiteNav stars={github.stars} downloadHref={downloadHref} />
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">

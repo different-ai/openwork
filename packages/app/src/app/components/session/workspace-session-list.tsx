@@ -35,6 +35,48 @@ type Props = {
 const MAX_SESSIONS_PREVIEW = 6;
 const COLLAPSED_SESSIONS_PREVIEW = 1;
 
+type SessionListItem = WorkspaceSessionGroup["sessions"][number];
+type FlattenedSessionRow = { session: SessionListItem; depth: number };
+
+const normalizeSessionParentID = (session: SessionListItem) => {
+  const parentID = session.parentID?.trim();
+  return parentID || "";
+};
+
+const getRootSessions = (sessions: WorkspaceSessionGroup["sessions"]) => {
+  const byID = new Set(sessions.map((session) => session.id));
+  return sessions.filter((session) => {
+    const parentID = normalizeSessionParentID(session);
+    return !parentID || !byID.has(parentID);
+  });
+};
+
+const flattenSessionRows = (sessions: WorkspaceSessionGroup["sessions"], rootLimit: number) => {
+  const childrenByParent = new Map<string, SessionListItem[]>();
+  sessions.forEach((session) => {
+    const parentID = normalizeSessionParentID(session);
+    if (!parentID) return;
+    const siblings = childrenByParent.get(parentID) ?? [];
+    siblings.push(session);
+    childrenByParent.set(parentID, siblings);
+  });
+
+  const roots = getRootSessions(sessions).slice(0, rootLimit);
+  const rows: FlattenedSessionRow[] = [];
+  const visited = new Set<string>();
+
+  const walk = (session: SessionListItem, depth: number) => {
+    if (visited.has(session.id)) return;
+    visited.add(session.id);
+    rows.push({ session, depth });
+    const children = childrenByParent.get(session.id) ?? [];
+    children.forEach((child) => walk(child, depth + 1));
+  };
+
+  roots.forEach((root) => walk(root, 0));
+  return rows;
+};
+
 const workspaceLabel = (workspace: WorkspaceInfo) =>
   workspace.displayName?.trim() ||
   workspace.openworkWorkspaceName?.trim() ||
@@ -117,20 +159,20 @@ export default function WorkspaceSessionList(props: Props) {
   };
 
   const previewSessions = (workspaceId: string, sessions: WorkspaceSessionGroup["sessions"]) =>
-    sessions.slice(0, previewCount(workspaceId));
+    flattenSessionRows(sessions, previewCount(workspaceId));
 
-  const showMoreSessions = (workspaceId: string, total: number) => {
+  const showMoreSessions = (workspaceId: string, totalRoots: number) => {
     expandWorkspace(workspaceId);
     setPreviewCountByWorkspaceId((current) => {
       const next = { ...current };
       const existing = next[workspaceId] ?? MAX_SESSIONS_PREVIEW;
-      next[workspaceId] = Math.min(existing + MAX_SESSIONS_PREVIEW, total);
+      next[workspaceId] = Math.min(existing + MAX_SESSIONS_PREVIEW, totalRoots);
       return next;
     });
   };
 
-  const showMoreLabel = (workspaceId: string, total: number) => {
-    const remaining = Math.max(0, total - previewCount(workspaceId));
+  const showMoreLabel = (workspaceId: string, totalRoots: number) => {
+    const remaining = Math.max(0, totalRoots - previewCount(workspaceId));
     const nextCount = Math.min(MAX_SESSIONS_PREVIEW, remaining);
     return nextCount > 0 ? `Show ${nextCount} more` : "Show more";
   };
@@ -175,9 +217,11 @@ export default function WorkspaceSessionList(props: Props) {
     onCleanup(() => window.removeEventListener("pointerdown", closeMenu));
   });
 
-  const renderSessionRow = (workspaceId: string, session: WorkspaceSessionGroup["sessions"][number]) => {
-    const isSelected = () => props.selectedSessionId === session.id;
-    const isSessionActive = () => (props.sessionStatusById?.[session.id] ?? "idle") !== "idle";
+  const renderSessionRow = (workspaceId: string, row: FlattenedSessionRow) => {
+    const session = () => row.session;
+    const depth = () => row.depth;
+    const isSelected = () => props.selectedSessionId === session().id;
+    const isSessionActive = () => (props.sessionStatusById?.[session().id] ?? "idle") !== "idle";
     const canManageSession = () =>
       Boolean(
         props.showSessionActions &&
@@ -187,7 +231,7 @@ export default function WorkspaceSessionList(props: Props) {
 
     const openSession = () => {
       setSessionMenuOpen(false);
-      props.onOpenSession(workspaceId, session.id);
+      props.onOpenSession(workspaceId, session().id);
     };
 
     return (
@@ -200,6 +244,7 @@ export default function WorkspaceSessionList(props: Props) {
               ? "border-dls-border bg-dls-surface text-dls-text shadow-[var(--dls-card-shadow)]"
               : "border-transparent text-gray-11 hover:bg-gray-2/60"
           }`}
+          style={{ "margin-left": `${Math.min(depth(), 4) * 16}px` }}
           onClick={openSession}
           onKeyDown={(event) => {
             if (event.key !== "Enter" && event.key !== " ") return;
@@ -209,16 +254,19 @@ export default function WorkspaceSessionList(props: Props) {
           }}
         >
           <div class="mr-2.5 flex min-w-0 items-center gap-2">
+            <Show when={depth() > 0}>
+              <span class="h-[1px] w-3 shrink-0 rounded-full bg-dls-border" />
+            </Show>
             <Show when={isSessionActive()}>
               <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-9" />
             </Show>
-            <span class="truncate text-[13px] font-normal text-current">{session.title}</span>
+            <span class="truncate text-[13px] font-normal text-current">{session().title}</span>
           </div>
 
           <div class="ml-auto flex shrink-0 items-center gap-1">
-            <Show when={session.time?.updated}>
+            <Show when={session().time?.updated}>
               <span class="whitespace-nowrap text-[11px] text-gray-9 transition-colors group-hover:text-gray-10">
-                {formatRelativeTime(session.time?.updated ?? Date.now())}
+                {formatRelativeTime(session().time?.updated ?? Date.now())}
               </span>
             </Show>
 
@@ -486,7 +534,7 @@ export default function WorkspaceSessionList(props: Props) {
                     fallback={
                       <Show when={group.sessions.length > 0}>
                         <For each={previewSessions(workspace().id, group.sessions)}>
-                          {(session) => renderSessionRow(workspace().id, session)}
+                          {(row) => renderSessionRow(workspace().id, row)}
                         </For>
                       </Show>
                     }
@@ -512,7 +560,7 @@ export default function WorkspaceSessionList(props: Props) {
                           }
                         >
                           <For each={previewSessions(workspace().id, group.sessions)}>
-                            {(session) => renderSessionRow(workspace().id, session)}
+                            {(row) => renderSessionRow(workspace().id, row)}
                           </For>
 
                           <Show when={group.sessions.length === 0 && group.status === "ready"}>
@@ -527,13 +575,13 @@ export default function WorkspaceSessionList(props: Props) {
                             </button>
                           </Show>
 
-                          <Show when={group.sessions.length > previewCount(workspace().id)}>
+                          <Show when={getRootSessions(group.sessions).length > previewCount(workspace().id)}>
                             <button
                               type="button"
                               class="w-full rounded-[15px] border border-transparent px-3 py-2.5 text-left text-[11px] text-gray-10 transition-colors hover:bg-gray-2/60 hover:text-gray-11"
-                              onClick={() => showMoreSessions(workspace().id, group.sessions.length)}
+                              onClick={() => showMoreSessions(workspace().id, getRootSessions(group.sessions).length)}
                             >
-                              {showMoreLabel(workspace().id, group.sessions.length)}
+                              {showMoreLabel(workspace().id, getRootSessions(group.sessions).length)}
                             </button>
                           </Show>
                         </Show>

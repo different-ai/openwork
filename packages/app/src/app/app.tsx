@@ -2937,7 +2937,7 @@ export default function App() {
       // Fetch sessions scoped to the workspace directory to avoid loading the
       // full global session list for every workspace.
       const list = unwrap(
-        await c.session.list({ directory: queryDirectory, roots: true, limit: SIDEBAR_SESSION_LIMIT }),
+        await c.session.list({ directory: queryDirectory, roots: false, limit: SIDEBAR_SESSION_LIMIT }),
       );
       wsDebug("sidebar:list", {
         id,
@@ -2958,6 +2958,7 @@ export default function App() {
         id: session.id,
         title: session.title,
         slug: session.slug,
+        parentID: session.parentID,
         time: session.time,
         directory: session.directory,
       }));
@@ -3092,6 +3093,7 @@ export default function App() {
           id: s.id,
           title: s.title,
           slug: s.slug,
+          parentID: s.parentID,
           time: s.time,
           directory: s.directory,
         })),
@@ -5546,6 +5548,7 @@ export default function App() {
         id: session.id,
         title: session.title,
         slug: session.slug,
+        parentID: session.parentID,
         time: session.time,
         directory: session.directory,
       };
