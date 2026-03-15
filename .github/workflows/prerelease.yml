@@ -75,8 +75,8 @@ jobs:
   publish-tauri:
     name: Build + Publish (${{ matrix.target }})
     needs: prepare-release
-    # Set OPENWORK_LINUX_X64_RUNNER_LABEL to route Linux release builds to a larger runner.
-    runs-on: ${{ matrix.os_type == 'linux' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
+    # Use explicit per-target runner labels so each release build can scale independently.
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
 
     env:
@@ -91,36 +91,36 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
-            os_type: macos
+          - os_type: macos
             target: aarch64-apple-darwin
+            runs_on: macos-latest
             args: "--target aarch64-apple-darwin --bundles dmg,app"
-          - platform: macos-14
-            os_type: macos
+          - os_type: macos
             target: x86_64-apple-darwin
+            runs_on: macos-26-intel
             args: "--target x86_64-apple-darwin --bundles dmg,app"
-          - platform: ubuntu-22.04
-            os_type: linux
+          - os_type: linux
             target: x86_64-unknown-linux-gnu
+            runs_on: blacksmith-4vcpu-ubuntu-2404
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: ubuntu-22.04-arm
-            os_type: linux
+          - os_type: linux
             target: aarch64-unknown-linux-gnu
+            runs_on: blacksmith-4vcpu-ubuntu-2404-arm
             args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
-          - platform: windows-2022
-            os_type: windows
+          - os_type: windows
             target: x86_64-pc-windows-msvc
+            runs_on: blacksmith-4vcpu-windows-2025
             args: "--target x86_64-pc-windows-msvc --bundles msi"
 
     steps:
       - name: Log runner selection
         shell: bash
         run: |
-          echo "Requested larger runner label: ${RUNNER_LABEL:-<unset>}"
-          echo "Effective runs-on: ${EFFECTIVE_RUNS_ON}"
+          echo "Configured runs-on: ${RUNS_ON}"
+          echo "Build target: ${TARGET}"
         env:
-          RUNNER_LABEL: ${{ vars.OPENWORK_LINUX_X64_RUNNER_LABEL }}
-          EFFECTIVE_RUNS_ON: ${{ matrix.os_type == 'linux' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL != '' && vars.OPENWORK_LINUX_X64_RUNNER_LABEL || matrix.platform }}
+          RUNS_ON: ${{ matrix.runs_on }}
+          TARGET: ${{ matrix.target }}
 
       - name: Checkout
         uses: actions/checkout@v4
