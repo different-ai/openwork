@@ -49,7 +49,7 @@ openwork/
 ## Common Gotchas
 
 - Electron packaging needs sidecars staged outside ASAR (`resources/sidecars`).
-- Desktop runtime checks should use `window.openworkDesktop`, not Tauri globals.
+- Desktop runtime checks should use `window.openworkDesktop`, not legacy desktop globals.
 - Renderer shell/dialog/path access should flow through preload namespaces, not direct imports.
 
 ## References
@@ -57,4 +57,4 @@ openwork/
 - `packages/desktop/src/main/main.ts`
 - `packages/desktop/src/main/preload.ts`
 - `packages/app/src/app/lib/openwork-desktop.ts`
-- `packages/app/src/app/lib/tauri.ts`
+- `packages/app/src/app/lib/desktop.ts`

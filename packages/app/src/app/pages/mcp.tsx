@@ -2,8 +2,8 @@ import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import type { McpServerEntry, McpStatusMap } from "../types";
 import type { McpDirectoryInfo } from "../constants";
-import { formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
-import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/tauri";
+import { formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../utils";
+import { readOpencodeConfig, type OpencodeConfigFile } from "../lib/desktop";
 
 import Button from "../components/button";
 import AddMcpModal from "../components/add-mcp-modal";
@@ -156,7 +156,7 @@ export default function McpView(props: McpViewProps) {
     const root = props.activeWorkspaceRoot.trim();
     const nextId = (configRequestId += 1);
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setProjectConfig(null);
       setGlobalConfig(null);
       setConfigError(null);
@@ -190,13 +190,13 @@ export default function McpView(props: McpViewProps) {
     isWindowsPlatform() ? tr("mcp.open_file") : tr("mcp.reveal_in_finder");
 
   const canRevealConfig = () => {
-    if (!isTauriRuntime() || revealBusy()) return false;
+    if (!isDesktopRuntime() || revealBusy()) return false;
     if (configScope() === "project" && !props.activeWorkspaceRoot.trim()) return false;
     return Boolean(activeConfig()?.exists);
   };
 
   const revealConfig = async () => {
-    if (!isTauriRuntime() || revealBusy()) return;
+    if (!isDesktopRuntime() || revealBusy()) return;
     const root = props.activeWorkspaceRoot.trim();
 
     if (configScope() === "project" && !root) {

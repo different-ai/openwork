@@ -1,4 +1,4 @@
-import type { ScheduledJob } from "./tauri";
+import type { ScheduledJob } from "./desktop";
 
 export type OpenworkServerCapabilities = {
   skills: { read: boolean; write: boolean; source: "openwork" | "opencode" };

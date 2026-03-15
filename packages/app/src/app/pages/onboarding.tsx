@@ -1,13 +1,13 @@
 import { For, Match, Show, Switch, createEffect, createSignal, onCleanup } from "solid-js";
 import type { OnboardingStep, StartupPreference } from "../types";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 import { CheckCircle2, ChevronDown, Circle, Globe } from "lucide-solid";
 
 import Button from "../components/button";
 import OnboardingWorkspaceSelector from "../components/onboarding-workspace-selector";
 import OpenWorkLogo from "../components/openwork-logo";
 import TextInput from "../components/text-input";
-import { isTauriRuntime, isWindowsPlatform } from "../utils/index";
+import { isDesktopRuntime, isWindowsPlatform } from "../utils/index";
 import { currentLocale, t } from "../../i18n";
 
 export type OnboardingViewProps = {
@@ -294,7 +294,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                         }
                       }}
                     />
-                    <Show when={isTauriRuntime()}>
+                    <Show when={isDesktopRuntime()}>
                       <Button
                         variant="outline"
                         onClick={props.onAddAuthorizedDirFromPicker}
@@ -335,7 +335,7 @@ export default function OnboardingView(props: OnboardingViewProps) {
                   </Show>
                 </div>
 
-                <Show when={isTauriRuntime() && props.developerMode}>
+                <Show when={isDesktopRuntime() && props.developerMode}>
                   <div class="rounded-2xl bg-gray-2/40 border border-gray-6 p-4">
                     <div class="flex items-start justify-between gap-4">
                       <div class="min-w-0">

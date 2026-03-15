@@ -4,7 +4,7 @@ import { applyEdits, modify } from "jsonc-parser";
 import { currentLocale, t } from "../../i18n";
 
 import type { Client, HubSkillCard, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
-import { addOpencodeCacheHint, isTauriRuntime } from "../utils";
+import { addOpencodeCacheHint, isDesktopRuntime } from "../utils";
 import skillCreatorTemplate from "../data/skill-creator.md?raw";
 import {
   isPluginInstalled,
@@ -23,7 +23,7 @@ import {
   readOpencodeConfig,
   writeOpencodeConfig,
   type OpencodeConfigFile,
-} from "../lib/tauri";
+} from "../lib/desktop";
 import type {
   OpenworkServerCapabilities,
   OpenworkServerClient,
@@ -276,7 +276,7 @@ export function createExtensionsStore(options: {
 
     // Host/Tauri mode fallback: read directly from `.opencode/skills` or `.claude/skills`
     // so the UI still works even if the OpenCode engine is stopped or unreachable.
-    if (isLocalWorkspace && isTauriRuntime()) {
+    if (isLocalWorkspace && isDesktopRuntime()) {
       if (root !== skillsRoot) {
         skillsLoaded = false;
       }
@@ -459,7 +459,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setPluginStatus(translate("skills.plugin_management_host_only"));
       setPluginList([]);
       setSidebarPluginStatus(translate("skills.plugins_host_only"));
@@ -571,7 +571,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setPluginStatus(translate("skills.plugin_management_host_only"));
       return;
     }
@@ -665,7 +665,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setPluginStatus(translate("skills.plugin_management_host_only"));
       return;
     }
@@ -715,7 +715,7 @@ export function createExtensionsStore(options: {
   async function importLocalSkill() {
     const isLocalWorkspace = options.workspaceType() === "local";
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(translate("skills.desktop_required"));
       return;
     }
@@ -812,7 +812,7 @@ export function createExtensionsStore(options: {
       return { ok: false, message };
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       const message = translate("skills.desktop_required");
       setSkillsStatus(message);
       return { ok: false, message };
@@ -871,7 +871,7 @@ export function createExtensionsStore(options: {
   }
 
   async function revealSkillsFolder() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return;
     }
@@ -909,7 +909,7 @@ export function createExtensionsStore(options: {
   }
 
   async function uninstallSkill(name: string) {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return;
     }
@@ -998,7 +998,7 @@ export function createExtensionsStore(options: {
       return null;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return null;
     }
@@ -1066,7 +1066,7 @@ export function createExtensionsStore(options: {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setSkillsStatus(translate("skills.desktop_required"));
       return;
     }

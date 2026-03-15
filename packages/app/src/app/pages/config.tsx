@@ -1,6 +1,6 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 
-import { isTauriRuntime } from "../utils";
+import { isDesktopRuntime } from "../utils";
 import { readPerfLogs } from "../lib/perf-log";
 
 import Button from "../components/button";
@@ -10,7 +10,7 @@ import { RefreshCcw } from "lucide-solid";
 
 import { buildOpenworkWorkspaceBaseUrl, parseOpenworkWorkspaceIdFromUrl } from "../lib/openwork-server";
 import type { OpenworkServerSettings, OpenworkServerStatus } from "../lib/openwork-server";
-import type { OpenworkServerInfo } from "../lib/tauri";
+import type { OpenworkServerInfo } from "../lib/desktop";
 
 export type ConfigViewProps = {
   busy: boolean;
@@ -145,7 +145,7 @@ export default function ConfigView(props: ConfigViewProps) {
     return {
       capturedAt: new Date().toISOString(),
       runtime: {
-        tauri: isTauriRuntime(),
+        tauri: isDesktopRuntime(),
         developerMode: props.developerMode,
       },
       workspace: {
@@ -543,7 +543,7 @@ export default function ConfigView(props: ConfigViewProps) {
         </div>
       </div>
 
-      <Show when={!isTauriRuntime()}>
+      <Show when={!isDesktopRuntime()}>
         <div class="text-xs text-gray-9">
           Some config features (local server sharing + messaging bridge) require the desktop app.
         </div>

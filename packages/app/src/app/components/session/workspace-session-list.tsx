@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js";
 import { ChevronDown, ChevronRight, Loader2, MoreHorizontal, Plus } from "lucide-solid";
 
-import type { WorkspaceInfo } from "../../lib/tauri";
+import type { WorkspaceInfo } from "../../lib/desktop";
 import type { WorkspaceConnectionState, WorkspaceSessionGroup } from "../../types";
 import { formatRelativeTime, getWorkspaceTaskLoadErrorDisplay, isWindowsPlatform } from "../../utils";
 

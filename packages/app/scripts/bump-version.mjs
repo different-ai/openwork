@@ -57,19 +57,19 @@ const targetVersion = async () => {
 
 const updatePackageJson = async (nextVersion) => {
   const uiPath = path.join(ROOT, "package.json");
-  const tauriPath = path.join(REPO_ROOT, "packages", "desktop", "package.json");
+  const desktopPath = path.join(REPO_ROOT, "packages", "desktop", "package.json");
   const orchestratorPath = path.join(REPO_ROOT, "packages", "orchestrator", "package.json");
   const serverPath = path.join(REPO_ROOT, "packages", "server", "package.json");
   const opencodeRouterPath = path.join(REPO_ROOT, "packages", "opencode-router", "package.json");
   const uiData = await readJson(uiPath);
-  const tauriData = await readJson(tauriPath);
+  const desktopData = await readJson(desktopPath);
   const orchestratorData = await readJson(orchestratorPath);
   const serverData = await readJson(serverPath);
   const opencodeRouterData = await readJson(opencodeRouterPath);
   uiData.version = nextVersion;
-  tauriData.version = nextVersion;
+  desktopData.version = nextVersion;
   // Desktop pins opencodeRouterVersion for sidecar bundling; keep it aligned.
-  tauriData.opencodeRouterVersion = nextVersion;
+  desktopData.opencodeRouterVersion = nextVersion;
   orchestratorData.version = nextVersion;
 
   // Ensure openwork-orchestrator uses the same openwork-server/opencode-router versions.
@@ -81,7 +81,7 @@ const updatePackageJson = async (nextVersion) => {
   opencodeRouterData.version = nextVersion;
   if (!isDryRun) {
     await writeFile(uiPath, JSON.stringify(uiData, null, 2) + "\n");
-    await writeFile(tauriPath, JSON.stringify(tauriData, null, 2) + "\n");
+    await writeFile(desktopPath, JSON.stringify(desktopData, null, 2) + "\n");
     await writeFile(orchestratorPath, JSON.stringify(orchestratorData, null, 2) + "\n");
     await writeFile(serverPath, JSON.stringify(serverData, null, 2) + "\n");
     await writeFile(opencodeRouterPath, JSON.stringify(opencodeRouterData, null, 2) + "\n");

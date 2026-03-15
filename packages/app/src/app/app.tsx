@@ -110,7 +110,7 @@ import {
   formatRelativeTime,
   groupMessageParts,
   isVisibleTextPart,
-  isTauriRuntime,
+  isDesktopRuntime,
   modelEquals,
   normalizeDirectoryQueryPath,
   normalizeDirectoryPath,
@@ -163,7 +163,7 @@ import {
   type OpenworkServerInfo,
   type OpenCodeRouterInfo,
   type WorkspaceInfo,
-} from "./lib/tauri";
+} from "./lib/desktop";
 import {
   FONT_ZOOM_STEP,
   applyFontZoom,
@@ -829,7 +829,7 @@ export default function App() {
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(getInitialThemeMode());
 
   const [engineSource, setEngineSource] = createSignal<"path" | "sidecar" | "custom">(
-    isTauriRuntime() ? "sidecar" : "path"
+    isDesktopRuntime() ? "sidecar" : "path"
   );
 
   const [engineCustomBinPath, setEngineCustomBinPath] = createSignal("");
@@ -953,7 +953,7 @@ export default function App() {
 
   createEffect(() => {
     if (typeof window === "undefined") return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     const applyAndPersistFontZoom = (value: number) => {
       const next = normalizeFontZoom(value);
@@ -1091,7 +1091,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!documentVisible()) return;
     let active = true;
 
@@ -1151,7 +1151,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!developerMode()) return;
     if (!documentVisible()) return;
 
@@ -1175,7 +1175,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!developerMode()) {
       setOpenCodeRouterInfoState(null);
       return;
@@ -1202,7 +1202,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!developerMode()) {
       setOrchestratorStatusState(null);
       return;
@@ -3499,7 +3499,7 @@ export default function App() {
       return { mode: "choice" as const, bundle };
     }
 
-    if (request.intent === "new_worker" && isTauriRuntime()) {
+    if (request.intent === "new_worker" && isDesktopRuntime()) {
       setView("dashboard");
       setTab("scheduled");
       setError(null);
@@ -3936,7 +3936,7 @@ export default function App() {
     setSharedBundleImportError(null);
     setError(null);
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       setView("dashboard");
       setTab("scheduled");
       setSharedBundleCreateWorkerRequest({
@@ -4097,7 +4097,7 @@ export default function App() {
     setOpenworkServerCapabilities(result.capabilities);
     setOpenworkServerCheckedAt(Date.now());
     const ok = result.status === "connected" || result.status === "limited";
-    if (ok && !isTauriRuntime()) {
+    if (ok && !isDesktopRuntime()) {
       const active = workspaceStore.activeWorkspaceDisplay();
       const shouldAttach = !client() || active.workspaceType !== "remote" || active.remoteType !== "openwork";
       if (shouldAttach) {
@@ -4117,7 +4117,7 @@ export default function App() {
     setOpenworkReconnectBusy(true);
     try {
       let hostInfo = openworkServerHostInfo();
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         try {
           hostInfo = await openworkServerInfo();
           setOpenworkServerHostInfo(hostInfo);
@@ -4189,7 +4189,7 @@ export default function App() {
   };
 
   const canReloadLocalEngine = () =>
-    isTauriRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
+    isDesktopRuntime() && workspaceStore.activeWorkspaceDisplay().workspaceType === "local";
 
   const canReloadWorkspace = createMemo(() => {
     if (canReloadLocalEngine()) return true;
@@ -4314,7 +4314,7 @@ export default function App() {
       }
 
       setThemeMode("system");
-      setEngineSource(isTauriRuntime() ? "sidecar" : "path");
+      setEngineSource(isDesktopRuntime() ? "sidecar" : "path");
       setEngineCustomBinPath("");
       setEngineRuntime("openwork-orchestrator");
       setDefaultModel(DEFAULT_MODEL);
@@ -4492,7 +4492,7 @@ export default function App() {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setScheduledJobs([]);
       setScheduledJobsStatus(null);
       return;
@@ -4538,7 +4538,7 @@ export default function App() {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       throw new Error("Scheduled tasks require the desktop app.");
     }
     if (isWindowsPlatform()) {
@@ -4551,7 +4551,7 @@ export default function App() {
 };
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     workspaceStore.activeWorkspaceId();
     workspaceProjectDir();
     void refreshMcpServers();
@@ -4562,7 +4562,7 @@ export default function App() {
   const activePermissionMemo = createMemo(() => activePermission());
   const migrationRepairUnavailableReason = createMemo<string | null>(() => {
     if (workspaceStore.canRepairOpencodeMigration()) return null;
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       return t("app.migration.desktop_required", currentLocale());
     }
 
@@ -4624,7 +4624,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (isTauriRuntime()) return;
+    if (isDesktopRuntime()) return;
     if (autoConnectAttempted()) return;
     if (client()) return;
     if (openworkServerStatus() !== "connected") return;
@@ -4827,7 +4827,7 @@ export default function App() {
       openworkWorkspaceId &&
       openworkCapabilities?.mcp?.write;
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseOpenworkServer && !isDesktopRuntime()) {
       setNotionError("Notion connections require the desktop app.");
       return;
     }
@@ -4985,7 +4985,7 @@ export default function App() {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setMcpStatus("MCP configuration is only available for local workspaces.");
       setMcpServers([]);
       setMcpStatuses({});
@@ -5037,7 +5037,7 @@ export default function App() {
     const startedAt = perfNow();
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
+      (!isDesktopRuntime() && openworkServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
     const entryType = entry.type ?? "remote";
 
@@ -5077,7 +5077,7 @@ export default function App() {
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseOpenworkServer && !isDesktopRuntime()) {
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
       finishPerf(developerMode(), "mcp.connect", "blocked", startedAt, {
         reason: "desktop-required",
@@ -5277,7 +5277,7 @@ export default function App() {
   async function logoutMcpAuth(name: string) {
     const isRemoteWorkspace =
       workspaceStore.activeWorkspaceDisplay().workspaceType === "remote" ||
-      (!isTauriRuntime() && openworkServerStatus() === "connected");
+      (!isDesktopRuntime() && openworkServerStatus() === "connected");
     const projectDir = workspaceProjectDir().trim();
 
     const openworkClient = openworkServerClient();
@@ -5306,7 +5306,7 @@ export default function App() {
       return;
     }
 
-    if (!canUseOpenworkServer && !isTauriRuntime()) {
+    if (!canUseOpenworkServer && !isDesktopRuntime()) {
       setMcpStatus(t("mcp.desktop_required", currentLocale()));
       return;
     }
@@ -5597,7 +5597,7 @@ export default function App() {
         // OpenCode is assigned a random port on every restart, so the stored URL is
         // always stale after a relaunch. The correct baseUrl is provided by engine_info().
         // Web mode still needs the cached value since it connects to a fixed server URL.
-        if (!isTauriRuntime()) {
+        if (!isDesktopRuntime()) {
           const storedBaseUrl = window.localStorage.getItem("openwork.baseUrl");
           if (storedBaseUrl) {
             setBaseUrl(storedBaseUrl);
@@ -5626,7 +5626,7 @@ export default function App() {
           storedEngineSource === "custom"
         ) {
           if (storedEngineSource === "custom" && !(storedEngineCustomBinPath ?? "").trim()) {
-            setEngineSource(isTauriRuntime() ? "sidecar" : "path");
+            setEngineSource(isDesktopRuntime() ? "sidecar" : "path");
           } else {
             setEngineSource(storedEngineSource);
           }
@@ -5757,7 +5757,7 @@ export default function App() {
       }
     }
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       try {
         setAppVersion((await window.openworkDesktop?.app.getVersion()) ?? null);
       } catch {
@@ -5829,7 +5829,7 @@ export default function App() {
       }
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       const currentUrl = typeof window === "undefined" ? "" : window.location.href;
       if (currentUrl) {
         queueRemoteConnectDeepLink(currentUrl);
@@ -5857,7 +5857,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     const projectDir = workspaceProjectDir().trim();
     if (!projectDir) return;
     void refreshMcpServers();
@@ -5914,7 +5914,7 @@ export default function App() {
           } catch {
             // ignore
           }
-        } else if (isTauriRuntime()) {
+        } else if (isDesktopRuntime()) {
           try {
             const configFile = await readOpencodeConfig("project", workspaceRoot);
             configFileContent = configFile.content;
@@ -5961,7 +5961,7 @@ export default function App() {
 
   createEffect(() => {
     if (!workspaceDefaultModelReady()) return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!defaultModelExplicit()) return;
 
     const workspace = workspaceStore.activeWorkspaceDisplay();
@@ -6020,7 +6020,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (onboardingStep() !== "local") return;
     void workspaceStore.refreshEngineDoctor();
   });
@@ -6146,7 +6146,7 @@ export default function App() {
       // ignore
     }
     // Apply to window decorations (only in Tauri desktop environment)
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       setWindowDecorations(!hide).catch(() => {
         // ignore errors (e.g., window not ready)
       });
@@ -6193,7 +6193,7 @@ export default function App() {
 
   createEffect(() => {
     if (booting()) return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (launchUpdateCheckTriggered()) return;
 
     const state = updateStatus();
@@ -6206,7 +6206,7 @@ export default function App() {
   createEffect(() => {
     if (booting()) return;
     if (typeof window === "undefined") return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!launchUpdateCheckTriggered()) return;
     if (!updateAutoCheck()) return;
 
@@ -6223,7 +6223,7 @@ export default function App() {
   });
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!updateAutoDownload()) return;
 
     const state = updateStatus();
@@ -6407,14 +6407,14 @@ export default function App() {
     const workspaceType = activeWorkspaceDisplay().workspaceType;
     const isRemoteWorkspace = workspaceType === "remote";
     const openworkStatus = openworkServerStatus();
-    const canUseDesktopTools = isTauriRuntime() && !isRemoteWorkspace;
+    const canUseDesktopTools = isDesktopRuntime() && !isRemoteWorkspace;
     const canInstallSkillCreator = isRemoteWorkspace
       ? openworkServerCanWriteSkills()
-      : isTauriRuntime();
+      : isDesktopRuntime();
     const canEditPlugins = isRemoteWorkspace
       ? openworkServerCanWritePlugins()
-      : isTauriRuntime();
-    const canUseGlobalPluginScope = !isRemoteWorkspace && isTauriRuntime();
+      : isDesktopRuntime();
+    const canUseGlobalPluginScope = !isRemoteWorkspace && isDesktopRuntime();
     const skillsAccessHint = isRemoteWorkspace
       ? openworkStatus === "disconnected"
         ? "OpenWork server unavailable. Add the server URL/token in Advanced to manage skills."
@@ -6898,14 +6898,14 @@ export default function App() {
     }
 
     if (path.startsWith("/proto-v1-ux")) {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         navigate("/dashboard/scheduled", { replace: true });
       }
       return;
     }
 
     if (path.startsWith("/proto")) {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         navigate("/dashboard/scheduled", { replace: true });
         return;
       }
@@ -7060,7 +7060,7 @@ export default function App() {
           }
         }}
         onConfirmWorker={
-          isTauriRuntime()
+          isDesktopRuntime()
             ? async (preset, folder) => {
                 const request = sharedBundleCreateWorkerRequest();
                 const ok = await workspaceStore.createSandboxFlow(
@@ -7097,14 +7097,14 @@ export default function App() {
             : undefined
         }
         workerDisabled={(() => {
-          if (!isTauriRuntime()) return true;
+          if (!isDesktopRuntime()) return true;
           if (workspaceStore.sandboxDoctorBusy?.()) return true;
           const doctor = workspaceStore.sandboxDoctorResult?.();
           if (!doctor) return false;
           return !doctor?.ready;
         })()}
         workerDisabledReason={(() => {
-          if (!isTauriRuntime()) return t("app.error.tauri_required", currentLocale());
+          if (!isDesktopRuntime()) return t("app.error.tauri_required", currentLocale());
           if (workspaceStore.sandboxDoctorBusy?.()) {
             return t("dashboard.sandbox_checking_docker", currentLocale());
           }
@@ -7117,7 +7117,7 @@ export default function App() {
         workerCtaDescription={t("dashboard.sandbox_get_ready_desc", currentLocale())}
         onWorkerCta={async () => {
           const url = "https://www.docker.com/products/docker-desktop/";
-          if (isTauriRuntime()) {
+          if (isDesktopRuntime()) {
             await window.openworkDesktop?.shell.openExternal({ url });
           } else {
             window.open(url, "_blank", "noopener,noreferrer");
@@ -7181,7 +7181,7 @@ export default function App() {
         }}
         onSubmitWorkspace={importSharedSkillIntoWorkspace}
         onCreateWorker={
-          isTauriRuntime()
+          isDesktopRuntime()
             ? () => {
                 const request = sharedSkillDestinationRequest();
                 if (!request) return;

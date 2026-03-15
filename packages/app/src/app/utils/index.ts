@@ -10,7 +10,7 @@ import type {
   ProviderListItem,
 } from "../types";
 import type { OpenWorkDesktopAPI } from "../lib/openwork-desktop";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 
 export function formatModelRef(model: ModelRef) {
   return `${model.providerID}/${model.modelID}`;
@@ -79,10 +79,6 @@ function getDesktopRuntimeBridge() {
 
 export function isDesktopRuntime() {
   return getDesktopRuntimeBridge() != null;
-}
-
-export function isTauriRuntime() {
-  return isDesktopRuntime();
 }
 
 export function isWindowsPlatform() {

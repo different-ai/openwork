@@ -2,7 +2,7 @@ import { Show, createMemo } from "solid-js";
 import { t, currentLocale } from "../../i18n";
 import OpenWorkLogo from "./openwork-logo";
 
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 
 export default function WorkspaceSwitchOverlay(props: {
   open: boolean;

@@ -19,7 +19,7 @@ import type { McpDirectoryInfo } from "../constants";
 import {
   formatRelativeTime,
   getWorkspaceTaskLoadErrorDisplay,
-  isTauriRuntime,
+  isDesktopRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
 } from "../utils";
@@ -41,7 +41,7 @@ import type {
   OpenworkServerSettings,
   OpenworkServerStatus,
 } from "../lib/openwork-server";
-import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/tauri";
+import type { EngineInfo, OrchestratorStatus, OpenworkServerInfo, OpenCodeRouterInfo, WorkspaceInfo } from "../lib/desktop";
 import { DEFAULT_OPENWORK_PUBLISHER_BASE_URL, publishOpenworkBundleJson } from "../lib/publisher";
 
 import Button from "../components/button";
@@ -545,7 +545,7 @@ export default function DashboardView(props: DashboardViewProps) {
     const workspace = props.workspaces.find((entry) => entry.id === workspaceId) ?? null;
     if (!workspace || workspace.workspaceType !== "local") return;
     const target = workspace.path?.trim() ?? "";
-    if (!target || !isTauriRuntime()) return;
+    if (!target || !isDesktopRuntime()) return;
     try {
       const desktop = window.openworkDesktop;
       if (!desktop) throw new Error("Desktop app required");
@@ -675,13 +675,13 @@ export default function DashboardView(props: DashboardViewProps) {
           label: "OpenWork invite link",
           value: inviteUrl,
           secret: true,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          placeholder: !isDesktopRuntime() ? "Desktop app required" : "Starting server...",
           hint: "One link that prefills worker URL and token.",
         },
         {
           label: "OpenWork worker URL",
           value: url,
-          placeholder: !isTauriRuntime() ? "Desktop app required" : "Starting server...",
+          placeholder: !isDesktopRuntime() ? "Desktop app required" : "Starting server...",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
             : hostUrl
@@ -692,7 +692,7 @@ export default function DashboardView(props: DashboardViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          placeholder: isDesktopRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
             : "Use on phones or laptops connecting to this host.",
@@ -942,13 +942,13 @@ export default function DashboardView(props: DashboardViewProps) {
     const ws = shareWorkspace();
     if (!ws) return "Export is available for local workers in the desktop app.";
     if (ws.workspaceType === "remote") return "Export is only supported for local workers.";
-    if (!isTauriRuntime()) return "Export is available in the desktop app.";
+    if (!isDesktopRuntime()) return "Export is available in the desktop app.";
     if (props.exportWorkspaceBusy) return "Export is already running.";
     return null;
   });
 
   const showUpdatePill = createMemo(() => {
-    if (!isTauriRuntime()) return false;
+    if (!isDesktopRuntime()) return false;
     const state = props.updateStatus?.state;
     return state === "available" || state === "downloading" || state === "ready";
   });

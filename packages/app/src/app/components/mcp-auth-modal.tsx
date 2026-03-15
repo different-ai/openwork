@@ -5,10 +5,10 @@ import TextInput from "./text-input";
 import type { Client } from "../types";
 import type { McpDirectoryInfo } from "../constants";
 import { unwrap } from "../lib/opencode";
-import { opencodeMcpAuth } from "../lib/tauri";
+import { opencodeMcpAuth } from "../lib/desktop";
 import { validateMcpServerName } from "../mcp";
 import { t, type Language } from "../../i18n";
-import { isTauriRuntime, normalizeDirectoryPath } from "../utils";
+import { isDesktopRuntime, normalizeDirectoryPath } from "../utils";
 
 const MCP_AUTH_POLL_INTERVAL_MS = 2_000;
 const MCP_AUTH_TIMEOUT_MS = 90_000;
@@ -86,7 +86,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
   });
 
   const openAuthorizationUrl = async (url: string) => {
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       await window.openworkDesktop?.shell.openExternal({ url });
       return;
     }
@@ -328,7 +328,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
     const entry = props.entry;
     if (!entry || cliAuthBusy()) return;
     if (props.isRemoteWorkspace) return;
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     setCliAuthBusy(true);
     setCliAuthResult(null);
@@ -763,7 +763,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                   <div class="pt-2 space-y-2">
                     <p class="text-xs text-red-11">{translate("mcp.auth.invalid_refresh_token")}</p>
                     <Show when={!props.isRemoteWorkspace}>
-                      <Show when={isTauriRuntime()}>
+                      <Show when={isDesktopRuntime()}>
                         <Button variant="secondary" onClick={handleCliReauth} disabled={cliAuthBusy()}>
                           <Show
                             when={cliAuthBusy()}
@@ -774,7 +774,7 @@ export default function McpAuthModal(props: McpAuthModalProps) {
                           </Show>
                         </Button>
                       </Show>
-                      <Show when={!isTauriRuntime()}>
+                      <Show when={!isDesktopRuntime()}>
                         <div class="text-[11px] text-red-10">
                           {translate("mcp.auth.reauth_cli_hint", { server: serverName() })}
                         </div>

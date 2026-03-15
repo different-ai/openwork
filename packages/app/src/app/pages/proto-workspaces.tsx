@@ -10,7 +10,7 @@ import {
   Settings,
 } from "lucide-solid";
 
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 import Button from "../components/button";
 import OpenWorkLogo from "../components/openwork-logo";
 import WorkspaceChip from "../components/workspace-chip";

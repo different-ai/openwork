@@ -1,6 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMount } from "solid-js";
 
-import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
+import { formatBytes, formatRelativeTime, isDesktopRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
 import { usePlatform } from "../context/platform";
@@ -38,7 +38,7 @@ import type {
   AppBuildInfo,
   OpenCodeRouterInfo,
   SandboxDebugProbeResult,
-} from "../lib/tauri";
+} from "../lib/desktop";
 import {
   appBuildInfo,
   engineRestart,
@@ -48,7 +48,7 @@ import {
   openworkServerRestart,
   pickFile,
   sandboxDebugProbe,
-} from "../lib/tauri";
+} from "../lib/desktop";
 import { currentLocale, LANGUAGE_OPTIONS, t, type Language } from "../../i18n";
 
 export type SettingsViewProps = {
@@ -198,7 +198,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const handlePickEngineBinary = async () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     try {
       const selected = await pickFile({ title: "Select OpenCode binary" });
       const path = Array.isArray(selected) ? selected[0] : selected;
@@ -242,7 +242,7 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const showUpdateToolbar = createMemo(() => {
-    if (!isTauriRuntime()) return false;
+    if (!isDesktopRuntime()) return false;
     if (props.updateEnv && props.updateEnv.supported === false) return false;
     return isMacToolbar();
   });
@@ -532,12 +532,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const engineStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
+    if (!isDesktopRuntime()) return "Unavailable";
     return props.engineInfo?.running ? "Running" : "Offline";
   });
 
   const engineStatusStyle = createMemo(() => {
-    if (!isTauriRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    if (!isDesktopRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     return props.engineInfo?.running
       ? "bg-green-7/10 text-green-11 border-green-7/20"
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -566,12 +566,12 @@ export default function SettingsView(props: SettingsViewProps) {
   });
 
   const opencodeRouterStatusLabel = createMemo(() => {
-    if (!isTauriRuntime()) return "Unavailable";
+    if (!isDesktopRuntime()) return "Unavailable";
     return props.opencodeRouterInfo?.running ? "Running" : "Offline";
   });
 
   const opencodeRouterStatusStyle = createMemo(() => {
-    if (!isTauriRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
+    if (!isDesktopRuntime()) return "bg-gray-4/60 text-gray-11 border-gray-7/50";
     return props.opencodeRouterInfo?.running
       ? "bg-green-7/10 text-green-11 border-green-7/20"
       : "bg-gray-4/60 text-gray-11 border-gray-7/50";
@@ -624,7 +624,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const handleOpenworkServerRestart = async () => {
-    if (openworkServerRestarting() || !isTauriRuntime()) return;
+    if (openworkServerRestarting() || !isDesktopRuntime()) return;
     setOpenworkServerRestarting(true);
     setOpenworkServerRestartError(null);
     try {
@@ -638,7 +638,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const handleOpenCodeRestart = async () => {
-    if (opencodeRestarting() || !isTauriRuntime()) return;
+    if (opencodeRestarting() || !isDesktopRuntime()) return;
     setOpencodeRestarting(true);
     setOpencodeRestartError(null);
     try {
@@ -733,12 +733,12 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const engineStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
+    if (!isDesktopRuntime()) return "Available in the desktop app.";
     return props.engineInfo?.lastStdout?.trim() || "No stdout captured yet.";
   };
 
   const engineStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
+    if (!isDesktopRuntime()) return "Available in the desktop app.";
     return props.engineInfo?.lastStderr?.trim() || "No stderr captured yet.";
   };
 
@@ -753,12 +753,12 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const opencodeRouterStdout = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
+    if (!isDesktopRuntime()) return "Available in the desktop app.";
     return props.opencodeRouterInfo?.lastStdout?.trim() || "No stdout captured yet.";
   };
 
   const opencodeRouterStderr = () => {
-    if (!isTauriRuntime()) return "Available in the desktop app.";
+    if (!isDesktopRuntime()) return "Available in the desktop app.";
     return props.opencodeRouterInfo?.lastStderr?.trim() || "No stderr captured yet.";
   };
 
@@ -798,7 +798,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const orchestratorVersionLabel = () => props.orchestratorStatus?.cliVersion ?? "—";
 
   onMount(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     void appBuildInfo().then((info) => setBuildInfo(info)).catch(() => setBuildInfo(null));
   });
 
@@ -941,7 +941,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const revealWorkspaceConfig = async () => {
-    if (!isTauriRuntime() || revealConfigBusy()) return;
+    if (!isDesktopRuntime() || revealConfigBusy()) return;
     const path = workspaceConfigPath();
     if (!path) {
       setConfigActionStatus("Select a local workspace before revealing config.");
@@ -980,7 +980,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const handleNukeOpencodeDevConfig = async () => {
-    if (!isTauriRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy()) return;
+    if (!isDesktopRuntime() || !opencodeDevModeEnabled() || nukeDevConfigBusy()) return;
     const confirmed =
       typeof window === "undefined"
         ? true
@@ -1000,7 +1000,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const runSandboxDebugProbe = async () => {
-    if (!isTauriRuntime() || sandboxProbeBusy()) return;
+    if (!isDesktopRuntime() || sandboxProbeBusy()) return;
     setSandboxProbeBusy(true);
     setSandboxProbeStatus(null);
     try {
@@ -1400,7 +1400,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   {props.developerMode ? "Developer panel enabled." : "Enable this to access the Developer panel."}
                 </div>
               </div>
-              <Show when={isTauriRuntime() && opencodeDevModeEnabled()}>
+              <Show when={isDesktopRuntime() && opencodeDevModeEnabled()}>
                 <div class="pt-1 flex flex-wrap items-center gap-3">
                   <button
                     type="button"
@@ -1584,7 +1584,7 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
 
               <Show
-                when={!isTauriRuntime()}
+                when={!isDesktopRuntime()}
                 fallback={
                   <Show
                     when={props.updateEnv && props.updateEnv.supported === false}
@@ -1712,7 +1712,7 @@ export default function SettingsView(props: SettingsViewProps) {
               </Show>
             </div>
 
-            <Show when={isTauriRuntime()}>
+            <Show when={isDesktopRuntime()}>
               <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-3">
                 <div>
                   <div class="text-sm font-medium text-gray-12">Appearance</div>
@@ -1792,9 +1792,9 @@ export default function SettingsView(props: SettingsViewProps) {
                       variant="secondary"
                       class="text-xs h-8 py-0 px-3"
                       onClick={runSandboxDebugProbe}
-                      disabled={!isTauriRuntime() || sandboxProbeBusy() || props.anyActiveRuns}
+                      disabled={!isDesktopRuntime() || sandboxProbeBusy() || props.anyActiveRuns}
                       title={
-                        !isTauriRuntime()
+                        !isDesktopRuntime()
                           ? "Sandbox probe requires desktop app"
                           : props.anyActiveRuns
                             ? "Stop active runs before probing"
@@ -1832,8 +1832,8 @@ export default function SettingsView(props: SettingsViewProps) {
                       variant="outline"
                       class="text-xs h-8 py-0 px-3"
                       onClick={revealWorkspaceConfig}
-                      disabled={!isTauriRuntime() || revealConfigBusy() || !workspaceConfigPath()}
-                      title={!isTauriRuntime() ? "Reveal config requires the desktop app" : ""}
+                      disabled={!isDesktopRuntime() || revealConfigBusy() || !workspaceConfigPath()}
+                      title={!isDesktopRuntime() ? "Reveal config requires the desktop app" : ""}
                     >
                       <FolderOpen size={13} class="mr-1.5" />
                       {revealConfigBusy() ? "Opening..." : "Reveal config"}
@@ -1867,8 +1867,8 @@ export default function SettingsView(props: SettingsViewProps) {
                     variant="secondary"
                     class="text-xs h-8 py-0 px-3 shrink-0"
                     onClick={props.repairOpencodeCache}
-                    disabled={props.cacheRepairBusy || !isTauriRuntime()}
-                    title={isTauriRuntime() ? "" : "Cache repair requires the desktop app"}
+                    disabled={props.cacheRepairBusy || !isDesktopRuntime()}
+                    title={isDesktopRuntime() ? "" : "Cache repair requires the desktop app"}
                   >
                     {props.cacheRepairBusy ? "Repairing cache" : "Repair cache"}
                   </Button>
@@ -1888,9 +1888,9 @@ export default function SettingsView(props: SettingsViewProps) {
                     variant="danger"
                     class="text-xs h-8 py-0 px-3 shrink-0"
                     onClick={props.cleanupOpenworkDockerContainers}
-                    disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isTauriRuntime()}
+                    disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isDesktopRuntime()}
                     title={
-                      !isTauriRuntime()
+                      !isDesktopRuntime()
                         ? "Docker cleanup requires the desktop app"
                         : props.anyActiveRuns
                           ? "Stop active runs before cleanup"
@@ -1941,7 +1941,7 @@ export default function SettingsView(props: SettingsViewProps) {
                   </p>
                 </div>
 
-                <Show when={isTauriRuntime() && (isLocalPreference() || props.developerMode)}>
+                <Show when={isDesktopRuntime() && (isLocalPreference() || props.developerMode)}>
                   <div class="bg-gray-2/30 border border-gray-6/50 rounded-2xl p-5 space-y-4">
                     <div>
                       <div class="text-sm font-medium text-gray-12">Engine</div>
@@ -2104,7 +2104,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         variant="secondary"
                         onClick={handleRestartLocalServer}
-                        disabled={props.busy || openworkRestartBusy() || !isTauriRuntime()}
+                        disabled={props.busy || openworkRestartBusy() || !isDesktopRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkRestartBusy() ? "animate-spin" : ""}`} />
@@ -2113,7 +2113,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         variant="secondary"
                         onClick={handleOpenCodeRestart}
-                        disabled={opencodeRestarting() || !isTauriRuntime()}
+                        disabled={opencodeRestarting() || !isDesktopRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRestarting() ? "animate-spin" : ""}`} />
@@ -2122,7 +2122,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         variant="secondary"
                         onClick={handleOpenworkServerRestart}
-                        disabled={openworkServerRestarting() || !isTauriRuntime()}
+                        disabled={openworkServerRestarting() || !isDesktopRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${openworkServerRestarting() ? "animate-spin" : ""}`} />
@@ -2131,7 +2131,7 @@ export default function SettingsView(props: SettingsViewProps) {
                       <Button
                         variant="secondary"
                         onClick={handleOpenCodeRouterRestart}
-                        disabled={opencodeRouterRestarting() || !isTauriRuntime()}
+                        disabled={opencodeRouterRestarting() || !isDesktopRuntime()}
                         class="text-xs px-3 py-1.5 justify-center"
                       >
                         <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />
@@ -2359,7 +2359,7 @@ export default function SettingsView(props: SettingsViewProps) {
                         <Button
                           variant="secondary"
                           onClick={handleOpenCodeRouterRestart}
-                          disabled={opencodeRouterRestarting() || !isTauriRuntime()}
+                          disabled={opencodeRouterRestarting() || !isDesktopRuntime()}
                           class="text-xs px-3 py-1.5"
                         >
                           <RefreshCcw class={`w-3.5 h-3.5 mr-1.5 ${opencodeRouterRestarting() ? "animate-spin" : ""}`} />

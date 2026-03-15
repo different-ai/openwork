@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 
-import type { UpdaterEnvironment } from "../lib/tauri";
+import type { UpdaterEnvironment } from "../lib/desktop";
 
 export type UpdateStatus =
   | { state: "idle"; lastCheckedAt: number | null }

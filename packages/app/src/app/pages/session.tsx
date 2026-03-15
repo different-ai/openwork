@@ -37,7 +37,7 @@ import {
   type EngineInfo,
   type OpenworkServerInfo,
   type WorkspaceInfo,
-} from "../lib/tauri";
+} from "../lib/desktop";
 import { usePlatform } from "../context/platform";
 import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
 import { createWorkspaceShellLayout } from "../lib/workspace-shell-layout";
@@ -94,7 +94,7 @@ import {
 } from "../lib/publisher";
 import {
   isUserVisiblePart,
-  isTauriRuntime,
+  isDesktopRuntime,
   isWindowsPlatform,
   normalizeDirectoryPath,
   parseTemplateFrontmatter,
@@ -416,7 +416,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   createEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setObsidianAvailable(false);
       return;
     }
@@ -1425,7 +1425,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const ensureRemoteMirrorSyncLoop = () => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (remoteMirrorTrackedFiles.size === 0) return;
     if (remoteMirrorSyncTimer !== undefined) return;
     remoteMirrorSyncTimer = window.setInterval(() => {
@@ -1489,7 +1489,7 @@ export default function SessionView(props: SessionViewProps) {
     on(
       () =>
         [
-          isTauriRuntime(),
+          isDesktopRuntime(),
           props.activeWorkspaceDisplay.workspaceType,
           props.openworkServerWorkspaceId?.trim() ?? "",
           Boolean(props.openworkServerClient),
@@ -1528,7 +1528,7 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage("Reveal is unavailable for remote workers.");
       return;
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setToastMessage("Reveal is available in the desktop app.");
       return;
     }
@@ -1567,7 +1567,7 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage("Obsidian is not available on this system.");
       return;
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setToastMessage("Open in Obsidian is available in the desktop app.");
       return;
     }
@@ -1623,7 +1623,7 @@ export default function SessionView(props: SessionViewProps) {
       setToastMessage("Workspace path is unavailable.");
       return;
     }
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setToastMessage("Reveal is available in the desktop app.");
       return;
     }
@@ -1856,7 +1856,7 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setToastMessage("File open is available in the desktop app.");
       return;
     }
@@ -3128,7 +3128,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "OpenWork invite link",
           value: inviteUrl,
           secret: true,
-          placeholder: !isTauriRuntime()
+          placeholder: !isDesktopRuntime()
             ? "Desktop app required"
             : "Starting server...",
           hint: "One link that prefills worker URL and token.",
@@ -3136,7 +3136,7 @@ export default function SessionView(props: SessionViewProps) {
         {
           label: "OpenWork worker URL",
           value: url,
-          placeholder: !isTauriRuntime()
+          placeholder: !isDesktopRuntime()
             ? "Desktop app required"
             : "Starting server...",
           hint: mountedUrl
@@ -3149,7 +3149,7 @@ export default function SessionView(props: SessionViewProps) {
           label: "Access token",
           value: token,
           secret: true,
-          placeholder: isTauriRuntime() ? "-" : "Desktop app required",
+          placeholder: isDesktopRuntime() ? "-" : "Desktop app required",
           hint: mountedUrl
             ? "Use on phones or laptops connecting to this worker."
             : "Use on phones or laptops connecting to this host.",
@@ -3434,7 +3434,7 @@ export default function SessionView(props: SessionViewProps) {
     if (!ws) return "Export is available for local workers in the desktop app.";
     if (ws.workspaceType === "remote")
       return "Export is only supported for local workers.";
-    if (!isTauriRuntime()) return "Export is available in the desktop app.";
+    if (!isDesktopRuntime()) return "Export is available in the desktop app.";
     if (props.exportWorkspaceBusy) return "Export is already running.";
     return null;
   });
@@ -3714,7 +3714,7 @@ export default function SessionView(props: SessionViewProps) {
   };
 
   const showUpdatePill = createMemo(() => {
-    if (!isTauriRuntime()) return false;
+    if (!isDesktopRuntime()) return false;
     const state = props.updateStatus?.state;
     return (
       state === "available" || state === "downloading" || state === "ready"

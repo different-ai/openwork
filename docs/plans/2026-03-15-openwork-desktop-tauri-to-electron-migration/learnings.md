@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:57 - Step 049 - Run Tauri artifact parity audit
+
+- The easiest way to finish the migration cleanup is to rename the last compatibility labels in live code (`isDesktopRuntime`, `desktop.ts`) and then explicitly document which remaining references are intentional historical records; otherwise audit output gets swamped by planning docs and old PR notes.
+- Repo-wide audits should exclude `node_modules` and other generated package-manager state, or dependency docs will drown out the actual product-path leftovers.
+
 ## 2026-03-15 15:52 - Step 048 - Update contributor docs, skills, and architecture docs
 
 - The doc migration is easier if you focus on contributor touchpoints first: requirements, local dev commands, release/versioning instructions, architecture vocabulary, and stack-specific skills all need to describe Electron main/preload instead of the old Rust shell.

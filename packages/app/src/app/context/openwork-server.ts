@@ -27,8 +27,8 @@ import {
   type OrchestratorStatus,
   type OpenworkServerInfo,
   type OpenCodeRouterInfo,
-} from "../lib/tauri";
-import { isTauriRuntime } from "../utils";
+} from "../lib/desktop";
+import { isDesktopRuntime } from "../utils";
 import type { StartupPreference } from "../types";
 
 export type OpenworkServerStore = ReturnType<typeof createOpenworkServerStore>;
@@ -179,7 +179,7 @@ export function createOpenworkServerStore(options: {
 
   // Poll host info (Tauri only)
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!options.documentVisible()) return;
     let active = true;
 
@@ -241,7 +241,7 @@ export function createOpenworkServerStore(options: {
 
   // Poll engine (developer mode, Tauri only)
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!options.developerMode()) return;
     if (!options.documentVisible()) return;
 
@@ -265,7 +265,7 @@ export function createOpenworkServerStore(options: {
 
   // Poll OpenCode Router info (developer mode, Tauri only)
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!options.developerMode()) {
       setRouterInfo(null);
       return;
@@ -292,7 +292,7 @@ export function createOpenworkServerStore(options: {
 
   // Poll orchestrator status (developer mode, Tauri only)
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (!options.developerMode()) {
       setOrchStatus(null);
       return;

@@ -1,7 +1,7 @@
 import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type ParentProps } from "solid-js";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 
-import { isTauriRuntime } from "../utils";
+import { isDesktopRuntime } from "../utils";
 
 export function normalizeServerUrl(input: string) {
   const trimmed = input.trim();
@@ -62,7 +62,7 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
     // traffic should go through the server proxy (usually same-origin `/opencode`).
     // Do not reuse any persisted localhost targets.
     const forceProxy =
-      !isTauriRuntime() &&
+      !isDesktopRuntime() &&
       (import.meta.env.PROD ||
         (typeof import.meta.env?.VITE_OPENWORK_URL === "string" &&
           import.meta.env.VITE_OPENWORK_URL.trim().length > 0));

@@ -1,4 +1,4 @@
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 
 import { t, currentLocale } from "../../i18n";
 

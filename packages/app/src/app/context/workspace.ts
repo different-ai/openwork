@@ -13,7 +13,7 @@ import type {
 import {
   addOpencodeCacheHint,
   clearStartupPreference,
-  isTauriRuntime,
+  isDesktopRuntime,
   normalizeDirectoryPath,
   readStartupPreference,
   safeStringify,
@@ -59,7 +59,7 @@ import {
   type EngineInfo,
   type SandboxDoctorResult,
   type WorkspaceInfo,
-} from "../lib/tauri";
+} from "../lib/desktop";
 import { waitForHealthy, createClient, type OpencodeAuth } from "../lib/opencode";
 import type { OpencodeConnectStatus, ProviderListItem } from "../types";
 import { t, currentLocale } from "../../i18n";
@@ -619,7 +619,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function refreshEngine() {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     try {
       const info = await engineInfo();
@@ -670,7 +670,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function refreshEngineDoctor() {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     try {
       const source = options.engineSource();
@@ -688,7 +688,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function refreshSandboxDoctor() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setSandboxDoctorResult(null);
       setSandboxDoctorCheckedAt(Date.now());
       return null;
@@ -840,7 +840,7 @@ export function createWorkspaceStore(options: {
             return false;
           }
 
-          if (isTauriRuntime()) {
+          if (isDesktopRuntime()) {
             try {
               const ws = await workspaceUpdateRemote({
                 workspaceId: next.id,
@@ -885,7 +885,7 @@ export function createWorkspaceStore(options: {
           setWorkspaceConfigLoaded(true);
           setAuthorizedDirs([]);
 
-          if (isTauriRuntime()) {
+          if (isDesktopRuntime()) {
             try {
               await workspaceSetActive(id);
             } catch {
@@ -933,7 +933,7 @@ export function createWorkspaceStore(options: {
         setWorkspaceConfigLoaded(true);
         setAuthorizedDirs([]);
 
-        if (isTauriRuntime()) {
+        if (isDesktopRuntime()) {
           try {
             await workspaceSetActive(id);
           } catch {
@@ -963,7 +963,7 @@ export function createWorkspaceStore(options: {
     syncActiveWorkspaceId(id);
     setProjectDir(nextRoot);
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       if (isRemote) {
         setWorkspaceConfig(null);
         setWorkspaceConfigLoaded(true);
@@ -1027,7 +1027,7 @@ export function createWorkspaceStore(options: {
       const existingEngine = engine();
       const runtime = existingEngine?.runtime ?? resolveEngineRuntime();
       const canReuseHost =
-        isTauriRuntime() &&
+        isDesktopRuntime() &&
         Boolean(existingEngine?.running && existingEngine.baseUrl);
 
       wsDebug("activate:remote->local:hostReuse", {
@@ -1262,7 +1262,7 @@ export function createWorkspaceStore(options: {
             if (discovered) {
               resolvedDirectory = discovered;
               console.log("[workspace] remote directory resolved", resolvedDirectory);
-              if (isTauriRuntime() && context.workspaceId) {
+              if (isDesktopRuntime() && context.workspaceId) {
                 const updated = await workspaceUpdateRemote({
                   workspaceId: context.workspaceId,
                   directory: resolvedDirectory,
@@ -1440,7 +1440,7 @@ export function createWorkspaceStore(options: {
   };
 
   async function createWorkspaceFlow(preset: WorkspacePreset, folder: string | null): Promise<boolean> {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
     }
@@ -1497,7 +1497,7 @@ export function createWorkspaceStore(options: {
     folder: string | null,
     input?: { onReady?: () => Promise<void> | void },
   ): Promise<boolean> {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
     }
@@ -1859,7 +1859,7 @@ export function createWorkspaceStore(options: {
     }
 
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         const ws = await workspaceCreateRemote({
           baseUrl: resolvedBaseUrl.replace(/\/+$/, ""),
           directory: finalDirectory ? finalDirectory : null,
@@ -2050,7 +2050,7 @@ export function createWorkspaceStore(options: {
       }
     }
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       try {
         const ws = await workspaceUpdateRemote({
           workspaceId: id,
@@ -2100,7 +2100,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function forgetWorkspace(workspaceId: string) {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
@@ -2163,7 +2163,7 @@ export function createWorkspaceStore(options: {
         return Boolean(await reconnect());
       }
 
-      if (!isTauriRuntime()) {
+      if (!isDesktopRuntime()) {
         options.setError(t("app.error.tauri_required", currentLocale()));
         updateWorkspaceConnectionState(id, {
           status: "error",
@@ -2245,7 +2245,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function stopSandbox(workspaceId: string) {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
@@ -2294,7 +2294,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function pickWorkspaceFolder() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return null;
     }
@@ -2314,7 +2314,7 @@ export function createWorkspaceStore(options: {
 
   async function exportWorkspaceConfig(workspaceId?: string) {
     if (exportingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
@@ -2372,7 +2372,7 @@ export function createWorkspaceStore(options: {
 
   async function importWorkspaceConfig() {
     if (importingWorkspaceConfig()) return;
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return;
     }
@@ -2426,14 +2426,14 @@ export function createWorkspaceStore(options: {
   }
 
   function canRepairOpencodeMigration() {
-    if (!isTauriRuntime()) return false;
+    if (!isDesktopRuntime()) return false;
     const workspace = activeWorkspaceInfo();
     if (!workspace || workspace.workspaceType !== "local") return false;
     return Boolean(activeWorkspacePath().trim());
   }
 
   async function repairOpencodeMigration(optionsOverride?: { navigate?: boolean }) {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       const message = t("app.migration.desktop_required", currentLocale());
       setMigrationRepairResult({ ok: false, message });
       options.setError(message);
@@ -2529,7 +2529,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function startHost(optionsOverride?: { workspacePath?: string; navigate?: boolean }) {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError(t("app.error.tauri_required", currentLocale()));
       return false;
     }
@@ -2637,7 +2637,7 @@ export function createWorkspaceStore(options: {
     const nextDisplayName = displayName?.trim() || null;
     options.setError(null);
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       try {
         const ws = await workspaceUpdateDisplayName({ workspaceId: id, displayName: nextDisplayName });
         setWorkspaces(ws.workspaces);
@@ -2673,7 +2673,7 @@ export function createWorkspaceStore(options: {
     options.setBusyStartedAt(Date.now());
 
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         const info = await engineStop();
         setEngine(info);
       }
@@ -2704,7 +2704,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function reloadWorkspaceEngine() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       options.setError("Reloading the engine requires the desktop app.");
       return false;
     }
@@ -2840,7 +2840,7 @@ export function createWorkspaceStore(options: {
   async function resolveWorkspacePath(input: string) {
     const trimmed = input.trim();
     if (!trimmed) return "";
-    if (!isTauriRuntime()) return trimmed;
+    if (!isDesktopRuntime()) return trimmed;
 
     if (trimmed === "~") {
       try {
@@ -2872,7 +2872,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function persistAuthorizedRoots(nextRoots: string[]) {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (activeWorkspaceInfo()?.workspaceType === "remote") return;
     const root = activeWorkspacePath().trim();
     if (!root) return;
@@ -2890,7 +2890,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function persistReloadSettings(next: { auto?: boolean; resume?: boolean }) {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (activeWorkspaceInfo()?.workspaceType === "remote") return;
     const root = activeWorkspacePath().trim();
     if (!root) return;
@@ -2928,7 +2928,7 @@ export function createWorkspaceStore(options: {
   }
 
   async function addAuthorizedDirFromPicker(optionsOverride?: { persistToWorkspace?: boolean }) {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (activeWorkspaceInfo()?.workspaceType === "remote") return;
 
     try {
@@ -2980,7 +2980,7 @@ export function createWorkspaceStore(options: {
       }
     })();
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       try {
         const ws = await workspaceBootstrap();
         setWorkspaces(ws.workspaces);
@@ -2993,7 +2993,7 @@ export function createWorkspaceStore(options: {
     await refreshEngine();
     await refreshEngineDoctor();
 
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       const active = workspaces().find((w) => w.id === activeWorkspaceId()) ?? null;
       if (active) {
         if (active.workspaceType === "remote") {

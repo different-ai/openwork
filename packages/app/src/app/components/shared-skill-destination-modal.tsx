@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createSignal } from "solid-js";
 
 import { CheckCircle2, Folder, FolderPlus, Globe, Loader2, Sparkles, X } from "lucide-solid";
-import type { WorkspaceInfo } from "../lib/tauri";
+import type { WorkspaceInfo } from "../lib/desktop";
 import { t, currentLocale } from "../../i18n";
 
 import Button from "./button";

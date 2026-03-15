@@ -2,7 +2,7 @@ import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "so
 import { Check, ChevronDown, GripVertical, Loader2, Plus, RefreshCcw, Settings, Square, Trash2 } from "lucide-solid";
 
 import type { TodoItem, WorkspaceConnectionState } from "../../types";
-import type { WorkspaceInfo } from "../../lib/tauri";
+import type { WorkspaceInfo } from "../../lib/desktop";
 
 type SessionSummary = {
   id: string;

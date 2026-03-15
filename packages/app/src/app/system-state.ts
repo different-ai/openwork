@@ -10,14 +10,14 @@ import type {
   ReloadTrigger,
   ResetOpenworkMode,
 } from "./types";
-import { addOpencodeCacheHint, isTauriRuntime, safeStringify } from "./utils";
+import { addOpencodeCacheHint, isDesktopRuntime, safeStringify } from "./utils";
 import { mapConfigProvidersToList } from "./utils/providers";
 import { createUpdaterState } from "./context/updater";
 import {
   resetOpenworkState,
   resetOpencodeCache,
   sandboxCleanupOpenworkContainers,
-} from "./lib/tauri";
+} from "./lib/desktop";
 import { unwrap, waitForHealthy } from "./lib/opencode";
 
 function throttle<T extends (...args: any[]) => any>(
@@ -102,7 +102,7 @@ export function createSystemState(options: {
   const [resetModalBusy, setResetModalBusy] = createSignal(false);
 
   createEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
     if (typeof window === "undefined" || !window.openworkDesktop) return;
 
     const unsubscribe = window.openworkDesktop.updates.onStatus((event) => {
@@ -222,13 +222,13 @@ export function createSystemState(options: {
     options.setError(null);
 
     try {
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         await resetOpenworkState(resetModalMode());
       }
 
       clearOpenworkLocalStorage(resetModalMode());
 
-      if (isTauriRuntime()) {
+      if (isDesktopRuntime()) {
         await window.openworkDesktop?.app.relaunch();
       } else {
         window.location.reload();
@@ -446,7 +446,7 @@ export function createSystemState(options: {
   }
 
   async function repairOpencodeCache() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setCacheRepairResult("Cache repair requires the desktop app.");
       return;
     }
@@ -477,7 +477,7 @@ export function createSystemState(options: {
   }
 
   async function cleanupOpenworkDockerContainers() {
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       setDockerCleanupResult("Docker cleanup requires the desktop app.");
       return;
     }
@@ -513,7 +513,7 @@ export function createSystemState(options: {
   }
 
   async function checkForUpdates(optionsCheck?: { quiet?: boolean }) {
-    if (!isTauriRuntime()) return;
+    if (!isDesktopRuntime()) return;
 
     const env = updateEnv();
     if (env && !env.supported) {

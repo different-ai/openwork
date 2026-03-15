@@ -2,7 +2,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 
 import type { ScheduledJob } from "../types";
 import { usePlatform } from "../context/platform";
-import { formatRelativeTime, isTauriRuntime } from "../utils";
+import { formatRelativeTime, isDesktopRuntime } from "../utils";
 
 import Button from "../components/button";
 import {
@@ -441,7 +441,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   const supported = createMemo(() => {
     if (props.source === "remote") return props.sourceReady;
     return (
-      isTauriRuntime() &&
+      isDesktopRuntime() &&
       !props.isWindows &&
       props.schedulerInstalled &&
       !schedulerInstallRequested()
@@ -449,7 +449,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
   });
   const schedulerGateActive = createMemo(() => {
     if (props.source !== "local") return false;
-    if (!isTauriRuntime() || props.isWindows) return false;
+    if (!isDesktopRuntime() || props.isWindows) return false;
     return !props.schedulerInstalled || schedulerInstallRequested();
   });
   const schedulerGateMode = createMemo(() => (props.schedulerInstalled ? "reload" : "install"));
@@ -458,7 +458,7 @@ export default function ScheduledTasksView(props: ScheduledTasksViewProps) {
     if (props.source === "remote") {
       return props.sourceReady ? null : "OpenWork server unavailable. Connect to sync scheduled tasks.";
     }
-    if (!isTauriRuntime()) return "Scheduled tasks require the desktop app.";
+    if (!isDesktopRuntime()) return "Scheduled tasks require the desktop app.";
     if (props.isWindows) return "Scheduler is not supported on Windows yet.";
     if (!props.schedulerInstalled || schedulerInstallRequested()) return null;
     return null;

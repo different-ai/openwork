@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCle
 import { marked } from "marked";
 import type { Part } from "@opencode-ai/sdk/v2/client";
 import { File } from "lucide-solid";
-import { isTauriRuntime, safeStringify, summarizeStep } from "../utils";
+import { isDesktopRuntime, safeStringify, summarizeStep } from "../utils";
 import { usePlatform } from "../context/platform";
 import { perfNow, recordPerfLog } from "../lib/perf-log";
 
@@ -630,7 +630,7 @@ export default function PartView(props: Props) {
     const filePath = normalizeFilePath(href, props.workspaceRoot ?? "");
     if (!filePath) return;
 
-    if (!isTauriRuntime()) {
+    if (!isDesktopRuntime()) {
       platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
       return;
     }

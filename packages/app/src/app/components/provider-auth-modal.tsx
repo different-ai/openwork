@@ -2,7 +2,7 @@ import type { ProviderAuthAuthorization } from "@opencode-ai/sdk/v2/client";
 import { CheckCircle2, Loader2, X } from "lucide-solid";
 import type { ProviderListItem } from "../types";
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { isTauriRuntime } from "../utils";
+import { isDesktopRuntime } from "../utils";
 import { compareProviders } from "../utils/providers";
 
 import Button from "./button";
@@ -269,7 +269,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const openOauthUrl = async (url: string) => {
     if (!url) return;
-    if (isTauriRuntime()) {
+    if (isDesktopRuntime()) {
       await window.openworkDesktop?.shell.openExternal({ url });
       return;
     }
