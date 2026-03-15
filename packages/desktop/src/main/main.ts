@@ -1,6 +1,11 @@
 import { app, type BrowserWindow } from "electron";
 import { createDesktopEventBus } from "./services/event-bus";
 import { createDefaultAppService, registerAppIpc } from "./services/app-service";
+import {
+  createDefaultDeepLinkService,
+  registerDeepLinkIpc,
+  type DeepLinkService,
+} from "./services/deep-link-service";
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
@@ -14,6 +19,45 @@ export type MainProcessContext = {
 };
 
 let mainProcessContext: MainProcessContext | null = null;
+let deepLinkService: DeepLinkService | null = null;
+let mainProcessBootstrapped = false;
+
+function getOrCreateMainProcessContext() {
+  if (!mainProcessContext) {
+    mainProcessContext = createMainProcessContext();
+  }
+
+  return mainProcessContext;
+}
+
+function focusMainWindow(window: BrowserWindow | null) {
+  if (!window || window.isDestroyed()) {
+    return;
+  }
+
+  if (window.isMinimized()) {
+    window.restore();
+  }
+
+  window.show();
+  window.focus();
+}
+
+function getOrCreateDeepLinkService() {
+  if (deepLinkService) {
+    return deepLinkService;
+  }
+
+  const context = getOrCreateMainProcessContext();
+  deepLinkService = createDefaultDeepLinkService({
+    emitDeepLink: (event) => {
+      context.eventBus.emit("deepLinkOpen", event);
+    },
+    focusMainWindow: () => focusMainWindow(context.mainWindow),
+  });
+
+  return deepLinkService;
+}
 
 export function createMainProcessContext(): MainProcessContext {
   return {
@@ -38,12 +82,14 @@ async function openMainWindow(context: MainProcessContext) {
 }
 
 export async function bootstrapMainProcess() {
-  if (mainProcessContext) {
-    return mainProcessContext;
+  const context = getOrCreateMainProcessContext();
+  if (mainProcessBootstrapped) {
+    return context;
   }
 
-  const context = createMainProcessContext();
+  const activeDeepLinkService = getOrCreateDeepLinkService();
   registerAppIpc(createDefaultAppService());
+  registerDeepLinkIpc(activeDeepLinkService);
   registerWindowIpc(
     createWindowService({
       getMainWindow: () => context.mainWindow,
@@ -59,6 +105,15 @@ export async function bootstrapMainProcess() {
   );
   registerPathIpc(createPathService());
   registerShellIpc(createShellService());
+  context.eventBus.registerRendererSink((event) => {
+    const window = context.mainWindow;
+    if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
+      return;
+    }
+
+    window.webContents.send(event.channel, event.payload);
+  });
+  activeDeepLinkService.onReady();
 
   app.on("activate", () => {
     if (hasOpenWindows()) {
@@ -76,11 +131,17 @@ export async function bootstrapMainProcess() {
 
   await openMainWindow(context);
 
-  mainProcessContext = context;
+  mainProcessBootstrapped = true;
   return context;
 }
 
 async function main() {
+  const activeDeepLinkService = getOrCreateDeepLinkService();
+  if (!activeDeepLinkService.initializeBeforeReady()) {
+    app.quit();
+    return null;
+  }
+
   await app.whenReady();
   return bootstrapMainProcess();
 }

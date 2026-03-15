@@ -173,7 +173,7 @@
         "The renderer can fetch pending deep links and subscribe to runtime ones.",
         "Duplicate event delivery is controlled similarly to the current app behavior."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "016",

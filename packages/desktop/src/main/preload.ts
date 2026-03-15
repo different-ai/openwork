@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type {
   DesktopDeepLinkEvent,
   DesktopUnsubscribe,
@@ -8,7 +8,7 @@ import type {
   SandboxCreateProgressEvent,
 } from "../../../app/src/app/lib/openwork-desktop";
 import type { AppBuildInfo } from "../../../app/src/app/lib/desktop-contract";
-import { IPC_CHANNELS } from "./ipc/channels";
+import { IPC_CHANNELS, IPC_EVENT_CHANNELS } from "./ipc/channels";
 
 const noopUnsubscribe: DesktopUnsubscribe = () => {};
 
@@ -27,6 +27,17 @@ function notImplementedSubscription<T>(name: string): (listener: (event: T) => v
 
 function invokeDesktopChannel<T>(channel: string, input?: unknown): Promise<T> {
   return ipcRenderer.invoke(channel, input) as Promise<T>;
+}
+
+function subscribeToDesktopEvent<T>(channel: string, listener: (event: T) => void): DesktopUnsubscribe {
+  const handler = (_event: IpcRendererEvent, payload: T) => {
+    listener(payload);
+  };
+
+  ipcRenderer.on(channel, handler);
+  return () => {
+    ipcRenderer.removeListener(channel, handler);
+  };
 }
 
 export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
@@ -62,8 +73,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       expandUser: (input) => invokeDesktopChannel<string>(IPC_CHANNELS.paths("expandUser"), input),
     },
     deepLinks: {
-      getPending: notImplemented("deepLinks.getPending"),
-      onOpen: notImplementedSubscription<DesktopDeepLinkEvent>("deepLinks.onOpen"),
+      getPending: () => invokeDesktopChannel<string[]>(IPC_CHANNELS.deepLinks("getPending")),
+      onOpen: (listener) => subscribeToDesktopEvent<DesktopDeepLinkEvent>(IPC_EVENT_CHANNELS.deepLinkOpen, listener),
     },
     updates: {
       getEnvironment: notImplemented("updates.getEnvironment"),

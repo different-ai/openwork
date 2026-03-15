@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:57 - Step 015 - Implement deep-link registration and pending queue
+
+- Deep-link ownership needs a pre-ready phase in Electron: `requestSingleInstanceLock()`, `second-instance`, and macOS `open-url` listeners should be initialized before `app.whenReady()` so startup links are not lost.
+- Once the main context owns an event bus, a single renderer-sink bridge in `main.ts` can fan out all typed main-process events to the current BrowserWindow; namespace services then only need to emit typed payloads instead of touching `webContents.send()` directly.
+
 ## 2026-03-15 10:52 - Step 014 - Implement path helper service
 
 - For file-system helpers, validating for null bytes without trimming is safer than normalizing aggressively: legitimate path segments can contain leading or trailing spaces, and the renderer already decides when user-input cleanup is appropriate.
