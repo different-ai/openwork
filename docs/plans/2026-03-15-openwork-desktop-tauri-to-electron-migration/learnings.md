@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 14:03 - Step 031 - Implement detached orchestrator start and sandbox progress events
+
+- The detached-host flow can stay orchestration-first in Electron: launch `openwork start --detach ...`, then treat renderer-visible progress as a typed event stream driven by health polling rather than by exposing the spawned process itself.
+- Once the event bus exists, sandbox progress becomes just another domain event (`sandboxCreateProgress`), so the preload contract can subscribe with the same pattern as deep links and updater status instead of inventing a special-case IPC shape.
+
 ## 2026-03-15 14:00 - Step 030 - Implement orchestrator status activate and dispose service
 
 - The lighter orchestrator flows can stay daemon-owned: read fallback state from `openwork-orchestrator-state.json`, then enrich it with live `/health` and `/workspaces` calls when the daemon base URL is available.

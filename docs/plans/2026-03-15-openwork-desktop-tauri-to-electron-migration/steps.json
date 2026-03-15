@@ -349,7 +349,7 @@
         "Sandbox progress events can be subscribed to through preload.",
         "The current sandbox create UX has a drop-in event replacement."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "032",

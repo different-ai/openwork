@@ -1,11 +1,16 @@
 import { ipcMain } from "electron";
 import { existsSync, readFileSync } from "node:fs";
+import { createServer as createNetServer } from "node:net";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 
 import type {
+  OrchestratorDetachedHost,
   OrchestratorStatus,
   OrchestratorWorkspace,
 } from "../../../../app/src/app/lib/desktop-contract";
+import type { SandboxCreateProgressEvent } from "../../../../app/src/app/lib/openwork-desktop";
 import { IPC_CHANNELS } from "../ipc/channels";
 
 type OrchestratorHealth = {
@@ -40,6 +45,10 @@ type OrchestratorWorkspaceResponse = {
 
 type OrchestratorDisposeResponse = {
   disposed: boolean;
+};
+
+type OrchestratorServiceOptions = {
+  emitSandboxProgress?: (event: SandboxCreateProgressEvent) => void;
 };
 
 function resolveOrchestratorDataDir() {
@@ -81,6 +90,87 @@ async function fetchJson<T>(url: string, init?: RequestInit) {
   }
 
   return (await response.json()) as T;
+}
+
+function emitSandboxProgress(
+  options: OrchestratorServiceOptions,
+  runId: string,
+  stage: string,
+  message: string,
+  payload?: unknown,
+) {
+  options.emitSandboxProgress?.({
+    runId,
+    stage,
+    message,
+    payload,
+  });
+}
+
+function deriveOrchestratorContainerName(runId: string) {
+  const sanitized = runId
+    .replace(/[^a-zA-Z0-9_.-]+/g, "-")
+    .slice(0, 24);
+  return `openwork-orchestrator-${sanitized}`;
+}
+
+async function allocateFreePort() {
+  return new Promise<number>((resolve, reject) => {
+    const server = createNetServer();
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Failed to allocate free port"));
+        return;
+      }
+      const { port } = address;
+      server.close(() => resolve(port));
+    });
+    server.on("error", reject);
+  });
+}
+
+function resolveOrchestratorCommand() {
+  const candidates = [
+    path.join(path.dirname(process.execPath), process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator"),
+    process.resourcesPath
+      ? path.join(process.resourcesPath, "sidecars", process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator")
+      : null,
+    process.resourcesPath
+      ? path.join(process.resourcesPath, process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator")
+      : null,
+  ].filter((candidate): candidate is string => Boolean(candidate) && existsSync(candidate as string));
+
+  return candidates[0] ?? (process.platform === "win32" ? "openwork.exe" : "openwork");
+}
+
+async function waitForOpenworkHealth(baseUrl: string, timeoutMs: number, onTick: (elapsedMs: number, lastError: string | null) => void) {
+  const startedAt = Date.now();
+  let lastTickAt = 0;
+  let lastError: string | null = null;
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const elapsedMs = Date.now() - startedAt;
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, "")}/health`);
+      if (response.ok) {
+        return elapsedMs;
+      }
+      lastError = `HTTP ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+
+    if (Date.now() - lastTickAt > 850) {
+      lastTickAt = Date.now();
+      onTick(elapsedMs, lastError);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+
+  throw new Error(lastError ?? "Timed out waiting for OpenWork server");
 }
 
 function fallbackStatusFromState(dataDir: string, lastError: string | null): OrchestratorStatus {
@@ -147,7 +237,7 @@ function resolveBaseUrlFromStatus(status: OrchestratorStatus) {
   return baseUrl;
 }
 
-export function createOrchestratorService() {
+export function createOrchestratorService(options: OrchestratorServiceOptions = {}) {
   return {
     async status() {
       return resolveOrchestratorStatus(resolveOrchestratorDataDir(), null);
@@ -204,6 +294,121 @@ export function createOrchestratorService() {
 
       return disposed.disposed;
     },
+
+    async startDetached(input: {
+      workspacePath: string;
+      sandboxBackend?: "none" | "docker" | null;
+      runId?: string | null;
+      openworkToken?: string | null;
+      openworkHostToken?: string | null;
+    }): Promise<OrchestratorDetachedHost> {
+      const workspacePath = input.workspacePath.trim();
+      if (!workspacePath) {
+        throw new Error("workspacePath is required");
+      }
+
+      const sandboxBackend = (input.sandboxBackend ?? "none").trim().toLowerCase();
+      const wantsDockerSandbox = sandboxBackend === "docker";
+      const sandboxRunId = input.runId?.trim() || randomUUID();
+      const sandboxContainerName = wantsDockerSandbox ? deriveOrchestratorContainerName(sandboxRunId) : null;
+      const port = await allocateFreePort();
+      const token = input.openworkToken?.trim() || randomUUID();
+      const hostToken = input.openworkHostToken?.trim() || randomUUID();
+      const openworkUrl = `http://127.0.0.1:${port}`;
+
+      emitSandboxProgress(options, sandboxRunId, "init", "Starting sandbox...", {
+        workspacePath,
+        openworkUrl,
+        port,
+        sandboxBackend: wantsDockerSandbox ? "docker" : "none",
+        containerName: sandboxContainerName,
+      });
+
+      const command = resolveOrchestratorCommand();
+      const args = [
+        "start",
+        "--workspace",
+        workspacePath,
+        "--approval",
+        "auto",
+        "--no-opencode-auth",
+        "--opencode-router",
+        "true",
+        "--detach",
+        "--openwork-host",
+        "0.0.0.0",
+        "--openwork-port",
+        String(port),
+        "--openwork-token",
+        token,
+        "--openwork-host-token",
+        hostToken,
+        "--run-id",
+        sandboxRunId,
+      ];
+
+      if (wantsDockerSandbox) {
+        args.push("--sandbox", "docker");
+      }
+
+      emitSandboxProgress(options, sandboxRunId, "spawn.config", "Launching sandbox host...", {
+        command,
+        args,
+        env: {
+          PATH: process.env.PATH ?? null,
+          OPENWORK_DOCKER_BIN: process.env.OPENWORK_DOCKER_BIN ?? null,
+          OPENWRK_DOCKER_BIN: process.env.OPENWRK_DOCKER_BIN ?? null,
+          DOCKER_BIN: process.env.DOCKER_BIN ?? null,
+        },
+      });
+
+      const child = spawn(command, args, {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      child.unref();
+
+      emitSandboxProgress(options, sandboxRunId, "spawned", "Sandbox process launched. Waiting for OpenWork server...", {
+        openworkUrl,
+      });
+
+      const timeoutMs = wantsDockerSandbox ? 90_000 : 12_000;
+      try {
+        const elapsedMs = await waitForOpenworkHealth(openworkUrl, timeoutMs, (tickElapsedMs, lastError) => {
+          emitSandboxProgress(options, sandboxRunId, "openwork.waiting", "Waiting for OpenWork server...", {
+            openworkUrl,
+            elapsedMs: tickElapsedMs,
+            lastError,
+            containerState: sandboxContainerName ? "unknown" : null,
+          });
+        });
+
+        emitSandboxProgress(options, sandboxRunId, "openwork.healthy", "OpenWork server is ready.", {
+          openworkUrl,
+          elapsedMs,
+          containerState: sandboxContainerName ? "unknown" : null,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        emitSandboxProgress(options, sandboxRunId, "error", "Sandbox failed to start.", {
+          error: message,
+          openworkUrl,
+          containerState: sandboxContainerName ? "unknown" : null,
+        });
+        throw new Error(message);
+      }
+
+      return {
+        openworkUrl,
+        token,
+        hostToken,
+        port,
+        sandboxBackend: wantsDockerSandbox ? "docker" : null,
+        sandboxRunId: wantsDockerSandbox ? sandboxRunId : null,
+        sandboxContainerName,
+      };
+    },
   };
 }
 
@@ -218,5 +423,9 @@ export function registerOrchestratorIpc(service: OrchestratorService) {
   ipcMain.handle(
     IPC_CHANNELS.orchestrator("disposeInstance"),
     (_event, input: { workspacePath: string }) => service.disposeInstance(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.orchestrator("startDetached"),
+    (_event, input: Parameters<OrchestratorService["startDetached"]>[0]) => service.startDetached(input),
   );
 }

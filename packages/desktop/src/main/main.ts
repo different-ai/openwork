@@ -126,7 +126,13 @@ export async function bootstrapMainProcess() {
   );
   registerCommandFileIpc(createCommandFileService());
   registerConfigIpc(createConfigService());
-  registerOrchestratorIpc(createOrchestratorService());
+  registerOrchestratorIpc(
+    createOrchestratorService({
+      emitSandboxProgress: (event) => {
+        context.eventBus.emit("sandboxCreateProgress", event);
+      },
+    }),
+  );
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;
