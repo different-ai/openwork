@@ -1393,10 +1393,12 @@ export default function App() {
 
   const {
     sessions,
+    sessionById,
     sessionStatusById,
     selectedSession,
     selectedSessionStatus,
     messages,
+    messagesBySessionId,
     todos,
     pendingPermissions,
     permissionReplyBusy,
@@ -1406,6 +1408,7 @@ export default function App() {
     events,
     activePermission,
     loadSessions,
+    ensureSessionLoaded,
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
@@ -1420,6 +1423,7 @@ export default function App() {
     setPendingPermissions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    sessionLoadingById,
   } = sessionStore;
 
   const ARTIFACT_SCAN_MESSAGE_WINDOW = 220;
@@ -6792,6 +6796,10 @@ export default function App() {
     openRenameWorkspace,
     selectSession: selectSession,
     messages: visibleMessages(),
+    getSessionById: sessionById,
+    getMessagesBySessionId: messagesBySessionId,
+    ensureSessionLoaded,
+    sessionLoadingById,
     todos: activeTodos(),
     busyLabel: busyLabel(),
     developerMode: developerMode(),

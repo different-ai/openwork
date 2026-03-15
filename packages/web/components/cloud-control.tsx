@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { DenMarketingRail } from "./den-marketing-rail";
 
 type Step = "auth" | "name" | "intent" | "initializing" | "workspace";
 type AuthMode = "sign-in" | "sign-up";
@@ -159,7 +160,6 @@ const WORKER_STATUS_POLL_MS = 5000;
 const DEFAULT_AUTH_NAME = "OpenWork User";
 const OPENWORK_APP_CONNECT_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_APP_CONNECT_URL ?? "").trim();
 const OPENWORK_AUTH_CALLBACK_BASE_URL = (process.env.NEXT_PUBLIC_OPENWORK_AUTH_CALLBACK_URL ?? "").trim();
-const BILLING_DISABLED_FOR_EXPERIMENT = true;
 const OPENWORK_DOWNLOAD_URL = "https://openwork.software/download";
 const OPENWORK_DISCORD_URL = "https://discord.gg/VEhNQXxYMB";
 const INTENT_SUGGESTIONS = [
@@ -266,21 +266,6 @@ function isDesktopContext(): boolean {
 
   const ua = window.navigator.userAgent || "";
   return !/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
-}
-
-function getExperimentBillingSummary(): BillingSummary {
-  return {
-    featureGateEnabled: false,
-    hasActivePlan: false,
-    checkoutRequired: false,
-    checkoutUrl: null,
-    portalUrl: null,
-    price: null,
-    subscription: null,
-    invoices: [],
-    productId: null,
-    benefitId: null
-  };
 }
 
 function getAdditionalWorkerRequestHref(): string {
@@ -1146,7 +1131,12 @@ export function CloudControlPanel() {
   const openworkConnectUrl = activeWorker?.openworkUrl ?? activeWorker?.instanceUrl ?? null;
   const hasWorkspaceScopedUrl = Boolean(openworkConnectUrl && /\/w\/[^/?#]+/.test(openworkConnectUrl));
   const ownedWorkerCount = workers.filter((item) => item.isMine).length;
-  const workerLimitReached = Boolean(user && ownedWorkerCount > 0);
+  const additionalWorkerNeedsPlan = Boolean(
+    user &&
+    ownedWorkerCount > 0 &&
+    billingSummary?.featureGateEnabled &&
+    !billingSummary.hasActivePlan
+  );
   const openworkDeepLink = buildOpenworkDeepLink(
     openworkConnectUrl,
     activeWorker?.clientToken ?? null,
@@ -1248,7 +1238,7 @@ export function CloudControlPanel() {
   const selectedWorkerStatus = activeWorker?.status ?? selectedWorker?.status ?? "unknown";
   const selectedStatusMeta = getWorkerStatusMeta(selectedWorkerStatus);
   const isSelectedWorkerFailed = selectedWorkerStatus.trim().toLowerCase() === "failed";
-  const effectiveCheckoutUrl = BILLING_DISABLED_FOR_EXPERIMENT ? null : (checkoutUrl ?? billingSummary?.checkoutUrl ?? null);
+  const effectiveCheckoutUrl = checkoutUrl ?? billingSummary?.checkoutUrl ?? null;
   const billingSubscription = billingSummary?.subscription ?? null;
   const billingPrice = billingSummary?.price ?? null;
   const runtimeUpgradeCount = runtimeSnapshot?.services.filter((item) => item.upgradeAvailable).length ?? 0;
@@ -1487,14 +1477,6 @@ export function CloudControlPanel() {
   }
 
   async function refreshBilling(options: { includeCheckout?: boolean; quiet?: boolean } = {}) {
-    if (BILLING_DISABLED_FOR_EXPERIMENT) {
-      const summary = getExperimentBillingSummary();
-      setBillingSummary(summary);
-      setCheckoutUrl(null);
-      setBillingError(null);
-      return summary;
-    }
-
     if (!user) {
       setBillingSummary(null);
       if (!options.quiet) {
@@ -1566,13 +1548,6 @@ export function CloudControlPanel() {
   }
 
   async function handleSubscriptionCancellation(cancelAtPeriodEnd: boolean) {
-    if (BILLING_DISABLED_FOR_EXPERIMENT) {
-      setBillingSummary(getExperimentBillingSummary());
-      setCheckoutUrl(null);
-      setBillingError("Billing is disabled for this experiment.");
-      return;
-    }
-
     if (!user || billingSubscriptionBusy) {
       return;
     }
@@ -1721,13 +1696,6 @@ export function CloudControlPanel() {
   }, [activeWorker?.workerId, selectedWorker?.workerId, runtimeSnapshot?.upgrade.status]);
 
   useEffect(() => {
-    if (BILLING_DISABLED_FOR_EXPERIMENT) {
-      setBillingSummary(getExperimentBillingSummary());
-      setBillingError(null);
-      setCheckoutUrl(null);
-      return;
-    }
-
     if (!user) {
       setBillingSummary(null);
       setBillingError(null);
@@ -1738,13 +1706,6 @@ export function CloudControlPanel() {
   }, [user?.id, authToken]);
 
   useEffect(() => {
-    if (BILLING_DISABLED_FOR_EXPERIMENT) {
-      if (shellView !== "workers") {
-        setShellView("workers");
-      }
-      return;
-    }
-
     if (!user || shellView !== "billing") {
       return;
     }
@@ -1794,21 +1755,16 @@ export function CloudControlPanel() {
       return;
     }
 
-    // Polar checkout returns are ignored while billing is disabled for this experiment.
-    // TODO(den-free-first-worker): Re-enable the original Polar checkout return flow after the experiment.
-    // setPaymentReturned(true);
-    // setCheckoutUrl(null);
-    // setShellView("billing");
-    // setLaunchStatus("Checkout return detected. Click launch to continue worker provisioning.");
-    // setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
-    // appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
-    // trackPosthogEvent("den_paywall_checkout_returned", {
-    //   source: "polar",
-    //   session_token_present: true
-    // });
+    setPaymentReturned(true);
     setCheckoutUrl(null);
-    setShellView("workers");
-    setLaunchStatus("Name your worker and click launch.");
+    setShellView("billing");
+    setLaunchStatus("Checkout return detected. Billing is refreshing now.");
+    setAuthInfo("Checkout return detected. Sign in to continue to Billing.");
+    appendEvent("success", "Returned from checkout", `Session ${shortValue(customerSessionToken)}`);
+    trackPosthogEvent("den_paywall_checkout_returned", {
+      source: "polar",
+      session_token_present: true
+    });
 
     params.delete("customer_session_token");
     const nextQuery = params.toString();
@@ -1821,7 +1777,8 @@ export function CloudControlPanel() {
       return;
     }
 
-    // Billing refresh intentionally disabled for the one-worker experiment.
+    void refreshBilling({ includeCheckout: false, quiet: true });
+    setPaymentReturned(false);
   }, [paymentReturned, user?.id, authToken]);
 
   useEffect(() => {
@@ -1911,14 +1868,9 @@ export function CloudControlPanel() {
       return;
     }
 
-    if (workerLimitReached) {
-      setAutoLaunchPending(false);
-      return;
-    }
-
     setAutoLaunchPending(false);
     void handleLaunchWorker({ source: "signup_auto" });
-  }, [autoLaunchPending, launchBusy, user?.id, workerLimitReached]);
+  }, [autoLaunchPending, launchBusy, user?.id]);
 
   useEffect(() => {
     if (step !== "initializing" || !worker) {
@@ -2280,41 +2232,40 @@ export function CloudControlPanel() {
         12000
       );
 
-      // TODO(den-free-first-worker): Restore this 402 paywall branch after the one-worker experiment ends.
-      // if (response.status === 402) {
-      //   const url = getCheckoutUrl(payload);
-      //   setCheckoutUrl(url);
-      //   setShellView("billing");
-      //   setBillingSummary((current) => {
-      //     if (!current) {
-      //       return current;
-      //     }
-      //
-      //     return {
-      //       ...current,
-      //       hasActivePlan: false,
-      //       checkoutRequired: true,
-      //       checkoutUrl: url ?? current.checkoutUrl
-      //     };
-      //   });
-      //   setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
-      //   setLaunchError(url ? null : "Checkout URL missing from paywall response.");
-      //   appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
-      //   trackPosthogEvent("den_paywall_required", {
-      //     checkout_url_present: Boolean(url)
-      //   });
-      //
-      //   if (!url) {
-      //     void refreshBilling({ includeCheckout: true, quiet: true });
-      //   }
-      //
-      //   return;
-      // }
+      if (response.status === 402) {
+        const url = getCheckoutUrl(payload);
+        setCheckoutUrl(url);
+        setShellView("billing");
+        setBillingSummary((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            hasActivePlan: false,
+            checkoutRequired: true,
+            checkoutUrl: url ?? current.checkoutUrl
+          };
+        });
+        setLaunchStatus("Payment is required. Complete checkout and return to continue launch.");
+        setLaunchError(url ? null : "Checkout URL missing from paywall response.");
+        appendEvent("warning", "Paywall required", url ? "Checkout URL generated" : "Checkout URL missing");
+        trackPosthogEvent("den_paywall_required", {
+          checkout_url_present: Boolean(url)
+        });
+
+        if (!url) {
+          void refreshBilling({ includeCheckout: true, quiet: true });
+        }
+
+        return;
+      }
       if (response.status === 409) {
-        const message = getErrorMessage(payload, "You can only create one cloud worker during this experiment.");
-        setLaunchStatus("Worker limit reached.");
+        const message = getErrorMessage(payload, "This worker could not be launched because a conflicting worker already exists.");
+        setLaunchStatus("Worker launch blocked.");
         setLaunchError(message);
-        appendEvent("warning", "Worker limit reached", message);
+        appendEvent("warning", "Launch blocked", message);
         return;
       }
 
@@ -2840,100 +2791,104 @@ export function CloudControlPanel() {
       <div className={isShellStep ? "flex min-h-0 w-full flex-1" : ""}>
 
         {step === "auth" ? (
-          <div className="mx-auto grid w-full max-w-[28rem] gap-6 px-1 py-2">
-            <div className="grid gap-3 text-center">
-              <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
-                {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
-              </h1>
-              <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
-                {authMode === "sign-up"
-                  ? "As soon as you sign up, we start provisioning your first hosted worker in the background."
-                  : "Pick up your existing worker setup and jump back into OpenWork."}
-              </p>
-            </div>
+          <div className="mx-auto grid w-full max-w-[78rem] gap-8 px-1 py-2 xl:grid-cols-[minmax(0,1.18fr)_minmax(360px,0.82fr)] xl:items-start">
+            <DenMarketingRail />
 
-            <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
-              <button
-                type="button"
-                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handleSocialSignIn("github")}
-                disabled={authBusy}
-              >
-                <GitHubLogo />
-                <span>Continue with GitHub</span>
-              </button>
-
-              <button
-                type="button"
-                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                onClick={() => void handleSocialSignIn("google")}
-                disabled={authBusy}
-              >
-                <GoogleLogo />
-                <span>Continue with Google</span>
-              </button>
-
-              <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
-                <span className="h-px flex-1 bg-slate-200" />
-                <span>or</span>
-                <span className="h-px flex-1 bg-slate-200" />
+            <div className="grid gap-6 rounded-[32px] border border-white/70 bg-white/92 p-5 shadow-[0_28px_80px_-44px_rgba(15,23,42,0.35)] backdrop-blur md:p-6">
+              <div className="grid gap-3 text-center">
+                <h1 className="text-[2rem] font-semibold leading-[1.02] tracking-[-0.045em] text-[var(--dls-text-primary)] md:text-[2.5rem]">
+                  {authMode === "sign-up" ? "Create your account." : "Sign in to Den."}
+                </h1>
+                <p className="mx-auto max-w-[24rem] text-[15px] leading-7 text-[var(--dls-text-secondary)]">
+                  {authMode === "sign-up"
+                    ? "Sign up to launch your first worker now. Additional workers unlock through Den Cloud billing when you need them."
+                    : "Pick up your workers, billing status, and Polar checkout return state right from app.openwork.software."}
+                </p>
               </div>
 
-              <label className="grid gap-2">
-                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  autoComplete="email"
-                  required
-                />
-              </label>
+              <form className="grid gap-3 rounded-[28px] border border-[var(--dls-border)] bg-white p-5 shadow-[var(--dls-card-shadow)] md:p-6" onSubmit={handleAuthSubmit}>
+                <button
+                  type="button"
+                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handleSocialSignIn("github")}
+                  disabled={authBusy}
+                >
+                  <GitHubLogo />
+                  <span>Continue with GitHub</span>
+                </button>
 
-              <label className="grid gap-2">
-                <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
-                <input
-                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
-                  required
-                />
-              </label>
+                <button
+                  type="button"
+                  className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void handleSocialSignIn("google")}
+                  disabled={authBusy}
+                >
+                  <GoogleLogo />
+                  <span>Continue with Google</span>
+                </button>
 
-              <button
-                type="submit"
-                className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={authBusy}
-              >
-                {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
-              </button>
-            </form>
+                <div className="flex items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400" aria-hidden="true">
+                  <span className="h-px flex-1 bg-slate-200" />
+                  <span>or</span>
+                  <span className="h-px flex-1 bg-slate-200" />
+                </div>
 
-            <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
-              <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
-              <button
-                type="button"
-                className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
-                onClick={() => {
-                  const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
-                  setAuthMode(nextMode);
-                  setAuthInfo(getAuthInfoForMode(nextMode));
-                  setAuthError(null);
-                }}
-              >
-                {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
-              </button>
-            </div>
+                <label className="grid gap-2">
+                  <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Email</span>
+                  <input
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                    type="email"
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    autoComplete="email"
+                    required
+                  />
+                </label>
 
-            {showAuthFeedback ? (
-              <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
-                {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
-                {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+                <label className="grid gap-2">
+                  <span className="px-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Password</span>
+                  <input
+                    className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-[15px] text-slate-900 outline-none transition focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+                    type="password"
+                    value={password}
+                    onChange={(event) => setPassword(event.target.value)}
+                    autoComplete={authMode === "sign-up" ? "new-password" : "current-password"}
+                    required
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  className="inline-flex w-full items-center justify-center rounded-2xl bg-[#011627] px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_24px_rgba(15,23,42,0.14)] transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={authBusy}
+                >
+                  {authBusy ? "Working..." : authMode === "sign-in" ? "Sign in" : "Create account"}
+                </button>
+              </form>
+
+              <div className="flex items-center justify-between gap-3 px-1 text-sm text-[var(--dls-text-secondary)]">
+                <p>{authMode === "sign-in" ? "Need an account?" : "Already have an account?"}</p>
+                <button
+                  type="button"
+                  className="font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"
+                  onClick={() => {
+                    const nextMode = authMode === "sign-in" ? "sign-up" : "sign-in";
+                    setAuthMode(nextMode);
+                    setAuthInfo(getAuthInfoForMode(nextMode));
+                    setAuthError(null);
+                  }}
+                >
+                  {authMode === "sign-in" ? "Create account" : "Switch to sign in"}
+                </button>
               </div>
-            ) : null}
+
+              {showAuthFeedback ? (
+                <div className="grid gap-1 rounded-2xl border border-[var(--dls-border)] bg-[var(--dls-hover)] px-4 py-3 text-center text-[13px] text-[var(--dls-text-secondary)]" aria-live="polite">
+                  {authInfo !== defaultAuthInfo ? <p>{authInfo}</p> : null}
+                  {authError ? <p className="font-medium text-rose-600">{authError}</p> : null}
+                </div>
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -3162,16 +3117,15 @@ export function CloudControlPanel() {
                 >
                   Workers
                 </button>
-                {/* TODO(den-free-first-worker): Restore Billing nav button after the experiment. */}
-                {/* <button
+                <button
                   type="button"
                   onClick={() => setShellView("billing")}
-                    className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
-                      shellView === "billing" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
-                    }`}
+                  className={`rounded-[12px] px-3 py-1.5 text-sm font-medium transition ${
+                    shellView === "billing" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"
+                  }`}
                 >
                   Billing
-                </button> */}
+                </button>
               </div>
               <button
                 type="button"
@@ -3183,7 +3137,7 @@ export function CloudControlPanel() {
               </button>
             </div>
 
-            {shellView === "workers" || BILLING_DISABLED_FOR_EXPERIMENT ? (
+            {shellView === "workers" ? (
               <div className="flex h-full min-h-0 flex-col lg:flex-row">
                 <aside className="hidden h-full w-[260px] shrink-0 flex-col justify-between border-r border-[var(--dls-border)] bg-transparent p-6 lg:flex">
                   <div>
@@ -3199,14 +3153,13 @@ export function CloudControlPanel() {
                         >
                           Workers
                         </button>
-                        {/* TODO(den-free-first-worker): Restore Billing sidebar button after the experiment. */}
-                        {/* <button
+                        <button
                           type="button"
                           className="w-full rounded-[14px] px-3 py-2.5 text-left text-sm font-medium text-slate-500 transition hover:bg-slate-50"
                           onClick={() => setShellView("billing")}
                         >
                           Billing
-                        </button> */}
+                        </button>
                         <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Settings</span>
                         <span className="block rounded-[14px] px-3 py-2.5 text-sm font-medium text-slate-400">Help Center</span>
                       </nav>
@@ -3280,12 +3233,10 @@ export function CloudControlPanel() {
                           type="button"
                           className="w-full rounded-2xl bg-slate-900 px-3 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
                           onClick={() => void handleLaunchWorker({ source: "manual" })}
-                          disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
+                          disabled={!user || launchBusy || worker?.status === "provisioning"}
                         >
                           {launchBusy
                             ? "Starting worker..."
-                            : workerLimitReached
-                              ? "Worker limit reached"
                             : worker?.status === "provisioning"
                               ? "Worker is starting..."
                               : `Launch "${workerName || "Cloud Worker"}"`}
@@ -3298,7 +3249,13 @@ export function CloudControlPanel() {
                           </div>
                         ) : null}
 
-                        {workerLimitReached ? (
+                        {additionalWorkerNeedsPlan ? (
+                          <div className="mt-3 rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                            Your first worker is live. Additional workers require an active Den Cloud plan.
+                          </div>
+                        ) : null}
+
+                        {ownedWorkerCount > 0 ? (
                           <a
                             href={getAdditionalWorkerRequestHref()}
                             className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
@@ -3396,12 +3353,10 @@ export function CloudControlPanel() {
                         type="button"
                         className="w-full rounded-2xl bg-slate-900 px-3 py-3 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={() => void handleLaunchWorker({ source: "manual" })}
-                        disabled={!user || launchBusy || worker?.status === "provisioning" || workerLimitReached}
+                        disabled={!user || launchBusy || worker?.status === "provisioning"}
                       >
                         {launchBusy
                           ? "Starting worker..."
-                          : workerLimitReached
-                            ? "Worker limit reached"
                           : worker?.status === "provisioning"
                             ? "Worker is starting..."
                             : `Launch "${workerName || "Cloud Worker"}"`}
@@ -3414,7 +3369,13 @@ export function CloudControlPanel() {
                         </div>
                       ) : null}
 
-                      {workerLimitReached ? (
+                      {additionalWorkerNeedsPlan ? (
+                        <div className="mt-3 rounded-[16px] border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-900">
+                          Your first worker is live. Additional workers require an active Den Cloud plan.
+                        </div>
+                      ) : null}
+
+                      {ownedWorkerCount > 0 ? (
                         <a
                           href={getAdditionalWorkerRequestHref()}
                           className="mt-3 inline-flex w-full items-center justify-center rounded-[12px] border border-slate-300 bg-white px-3 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
@@ -3423,8 +3384,7 @@ export function CloudControlPanel() {
                         </a>
                       ) : null}
 
-                      {/* TODO(den-free-first-worker): Restore checkout CTA block when paywall returns. */}
-                      {/* {effectiveCheckoutUrl ? (
+                      {effectiveCheckoutUrl ? (
                         <div className="mt-3 rounded-[12px] border border-amber-200 bg-amber-50 px-3 py-2.5">
                           <p className="text-sm font-semibold text-amber-800">Payment needed before launch</p>
                           <a
@@ -3435,7 +3395,7 @@ export function CloudControlPanel() {
                             Continue to checkout
                           </a>
                         </div>
-                      ) : null} */}
+                      ) : null}
 
                     </div>
                   ) : null}
@@ -3845,11 +3805,8 @@ export function CloudControlPanel() {
                       </div>
                     </>
                   ) : (
-                    <div className="flex min-h-[360px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-slate-50">
-                      <div className="px-6 text-center">
-                        <p className="text-lg font-semibold text-slate-900">Select a worker</p>
-                        <p className="mt-1 text-sm text-slate-500">Pick a worker from the list to see details and connect.</p>
-                      </div>
+                    <div className="rounded-[24px] border border-slate-200 bg-[linear-gradient(180deg,#ffffff,#f8fafc)] p-5 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+                      <DenMarketingRail compact />
                     </div>
                   )}
                 </section>

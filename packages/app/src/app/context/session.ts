@@ -39,6 +39,7 @@ export type SessionStore = ReturnType<typeof createSessionStore>;
 
 type StoreState = {
   sessions: Session[];
+  sessionInfoById: Record<string, Session>;
   sessionStatus: Record<string, string>;
   sessionErrorTurns: Record<string, SessionErrorTurn[]>;
   messages: Record<string, MessageInfo[]>;
@@ -183,6 +184,7 @@ export function createSessionStore(options: {
 
   const [store, setStore] = createStore<StoreState>({
     sessions: [],
+    sessionInfoById: {},
     sessionStatus: {},
     sessionErrorTurns: {},
     messages: {},
@@ -608,6 +610,31 @@ export function createSessionStore(options: {
   let selectRunCounter = 0;
   let selectVersion = 0;
   const selectInFlightBySession = new Map<string, Promise<void>>();
+  const ensureInFlightBySession = new Map<string, Promise<void>>();
+
+  const rememberSession = (session: Session) => {
+    setStore("sessionInfoById", session.id, session);
+  };
+
+  const rememberSessions = (list: Session[]) => {
+    if (!list.length) return;
+    batch(() => {
+      list.forEach((session) => {
+        setStore("sessionInfoById", session.id, session);
+      });
+    });
+  };
+
+  const sessionById = (id: string | null) => {
+    if (!id) return null;
+    return store.sessionInfoById[id] ?? store.sessions.find((session) => session.id === id) ?? null;
+  };
+
+  const messagesBySessionId = (id: string | null): MessageWithParts[] => {
+    if (!id) return [];
+    const list = store.messages[id] ?? [];
+    return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+  };
 
   const sessions = () => store.sessions;
   const sessionStatusById = () => store.sessionStatus;
@@ -616,9 +643,7 @@ export function createSessionStore(options: {
   const events = () => store.events;
 
   const selectedSession = createMemo(() => {
-    const id = options.selectedSessionId();
-    if (!id) return null;
-    return store.sessions.find((session) => session.id === id) ?? null;
+    return sessionById(options.selectedSessionId());
   });
 
   const selectedSessionStatus = createMemo(() => {
@@ -628,10 +653,7 @@ export function createSessionStore(options: {
   });
 
   const messages = createMemo<MessageWithParts[]>(() => {
-    const id = options.selectedSessionId();
-    if (!id) return [];
-    const list = store.messages[id] ?? [];
-    return list.map((info) => ({ info, parts: store.parts[info.id] ?? [] }));
+    return messagesBySessionId(options.selectedSessionId());
   });
 
   const todos = createMemo<TodoItem[]>(() => {
@@ -676,6 +698,7 @@ export function createSessionStore(options: {
       ? list.filter((session) => normalizeDirectoryPath(session.directory) === root)
       : list;
     sessionDebug("sessions:load:filtered", { root: root || null, count: filtered.length });
+    rememberSessions(filtered);
     setStore("sessions", reconcile(sortSessionsByActivity(filtered), { key: "id" }));
   }
 
@@ -687,7 +710,12 @@ export function createSessionStore(options: {
       throw new Error("Session name is required");
     }
     const next = unwrap(await c.session.update({ sessionID, title: trimmed }));
-    setStore("sessions", (current) => upsertSession(current, next));
+    rememberSession(next);
+    setStore("sessions", (current) => {
+      const tracked = current.some((session) => session.id === next.id);
+      if (next.parentID && !tracked) return current;
+      return upsertSession(current, next);
+    });
   }
 
   async function refreshPendingPermissions() {
@@ -723,6 +751,50 @@ export function createSessionStore(options: {
         setStore("parts", message.info.id, reconcile(sortById(parts), { key: "id" }));
       }
     });
+  }
+
+  async function ensureSessionLoaded(sessionID: string) {
+    const id = sessionID.trim();
+    if (!id) return;
+    if (sessionById(id) && (store.messages[id]?.length ?? 0) > 0) return;
+
+    const existing = ensureInFlightBySession.get(id);
+    if (existing) return existing;
+
+    const c = options.client();
+    if (!c) return;
+
+    const run = (async () => {
+      setMessageLoadBusyBySession((prev) => ({ ...prev, [id]: true }));
+      try {
+        const [info, msgs] = await Promise.all([
+          withTimeout(c.session.get({ sessionID: id }), 8000, "session.get"),
+          withTimeout(c.session.messages({ sessionID: id, limit: INITIAL_SESSION_MESSAGE_LIMIT }), 12000, "session.messages"),
+        ]);
+        const nextSession = unwrap(info);
+        const nextMessages = unwrap(msgs);
+        rememberSession(nextSession);
+        setMessagesForSession(id, nextMessages);
+        setMessageLimitBySession((prev) => ({ ...prev, [id]: INITIAL_SESSION_MESSAGE_LIMIT }));
+        setMessageCompleteBySession((prev) => ({ ...prev, [id]: nextMessages.length < INITIAL_SESSION_MESSAGE_LIMIT }));
+      } catch (error) {
+        sessionWarn("session.ensure.failed", {
+          sessionID: id,
+          error: error instanceof Error ? error.message : safeStringify(error),
+        });
+      } finally {
+        setMessageLoadBusyBySession((prev) => ({ ...prev, [id]: false }));
+      }
+    })();
+
+    ensureInFlightBySession.set(id, run);
+    try {
+      await run;
+    } finally {
+      if (ensureInFlightBySession.get(id) === run) {
+        ensureInFlightBySession.delete(id);
+      }
+    }
   }
 
   async function selectSession(sessionID: string) {
@@ -926,6 +998,7 @@ export function createSessionStore(options: {
   }
 
   const setSessions = (next: Session[]) => {
+    rememberSessions(next);
     setStore("sessions", reconcile(sortSessionsByActivity(next), { key: "id" }));
   };
 
@@ -1064,7 +1137,12 @@ export function createSessionStore(options: {
         const record = event.properties as Record<string, unknown>;
         if (record.info && typeof record.info === "object") {
           const info = record.info as Session;
-          setStore("sessions", (current) => upsertSession(current, info));
+          rememberSession(info);
+          setStore("sessions", (current) => {
+            const tracked = current.some((session) => session.id === info.id);
+            if (info.parentID && !tracked) return current;
+            return upsertSession(current, info);
+          });
         }
       }
     }
@@ -1076,6 +1154,11 @@ export function createSessionStore(options: {
         if (info?.id) {
           syntheticContinueEventTimesBySession.delete(info.id);
           syntheticContinueLoopLastWarnAtBySession.delete(info.id);
+          setStore(
+            produce((draft: StoreState) => {
+              delete draft.sessionInfoById[info.id];
+            }),
+          );
           setStore("sessions", (current) => removeSession(current, info.id));
           setStore(
             produce((draft: StoreState) => {
@@ -1110,7 +1193,12 @@ export function createSessionStore(options: {
           if (c) {
             try {
               const latest = unwrap(await c.session.get({ sessionID }));
-              setStore("sessions", (current) => upsertSession(current, latest));
+              rememberSession(latest);
+              setStore("sessions", (current) => {
+                const tracked = current.some((session) => session.id === latest.id);
+                if (latest.parentID && !tracked) return current;
+                return upsertSession(current, latest);
+              });
             } catch {
               // ignore
             }
@@ -1524,6 +1612,7 @@ export function createSessionStore(options: {
 
   return {
     sessions,
+    sessionById,
     sessionErrorTurnsById: (sessionID: string | null) => (sessionID ? store.sessionErrorTurns[sessionID] ?? [] : []),
     selectedSessionErrorTurns: createMemo(() => {
       const sessionID = options.selectedSessionId();
@@ -1533,6 +1622,7 @@ export function createSessionStore(options: {
     selectedSession,
     selectedSessionStatus,
     messages,
+    messagesBySessionId,
     todos,
     pendingPermissions,
     permissionReplyBusy,
@@ -1542,6 +1632,7 @@ export function createSessionStore(options: {
     events,
     activePermission,
     loadSessions,
+    ensureSessionLoaded,
     refreshPendingPermissions,
     refreshPendingQuestions,
     selectSession,
@@ -1559,5 +1650,6 @@ export function createSessionStore(options: {
     setPendingQuestions,
     selectedSessionHasEarlierMessages,
     selectedSessionLoadingEarlierMessages,
+    sessionLoadingById: (sessionID: string | null) => (sessionID ? Boolean(messageLoadBusyBySession()[sessionID]) : false),
   };
 }

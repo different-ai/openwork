@@ -7,7 +7,7 @@ import {
   onCleanup,
 } from "solid-js";
 import type { JSX } from "solid-js";
-import type { Part } from "@opencode-ai/sdk/v2/client";
+import type { Part, Session } from "@opencode-ai/sdk/v2/client";
 import {
   Check,
   ChevronDown,
@@ -44,6 +44,10 @@ export type MessageListProps = {
   isStreaming?: boolean;
   developerMode: boolean;
   showThinking: boolean;
+  getSessionById?: (sessionId: string | null) => Session | null;
+  getMessagesBySessionId?: (sessionId: string | null) => MessageWithParts[];
+  ensureSessionLoaded?: (sessionId: string) => Promise<void> | void;
+  sessionLoadingById?: (sessionId: string | null) => boolean;
   expandedStepIds: Set<string>;
   setExpandedStepIds: (updater: (current: Set<string>) => Set<string>) => void;
   openSessionById?: (sessionId: string) => void;
@@ -56,6 +60,7 @@ export type MessageListProps = {
     handler: ((messageId: string, behavior?: ScrollBehavior) => boolean) | null,
   ) => void;
   footer?: JSX.Element;
+  variant?: "default" | "nested";
 };
 
 type StepClusterBlock = {
@@ -251,6 +256,7 @@ type TaskStepInfo = {
   isTask: boolean;
   agentType?: string;
   sessionId?: string;
+  description?: string;
 };
 
 function formatAgentType(agentType: string): string {
@@ -288,12 +294,16 @@ function getTaskStepInfo(part: Part): TaskStepInfo {
     metadata.sessionID ??
     state.sessionId ??
     state.sessionID;
+  const rawDescription =
+    typeof input.description === "string" && input.description.trim()
+      ? input.description.trim()
+      : undefined;
   const sessionId =
     typeof rawSessionId === "string" && rawSessionId.trim()
       ? rawSessionId.trim()
       : undefined;
 
-  return { isTask: true, agentType, sessionId };
+  return { isTask: true, agentType, sessionId, description: rawDescription };
 }
 
 function compactPathToken(value: string) {
@@ -778,6 +788,113 @@ export default function MessageList(props: MessageListProps) {
     props.setScrollToMessageById?.(null);
   });
 
+  const isNestedVariant = () => props.variant === "nested";
+
+  const sessionStreamState = (messages: MessageWithParts[]) => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const info = messages[index]?.info as { role?: string; time?: { completed?: number } };
+      if (info?.role !== "assistant") continue;
+      return !info.time?.completed;
+    }
+    return false;
+  };
+
+  const SubagentThread = (threadProps: { part: Part }) => {
+    const task = createMemo(() => getTaskStepInfo(threadProps.part));
+    const sessionId = createMemo(() => task().sessionId ?? null);
+    const [open, setOpen] = createSignal(true);
+    let requestedSessionId = "";
+    const session = createMemo(() => props.getSessionById?.(sessionId()) ?? null);
+    const childMessages = createMemo(() => props.getMessagesBySessionId?.(sessionId()) ?? []);
+    const loading = createMemo(() => props.sessionLoadingById?.(sessionId()) ?? false);
+    const streaming = createMemo(() => loading() || sessionStreamState(childMessages()));
+    const label = createMemo(() => {
+      const title = session()?.title?.trim();
+      if (title) return title;
+      if (task().description) return task().description!;
+      if (task().agentType) return `${task().agentType} task`;
+      return "Subagent session";
+    });
+    const statusLabel = createMemo(() => {
+      if (loading()) return "Loading transcript";
+      if (streaming()) return "Running";
+      if (childMessages().length > 0) {
+        const count = childMessages().length;
+        return `${count} message${count === 1 ? "" : "s"}`;
+      }
+      return "Waiting for transcript";
+    });
+
+    createEffect(() => {
+      const id = sessionId();
+      if (!id) return;
+      if (!props.ensureSessionLoaded) return;
+      if (requestedSessionId === id) return;
+      requestedSessionId = id;
+      void props.ensureSessionLoaded(id);
+    });
+
+    return (
+      <Show when={sessionId()}>
+        <div class="mt-3 border-l border-dls-border/70 pl-4">
+          <div class="flex flex-wrap items-center gap-2 text-[12px] text-gray-10">
+            <button
+              type="button"
+              class="inline-flex items-center gap-1 rounded-full border border-dls-border bg-dls-surface px-2.5 py-1 text-[12px] font-medium text-dls-text transition-colors hover:bg-dls-hover"
+              onClick={() => setOpen((value) => !value)}
+            >
+              <Show when={open()} fallback={<ChevronRight size={12} />}>
+                <ChevronDown size={12} />
+              </Show>
+              <span>{label()}</span>
+            </button>
+            <span class="text-gray-9">{statusLabel()}</span>
+            <Show when={task().agentType && task().agentType !== label()}>
+              <span class="text-gray-8">{task().agentType}</span>
+            </Show>
+            <Show when={props.openSessionById && sessionId()}>
+              <button
+                type="button"
+                class="text-dls-link transition-colors hover:text-dls-text"
+                onClick={() => {
+                  const id = sessionId();
+                  if (!id) return;
+                  props.openSessionById?.(id);
+                }}
+              >
+                Open session
+              </button>
+            </Show>
+          </div>
+          <Show when={open()}>
+            <div class="mt-3 rounded-[18px] border border-dls-border/70 bg-dls-surface px-3 py-3">
+              <Show
+                when={childMessages().length > 0}
+                fallback={<div class="text-[12px] leading-5 text-gray-9">Waiting for the subagent transcript to arrive.</div>}
+              >
+                <MessageList
+                  messages={childMessages()}
+                  isStreaming={streaming()}
+                  developerMode={props.developerMode}
+                  showThinking={props.showThinking}
+                  getSessionById={props.getSessionById}
+                  getMessagesBySessionId={props.getMessagesBySessionId}
+                  ensureSessionLoaded={props.ensureSessionLoaded}
+                  sessionLoadingById={props.sessionLoadingById}
+                  expandedStepIds={props.expandedStepIds}
+                  setExpandedStepIds={props.setExpandedStepIds}
+                  openSessionById={props.openSessionById}
+                  workspaceRoot={props.workspaceRoot}
+                  variant="nested"
+                />
+              </Show>
+            </div>
+          </Show>
+        </div>
+      </Show>
+    );
+  };
+
   /** Quiet single-line timeline row */
   const StepRow = (rowProps: {
     part: Part;
@@ -795,6 +912,7 @@ export default function MessageList(props: MessageListProps) {
       }
       return detail || title || "Updates progress";
     });
+    const task = createMemo(() => getTaskStepInfo(rowProps.part));
 
     if (rowProps.part.type === "reasoning") {
       return (
@@ -811,9 +929,12 @@ export default function MessageList(props: MessageListProps) {
     return (
       <div class="flex items-start gap-3 text-[14px] text-gray-9">
         <ChevronRight size={14} class="mt-[2px] shrink-0 text-gray-7" />
-        <div class="min-w-0 leading-relaxed">
+        <div class="min-w-0 flex-1 leading-relaxed">
           <span class="mr-1">Execution timeline 1 step -</span>
           <span>{headline()}</span>
+          <Show when={task().isTask && task().sessionId}>
+            <SubagentThread part={rowProps.part} />
+          </Show>
         </div>
       </div>
     );
@@ -859,7 +980,7 @@ export default function MessageList(props: MessageListProps) {
         }
       >
         <div
-          class={`ml-4 flex flex-col gap-4 ${useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}
+          class={`ml-4 flex flex-col gap-4 ${!isNestedVariant() && useInnerTimelineScroll() ? "max-h-[420px] overflow-y-auto pr-1" : ""}`}
         >
           <For each={containerProps.stepGroups}>
             {(group) => (
@@ -901,8 +1022,12 @@ export default function MessageList(props: MessageListProps) {
           <div
             class={`${
               block.isUser
-                ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-                : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
+                ? isNestedVariant()
+                  ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
+                  : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+                : isNestedVariant()
+                  ? "w-full relative text-[14px] leading-[1.65] text-dls-text group"
+                  : "w-full relative max-w-[760px] text-[15px] leading-[1.7] text-dls-text group"
             } ${searchOutlineClass}`}
           >
             <StepsContainer
@@ -938,7 +1063,7 @@ export default function MessageList(props: MessageListProps) {
           data-message-id={block.messageId}
           style={blockPerfStyle(blockIndex)}
         >
-          <div class={`w-full relative max-w-[650px] ${searchOutlineClass}`}>
+          <div class={`w-full relative ${isNestedVariant() ? "" : "max-w-[650px]"} ${searchOutlineClass}`}>
             <div
               class="inline-flex max-w-full items-start gap-2 rounded-[18px] border border-red-7/20 bg-red-1/35 px-3 py-2 text-[13px] leading-5 text-red-12 shadow-sm"
               role="alert"
@@ -961,8 +1086,12 @@ export default function MessageList(props: MessageListProps) {
         <div
           class={`${
             block.isUser
-              ? "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
-              : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
+              ? isNestedVariant()
+                ? "relative max-w-[92%] rounded-[20px] border border-dls-border bg-dls-sidebar px-4 py-3 text-[14px] leading-relaxed text-dls-text"
+                : "relative max-w-[85%] rounded-[24px] border border-dls-border bg-dls-sidebar px-6 py-4 text-[15px] leading-relaxed text-dls-text"
+              : isNestedVariant()
+                ? "w-full relative text-[14px] leading-[1.65] text-dls-text antialiased group"
+                : "w-full relative max-w-[760px] text-[15px] leading-[1.72] text-dls-text antialiased group"
           } ${searchOutlineClass}`}
         >
           <Show when={block.attachments.length > 0}>
@@ -1070,36 +1199,38 @@ export default function MessageList(props: MessageListProps) {
               </div>
             )}
           </For>
-          <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
-            <button
-              class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
-              title="Copy message"
-              onClick={() => {
-                const text = block.renderableParts
-                  .map((part) => partToText(part))
-                  .join("\n");
-                handleCopy(text, block.messageId);
-              }}
-            >
-              <Show
-                when={copyingId() === block.messageId}
-                fallback={<Copy size={12} />}
+          <Show when={!isNestedVariant()}>
+            <div class="absolute bottom-2 right-2 flex justify-end opacity-100 pointer-events-auto md:opacity-0 md:pointer-events-none md:group-hover:opacity-100 md:group-hover:pointer-events-auto md:group-focus-within:opacity-100 md:group-focus-within:pointer-events-auto transition-opacity select-none">
+              <button
+                class="text-dls-secondary hover:text-dls-text p-1 rounded hover:bg-dls-hover transition-colors"
+                title="Copy message"
+                onClick={() => {
+                  const text = block.renderableParts
+                    .map((part) => partToText(part))
+                    .join("\n");
+                  handleCopy(text, block.messageId);
+                }}
               >
-                <Check size={12} class="text-green-10" />
-              </Show>
-            </button>
-          </div>
+                <Show
+                  when={copyingId() === block.messageId}
+                  fallback={<Copy size={12} />}
+                >
+                  <Check size={12} class="text-green-10" />
+                </Show>
+              </button>
+            </div>
+          </Show>
         </div>
       </div>
     );
   };
 
   return (
-    <div class="pb-10" style={{ contain: "layout paint style" }}>
+    <div class={isNestedVariant() ? "pb-0" : "pb-10"} style={{ contain: "layout paint style" }}>
       <Show
         when={shouldVirtualize()}
         fallback={
-          <div class="space-y-4">
+          <div class={isNestedVariant() ? "space-y-3" : "space-y-4"}>
             <For each={messageBlocks()}>
               {(block, blockIndex) => renderBlock(block, blockIndex())}
             </For>
@@ -1109,7 +1240,7 @@ export default function MessageList(props: MessageListProps) {
         <Show
           when={virtualRows().length > 0}
           fallback={
-            <div class="space-y-4">
+            <div class={isNestedVariant() ? "space-y-3" : "space-y-4"}>
               <For each={messageBlocks()}>
                 {(block, blockIndex) => renderBlock(block, blockIndex())}
               </For>
@@ -1146,7 +1277,7 @@ export default function MessageList(props: MessageListProps) {
           </div>
         </Show>
       </Show>
-      <Show when={props.footer}>{props.footer}</Show>
+      <Show when={!isNestedVariant() && props.footer}>{props.footer}</Show>
     </div>
   );
 }

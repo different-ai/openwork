@@ -17,9 +17,26 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenWork Cloud",
+  metadataBase: new URL("https://app.openwork.software"),
+  title: "Den Cloud Workers",
   description:
-    "Launch OpenWork cloud workers, handle Polar paywall flows, and operate Den from app.openwork.software."
+    "Launch OpenWork cloud workers, manage Polar checkout flows, and run Den from app.openwork.software with the same positioning as the landing page.",
+  openGraph: {
+    title: "Den Cloud Workers",
+    description:
+      "Always-on AI workers for you and your team, launched from app.openwork.software.",
+    images: ["/opengraph-image"]
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Den Cloud Workers",
+    description:
+      "Launch OpenWork cloud workers, manage Polar checkout flows, and operate Den from app.openwork.software.",
+    images: ["/opengraph-image"]
+  },
+  icons: {
+    icon: "/openwork-mark.svg"
+  }
 };
 
 const defaultPosthogKey = "phc_4YnPTlDVYPjgwKvLuNxhbHjV5kadgvd7XLzVHWnCXAI";

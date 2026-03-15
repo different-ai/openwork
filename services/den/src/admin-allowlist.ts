@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm"
+import { inArray, sql } from "drizzle-orm"
 import { db } from "./db/index.js"
 import { AdminAllowlistTable } from "./db/schema.js"
 
@@ -9,20 +9,17 @@ const ADMIN_ALLOWLIST_SEEDS = [
     note: "Seeded internal admin",
   },
   {
-    id: "admin-jan-openworklabs-com",
-    email: "jan@openworklabs.com",
-    note: "Seeded internal admin",
-  },
-  {
-    id: "admin-omar-openworklabs-com",
-    email: "omar@openworklabs.com",
-    note: "Seeded internal admin",
-  },
-  {
     id: "admin-berk-openworklabs-com",
     email: "berk@openworklabs.com",
     note: "Seeded internal admin",
   },
+] as const
+
+const MANAGED_ADMIN_ALLOWLIST_IDS = [
+  "admin-ben-openworklabs-com",
+  "admin-jan-openworklabs-com",
+  "admin-omar-openworklabs-com",
+  "admin-berk-openworklabs-com",
 ] as const
 
 let ensureAdminAllowlistSeededPromise: Promise<void> | null = null
@@ -38,6 +35,13 @@ async function seedAdminAllowlist() {
           updated_at: sql`CURRENT_TIMESTAMP(3)`,
         },
       })
+  }
+
+  const activeSeedIds = new Set<string>(ADMIN_ALLOWLIST_SEEDS.map((entry) => entry.id))
+  const staleSeedIds = MANAGED_ADMIN_ALLOWLIST_IDS.filter((id) => !activeSeedIds.has(id))
+
+  if (staleSeedIds.length > 0) {
+    await db.delete(AdminAllowlistTable).where(inArray(AdminAllowlistTable.id, staleSeedIds))
   }
 }
 
