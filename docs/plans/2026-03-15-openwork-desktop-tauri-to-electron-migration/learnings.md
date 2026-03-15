@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 13:57 - Step 029 - Implement engine lifecycle service
+
+- Keeping engine runtime state in an Electron-owned singleton lets `start`/`stop`/`restart` stay preload-safe while still tracking auth fields, log tails, runtime mode, and restart inputs for later reuse.
+- For orchestrator mode, preserving clean service boundaries means engine lifecycle should only spawn and stop the orchestrator-managed OpenCode process plus auth snapshot, leaving local OpenWork server and router startup for their dedicated later steps.
+
 ## 2026-03-15 11:27 - Step 028 - Implement engine binary resolution and doctor service
 
 - Engine doctor logic stays testable if binary resolution is kept as a pure note-producing helper: evaluate `OPENCODE_BIN_PATH`, optional sidecar candidates, PATH lookups, and common GUI-missing tool directories in a deterministic order and return the full note trail alongside the chosen binary.

@@ -119,12 +119,12 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       opkgInstall: (input) => invokeDesktopChannel(IPC_CHANNELS.packages("opkgInstall"), input),
     },
     engine: {
-      info: notImplemented("engine.info"),
-      start: notImplemented("engine.start"),
-      stop: notImplemented("engine.stop"),
-      restart: notImplemented("engine.restart"),
+      info: () => invokeDesktopChannel(IPC_CHANNELS.engine("info")),
+      start: (input) => invokeDesktopChannel(IPC_CHANNELS.engine("start"), input),
+      stop: () => invokeDesktopChannel(IPC_CHANNELS.engine("stop")),
+      restart: () => invokeDesktopChannel(IPC_CHANNELS.engine("restart")),
       doctor: (input) => invokeDesktopChannel(IPC_CHANNELS.engine("doctor"), input),
-      install: notImplemented("engine.install"),
+      install: () => invokeDesktopChannel(IPC_CHANNELS.engine("install")),
     },
     orchestrator: {
       status: notImplemented("orchestrator.status"),

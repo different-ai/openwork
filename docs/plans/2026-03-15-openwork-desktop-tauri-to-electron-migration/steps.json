@@ -327,7 +327,7 @@
         "Existing EngineInfo semantics are preserved.",
         "Cleanup on app exit is handled in Electron main."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "030",

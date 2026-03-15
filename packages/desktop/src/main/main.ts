@@ -95,9 +95,10 @@ export async function bootstrapMainProcess() {
   }
 
   const activeDeepLinkService = getOrCreateDeepLinkService();
+  const engineService = createEngineService();
   registerAppIpc(createDefaultAppService());
   registerDeepLinkIpc(activeDeepLinkService);
-  registerEngineIpc(createEngineService());
+  registerEngineIpc(engineService);
   registerWindowIpc(
     createWindowService({
       getMainWindow: () => context.mainWindow,
@@ -147,6 +148,10 @@ export async function bootstrapMainProcess() {
     if (process.platform !== "darwin") {
       app.quit();
     }
+  });
+
+  app.on("before-quit", () => {
+    engineService.cleanupOnQuit();
   });
 
   await openMainWindow(context);
