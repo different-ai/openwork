@@ -30,6 +30,8 @@ The script prints the exact URLs and `docker compose ... down` command to use fo
 - `DATABASE_URL` MySQL connection URL
 - `BETTER_AUTH_SECRET` 32+ char secret
 - `BETTER_AUTH_URL` public base URL Better Auth uses for OAuth redirects and callbacks
+- `LOOPS_API_KEY` optional Loops API key used for production email verification delivery
+- `LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION_ID` optional Loops transactional email ID for verification emails; when this and `LOOPS_API_KEY` are set, production email/password sign-up is enabled
 - `GITHUB_CLIENT_ID` optional OAuth app client ID for GitHub sign-in
 - `GITHUB_CLIENT_SECRET` optional OAuth app client secret for GitHub sign-in
 - `GOOGLE_CLIENT_ID` optional OAuth app client ID for Google sign-in
@@ -115,6 +117,7 @@ Optional GitHub Actions secrets (enable GitHub social sign-in):
 - `DEN_GITHUB_CLIENT_SECRET`
 - `DEN_GOOGLE_CLIENT_ID`
 - `DEN_GOOGLE_CLIENT_SECRET`
+- `DEN_LOOPS_API_KEY` (enables production email verification delivery when paired with the transactional ID below)
 
 Optional GitHub Actions variable:
 
@@ -132,6 +135,7 @@ Optional GitHub Actions variable:
 - `DEN_POLAR_API_BASE` (defaults to `https://api.polar.sh`)
 - `DEN_POLAR_SUCCESS_URL` (defaults to `https://app.openwork.software`)
 - `DEN_POLAR_RETURN_URL` (defaults to `DEN_POLAR_SUCCESS_URL`)
+- `DEN_LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION_ID` (Loops transactional email ID used for verification emails)
 
 Required additional secret when using vanity worker domains:
 

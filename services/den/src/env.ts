@@ -5,6 +5,8 @@ const schema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
   OPENWORK_DEV_MODE: z.string().optional(),
+  LOOPS_API_KEY: z.string().optional(),
+  LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION_ID: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -64,6 +66,11 @@ export const env = {
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
   openworkDevMode: parsed.OPENWORK_DEV_MODE === "1",
+  loops: {
+    apiKey: parsed.LOOPS_API_KEY?.trim() || undefined,
+    transactionalEmailVerificationId:
+      parsed.LOOPS_TRANSACTIONAL_EMAIL_VERIFICATION_ID?.trim() || undefined,
+  },
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
