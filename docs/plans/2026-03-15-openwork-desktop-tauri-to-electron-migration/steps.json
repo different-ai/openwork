@@ -261,7 +261,7 @@
         "Path normalization is handled centrally.",
         "Renderer no longer depends on Rust commands for this mutation."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "024",

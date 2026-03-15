@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:15 - Step 023 - Implement authorized roots mutation
+
+- Authorized-root updates are safer when the service first resolves the workspace by normalized local path instead of trusting the raw incoming string; that prevents remote workspaces or typoed paths from mutating arbitrary config files.
+- Once `openworkRead` / `openworkWrite` exist, `addAuthorizedRoot` becomes a thin composition layer, which keeps path validation and JSON persistence logic centralized for the next workspace-related steps.
+
 ## 2026-03-15 11:14 - Step 022 - Implement workspace archive import/export
 
 - The workspace archive path is easiest to keep compatible when the service itself owns both halves: export only the allowed config files plus `manifest.json`, and import only `opencode.json` / `.opencode/**` entries after a strict archive-path safety check.

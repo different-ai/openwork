@@ -91,7 +91,7 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       updateRemote: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("updateRemote"), input),
       updateDisplayName: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("updateDisplayName"), input),
       forget: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("forget"), input),
-      addAuthorizedRoot: notImplemented("workspace.addAuthorizedRoot"),
+      addAuthorizedRoot: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("addAuthorizedRoot"), input),
       openworkRead: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("openworkRead"), input),
       openworkWrite: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("openworkWrite"), input),
       exportConfig: (input) => invokeDesktopChannel(IPC_CHANNELS.workspace("exportConfig"), input),

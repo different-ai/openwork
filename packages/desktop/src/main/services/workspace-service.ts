@@ -447,6 +447,40 @@ export function createWorkspaceService() {
       };
     },
 
+    async addAuthorizedRoot(input: {
+      workspacePath: string;
+      folderPath: string;
+    }): Promise<ExecResult> {
+      const workspacePath = path.resolve(
+        validatePathInput(input.workspacePath, { label: "workspacePath", allowRelative: false }),
+      );
+      const folderPath = path.resolve(
+        validatePathInput(input.folderPath, { label: "folderPath", allowRelative: false }),
+      );
+
+      const state = await store.load();
+      const workspace = state.workspaces.find(
+        (entry) => normalizeWorkspacePathKey(entry.path) === normalizeWorkspacePathKey(workspacePath),
+      );
+      if (!workspace || workspace.workspaceType !== "local") {
+        throw new Error("workspacePath must belong to a local workspace");
+      }
+
+      const config = await this.openworkRead({ workspacePath });
+      const roots = new Set(config.authorizedRoots.map((entry) => normalizeWorkspacePathKey(entry)));
+      roots.add(normalizeWorkspacePathKey(workspacePath));
+      roots.add(normalizeWorkspacePathKey(folderPath));
+      config.authorizedRoots = Array.from(roots);
+
+      await this.openworkWrite({ workspacePath, config });
+      return {
+        ok: true,
+        status: 0,
+        stdout: "Updated authorizedRoots",
+        stderr: "",
+      };
+    },
+
     async exportConfig(input: {
       workspaceId: string;
       outputPath: string;
@@ -649,6 +683,10 @@ export function registerWorkspaceIpc(service: WorkspaceService) {
   ipcMain.handle(
     IPC_CHANNELS.workspace("openworkWrite"),
     (_event, input: Parameters<WorkspaceService["openworkWrite"]>[0]) => service.openworkWrite(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.workspace("addAuthorizedRoot"),
+    (_event, input: Parameters<WorkspaceService["addAuthorizedRoot"]>[0]) => service.addAuthorizedRoot(input),
   );
   ipcMain.handle(
     IPC_CHANNELS.workspace("exportConfig"),
