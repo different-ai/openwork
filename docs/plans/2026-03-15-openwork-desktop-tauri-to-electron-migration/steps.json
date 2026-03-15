@@ -305,7 +305,7 @@
         "opkg install still works from the desktop shell.",
         "No generic arbitrary process execution is exposed to the renderer."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "028",

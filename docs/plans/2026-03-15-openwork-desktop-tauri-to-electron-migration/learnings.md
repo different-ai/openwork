@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:23 - Step 027 - Implement skill import and opkg install service
+
+- Constrained process execution is easiest to enforce by encoding the exact fallback command list in the service (`opkg`, `openpackage`, `pnpm dlx opkg`, `npx opkg`) instead of building a generic command runner and trying to lock it down later.
+- Skill-directory imports do not need a separate archive format: once the project skill root helper exists, a guarded recursive copy into `.opencode/skills/<name>` preserves the current desktop-only import behavior with a much smaller surface area than arbitrary filesystem APIs.
+
 ## 2026-03-15 11:22 - Step 026 - Implement local skills CRUD and template install service
 
 - Skill discovery is broader than a single folder: preserve the current search order across project ancestry (`.opencode/skills`, legacy `.opencode/skill`, `.claude/skills`) and global roots (`XDG`, `.claude`, `.agents`, `.agent`) before deduping by skill name.

@@ -10,6 +10,7 @@ import {
 } from "./services/deep-link-service";
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
+import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
 import { createSkillService, registerSkillIpc } from "./services/skill-service";
 import { createUpdateService, registerUpdateIpc } from "./services/update-service";
@@ -109,6 +110,7 @@ export async function bootstrapMainProcess() {
     }),
   );
   registerPathIpc(createPathService());
+  registerOpkgIpc(createOpkgService());
   registerShellIpc(createShellService());
   registerSkillIpc(createSkillService());
   registerUpdateIpc(

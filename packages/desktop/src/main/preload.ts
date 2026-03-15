@@ -113,10 +113,10 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       writeLocal: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("writeLocal"), input),
       installTemplate: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("installTemplate"), input),
       uninstall: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("uninstall"), input),
-      importFromDirectory: notImplemented("skills.importFromDirectory"),
+      importFromDirectory: (input) => invokeDesktopChannel(IPC_CHANNELS.skills("importFromDirectory"), input),
     },
     packages: {
-      opkgInstall: notImplemented("packages.opkgInstall"),
+      opkgInstall: (input) => invokeDesktopChannel(IPC_CHANNELS.packages("opkgInstall"), input),
     },
     engine: {
       info: notImplemented("engine.info"),

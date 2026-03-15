@@ -23,7 +23,7 @@ function candidateXdgConfigDirs() {
   return candidates;
 }
 
-async function ensureProjectSkillRoot(projectDir: string) {
+export async function ensureProjectSkillRoot(projectDir: string) {
   const base = path.join(projectDir, ".opencode");
   const legacy = path.join(base, "skill");
   const modern = path.join(base, "skills");
@@ -427,6 +427,41 @@ export function createSkillService() {
 
       return { ok: true, status: 0, stdout: `Removed skill ${name}`, stderr: "" };
     },
+
+    async importFromDirectory(input: {
+      projectDir: string;
+      sourceDir: string;
+      overwrite?: boolean;
+    }): Promise<ExecResult> {
+      const projectDir = input.projectDir.trim();
+      if (!projectDir) {
+        throw new Error("projectDir is required");
+      }
+
+      const sourceDir = input.sourceDir.trim();
+      if (!sourceDir) {
+        throw new Error("sourceDir is required");
+      }
+
+      const skillRoot = await ensureProjectSkillRoot(projectDir);
+      const name = path.basename(sourceDir);
+      if (!name) {
+        throw new Error("Failed to infer skill name from directory");
+      }
+
+      const dest = path.join(skillRoot, name);
+      if (existsSync(dest)) {
+        if (input.overwrite) {
+          await rm(dest, { recursive: true, force: true });
+        } else {
+          throw new Error(`Skill already exists at ${dest}`);
+        }
+      }
+
+      await mkdir(path.dirname(dest), { recursive: true });
+      await (await import("node:fs/promises")).cp(sourceDir, dest, { recursive: true });
+      return { ok: true, status: 0, stdout: `Imported skill to ${dest}`, stderr: "" };
+    },
   };
 }
 
@@ -450,5 +485,9 @@ export function registerSkillIpc(service: SkillService) {
   ipcMain.handle(
     IPC_CHANNELS.skills("uninstall"),
     (_event, input: { projectDir: string; name: string }) => service.uninstall(input),
+  );
+  ipcMain.handle(
+    IPC_CHANNELS.skills("importFromDirectory"),
+    (_event, input: { projectDir: string; sourceDir: string; overwrite?: boolean }) => service.importFromDirectory(input),
   );
 }
