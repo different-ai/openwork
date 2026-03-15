@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:28 - Step 043 - Cut over workspace and session related renderer code
+
+- Most renderer cutovers get simpler once you stop chasing one-for-one native imports and instead rely on the compatibility shim plus the small typed shell/path bridge: local file open/reveal flows can all route through `window.openworkDesktop.shell` and `window.openworkDesktop.paths`.
+- For sandbox progress in workspace state, normalize the event `payload` object once up front; that keeps the typed event subscription readable and avoids repeated `unknown` handling at every stage-specific branch.
+
 ## 2026-03-15 15:20 - Step 042 - Cut over app update, deep-link, and zoom flows
 
 - The renderer-side update migration works best if `system-state.ts` treats pending updates as plain metadata and lets the Electron main service own the actual download/install lifecycle, with progress flowing back through typed update-status events.

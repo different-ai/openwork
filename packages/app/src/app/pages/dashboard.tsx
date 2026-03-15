@@ -547,11 +547,12 @@ export default function DashboardView(props: DashboardViewProps) {
     const target = workspace.path?.trim() ?? "";
     if (!target || !isTauriRuntime()) return;
     try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Desktop app required");
       if (isWindowsPlatform()) {
-        await openPath(target);
+        await desktop.shell.openPath({ path: target });
       } else {
-        await revealItemInDir(target);
+        await desktop.shell.revealItemInDir({ path: target });
       }
     } catch (error) {
       console.warn("Failed to reveal workspace", error);

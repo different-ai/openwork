@@ -950,11 +950,12 @@ export default function SettingsView(props: SettingsViewProps) {
     setRevealConfigBusy(true);
     setConfigActionStatus(null);
     try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Reveal config requires the desktop app");
       if (isWindowsPlatform()) {
-        await openPath(path);
+        await desktop.shell.openPath({ path });
       } else {
-        await revealItemInDir(path);
+        await desktop.shell.revealItemInDir({ path });
       }
       setConfigActionStatus("Revealed workspace config.");
     } catch (error) {

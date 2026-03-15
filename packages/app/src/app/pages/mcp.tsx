@@ -208,11 +208,12 @@ export default function McpView(props: McpViewProps) {
     setConfigError(null);
     try {
       const resolved = await readOpencodeConfig(configScope(), root);
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error(tr("mcp.reveal_config_failed"));
       if (isWindowsPlatform()) {
-        await openPath(resolved.path);
+        await desktop.shell.openPath({ path: resolved.path });
       } else {
-        await revealItemInDir(resolved.path);
+        await desktop.shell.revealItemInDir({ path: resolved.path });
       }
     } catch (e) {
       setConfigError(e instanceof Error ? e.message : tr("mcp.reveal_config_failed"));

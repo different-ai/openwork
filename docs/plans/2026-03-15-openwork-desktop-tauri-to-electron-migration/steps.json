@@ -481,7 +481,7 @@
         "Dialogs, path joins, reveal/open actions, and sandbox events still work.",
         "The workspace and session UX remain functionally complete."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "044",

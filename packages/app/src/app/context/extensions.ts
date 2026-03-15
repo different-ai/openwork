@@ -1,7 +1,6 @@
 import { createSignal } from "solid-js";
 
 import { applyEdits, modify } from "jsonc-parser";
-import { join } from "@tauri-apps/api/path";
 import { currentLocale, t } from "../../i18n";
 
 import type { Client, HubSkillCard, PluginScope, ReloadReason, ReloadTrigger, SkillCard } from "../types";
@@ -884,14 +883,15 @@ export function createExtensionsStore(options: {
     }
 
     try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      const opencodeSkills = await join(root, ".opencode", "skills");
-      const claudeSkills = await join(root, ".claude", "skills");
-      const legacySkills = await join(root, ".opencode", "skill");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error(translate("skills.desktop_required"));
+      const opencodeSkills = await desktop.paths.join({ segments: [root, ".opencode", "skills"] });
+      const claudeSkills = await desktop.paths.join({ segments: [root, ".claude", "skills"] });
+      const legacySkills = await desktop.paths.join({ segments: [root, ".opencode", "skill"] });
 
       const tryOpen = async (target: string) => {
         try {
-          await openPath(target);
+          await desktop.shell.openPath({ path: target });
           return true;
         } catch {
           return false;
@@ -902,7 +902,7 @@ export function createExtensionsStore(options: {
       if (await tryOpen(opencodeSkills)) return;
       if (await tryOpen(claudeSkills)) return;
       if (await tryOpen(legacySkills)) return;
-      await revealItemInDir(opencodeSkills);
+      await desktop.shell.revealItemInDir({ path: opencodeSkills });
     } catch (e) {
       setSkillsStatus(e instanceof Error ? e.message : translate("skills.reveal_failed"));
     }

@@ -92,7 +92,6 @@ import {
   DEFAULT_OPENWORK_PUBLISHER_BASE_URL,
   publishOpenworkBundleJson,
 } from "../lib/publisher";
-import { join } from "@tauri-apps/api/path";
 import {
   isUserVisiblePart,
   isTauriRuntime,
@@ -113,6 +112,10 @@ import FlyoutItem from "../components/flyout-item";
 import QuestionModal from "../components/question-modal";
 import ArtifactsPanel from "../components/session/artifacts-panel";
 import InboxPanel from "../components/session/inbox-panel";
+
+async function joinDesktopPath(...segments: string[]) {
+  return (await window.openworkDesktop?.paths.join({ segments })) ?? segments.join("/");
+}
 
 export type SessionViewProps = {
   selectedSessionId: string | null;
@@ -918,7 +921,7 @@ export default function SessionView(props: SessionViewProps) {
       candidates.push(value);
     };
 
-    pushCandidate(await join(root, normalized));
+    pushCandidate(await joinDesktopPath(root, normalized));
 
     if (normalized.startsWith(".opencode/openwork/outbox/")) {
       return candidates;
@@ -928,7 +931,7 @@ export default function SessionView(props: SessionViewProps) {
       const suffix = normalized.slice("openwork/outbox/".length);
       if (suffix) {
         pushCandidate(
-          await join(root, ".opencode", "openwork", "outbox", suffix),
+          await joinDesktopPath(root, ".opencode", "openwork", "outbox", suffix),
         );
       }
       return candidates;
@@ -938,7 +941,7 @@ export default function SessionView(props: SessionViewProps) {
       const suffix = normalized.slice("outbox/".length);
       if (suffix) {
         pushCandidate(
-          await join(root, ".opencode", "openwork", "outbox", suffix),
+          await joinDesktopPath(root, ".opencode", "openwork", "outbox", suffix),
         );
       }
       return candidates;
@@ -946,7 +949,7 @@ export default function SessionView(props: SessionViewProps) {
 
     if (!normalized.startsWith(".opencode/")) {
       pushCandidate(
-        await join(root, ".opencode", "openwork", "outbox", normalized),
+        await joinDesktopPath(root, ".opencode", "openwork", "outbox", normalized),
       );
     }
 
@@ -1530,17 +1533,17 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
     try {
-      const { openPath, revealItemInDir } =
-        await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Desktop app required");
       const result = await runLocalFileAction(
         file,
         "reveal",
         async (candidate) => {
           if (isWindowsPlatform()) {
-            await openPath(candidate);
+            await desktop.shell.openPath({ path: candidate });
             return;
           }
-          await revealItemInDir(candidate);
+          await desktop.shell.revealItemInDir({ path: candidate });
         },
       );
       if (!result.ok && result.reason === "missing-root") {
@@ -1625,12 +1628,12 @@ export default function SessionView(props: SessionViewProps) {
       return;
     }
     try {
-      const { openPath, revealItemInDir } =
-        await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Desktop app required");
       if (isWindowsPlatform()) {
-        await openPath(target);
+        await desktop.shell.openPath({ path: target });
       } else {
-        await revealItemInDir(target);
+        await desktop.shell.revealItemInDir({ path: target });
       }
     } catch (error) {
       const message =
@@ -1859,12 +1862,13 @@ export default function SessionView(props: SessionViewProps) {
     }
 
     try {
-      const { openPath } = await import("@tauri-apps/plugin-opener");
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Desktop app required");
       const result = await runLocalFileAction(
         trimmed,
         "open",
         async (candidate) => {
-          await openPath(candidate);
+          await desktop.shell.openPath({ path: candidate });
         },
       );
       if (!result.ok && result.reason === "missing-root") {

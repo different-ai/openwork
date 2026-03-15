@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal } from "solid-js";
-import { listen, type Event as TauriEvent } from "@tauri-apps/api/event";
 
 import type {
   Client,
@@ -30,7 +29,6 @@ import {
   type OpenworkServerSettings,
   type OpenworkWorkspaceInfo,
 } from "../lib/openwork-server";
-import { downloadDir, homeDir } from "@tauri-apps/api/path";
 import {
   engineDoctor,
   engineInfo,
@@ -1602,36 +1600,38 @@ export function createWorkspaceStore(options: {
 
       let stopListen: (() => void) | null = null;
       try {
-        stopListen = await listen(
-          "openwork://sandbox-create-progress",
-          (event: TauriEvent<{ runId?: string; stage?: string; message?: string; payload?: any }>) => {
-            const payload = event.payload ?? {};
+        stopListen =
+          window.openworkDesktop?.orchestrator.onSandboxCreateProgress((payload) => {
             if ((payload.runId ?? "").trim() !== runId) return;
             const stage = String(payload.stage ?? "").trim();
             const message = String(payload.message ?? "").trim();
+            const detailPayload =
+              payload.payload && typeof payload.payload === "object"
+                ? (payload.payload as Record<string, unknown>)
+                : {};
             if (message) {
               setSandboxStage(message);
               pushSandboxCreateLog(message);
             }
 
             if (stage === "docker.container") {
-              const state = String(payload.payload?.containerState ?? "").trim();
+              const state = String(detailPayload.containerState ?? "").trim();
               if (state) {
                 setSandboxStep("sandbox", { status: "active", detail: `Container: ${state}` });
               }
             }
 
             if (stage === "docker.config") {
-              const selected = String(payload.payload?.openworkDockerBin ?? "").trim();
+              const selected = String(detailPayload.openworkDockerBin ?? "").trim();
               if (selected) {
                 pushSandboxCreateLog(`OPENWORK_DOCKER_BIN=${selected}`);
               }
-              const resolved = String(payload.payload?.resolvedDockerBin ?? "").trim();
+              const resolved = String(detailPayload.resolvedDockerBin ?? "").trim();
               if (resolved) {
                 pushSandboxCreateLog(`Resolved docker: ${resolved}`);
               }
-              const candidates = Array.isArray(payload.payload?.candidates)
-                ? payload.payload.candidates.filter((item: unknown) => String(item ?? "").trim())
+              const candidates = Array.isArray(detailPayload.candidates)
+                ? detailPayload.candidates.filter((item: unknown) => String(item ?? "").trim())
                 : [];
               if (candidates.length) {
                 pushSandboxCreateLog(`Docker probe paths: ${candidates.join(", ")}`);
@@ -1639,7 +1639,7 @@ export function createWorkspaceStore(options: {
             }
 
             if (stage === "docker.inspect") {
-              const inspectError = String(payload.payload?.error ?? "").trim();
+              const inspectError = String(detailPayload.error ?? "").trim();
               if (inspectError) {
                 setSandboxStep("sandbox", { status: "active", detail: "Docker inspect warning" });
                 pushSandboxCreateLog(`docker inspect warning: ${inspectError}`);
@@ -1647,10 +1647,10 @@ export function createWorkspaceStore(options: {
             }
 
             if (stage === "openwork.waiting") {
-              const elapsedMs = Number(payload.payload?.elapsedMs ?? 0);
+              const elapsedMs = Number(detailPayload.elapsedMs ?? 0);
               const seconds = elapsedMs > 0 ? Math.max(1, Math.floor(elapsedMs / 1000)) : 0;
               setSandboxStep("health", { status: "active", detail: seconds ? `${seconds}s` : null });
-              const probeError = String(payload.payload?.containerProbeError ?? "").trim();
+              const probeError = String(detailPayload.containerProbeError ?? "").trim();
               if (probeError) {
                 pushSandboxCreateLog(`Container probe: ${probeError}`);
               }
@@ -1662,13 +1662,12 @@ export function createWorkspaceStore(options: {
             }
 
             if (stage === "error") {
-              const err = String(payload.payload?.error ?? "").trim() || message || "Sandbox failed to start";
+              const err = String(detailPayload.error ?? "").trim() || message || "Sandbox failed to start";
               setSandboxStep("sandbox", { status: "error", detail: err });
               setSandboxStep("health", { status: "error", detail: err });
               setSandboxError(err);
             }
-          },
-        );
+          }) ?? null;
 
         const host = await orchestratorStartDetached({
           workspacePath: resolvedFolder,
@@ -2346,7 +2345,7 @@ export function createWorkspaceStore(options: {
         .slice(0, 60);
       const dateStamp = new Date().toISOString().slice(0, 10);
       const fileName = `openwork-${nameBase || "worker"}-${dateStamp}.openwork-workspace`;
-      const downloads = await downloadDir().catch(() => null);
+      const downloads = await window.openworkDesktop?.paths.downloads().catch(() => null);
       const defaultPath = downloads ? `${downloads}/${fileName}` : fileName;
 
       const outputPath = await saveFile({
@@ -2845,7 +2844,7 @@ export function createWorkspaceStore(options: {
 
     if (trimmed === "~") {
       try {
-        return (await homeDir()).replace(/[\\/]+$/, "");
+        return ((await window.openworkDesktop?.paths.home()) ?? trimmed).replace(/[\\/]+$/, "");
       } catch {
         return trimmed;
       }
@@ -2853,7 +2852,7 @@ export function createWorkspaceStore(options: {
 
     if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
       try {
-        const home = (await homeDir()).replace(/[\\/]+$/, "");
+        const home = ((await window.openworkDesktop?.paths.home()) ?? trimmed).replace(/[\\/]+$/, "");
         return `${home}${trimmed.slice(1)}`;
       } catch {
         return trimmed;

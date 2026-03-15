@@ -636,8 +636,9 @@ export default function PartView(props: Props) {
     }
 
     try {
-      const { openPath, revealItemInDir } = await import("@tauri-apps/plugin-opener");
-      await revealItemInDir(filePath).catch(() => openPath(filePath));
+      const desktop = window.openworkDesktop;
+      if (!desktop) throw new Error("Desktop app required");
+      await desktop.shell.revealItemInDir({ path: filePath }).catch(() => desktop.shell.openPath({ path: filePath }));
     } catch {
       platform.openLink(href.startsWith("file://") ? href : `file://${filePath}`);
     }
