@@ -338,7 +338,7 @@
         "Workspace activation and instance disposal still work.",
         "The implementation is Electron-owned instead of Rust-owned."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "031",

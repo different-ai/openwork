@@ -10,6 +10,7 @@ import {
 } from "./services/deep-link-service";
 import { createDialogService, registerDialogIpc } from "./services/dialog-service";
 import { createEngineService, registerEngineIpc } from "./services/engine-service";
+import { createOrchestratorService, registerOrchestratorIpc } from "./services/orchestrator-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
@@ -125,6 +126,7 @@ export async function bootstrapMainProcess() {
   );
   registerCommandFileIpc(createCommandFileService());
   registerConfigIpc(createConfigService());
+  registerOrchestratorIpc(createOrchestratorService());
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;

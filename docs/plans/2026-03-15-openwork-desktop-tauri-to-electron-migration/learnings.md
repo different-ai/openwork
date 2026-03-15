@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 14:00 - Step 030 - Implement orchestrator status activate and dispose service
+
+- The lighter orchestrator flows can stay daemon-owned: read fallback state from `openwork-orchestrator-state.json`, then enrich it with live `/health` and `/workspaces` calls when the daemon base URL is available.
+- `activateWorkspace` and `disposeInstance` both depend on the same orchestration pattern: first ensure the workspace exists via `POST /workspaces`, then operate on the returned workspace ID; that keeps Electron aligned with the orchestrator's source of truth instead of inventing its own registry.
+
 ## 2026-03-15 13:57 - Step 029 - Implement engine lifecycle service
 
 - Keeping engine runtime state in an Electron-owned singleton lets `start`/`stop`/`restart` stay preload-safe while still tracking auth fields, log tails, runtime mode, and restart inputs for later reuse.

@@ -127,9 +127,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       install: () => invokeDesktopChannel(IPC_CHANNELS.engine("install")),
     },
     orchestrator: {
-      status: notImplemented("orchestrator.status"),
-      activateWorkspace: notImplemented("orchestrator.activateWorkspace"),
-      disposeInstance: notImplemented("orchestrator.disposeInstance"),
+      status: () => invokeDesktopChannel(IPC_CHANNELS.orchestrator("status")),
+      activateWorkspace: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("activateWorkspace"), input),
+      disposeInstance: (input) => invokeDesktopChannel(IPC_CHANNELS.orchestrator("disposeInstance"), input),
       startDetached: notImplemented("orchestrator.startDetached"),
       sandboxDoctor: notImplemented("orchestrator.sandboxDoctor"),
       sandboxStop: notImplemented("orchestrator.sandboxStop"),
