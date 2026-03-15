@@ -68,8 +68,24 @@ export function formatModelLabel(model: ModelRef, providers: ProviderListItem[] 
   return `${providerLabel} · ${modelLabel}`;
 }
 
+type DesktopWindow = Window & {
+  openworkDesktop?: unknown;
+};
+
+function getDesktopRuntimeBridge() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return (window as DesktopWindow).openworkDesktop ?? null;
+}
+
+export function isDesktopRuntime() {
+  return getDesktopRuntimeBridge() != null;
+}
+
 export function isTauriRuntime() {
-  return typeof window !== "undefined" && (window as any).__TAURI_INTERNALS__ != null;
+  return isDesktopRuntime();
 }
 
 export function isWindowsPlatform() {

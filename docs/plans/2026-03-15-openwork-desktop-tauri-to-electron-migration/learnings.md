@@ -25,6 +25,10 @@ Guidance:
 
 ---
 
+## 2026-03-15 10:27 - Step 003 - Define desktop runtime detection primitive
+
+- `packages/app/src/app/utils/index.ts` can expose `isDesktopRuntime()` backed by `window.openworkDesktop` while keeping `isTauriRuntime()` as a temporary alias, which lets later cutover steps remove the old name without forcing a repo-wide runtime-branch rewrite immediately.
+
 ## 2026-03-15 10:25 - Step 002 - Extract shared desktop DTO module
 
 - `packages/app/src/app/lib/desktop-contract.ts` can become the neutral typing seam while `packages/app/src/app/lib/tauri.ts` re-exports those types, which avoids a broad import churn during the early migration steps.

@@ -41,7 +41,7 @@
         "Desktop and web mode can still be distinguished reliably.",
         "No Tauri-specific detection logic remains in the shared runtime helper."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "004",
