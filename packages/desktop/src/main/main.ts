@@ -16,6 +16,7 @@ import { createOpenworkServerService, registerOpenworkServerIpc } from "./servic
 import { createObsidianService, registerObsidianIpc } from "./services/obsidian-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
 import { createRouterService, registerRouterIpc } from "./services/router-service";
+import { createSchedulerService, registerSchedulerIpc } from "./services/scheduler-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
 import { createShellService, registerShellIpc } from "./services/shell-service";
 import { createSkillService, registerSkillIpc } from "./services/skill-service";
@@ -149,6 +150,7 @@ export async function bootstrapMainProcess() {
   );
   registerOpenworkServerIpc(openworkServerService);
   registerRouterIpc(routerService);
+  registerSchedulerIpc(createSchedulerService());
   registerCacheIpc(createCacheService({ stopHostServices }));
   registerWorkspaceIpc(createWorkspaceService());
   context.eventBus.registerRendererSink((event) => {

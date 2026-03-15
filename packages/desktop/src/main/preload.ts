@@ -163,8 +163,8 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       readMirrorFile: (input) => invokeDesktopChannel(IPC_CHANNELS.obsidian("readMirrorFile"), input),
     },
     scheduler: {
-      listJobs: notImplemented("scheduler.listJobs"),
-      deleteJob: notImplemented("scheduler.deleteJob"),
+      listJobs: (input) => invokeDesktopChannel(IPC_CHANNELS.scheduler("listJobs"), input),
+      deleteJob: (input) => invokeDesktopChannel(IPC_CHANNELS.scheduler("deleteJob"), input),
     },
     opencode: {
       dbMigrate: notImplemented("opencode.dbMigrate"),

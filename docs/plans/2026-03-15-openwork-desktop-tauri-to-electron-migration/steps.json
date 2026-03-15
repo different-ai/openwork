@@ -426,7 +426,7 @@
         "Scheduled jobs can still be deleted from the UI.",
         "The current ScheduledJob DTO remains usable by the renderer."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "039",

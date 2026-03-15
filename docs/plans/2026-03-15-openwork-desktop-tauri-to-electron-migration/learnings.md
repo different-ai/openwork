@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:07 - Step 038 - Implement scheduler list and delete service
+
+- Scheduler state is mostly file-based, so Electron can preserve parity without a separate daemon: read scoped and legacy JSON job files first, then perform OS-specific uninstall cleanup (`launchctl` or `systemctl`) only when deleting.
+- Matching the old fuzzy delete behavior matters for the UI: deleting by name should still resolve through slug, exact name, and partial-name matches rather than requiring the user to know the exact scheduler slug.
+
 ## 2026-03-15 15:05 - Step 037 - Implement Obsidian integration service
 
 - The Obsidian bridge stays narrow if it only exposes three concerns: availability probing, a macOS-only `open -a Obsidian <file>` handoff, and mirror-file storage under Electron `userData`.
