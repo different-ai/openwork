@@ -111,6 +111,39 @@ pick_port() {
   "
 }
 
+detect_public_host() {
+  if [ -n "${OPENWORK_PUBLIC_HOST:-}" ]; then
+    printf '%s\n' "$OPENWORK_PUBLIC_HOST"
+    return
+  fi
+
+  local host
+  host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  host="${host//$'\n'/}"
+  host="${host// /}"
+  if [ -n "$host" ]; then
+    printf '%s\n' "$host"
+    return
+  fi
+
+  printf '%s\n' "localhost"
+}
+
+detect_lan_ipv4() {
+  node -e '
+    const os = require("os");
+    const nets = os.networkInterfaces();
+    for (const entries of Object.values(nets)) {
+      for (const entry of entries || []) {
+        if (!entry || entry.internal || entry.family !== "IPv4") continue;
+        if (entry.address.startsWith("127.")) continue;
+        process.stdout.write(entry.address);
+        process.exit(0);
+      }
+    }
+  '
+}
+
 DEV_ID="$(node -e "console.log(require('crypto').randomUUID().slice(0, 8))")"
 PROJECT="openwork-dev-$DEV_ID"
 
@@ -145,6 +178,9 @@ SHARE_PORT="${SHARE_PORT:-$(pick_port)}"
 if [ "$SHARE_PORT" = "$OPENWORK_PORT" ] || [ "$SHARE_PORT" = "$WEB_PORT" ]; then
   SHARE_PORT="$(pick_port)"
 fi
+
+PUBLIC_HOST="$(detect_public_host)"
+LAN_IPV4="$(detect_lan_ipv4 || true)"
 
 echo "Starting Docker Compose project: $PROJECT" >&2
 echo "- OPENWORK_PORT=$OPENWORK_PORT" >&2
@@ -189,8 +225,20 @@ fi
 
 echo "" >&2
 echo "OpenWork web UI:     http://localhost:$WEB_PORT" >&2
+echo "OpenWork web UI (LAN/public): http://$PUBLIC_HOST:$WEB_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "OpenWork web UI (LAN IP):     http://$LAN_IPV4:$WEB_PORT" >&2
+fi
 echo "OpenWork server:     http://localhost:$OPENWORK_PORT" >&2
+echo "OpenWork server (LAN/public): http://$PUBLIC_HOST:$OPENWORK_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "OpenWork server (LAN IP):     http://$LAN_IPV4:$OPENWORK_PORT" >&2
+fi
 echo "Share service:       http://localhost:$SHARE_PORT" >&2
+echo "Share service (LAN/public):   http://$PUBLIC_HOST:$SHARE_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "Share service (LAN IP):       http://$LAN_IPV4:$SHARE_PORT" >&2
+fi
 echo "Token file:          $ROOT_DIR/tmp/.dev-env-$DEV_ID" >&2
 echo "" >&2
 echo "To stop this stack:" >&2

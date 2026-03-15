@@ -37,6 +37,43 @@ random_hex() {
   node -e "console.log(require('crypto').randomBytes(${bytes}).toString('hex'))"
 }
 
+detect_public_host() {
+  if [ -n "${DEN_PUBLIC_HOST:-}" ]; then
+    printf '%s\n' "$DEN_PUBLIC_HOST"
+    return
+  fi
+
+  local host
+  host="$(hostname -s 2>/dev/null || hostname 2>/dev/null || true)"
+  host="${host//$'\n'/}"
+  host="${host// /}"
+  if [ -n "$host" ]; then
+    printf '%s\n' "$host"
+    return
+  fi
+
+  printf '%s\n' "localhost"
+}
+
+detect_lan_ipv4() {
+  node -e '
+    const os = require("os");
+    const nets = os.networkInterfaces();
+    for (const entries of Object.values(nets)) {
+      for (const entry of entries || []) {
+        if (!entry || entry.internal || entry.family !== "IPv4") continue;
+        if (entry.address.startsWith("127.")) continue;
+        process.stdout.write(entry.address);
+        process.exit(0);
+      }
+    }
+  '
+}
+
+join_csv_unique() {
+  printf "%s\n" "$@" | awk 'NF && !seen[$0]++' | paste -sd, -
+}
+
 DEV_ID="$(node -e "console.log(require('crypto').randomUUID().slice(0, 8))")"
 PROJECT="openwork-den-dev-$DEV_ID"
 
@@ -46,11 +83,24 @@ if [ "$DEN_WEB_PORT" = "$DEN_API_PORT" ]; then
   DEN_WEB_PORT="$(pick_port)"
 fi
 
+PUBLIC_HOST="$(detect_public_host)"
+LAN_IPV4="$(detect_lan_ipv4 || true)"
+
 DEN_BETTER_AUTH_SECRET="${DEN_BETTER_AUTH_SECRET:-$(random_hex 32)}"
-DEN_BETTER_AUTH_URL="${DEN_BETTER_AUTH_URL:-http://localhost:$DEN_WEB_PORT}"
+DEN_BETTER_AUTH_URL="${DEN_BETTER_AUTH_URL:-http://$PUBLIC_HOST:$DEN_WEB_PORT}"
 DEN_PROVISIONER_MODE="${DEN_PROVISIONER_MODE:-stub}"
 DEN_WORKER_URL_TEMPLATE="${DEN_WORKER_URL_TEMPLATE:-https://workers.local/{workerId}}"
-DEN_CORS_ORIGINS="${DEN_CORS_ORIGINS:-http://localhost:$DEN_WEB_PORT,http://127.0.0.1:$DEN_WEB_PORT,http://localhost:$DEN_API_PORT,http://127.0.0.1:$DEN_API_PORT}"
+if [ -z "${DEN_CORS_ORIGINS:-}" ]; then
+  DEN_CORS_ORIGINS="$(join_csv_unique \
+    "http://$PUBLIC_HOST:$DEN_WEB_PORT" \
+    "http://$PUBLIC_HOST:$DEN_API_PORT" \
+    "http://localhost:$DEN_WEB_PORT" \
+    "http://127.0.0.1:$DEN_WEB_PORT" \
+    "http://localhost:$DEN_API_PORT" \
+    "http://127.0.0.1:$DEN_API_PORT" \
+    "${LAN_IPV4:+http://$LAN_IPV4:$DEN_WEB_PORT}" \
+    "${LAN_IPV4:+http://$LAN_IPV4:$DEN_API_PORT}")"
+fi
 
 mkdir -p "$RUNTIME_DIR"
 RUNTIME_FILE="$ROOT_DIR/tmp/.den-dev-env-$DEV_ID"
@@ -61,6 +111,7 @@ DEN_API_PORT=$DEN_API_PORT
 DEN_WEB_PORT=$DEN_WEB_PORT
 DEN_API_URL=http://localhost:$DEN_API_PORT
 DEN_WEB_URL=http://localhost:$DEN_WEB_PORT
+DEN_WEB_URL_PUBLIC=http://$PUBLIC_HOST:$DEN_WEB_PORT
 DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL
 COMPOSE_FILE=$COMPOSE_FILE
 EOF
@@ -69,6 +120,7 @@ echo "Starting Docker Compose project: $PROJECT" >&2
 echo "- DEN_API_PORT=$DEN_API_PORT" >&2
 echo "- DEN_WEB_PORT=$DEN_WEB_PORT" >&2
 echo "- DEN_BETTER_AUTH_URL=$DEN_BETTER_AUTH_URL" >&2
+echo "- DEN_CORS_ORIGINS=$DEN_CORS_ORIGINS" >&2
 echo "- DEN_PROVISIONER_MODE=$DEN_PROVISIONER_MODE" >&2
 
 if ! DEN_API_PORT="$DEN_API_PORT" \
@@ -86,7 +138,15 @@ fi
 
 echo "" >&2
 echo "OpenWork Cloud web UI:  http://localhost:$DEN_WEB_PORT" >&2
+echo "OpenWork Cloud web UI (LAN/public): http://$PUBLIC_HOST:$DEN_WEB_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "OpenWork Cloud web UI (LAN IP):     http://$LAN_IPV4:$DEN_WEB_PORT" >&2
+fi
 echo "Den demo/API:          http://localhost:$DEN_API_PORT" >&2
+echo "Den demo/API (LAN/public):          http://$PUBLIC_HOST:$DEN_API_PORT" >&2
+if [ -n "$LAN_IPV4" ]; then
+  echo "Den demo/API (LAN IP):              http://$LAN_IPV4:$DEN_API_PORT" >&2
+fi
 echo "Health check:          http://localhost:$DEN_API_PORT/health" >&2
 echo "Runtime env file:      $RUNTIME_FILE" >&2
 echo "" >&2

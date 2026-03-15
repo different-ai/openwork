@@ -34,6 +34,7 @@ Optional env vars (via `.env` or `export`):
 - `OPENWORK_PORT` — host port to map to container :8787
 - `WEB_PORT` — host port to map to container :5173
 - `SHARE_PORT` — host port to map to the local share service :3000
+- `OPENWORK_PUBLIC_HOST` — host name/IP used in printed LAN/public URLs (defaults to your machine hostname)
 - `OPENWORK_DOCKER_DEV_MOUNT_HOST_OPENCODE=1` — import host OpenCode config/auth into the isolated dev state
 - `OPENWORK_OPENCODE_CONFIG_DIR` — override the host OpenCode config source used for that optional import
 - `OPENWORK_OPENCODE_DATA_DIR` — override the host OpenCode data source used for that optional import
@@ -75,8 +76,9 @@ Optional env vars (via `.env` or `export`):
 - `DEN_API_PORT` — host port to map to the Den control plane :8788
 - `DEN_WEB_PORT` — host port to map to the cloud web app :3005
 - `DEN_BETTER_AUTH_SECRET` — Better Auth secret (auto-generated if unset)
-- `DEN_BETTER_AUTH_URL` — browser-facing auth base URL (defaults to the printed web URL)
-- `DEN_CORS_ORIGINS` — trusted origins for Better Auth + Express CORS
+- `DEN_PUBLIC_HOST` — host name/IP used for default auth URL + printed LAN/public URLs (defaults to your machine hostname)
+- `DEN_BETTER_AUTH_URL` — browser-facing auth base URL (defaults to `http://$DEN_PUBLIC_HOST:<DEN_WEB_PORT>`)
+- `DEN_CORS_ORIGINS` — trusted origins for Better Auth + Express CORS (defaults include hostname, localhost, loopback, and detected LAN IPv4)
 - `DEN_PROVISIONER_MODE` — `stub` or `render` (defaults to `stub`)
 - `DEN_WORKER_URL_TEMPLATE` — stub worker URL template with `{workerId}` placeholder
 
