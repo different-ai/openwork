@@ -32,8 +32,7 @@
     "release:prepare": "node scripts/release/prepare.mjs",
     "release:prepare:dry": "node scripts/release/prepare.mjs --dry-run",
     "release:ship": "node scripts/release/ship.mjs",
-    "release:ship:watch": "node scripts/release/ship.mjs --watch",
-    "tauri": "pnpm --filter @different-ai/openwork exec tauri"
+    "release:ship:watch": "node scripts/release/ship.mjs --watch"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

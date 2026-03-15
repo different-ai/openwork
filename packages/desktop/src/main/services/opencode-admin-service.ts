@@ -95,7 +95,7 @@ function commonToolPaths() {
 
 function sourceSidecarDir() {
   const currentFile = fileURLToPath(import.meta.url);
-  return path.resolve(path.dirname(currentFile), "../../src-tauri/sidecars");
+  return path.resolve(path.dirname(currentFile), "../../resources/sidecars");
 }
 
 function pathEnv() {

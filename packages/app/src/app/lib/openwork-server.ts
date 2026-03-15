@@ -1,5 +1,3 @@
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-import { isTauriRuntime } from "../utils";
 import type { ScheduledJob } from "./tauri";
 
 export type OpenworkServerCapabilities = {
@@ -981,8 +979,7 @@ function buildAuthHeaders(token?: string, hostToken?: string, extra?: Record<str
   return headers;
 }
 
-// Use Tauri's fetch when running in the desktop app to avoid CORS issues
-const resolveFetch = () => (isTauriRuntime() ? tauriFetch : globalThis.fetch);
+const resolveFetch = () => globalThis.fetch;
 
 const DEFAULT_OPENWORK_SERVER_TIMEOUT_MS = 10_000;
 

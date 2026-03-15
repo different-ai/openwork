@@ -525,7 +525,7 @@
         "Cargo.toml Cargo.lock src-tauri configs and Tauri plugin dependencies are removed where appropriate.",
         "The repository no longer has stale desktop shell artifacts that suggest a hybrid architecture."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "048",

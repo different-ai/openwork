@@ -18,18 +18,18 @@ asarUnpack:
   - resources/sidecars/**
 mac:
   category: public.app-category.productivity
-  icon: src-tauri/icons/icon.icns
-  entitlements: src-tauri/entitlements.plist
+  icon: assets/icons/icon.icns
+  entitlements: assets/entitlements.plist
   hardenedRuntime: true
   target:
     - dmg
     - zip
 win:
-  icon: src-tauri/icons/icon.ico
+  icon: assets/icons/icon.ico
   target:
     - nsis
 linux:
-  icon: src-tauri/icons
+  icon: assets/icons
   target:
     - AppImage
     - tar.gz

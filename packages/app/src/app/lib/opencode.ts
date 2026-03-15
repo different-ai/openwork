@@ -1,7 +1,4 @@
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
-
-import { isTauriRuntime } from "../utils";
 
 type FieldsResult<T> =
   | ({ data: T; error?: undefined } & { request: Request; response: Response })
@@ -93,7 +90,7 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
   return encoded ? `Basic ${encoded}` : null;
 };
 
-const createTauriFetch = (auth?: OpencodeAuth) => {
+const createAuthenticatedFetch = (auth?: OpencodeAuth) => {
   const authHeader = resolveAuthHeader(auth);
   const addAuth = (headers: Headers) => {
     if (!authHeader || headers.has("Authorization")) return;
@@ -105,25 +102,12 @@ const createTauriFetch = (auth?: OpencodeAuth) => {
       const headers = new Headers(input.headers);
       addAuth(headers);
       const request = new Request(input, { headers });
-      return fetchWithTimeout(
-        tauriFetch as unknown as typeof globalThis.fetch,
-        request,
-        undefined,
-        DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
-      );
+      return fetchWithTimeout(globalThis.fetch, request, undefined, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
     }
 
     const headers = new Headers(init?.headers);
     addAuth(headers);
-    return fetchWithTimeout(
-      tauriFetch as unknown as typeof globalThis.fetch,
-      input,
-      {
-        ...init,
-        headers,
-      },
-      DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS,
-    );
+    return fetchWithTimeout(globalThis.fetch, input, { ...init, headers }, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
   };
 };
 
@@ -142,17 +126,12 @@ export function unwrap<T>(result: FieldsResult<T>): NonNullable<T> {
 
 export function createClient(baseUrl: string, directory?: string, auth?: OpencodeAuth) {
   const headers: Record<string, string> = {};
-  if (!isTauriRuntime()) {
-    const authHeader = resolveAuthHeader(auth);
-    if (authHeader) {
-      headers.Authorization = authHeader;
-    }
+  const authHeader = resolveAuthHeader(auth);
+  if (authHeader) {
+    headers.Authorization = authHeader;
   }
 
-  const fetchImpl = isTauriRuntime()
-    ? createTauriFetch(auth)
-    : (input: RequestInfo | URL, init?: RequestInit) =>
-        fetchWithTimeout(globalThis.fetch, input, init, DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS);
+  const fetchImpl = createAuthenticatedFetch(auth);
   return createOpencodeClient({
     baseUrl,
     directory,

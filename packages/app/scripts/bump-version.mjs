@@ -88,34 +88,6 @@ const updatePackageJson = async (nextVersion) => {
   }
 };
 
-const updateCargoToml = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "packages", "desktop", "src-tauri", "Cargo.toml");
-  const raw = await readFile(filePath, "utf8");
-  const updated = raw.replace(/\bversion\s*=\s*"[^"]+"/m, `version = "${nextVersion}"`);
-  if (!isDryRun) {
-    await writeFile(filePath, updated);
-    // Regenerate Cargo.lock so it stays in sync with the version bump.
-    const { execFileSync } = await import("node:child_process");
-    try {
-      execFileSync("cargo", ["generate-lockfile"], {
-        cwd: path.join(REPO_ROOT, "packages", "desktop", "src-tauri"),
-        stdio: "ignore",
-      });
-    } catch {
-      // cargo may not be installed (e.g. CI without Rust); skip silently.
-    }
-  }
-};
-
-const updateTauriConfig = async (nextVersion) => {
-  const filePath = path.join(REPO_ROOT, "packages", "desktop", "src-tauri", "tauri.conf.json");
-  const data = JSON.parse(await readFile(filePath, "utf8"));
-  data.version = nextVersion;
-  if (!isDryRun) {
-    await writeFile(filePath, JSON.stringify(data, null, 2) + "\n");
-  }
-};
-
 const main = async () => {
   if (explicit && !semverPattern.test(explicit)) {
     throw new Error(`Invalid explicit version: ${explicit}`);
@@ -126,8 +98,6 @@ const main = async () => {
 
   const nextVersion = await targetVersion();
   await updatePackageJson(nextVersion);
-  await updateCargoToml(nextVersion);
-  await updateTauriConfig(nextVersion);
 
   console.log(
     JSON.stringify(
@@ -141,8 +111,6 @@ const main = async () => {
           "packages/orchestrator/package.json",
           "packages/server/package.json",
           "packages/opencode-router/package.json",
-          "packages/desktop/src-tauri/Cargo.toml",
-          "packages/desktop/src-tauri/tauri.conf.json",
         ],
       },
       null,

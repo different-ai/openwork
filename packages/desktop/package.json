@@ -7,8 +7,8 @@
   "type": "module",
   "main": "dist/main/main.js",
   "scripts": {
-    "dev": "OPENWORK_DEV_MODE=1 OPENWORK_DATA_DIR=\"$HOME/.openwork/openwork-orchestrator-dev\" tauri dev --config src-tauri/tauri.dev.conf.json --config \"{\\\"build\\\":{\\\"devUrl\\\":\\\"http://localhost:${PORT:-5173}\\\"}}\"",
-    "build": "tauri build",
+    "dev": "OPENWORK_DEV_MODE=1 ELECTRON_RENDERER_URL=\"http://localhost:${PORT:-5173}\" pnpm build:main && electron .",
+    "build": "pnpm build:electron",
     "prepare:sidecar": "node ./scripts/prepare-sidecar.mjs",
     "prepare:electron-resources": "node ./scripts/prepare-electron-resources.mjs",
     "build:main": "tsc -p tsconfig.build.json",
@@ -17,7 +17,6 @@
     "typecheck:electron": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^22.10.2",
     "@types/adm-zip": "^0.5.7",
     "adm-zip": "^0.5.16",

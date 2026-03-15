@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:46 - Step 047 - Remove Tauri Rust and Cargo artifacts
+
+- The final desktop cleanup only becomes safe once remaining renderer-native imports are gone and sidecar/icon references have moved off `src-tauri`; otherwise deleting the Rust shell just moves breakage into Electron packaging and startup.
+- Removing the Tauri dependencies from `packages/app/package.json` and swapping desktop scripts over to Electron before deleting `packages/desktop/src-tauri/` keeps install and typecheck flows green during the cleanup commit itself.
+
 ## 2026-03-15 15:41 - Step 046 - Replace dev build CI and release workflows
 
 - The release scripts no longer need to reason about Cargo or Tauri version alignment; checking package versions plus Electron packaging config presence is enough to keep the release gate meaningful during the migration.

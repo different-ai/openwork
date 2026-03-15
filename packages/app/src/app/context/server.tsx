@@ -1,6 +1,5 @@
 import { createContext, createEffect, createMemo, createSignal, onCleanup, useContext, type ParentProps } from "solid-js";
 import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 
 import { isTauriRuntime } from "../utils";
 
@@ -115,7 +114,6 @@ export function ServerProvider(props: ParentProps & { defaultUrl: string }) {
       baseUrl: url,
       headers,
       signal: AbortSignal.timeout(3000),
-      fetch: isTauriRuntime() ? tauriFetch : undefined,
     });
     return client.global
       .health()
