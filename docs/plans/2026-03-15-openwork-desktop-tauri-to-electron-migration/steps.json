@@ -140,7 +140,7 @@
         "Current title/defaultPath/filter semantics still work.",
         "Renderer no longer imports any dialog plugin directly."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "013",

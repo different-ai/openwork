@@ -46,9 +46,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       setZoomFactor: (input) => invokeDesktopChannel<number>(IPC_CHANNELS.window("setZoomFactor"), input),
     },
     dialogs: {
-      pickDirectory: notImplemented("dialogs.pickDirectory"),
-      pickFile: notImplemented("dialogs.pickFile"),
-      saveFile: notImplemented("dialogs.saveFile"),
+      pickDirectory: (input) => invokeDesktopChannel<string | string[] | null>(IPC_CHANNELS.dialogs("pickDirectory"), input),
+      pickFile: (input) => invokeDesktopChannel<string | string[] | null>(IPC_CHANNELS.dialogs("pickFile"), input),
+      saveFile: (input) => invokeDesktopChannel<string | null>(IPC_CHANNELS.dialogs("saveFile"), input),
     },
     shell: {
       openExternal: notImplemented("shell.openExternal"),
