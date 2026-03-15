@@ -195,7 +195,7 @@
         "Install and relaunch can happen without renderer plugin objects.",
         "The current renderer update UX can be rebuilt without semantic gaps."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "018",

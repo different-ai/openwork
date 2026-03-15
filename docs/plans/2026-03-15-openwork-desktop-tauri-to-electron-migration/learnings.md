@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:01 - Step 017 - Implement updater download and install event flow
+
+- The renderer no longer needs updater plugin objects if the Electron service owns pending-update state (`checkedAt`, `version`, `notes`) and emits typed `updateStatus` events for `checking`, `available`, `downloading`, `ready`, and `error`.
+- `electron-updater` is easiest to integrate incrementally when `check()` drives the availability state, while library events (`download-progress`, `update-downloaded`, `error`) drive the long-running download/install lifecycle through the shared event bus.
+
 ## 2026-03-15 10:59 - Step 016 - Implement updater environment and check service
 
 - An Electron updater service can stay renderer-compatible even before packaging is finished: return a structured `available: false` result when the environment says updates are unsupported, and reserve thrown errors for genuine check failures in supported packaged builds.

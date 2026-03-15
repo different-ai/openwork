@@ -79,9 +79,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
     updates: {
       getEnvironment: () => invokeDesktopChannel(IPC_CHANNELS.updates("getEnvironment")),
       check: (input) => invokeDesktopChannel(IPC_CHANNELS.updates("check"), input),
-      download: notImplemented("updates.download"),
-      installAndRelaunch: notImplemented("updates.installAndRelaunch"),
-      onStatus: notImplementedSubscription<DesktopUpdateStatusEvent>("updates.onStatus"),
+      download: () => invokeDesktopChannel<void>(IPC_CHANNELS.updates("download")),
+      installAndRelaunch: () => invokeDesktopChannel<void>(IPC_CHANNELS.updates("installAndRelaunch")),
+      onStatus: (listener) => subscribeToDesktopEvent<DesktopUpdateStatusEvent>(IPC_EVENT_CHANNELS.updateStatus, listener),
     },
     workspace: {
       bootstrap: notImplemented("workspace.bootstrap"),

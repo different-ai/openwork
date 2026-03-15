@@ -106,7 +106,13 @@ export async function bootstrapMainProcess() {
   );
   registerPathIpc(createPathService());
   registerShellIpc(createShellService());
-  registerUpdateIpc(createUpdateService());
+  registerUpdateIpc(
+    createUpdateService({
+      emitStatus: (event) => {
+        context.eventBus.emit("updateStatus", event);
+      },
+    }),
+  );
   context.eventBus.registerRendererSink((event) => {
     const window = context.mainWindow;
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) {
