@@ -132,7 +132,7 @@ must be routed through a host-side service.
 In OpenWork, the long-term direction is:
 
 - Use the OpenWork server (`packages/server`) as the single API surface for filesystem-backed operations.
-- Treat Tauri-only file operations as an implementation detail / convenience fallback, not a separate feature set.
+- Treat Electron host-only file operations as an implementation detail / convenience fallback, not a separate feature set.
 
 This ensures the same UI flows work on desktop, mobile, and web clients, with approvals and auditing handled centrally.
 

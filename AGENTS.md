@@ -51,7 +51,7 @@ Read INFRASTRUCTURE.md
 * **Purpose-first UI**: prioritize clarity, safety, and approachability for non-technical users.
 * **Parity with OpenCode**: anything the UI can do must map cleanly to OpenCode tools.
 * **Prefer OpenCode primitives**: represent concepts using OpenCode's native surfaces first (folders/projects, `.opencode`, `opencode.json`, skills, plugins) before introducing new abstractions.
-* **Web parity**: anything that mutates `.opencode/` should be expressible via the OpenWork server API; Tauri-only filesystem calls are a fallback for host mode, not a separate capability set.
+* **Web parity**: anything that mutates `.opencode/` should be expressible via the OpenWork server API; Electron host-mode filesystem calls are a fallback for trusted local use, not a separate capability set.
 * **Self-referential**: maintain a gitignored mirror of OpenCode at `vendor/opencode` for inspection.
 * **Self-building**: prefer prompts, skills, and composable primitives over bespoke logic.
 * **Open source**: keep the repo portable; no secrets committed.
@@ -117,10 +117,10 @@ Design principles for hot reload:
 
 | Layer                | Technology                |
 | -------------------- | ------------------------- |
-| Desktop/Mobile shell | Tauri 2.x                 |
+| Desktop shell        | Electron main + preload   |
 | Frontend             | SolidJS + TailwindCSS     |
 | State                | Solid stores + IndexedDB  |
-| IPC                  | Tauri commands + events   |
+| IPC                  | Electron IPC + event bus  |
 | OpenCode integration | Spawn CLI or embed binary |
 
 ## Repository Guidance
@@ -152,7 +152,8 @@ openwork/
       prd/
       package.json
     desktop/
-      src-tauri/
+      src/main/
+      resources/
       package.json
 ```
 
@@ -209,8 +210,7 @@ OpenWork releases are built by GitHub Actions (`Release App`). A release is trig
 * `packages/app/package.json` (`version`)
 * `packages/desktop/package.json` (`version`)
 * `packages/orchestrator/package.json` (`version`, publishes as `openwork-orchestrator`)
-* `packages/desktop/src-tauri/tauri.conf.json` (`version`)
-* `packages/desktop/src-tauri/Cargo.toml` (`version`)
+* `packages/desktop/electron-builder.yml` (artifact metadata + publish config)
 
 You can bump all three non-interactively with:
 
@@ -224,7 +224,7 @@ You can bump all three non-interactively with:
     * `git tag vX.Y.Z`
     * `git push origin vX.Y.Z`
 
-This triggers the workflow automatically (`on: push.tags: v*`).
+This triggers the workflow automatically (`on: push.tags: v*`) and builds Electron desktop artifacts.
 
 ### Re-run / repair an existing release
 

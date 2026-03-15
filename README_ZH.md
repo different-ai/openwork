@@ -84,8 +84,7 @@ OpenWork 的设计目标是：
 ### 系统要求
 
 - Node.js + `pnpm`
-- Rust 工具链（用于 Tauri）：通过 `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh` 安装
-- Tauri CLI：`cargo install tauri-cli`
+- 通过 `pnpm install` 安装 Electron 桌面依赖
 - 已安装 OpenCode CLI 且可在 PATH 中使用：`opencode`
 
 ### 安装
@@ -134,9 +133,7 @@ yay -s opencode # 已发布版本
 
 ## 文件夹选择器
 
-文件夹选择器使用 Tauri 对话框插件。
-功能权限在以下文件中定义：
-- `packages/desktop/src-tauri/capabilities/default.json`
+桌面外壳现在使用 Electron `main` + `preload`，并通过 `window.openworkDesktop` 暴露对话框、Shell、更新与本地运行时能力。
 
 ## OpenPackage 说明
 
@@ -177,15 +174,7 @@ pnpm test:e2e
 
 ### Linux / Wayland (Hyprland)
 
-如果 OpenWork 在启动时因 WebKitGTK 错误（如 `Failed to create GBM buffer`）而崩溃，请在启动前禁用 dmabuf 或合成。尝试以下环境标志之一。
-
-```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
-```
-
-```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
-```
+如果 Electron 打包或沙箱验证在 Linux 上失败，请确认已安装 `libfuse2`、`rpm` 与 `libarchive-tools`，然后重新运行桌面构建。
 
 ## 安全说明
 

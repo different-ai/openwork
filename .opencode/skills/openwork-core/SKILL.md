@@ -8,7 +8,7 @@ description: Core context and guardrails for OpenWork native app
 ### Orientation
 - Read `AGENTS.md`, `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, and `ARCHITECTURE.md` before changing behavior.
 - Ensure `vendor/opencode` exists for self-reference.
-- Use the `tauri-solidjs` skill for stack-specific guidance.
+- Use the `electron-solidjs` skill for desktop stack-specific guidance.
 
 ### Update the OpenCode mirror
 ```bash
@@ -17,12 +17,8 @@ git -C vendor/opencode pull --ff-only
 
 ### Development workflow
 ```bash
-pnpm tauri dev          # Desktop development
-pnpm tauri ios dev      # iOS development
-pnpm tauri android dev  # Android development
-
-# Or run directly in the desktop package:
-pnpm -C packages/desktop tauri dev
+pnpm dev                # Desktop development (Electron + Vite)
+pnpm -C packages/desktop build:electron
 ```
 
 ## OpenCode Integration
@@ -46,7 +42,7 @@ opencode -p "your prompt" -f json -q
 
 - OpenWork must stay within OpenCode's tool surface; avoid inventing new capabilities.
 - Always expose plans, permissions, and progress for non-technical users.
-- Use Tauri commands for all system access (file, shell, database).
+- Use the Electron preload bridge for all system access (file, shell, database).
 - Keep UI at 60fps; avoid blocking the main thread.
 - Mobile builds require platform-specific setup (Xcode, Android Studio).
 
@@ -64,15 +60,9 @@ opencode -p "your prompt" -f json -q
 git clone https://github.com/anomalyco/opencode vendor/opencode
 ```
 
-### Initialize Tauri project
+### Build Electron desktop package
 ```bash
-pnpm create tauri-app . --template solid-ts
-```
-
-### Add mobile targets
-```bash
-pnpm tauri ios init
-pnpm tauri android init
+pnpm --dir packages/desktop build:electron
 ```
 
 ## Common Gotchas

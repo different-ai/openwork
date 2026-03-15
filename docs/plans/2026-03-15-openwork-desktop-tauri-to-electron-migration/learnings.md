@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 15:52 - Step 048 - Update contributor docs, skills, and architecture docs
+
+- The doc migration is easier if you focus on contributor touchpoints first: requirements, local dev commands, release/versioning instructions, architecture vocabulary, and stack-specific skills all need to describe Electron main/preload instead of the old Rust shell.
+- Translation readmes do not need a full rewrite to be useful in this step; removing the stale Tauri/Rust setup guidance and replacing it with Electron desktop guidance is enough to keep contributors from following the wrong installation path.
+
 ## 2026-03-15 15:46 - Step 047 - Remove Tauri Rust and Cargo artifacts
 
 - The final desktop cleanup only becomes safe once remaining renderer-native imports are gone and sidecar/icon references have moved off `src-tauri`; otherwise deleting the Rust shell just moves breakage into Electron packaging and startup.

@@ -10,15 +10,15 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 
 ## App release (desktop)
 
-1. Bump versions (app + desktop + Tauri + Cargo):
+1. Bump versions (app + desktop + Electron package metadata):
     - `pnpm bump:patch` or `pnpm bump:minor` or `pnpm bump:major`
 2. Re-run `pnpm release:review`.
-3. Build sidecars for the desktop bundle:
-   - `pnpm --filter @different-ai/openwork prepare:sidecar`
+3. Build Electron resources for the desktop bundle:
+   - `pnpm --dir packages/desktop prepare:electron-resources`
 4. Commit the version bump.
 5. Tag and push:
-   - `git tag vX.Y.Z`
-   - `git push origin vX.Y.Z`
+    - `git tag vX.Y.Z`
+    - `git push origin vX.Y.Z`
 
 ## openwork-orchestrator (npm + sidecars)
 
@@ -43,15 +43,6 @@ OpenWork releases should be deterministic, easy to reproduce, and fully verifiab
 - `gh release view vX.Y.Z --repo different-ai/openwork`
 
 Use `pnpm release:review --json` when automating these checks in scripts or agents.
-
-## AUR
-
-`Release App` publishes the Arch AUR package automatically after the Linux `.deb` asset is uploaded.
-
-Required repo config:
-
-- GitHub Actions secret: `AUR_SSH_PRIVATE_KEY` (SSH key with push access to the AUR package repo)
-- Optional repo variable: `AUR_REPO` (defaults to `openwork`)
 
 ## npm publishing
 

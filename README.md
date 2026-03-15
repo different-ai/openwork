@@ -72,8 +72,7 @@ OpenWork is designed to be:
 ### Requirements
 
 - Node.js + `pnpm`
-- Rust toolchain (for Tauri): install via `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-- Tauri CLI: `cargo install tauri-cli`
+- Electron runtime dependencies installed via `pnpm install`
 - OpenCode CLI installed and available on PATH: `opencode`
 
 ### Local Dev Prerequisites (Desktop)
@@ -82,9 +81,8 @@ Before running `pnpm dev`, ensure these are installed and active in your shell:
 
 - Node + pnpm (repo uses `pnpm@10.27.0`)
 - **Bun 1.3.9+** (`bun --version`)
-- Rust toolchain (for Tauri), with Cargo from current `rustup` stable (supports `Cargo.lock` v4)
 - Xcode Command Line Tools (macOS)
-- On Linux, WebKitGTK 4.1 development packages so `pkg-config` can resolve `webkit2gtk-4.1` and `javascriptcoregtk-4.1`
+- On Linux, Electron packaging deps like `rpm`, `libarchive-tools`, and `libfuse2`
 
 ### One-minute sanity check
 
@@ -97,7 +95,7 @@ pnpm install --frozen-lockfile
 
 which bun
 bun --version
-pnpm --filter @different-ai/openwork exec tauri --version
+pnpm --filter @different-ai/openwork typecheck:electron
 ```
 
 ### Install
@@ -114,7 +112,7 @@ OpenWork now lives in `packages/app` (UI) and `packages/desktop` (desktop shell)
 pnpm dev
 ```
 
-`pnpm dev` now enables `OPENWORK_DEV_MODE=1` automatically, so desktop dev uses an isolated OpenCode state instead of your personal global config/auth/data.
+`pnpm dev` now enables `OPENWORK_DEV_MODE=1` automatically, so desktop dev uses an isolated OpenCode state instead of your personal global config/auth/data. The desktop package launches Electron and loads the Vite UI through the preload bridge.
 
 ### Run (Web UI only)
 
@@ -127,8 +125,8 @@ All repo `dev` entrypoints now opt into the same dev-mode isolation so local tes
 ### Arch Users:
 
 ```bash
-sudo pacman -S --needed webkit2gtk-4.1
-yay -s opencode # Releases version
+sudo pacman -S --needed libarchive rpm fuse2
+yay -S opencode
 ```
 
 ## Architecture (high-level)
@@ -147,12 +145,9 @@ This lets you run agentic workflows, send prompts, and see progress entirely on 
   - subscribe to SSE events(Server-Sent Events are used to stream real-time updates from the server to the UI.)
   - read todos and permission requests
 
-## Folder Picker
+## Desktop Bridge
 
-The folder picker uses the Tauri dialog plugin.
-Capability permissions are defined in:
-
-- `packages/desktop/src-tauri/capabilities/default.json`
+The desktop shell now uses Electron `main` + `preload` with a typed `window.openworkDesktop` bridge for dialogs, shell access, updater checks, deep links, and local runtime supervision.
 
 ## OpenPackage Notes
 
@@ -192,17 +187,9 @@ pnpm test:e2e
 
 ## Troubleshooting
 
-### Linux / Wayland (Hyprland)
+### Linux / Wayland
 
-If OpenWork crashes on launch with WebKitGTK errors like `Failed to create GBM buffer`, disable dmabuf or compositing before launch. Try one of the following environment flags.
-
-```bash
-WEBKIT_DISABLE_DMABUF_RENDERER=1 openwork
-```
-
-```bash
-WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
-```
+If Electron packaging or sandbox validation fails on Linux, make sure `libfuse2`, `rpm`, and `libarchive-tools` are installed and rerun the desktop build.
 
 ## Security Notes
 
@@ -212,7 +199,7 @@ WEBKIT_DISABLE_COMPOSITING_MODE=1 openwork
 ## Contributing
 
 - Review `AGENTS.md` plus `VISION.md`, `PRINCIPLES.md`, `PRODUCT.md`, and `ARCHITECTURE.md` to understand the product goals before making changes.
-- Ensure Node.js, `pnpm`, the Rust toolchain, and `opencode` are installed before working inside the repo.
+- Ensure Node.js, `pnpm`, Bun, and `opencode` are installed before working inside the repo.
 - Run `pnpm install` once per checkout, then verify your change with `pnpm typecheck` plus `pnpm test:e2e` (or the targeted subset of scripts) before opening a PR.
 - Use `.github/pull_request_template.md` when opening PRs and include exact commands, outcomes, manual verification steps, and evidence.
 - If CI fails, classify failures in the PR body as either code-related regressions or external/environment/auth blockers.

@@ -536,7 +536,7 @@
         "Architecture docs describe Electron preload/main instead of Tauri commands and events.",
         "Internal skills and release docs reflect the new desktop stack."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "049",
