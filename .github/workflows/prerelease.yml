@@ -73,16 +73,13 @@ jobs:
             --prerelease
 
   publish-tauri:
-    name: Build + Publish (${{ matrix.target }})
+    name: Build + Package (${{ matrix.target }})
     needs: prepare-release
     # Use explicit per-target runner labels so each release build can scale independently.
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
 
     env:
-      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
-      RELEASE_NAME: ${{ needs.prepare-release.outputs.release_name }}
-      RELEASE_BODY: ${{ needs.prepare-release.outputs.release_body }}
       MACOS_NOTARIZE: ${{ vars.MACOS_NOTARIZE || 'false' }}
       RUSTFLAGS: ${{ matrix.os_type == 'linux' && '-C link-arg=-fuse-ld=lld' || '' }}
       OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
@@ -104,10 +101,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             runs_on: blacksmith-16vcpu-ubuntu-2404
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
-          - os_type: linux
-            target: aarch64-unknown-linux-gnu
-            runs_on: blacksmith-16vcpu-ubuntu-2404-arm
-            args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - os_type: windows
             target: x86_64-pc-windows-msvc
             runs_on: blacksmith-16vcpu-windows-2025
@@ -157,7 +150,7 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload desktop artifacts
+      - name: Build desktop workflow artifacts
         uses: ./.github/actions/run-tauri-release-build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -172,12 +165,166 @@ jobs:
         with:
           os-type: ${{ matrix.os_type }}
           notarize: ${{ matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true' }}
-          release-tag: ${{ env.RELEASE_TAG }}
-          release-name: ${{ env.RELEASE_NAME }}
-          release-body: ${{ env.RELEASE_BODY }}
-          release-draft: false
-          prerelease: true
           args: ${{ matrix.args }}
           upload-updater-json: false
           updater-json-prefer-nsis: true
-          release-asset-name-pattern: openwork-desktop-[platform]-[arch][ext]
+          workflow-artifact-name-pattern: desktop-release-[platform]-[arch]-[bundle]
+
+      - name: Verify versions.json bundled (macOS)
+        if: success() && matrix.os_type == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_path="packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenWork.app"
+          manifest_path="$app_path/Contents/MacOS/versions.json"
+
+          if [ ! -f "$manifest_path" ]; then
+            echo "ERROR: versions.json missing from app bundle: $manifest_path" >&2
+            echo "Hint: ensure packages/desktop/src-tauri/tauri.conf.json bundles sidecars/versions.json" >&2
+            exit 1
+          fi
+
+          echo "Found bundled versions.json at $manifest_path"
+
+  build-tauri-linux-arm64:
+    name: Build ARM64 Linux binary
+    needs: prepare-release
+    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
+    timeout-minutes: 360
+
+    env:
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+
+    steps:
+      - name: Log runner selection
+        shell: bash
+        run: |
+          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404-arm"
+          echo "Build target: aarch64-unknown-linux-gnu"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/setup-desktop-build-env
+        with:
+          os-type: linux
+          rust-target: aarch64-unknown-linux-gnu
+
+      - name: Install OpenCode sidecar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+          TARGET: aarch64-unknown-linux-gnu
+          OS_TYPE: linux
+        run: node scripts/release/install-opencode-sidecar.mjs
+
+      - name: Build ARM64 binary without bundling
+        run: pnpm --dir packages/desktop exec tauri build --target aarch64-unknown-linux-gnu --no-bundle
+
+      - name: Upload ARM64 target directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-linux-arm64-target-dir
+          path: packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu
+          if-no-files-found: error
+
+  bundle-tauri-linux-arm64:
+    name: Bundle ARM64 Linux packages
+    needs: [prepare-release, build-tauri-linux-arm64]
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 360
+
+    env:
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+
+    steps:
+      - name: Log runner selection
+        shell: bash
+        run: |
+          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404"
+          echo "Bundle target: aarch64-unknown-linux-gnu"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/setup-desktop-build-env
+        with:
+          os-type: linux
+          rust-target: aarch64-unknown-linux-gnu
+
+      - name: Install OpenCode sidecar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+          TARGET: aarch64-unknown-linux-gnu
+          OS_TYPE: linux
+        run: node scripts/release/install-opencode-sidecar.mjs
+
+      - name: Restore ARM64 target directory
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-linux-arm64-target-dir
+          path: packages/desktop/src-tauri/target
+
+      - name: Bundle ARM64 Linux packages on x86 runner
+        run: pnpm --dir packages/desktop exec tauri bundle --target aarch64-unknown-linux-gnu --bundles deb,rpm
+
+      - name: Upload ARM64 deb workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-linux-arm64-deb
+          path: |
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb.sig
+          if-no-files-found: error
+
+      - name: Upload ARM64 rpm workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-linux-aarch64-rpm
+          path: |
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm.sig
+          if-no-files-found: error
+
+  upload-tauri-release-assets:
+    name: Upload desktop release assets
+    needs: [prepare-release, publish-tauri, bundle-tauri-linux-arm64]
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Download desktop workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-release-*
+          path: ${{ runner.temp }}/desktop-release-artifacts
+
+      - name: Upload desktop assets to prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/upload-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --artifacts-dir "$RUNNER_TEMP/desktop-release-artifacts"

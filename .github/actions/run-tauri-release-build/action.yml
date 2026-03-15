@@ -1,5 +1,5 @@
-name: Run Tauri release build
-description: Run optional Windows GitHub network diagnostics, then build and upload a Tauri desktop release.
+name: Build Tauri workflow artifacts
+description: Run optional Windows GitHub network diagnostics, then build Tauri desktop bundles as workflow artifacts.
 
 inputs:
   os-type:
@@ -7,21 +7,6 @@ inputs:
     required: true
   notarize:
     description: Whether to run the notarized macOS path.
-    required: true
-  release-tag:
-    description: GitHub release tag.
-    required: true
-  release-name:
-    description: GitHub release title.
-    required: true
-  release-body:
-    description: GitHub release notes body.
-    required: true
-  release-draft:
-    description: Whether the release should remain a draft.
-    required: true
-  prerelease:
-    description: Whether the release is marked as a prerelease.
     required: true
   args:
     description: CLI args for `tauri build`.
@@ -50,6 +35,10 @@ inputs:
     description: Release asset naming pattern.
     required: false
     default: openwork-desktop-[platform]-[arch][ext]
+  workflow-artifact-name-pattern:
+    description: Workflow artifact naming pattern.
+    required: false
+    default: desktop-release-[platform]-[arch]-[bundle]
 
 runs:
   using: composite
@@ -104,7 +93,7 @@ runs:
           throw "Windows runner cannot resolve or reach required GitHub hosts."
         }
 
-    - name: Build and upload (notarized)
+    - name: Build notarized workflow artifacts
       if: ${{ inputs.os-type == 'macos' && inputs.notarize == 'true' }}
       uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
       env:
@@ -119,20 +108,16 @@ runs:
         APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
         APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
       with:
-        tagName: ${{ inputs.release-tag }}
-        releaseName: ${{ inputs.release-name }}
-        releaseBody: ${{ inputs.release-body }}
-        releaseDraft: ${{ inputs.release-draft }}
-        prerelease: ${{ inputs.prerelease }}
         projectPath: ${{ inputs.project-path }}
         tauriScript: ${{ inputs.tauri-script }}
         args: ${{ inputs.args }}
         retryAttempts: ${{ inputs.retry-attempts }}
         uploadUpdaterJson: ${{ inputs.upload-updater-json }}
         updaterJsonPreferNsis: ${{ inputs.updater-json-prefer-nsis }}
-        releaseAssetNamePattern: ${{ inputs.release-asset-name-pattern }}
+        uploadWorkflowArtifacts: true
+        workflowArtifactNamePattern: ${{ inputs.workflow-artifact-name-pattern }}
 
-    - name: Build and upload
+    - name: Build workflow artifacts
       if: ${{ inputs.os-type != 'macos' || inputs.notarize != 'true' }}
       uses: tauri-apps/tauri-action@390cbe447412ced1303d35abe75287949e43437a
       env:
@@ -147,15 +132,11 @@ runs:
         APPLE_API_ISSUER: ${{ env.APPLE_API_ISSUER }}
         APPLE_API_KEY_PATH: ${{ env.APPLE_API_KEY_PATH }}
       with:
-        tagName: ${{ inputs.release-tag }}
-        releaseName: ${{ inputs.release-name }}
-        releaseBody: ${{ inputs.release-body }}
-        releaseDraft: ${{ inputs.release-draft }}
-        prerelease: ${{ inputs.prerelease }}
         projectPath: ${{ inputs.project-path }}
         tauriScript: ${{ inputs.tauri-script }}
         args: ${{ inputs.args }}
         retryAttempts: ${{ inputs.retry-attempts }}
         uploadUpdaterJson: ${{ inputs.upload-updater-json }}
         updaterJsonPreferNsis: ${{ inputs.updater-json-prefer-nsis }}
-        releaseAssetNamePattern: ${{ inputs.release-asset-name-pattern }}
+        uploadWorkflowArtifacts: true
+        workflowArtifactNamePattern: ${{ inputs.workflow-artifact-name-pattern }}

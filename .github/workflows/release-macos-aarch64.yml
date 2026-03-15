@@ -225,18 +225,13 @@ jobs:
         run: node scripts/release/review.mjs --strict
 
   publish-tauri:
-    name: Build + Publish (${{ matrix.target }})
+    name: Build + Package (${{ matrix.target }})
     needs: [resolve-release, verify-release]
     if: needs.resolve-release.outputs.build_tauri == 'true'
     # Use explicit per-target runner labels so each release build can scale independently.
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
-      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
-      RELEASE_NAME: ${{ needs.resolve-release.outputs.release_name }}
-      RELEASE_BODY: ${{ needs.resolve-release.outputs.release_body }}
-      RELEASE_DRAFT: ${{ needs.resolve-release.outputs.draft }}
-      RELEASE_PRERELEASE: ${{ needs.resolve-release.outputs.prerelease }}
       MACOS_NOTARIZE: ${{ needs.resolve-release.outputs.notarize }}
       RUSTFLAGS: ${{ matrix.os_type == 'linux' && '-C link-arg=-fuse-ld=lld' || '' }}
       # Ensure Tauri's beforeBuildCommand (prepare:sidecar) uses our fork.
@@ -259,10 +254,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
             runs_on: blacksmith-16vcpu-ubuntu-2404
             args: "--target x86_64-unknown-linux-gnu --bundles deb,rpm"
-          - os_type: linux
-            target: aarch64-unknown-linux-gnu
-            runs_on: blacksmith-16vcpu-ubuntu-2404-arm
-            args: "--target aarch64-unknown-linux-gnu --bundles deb,rpm"
           - os_type: windows
             target: x86_64-pc-windows-msvc
             runs_on: blacksmith-16vcpu-windows-2025
@@ -286,7 +277,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.resolve-release.outputs.release_tag }}
           fetch-depth: 0
 
       - name: Setup desktop build environment
@@ -317,7 +308,7 @@ jobs:
 
           echo "NOTARY_KEY_PATH=$NOTARY_KEY_PATH" >> "$GITHUB_ENV"
 
-      - name: Build + upload desktop artifacts
+      - name: Build desktop workflow artifacts
         uses: ./.github/actions/run-tauri-release-build
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -332,49 +323,17 @@ jobs:
         with:
           os-type: ${{ matrix.os_type }}
           notarize: ${{ matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true' }}
-          release-tag: ${{ env.RELEASE_TAG }}
-          release-name: ${{ env.RELEASE_NAME }}
-          release-body: ${{ env.RELEASE_BODY }}
-          release-draft: ${{ env.RELEASE_DRAFT == 'true' }}
-          prerelease: ${{ env.RELEASE_PRERELEASE == 'true' }}
           args: ${{ matrix.args }}
           upload-updater-json: false
           updater-json-prefer-nsis: true
-          release-asset-name-pattern: openwork-desktop-[platform]-[arch][ext]
+          workflow-artifact-name-pattern: desktop-release-[platform]-[arch]-[bundle]
 
       - name: Verify versions.json bundled (macOS)
         if: success() && matrix.os_type == 'macos'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          case "${{ matrix.target }}" in
-            aarch64-apple-darwin)
-              asset_arch="aarch64"
-              ;;
-            x86_64-apple-darwin)
-              asset_arch="x64"
-              ;;
-            *)
-              echo "Unexpected target for macOS verify: ${{ matrix.target }}" >&2
-              exit 1
-              ;;
-          esac
-
-          tmp_dir="$RUNNER_TEMP/openwork-bundle-verify"
-          rm -rf "$tmp_dir"
-          mkdir -p "$tmp_dir"
-
-          gh release download "${RELEASE_TAG}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern "openwork-desktop-darwin-${asset_arch}.app.tar.gz" \
-            --dir "$tmp_dir"
-
-          tar -xzf "$tmp_dir/openwork-desktop-darwin-${asset_arch}.app.tar.gz" -C "$tmp_dir"
-
-          app_path="$tmp_dir/OpenWork.app"
+          app_path="packages/desktop/src-tauri/target/${{ matrix.target }}/release/bundle/macos/OpenWork.app"
           manifest_path="$app_path/Contents/MacOS/versions.json"
 
           if [ ! -f "$manifest_path" ]; then
@@ -385,9 +344,152 @@ jobs:
 
           echo "Found bundled versions.json at $manifest_path"
 
+  build-tauri-linux-arm64:
+    name: Build ARM64 Linux binary
+    needs: [resolve-release, verify-release]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404-arm
+    timeout-minutes: 360
+    env:
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+    steps:
+      - name: Log runner selection
+        shell: bash
+        run: |
+          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404-arm"
+          echo "Build target: aarch64-unknown-linux-gnu"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/setup-desktop-build-env
+        with:
+          os-type: linux
+          rust-target: aarch64-unknown-linux-gnu
+
+      - name: Install OpenCode sidecar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+          TARGET: aarch64-unknown-linux-gnu
+          OS_TYPE: linux
+        run: node scripts/release/install-opencode-sidecar.mjs
+
+      - name: Build ARM64 binary without bundling
+        run: pnpm --dir packages/desktop exec tauri build --target aarch64-unknown-linux-gnu --no-bundle
+
+      - name: Upload ARM64 target directory
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build-linux-arm64-target-dir
+          path: packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu
+          if-no-files-found: error
+
+  bundle-tauri-linux-arm64:
+    name: Bundle ARM64 Linux packages
+    needs: [resolve-release, verify-release, build-tauri-linux-arm64]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: blacksmith-16vcpu-ubuntu-2404
+    timeout-minutes: 360
+    env:
+      RUSTFLAGS: -C link-arg=-fuse-ld=lld
+      OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+      OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+    steps:
+      - name: Log runner selection
+        shell: bash
+        run: |
+          echo "Configured runs-on: blacksmith-16vcpu-ubuntu-2404"
+          echo "Bundle target: aarch64-unknown-linux-gnu"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-release.outputs.release_tag }}
+          fetch-depth: 0
+
+      - name: Setup desktop build environment
+        uses: ./.github/actions/setup-desktop-build-env
+        with:
+          os-type: linux
+          rust-target: aarch64-unknown-linux-gnu
+
+      - name: Install OpenCode sidecar
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCODE_GITHUB_REPO: ${{ vars.OPENCODE_GITHUB_REPO || 'anomalyco/opencode' }}
+          OPENCODE_VERSION: ${{ vars.OPENCODE_VERSION || '1.2.20' }}
+          TARGET: aarch64-unknown-linux-gnu
+          OS_TYPE: linux
+        run: node scripts/release/install-opencode-sidecar.mjs
+
+      - name: Restore ARM64 target directory
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build-linux-arm64-target-dir
+          path: packages/desktop/src-tauri/target
+
+      - name: Bundle ARM64 Linux packages on x86 runner
+        run: pnpm --dir packages/desktop exec tauri bundle --target aarch64-unknown-linux-gnu --bundles deb,rpm
+
+      - name: Upload ARM64 deb workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-linux-arm64-deb
+          path: |
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/deb/*.deb.sig
+          if-no-files-found: error
+
+      - name: Upload ARM64 rpm workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-release-linux-aarch64-rpm
+          path: |
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm
+            packages/desktop/src-tauri/target/aarch64-unknown-linux-gnu/release/bundle/rpm/*.rpm.sig
+          if-no-files-found: error
+
+  upload-tauri-release-assets:
+    name: Upload desktop release assets
+    needs: [resolve-release, verify-release, publish-tauri, bundle-tauri-linux-arm64]
+    if: needs.resolve-release.outputs.build_tauri == 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Download desktop workflow artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-release-*
+          path: ${{ runner.temp }}/desktop-release-artifacts
+
+      - name: Upload desktop assets to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node scripts/release/upload-desktop-release-assets.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$RELEASE_TAG" \
+            --artifacts-dir "$RUNNER_TEMP/desktop-release-artifacts"
+
   publish-updater-json:
     name: Publish consolidated latest.json
-    needs: [resolve-release, verify-release, publish-tauri]
+    needs: [resolve-release, verify-release, upload-tauri-release-assets]
     if: needs.resolve-release.outputs.build_tauri == 'true'
     runs-on: blacksmith-4vcpu-ubuntu-2404
     env:

@@ -29,6 +29,15 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
+    - name: Configure build parallelism
+      shell: bash
+      run: |
+        jobs="$(node -e 'const os = require("node:os"); process.stdout.write(String(os.availableParallelism ? os.availableParallelism() : os.cpus().length));')"
+        {
+          echo "CARGO_BUILD_JOBS=${jobs}"
+          echo "CMAKE_BUILD_PARALLEL_LEVEL=${jobs}"
+        } >> "$GITHUB_ENV"
+
     - name: Setup pnpm
       uses: pnpm/action-setup@v4
       with:
