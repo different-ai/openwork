@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 11:17 - Step 024 - Implement command file CRUD service
+
+- Reusing the same command-name sanitization and frontmatter serializer for both seeded commands and user-authored command files keeps command markdown stable across workspace bootstrap and later CRUD edits.
+- The current scope model is intentionally simple: workspace commands resolve under `<projectDir>/.opencode/commands`, while global commands resolve under `XDG_CONFIG_HOME/opencode/commands` or `HOME/.config/opencode/commands`; matching that split avoids surprising migration drift.
+
 ## 2026-03-15 11:15 - Step 023 - Implement authorized roots mutation
 
 - Authorized-root updates are safer when the service first resolves the workspace by normalized local path instead of trusting the raw incoming string; that prevents remote workspaces or typoed paths from mutating arbitrary config files.

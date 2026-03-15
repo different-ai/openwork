@@ -34,7 +34,7 @@ function enterpriseSeedMarkerPath(root: string) {
   return path.join(root, ".opencode", ENTERPRISE_SEED_MARKER);
 }
 
-function sanitizeCommandName(raw: string) {
+export function sanitizeCommandName(raw: string) {
   const trimmed = raw.trim().replace(/^\/+/, "");
   if (!trimmed) {
     return null;
@@ -51,7 +51,7 @@ function escapeYamlScalar(value: string) {
   return JSON.stringify(value);
 }
 
-function serializeCommandFrontmatter(command: SeedCommand) {
+export function serializeCommandFrontmatter(command: SeedCommand) {
   const template = command.template.trim();
   if (!template) {
     throw new Error("command.template is required");

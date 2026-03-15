@@ -99,9 +99,9 @@ export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
       onReloadRequired: notImplementedSubscription<ReloadRequiredEvent>("workspace.onReloadRequired"),
     },
     commandFiles: {
-      list: notImplemented("commandFiles.list"),
-      write: notImplemented("commandFiles.write"),
-      delete: notImplemented("commandFiles.delete"),
+      list: (input) => invokeDesktopChannel(IPC_CHANNELS.commandFiles("list"), input),
+      write: (input) => invokeDesktopChannel(IPC_CHANNELS.commandFiles("write"), input),
+      delete: (input) => invokeDesktopChannel(IPC_CHANNELS.commandFiles("delete"), input),
     },
     config: {
       readOpencode: notImplemented("config.readOpencode"),

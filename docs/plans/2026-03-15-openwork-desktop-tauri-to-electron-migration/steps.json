@@ -272,7 +272,7 @@
         "Current scope semantics are preserved.",
         "The renderer can retire the corresponding Tauri wrappers."
       ],
-      "completed": false
+      "completed": true
     },
     {
       "serialNumber": "025",
