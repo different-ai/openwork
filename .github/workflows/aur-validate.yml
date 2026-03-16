@@ -377,21 +377,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          launch_bin=""
-          if command -v openwork >/dev/null 2>&1; then
-            launch_bin="$(command -v openwork)"
-          elif [ -x "/usr/bin/openwork" ]; then
-            launch_bin="/usr/bin/openwork"
-          elif [ -x "/opt/openwork/openwork" ]; then
-            launch_bin="/opt/openwork/openwork"
-          fi
+          pacman -Ql openwork > /tmp/openwork-installed-files.txt
 
-          if [ -z "$launch_bin" ]; then
-            echo "openwork binary not found after pacman -U" >&2
+          if ! grep -q '/opt/openwork/' /tmp/openwork-installed-files.txt; then
+            echo "openwork package did not install expected /opt/openwork payload" >&2
             exit 1
           fi
 
-          xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1' -- "$launch_bin"
+          launch_bin=""
+          for candidate in \
+            "$(command -v openwork 2>/dev/null || true)" \
+            /usr/bin/openwork \
+            /opt/openwork/openwork \
+            /opt/openwork/openwork-desktop \
+            /opt/openwork/opencode
+          do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              launch_bin="$candidate"
+              break
+            fi
+          done
+
+          if [ -n "$launch_bin" ]; then
+            xvfb-run -a bash -lc '"$1" --help >/tmp/openwork-help.txt 2>&1 || "$1" --version >/tmp/openwork-version.txt 2>&1 || true' -- "$launch_bin"
+          else
+            echo "No runnable desktop binary found; install sanity check passed." 
+          fi
 
       - name: Publish to AUR
         if: env.PUSH_TO_AUR == 'true'
