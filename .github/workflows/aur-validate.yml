@@ -325,7 +325,7 @@ jobs:
           text = re.sub(r"^arch=.*$", "arch=('x86_64')", text, flags=re.M)
           text = re.sub(
               r"^source_x86_64=.*$",
-              f"source_x86_64=(\"${{pkgname}}-${{pkgver}}.deb::{source_url}\")",
+              "source_x86_64=(\"${pkgname}-${pkgver}.deb::" + source_url + "\")",
               text,
               flags=re.M,
           )
