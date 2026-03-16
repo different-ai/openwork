@@ -1,9 +1,10 @@
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type {
   ExecResult,
@@ -94,10 +95,20 @@ function stopChild(state: RouterState) {
 
 function resolveRouterCommand() {
   const fileName = process.platform === "win32" ? "opencode-router.exe" : "opencode-router";
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const appPath = app.getAppPath();
+  const sourceSidecarDirs = [
+    path.resolve(appPath, "resources/sidecars"),
+    path.resolve(appPath, "../resources/sidecars"),
+    path.resolve(currentDir, "../../../resources/sidecars"),
+    path.resolve(currentDir, "../../../../../resources/sidecars"),
+  ];
   const candidates = [
     path.join(path.dirname(process.execPath), fileName),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars", fileName) : null,
     process.resourcesPath ? path.join(process.resourcesPath, fileName) : null,
+    ...sourceSidecarDirs.map((dir) => path.join(dir, fileName)),
   ].filter((candidate): candidate is string => Boolean(candidate) && existsSync(candidate as string));
 
   return candidates[0] ?? fileName;

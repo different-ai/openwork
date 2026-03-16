@@ -43,7 +43,7 @@ function subscribeToDesktopEvent<T>(channel: string, listener: (event: T) => voi
 export function createOpenworkDesktopBridge(): OpenWorkDesktopAPI {
   return {
     runtime: {
-      getInfo: notImplemented("runtime.getInfo"),
+      getInfo: () => invokeDesktopChannel(IPC_CHANNELS.runtime("getInfo")),
     },
     app: {
       getVersion: () => invokeDesktopChannel<string>(IPC_CHANNELS.app("getVersion")),

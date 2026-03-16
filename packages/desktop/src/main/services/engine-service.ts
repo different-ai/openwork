@@ -214,9 +214,16 @@ function commonToolPaths() {
   return paths.filter((entry) => existsSync(entry));
 }
 
-function sourceSidecarDir() {
-  const currentFile = fileURLToPath(import.meta.url);
-  return path.resolve(path.dirname(currentFile), "../../resources/sidecars");
+function sourceSidecarDirs() {
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const appPath = app.getAppPath();
+  return [
+    path.resolve(appPath, "resources/sidecars"),
+    path.resolve(appPath, "../resources/sidecars"),
+    path.resolve(currentDir, "../../../resources/sidecars"),
+    path.resolve(currentDir, "../../../../../resources/sidecars"),
+  ];
 }
 
 function sidecarDirectoryCandidates() {
@@ -224,7 +231,7 @@ function sidecarDirectoryCandidates() {
     path.dirname(process.execPath),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null,
     process.resourcesPath || null,
-    sourceSidecarDir(),
+    ...sourceSidecarDirs(),
   ].filter((candidate): candidate is string => Boolean(candidate) && existsSync(candidate as string));
 }
 

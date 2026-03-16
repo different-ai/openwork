@@ -77,7 +77,7 @@ addCheck(
 );
 addCheck(
   "Desktop main entry points at Electron build output",
-  typeof versions.desktopMain === "string" && versions.desktopMain === "dist/main/main.js",
+  typeof versions.desktopMain === "string" && versions.desktopMain === "dist/main/main.cjs",
   String(versions.desktopMain ?? "missing"),
 );
 if (versions.opencode.desktop || versions.opencode.orchestrator) {

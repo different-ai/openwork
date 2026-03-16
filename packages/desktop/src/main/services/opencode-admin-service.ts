@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, realpath } from "node:fs/promises";
@@ -93,13 +93,20 @@ function commonToolPaths() {
   return paths.filter((entry) => existsSync(entry));
 }
 
-function sourceSidecarDir() {
-  const currentFile = fileURLToPath(import.meta.url);
-  return path.resolve(path.dirname(currentFile), "../../resources/sidecars");
+function sourceSidecarDirs() {
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const appPath = app.getAppPath();
+  return [
+    path.resolve(appPath, "resources/sidecars"),
+    path.resolve(appPath, "../resources/sidecars"),
+    path.resolve(currentDir, "../../../resources/sidecars"),
+    path.resolve(currentDir, "../../../../../resources/sidecars"),
+  ];
 }
 
 function pathEnv() {
-  const sidecarDirs = [path.dirname(process.execPath), process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null, process.resourcesPath ?? null, sourceSidecarDir()]
+  const sidecarDirs = [path.dirname(process.execPath), process.resourcesPath ? path.join(process.resourcesPath, "sidecars") : null, process.resourcesPath ?? null, ...sourceSidecarDirs()]
     .filter((entry): entry is string => Boolean(entry) && existsSync(entry as string));
   const entries = [...sidecarDirs, ...commonToolPaths(), ...(process.env.PATH?.split(path.delimiter) ?? [])];
   return Array.from(new Set(entries.filter(Boolean))).join(path.delimiter);
@@ -124,7 +131,7 @@ function resolveEnginePath(preferSidecar: boolean, opencodeBinPath?: string | nu
       path.join(path.dirname(process.execPath), opencodeExecutableName()),
       process.resourcesPath ? path.join(process.resourcesPath, "sidecars", opencodeExecutableName()) : null,
       process.resourcesPath ? path.join(process.resourcesPath, opencodeExecutableName()) : null,
-      path.join(sourceSidecarDir(), opencodeExecutableName()),
+      ...sourceSidecarDirs().map((dir) => path.join(dir, opencodeExecutableName())),
     ]) {
       if (candidate && existsSync(candidate)) return candidate;
     }

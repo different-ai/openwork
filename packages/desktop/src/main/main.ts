@@ -16,6 +16,7 @@ import { createOpenworkServerService, registerOpenworkServerIpc } from "./servic
 import { createObsidianService, registerObsidianIpc } from "./services/obsidian-service";
 import { createOpencodeAdminService, registerOpencodeAdminIpc } from "./services/opencode-admin-service";
 import { createPathService, registerPathIpc } from "./services/path-service";
+import { createRuntimeService, registerRuntimeIpc } from "./services/runtime-service";
 import { createRouterService, registerRouterIpc } from "./services/router-service";
 import { createSchedulerService, registerSchedulerIpc } from "./services/scheduler-service";
 import { createOpkgService, registerOpkgIpc } from "./services/opkg-service";
@@ -113,6 +114,7 @@ export async function bootstrapMainProcess() {
     routerService.cleanupOnQuit?.();
   };
   registerAppIpc(createDefaultAppService());
+  registerRuntimeIpc(createRuntimeService());
   registerDeepLinkIpc(activeDeepLinkService);
   registerEngineIpc(engineService);
   registerWindowIpc(

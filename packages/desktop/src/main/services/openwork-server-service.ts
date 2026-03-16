@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -7,6 +7,7 @@ import { networkInterfaces } from "node:os";
 import { hostname } from "node:os";
 import path from "node:path";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import type { EngineInfo, OpenworkServerInfo } from "../../../../app/src/app/lib/desktop-contract";
 import { IPC_CHANNELS } from "../ipc/channels";
@@ -82,10 +83,20 @@ function snapshot(state: OpenworkServerState): OpenworkServerInfo {
 
 function resolveOpenworkServerCommand() {
   const fileName = process.platform === "win32" ? "openwork-server.exe" : "openwork-server";
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const appPath = app.getAppPath();
+  const sourceSidecarDirs = [
+    path.resolve(appPath, "resources/sidecars"),
+    path.resolve(appPath, "../resources/sidecars"),
+    path.resolve(currentDir, "../../../resources/sidecars"),
+    path.resolve(currentDir, "../../../../../resources/sidecars"),
+  ];
   const candidates = [
     path.join(path.dirname(process.execPath), fileName),
     process.resourcesPath ? path.join(process.resourcesPath, "sidecars", fileName) : null,
     process.resourcesPath ? path.join(process.resourcesPath, fileName) : null,
+    ...sourceSidecarDirs.map((dir) => path.join(dir, fileName)),
   ].filter((candidate): candidate is string => Boolean(candidate) && existsSync(candidate as string));
 
   return candidates[0] ?? fileName;
@@ -176,6 +187,29 @@ function buildArgs(
   return args;
 }
 
+async function waitForOpenworkHealth(baseUrl: string, clientToken: string, timeoutMs = 30000) {
+  const startedAt = Date.now();
+  let lastError = "Timed out waiting for OpenWork server";
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${baseUrl}/health`, {
+        headers: {
+          Authorization: `Bearer ${clientToken}`,
+          Accept: "application/json",
+        },
+      });
+      if (response.ok) {
+        return;
+      }
+      lastError = `Health check failed with status ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw new Error(lastError);
+}
+
 export function createOpenworkServerService(options: OpenworkServerServiceOptions) {
   const state = defaultState();
 
@@ -258,6 +292,8 @@ export function createOpenworkServerService(options: OpenworkServerServiceOption
       state.clientToken = clientToken;
       state.hostToken = hostToken;
       state.pid = child.pid ?? null;
+
+      await waitForOpenworkHealth(state.baseUrl, clientToken);
 
       return snapshot(state);
     },

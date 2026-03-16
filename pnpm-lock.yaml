@@ -100,6 +100,9 @@ importers:
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.3
+      esbuild:
+        specifier: ^0.25.12
+        version: 0.25.12
       jsonc-parser:
         specifier: ^3.2.1
         version: 3.3.1

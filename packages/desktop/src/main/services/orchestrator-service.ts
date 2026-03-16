@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { app, ipcMain } from "electron";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { createServer as createNetServer } from "node:net";
@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import type {
   ExecResult,
@@ -138,6 +139,15 @@ async function allocateFreePort() {
 }
 
 function resolveOrchestratorCommand() {
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = path.dirname(currentFile);
+  const appPath = app.getAppPath();
+  const sourceSidecarDirs = [
+    path.resolve(appPath, "resources/sidecars"),
+    path.resolve(appPath, "../resources/sidecars"),
+    path.resolve(currentDir, "../../../resources/sidecars"),
+    path.resolve(currentDir, "../../../../../resources/sidecars"),
+  ];
   const candidates = [
     path.join(path.dirname(process.execPath), process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator"),
     process.resourcesPath
@@ -146,6 +156,7 @@ function resolveOrchestratorCommand() {
     process.resourcesPath
       ? path.join(process.resourcesPath, process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator")
       : null,
+    ...sourceSidecarDirs.map((dir) => path.join(dir, process.platform === "win32" ? "openwork-orchestrator.exe" : "openwork-orchestrator")),
   ].filter((candidate): candidate is string => Boolean(candidate) && existsSync(candidate as string));
 
   return candidates[0] ?? (process.platform === "win32" ? "openwork.exe" : "openwork");

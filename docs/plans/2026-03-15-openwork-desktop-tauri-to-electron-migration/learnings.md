@@ -25,6 +25,11 @@ Guidance:
 
 ---
 
+## 2026-03-15 20:04 - Step 050 - Run full desktop parity verification
+
+- Electron install reliability needed a repo-level pnpm fix: adding `electron` and `sharp` to root `onlyBuiltDependencies` unblocks the required postinstall downloads, but an already-broken local install still needs one `pnpm install --force` repair pass.
+- A plain `tsc` emit was not a runnable Electron main/preload build for this repo; the working verification path is a bundled desktop build (`packages/desktop/scripts/build-main.mjs`) plus a parity runner that launches the real Electron app and exercises the preload bridge end to end.
+
 ## 2026-03-15 15:57 - Step 049 - Run Tauri artifact parity audit
 
 - The easiest way to finish the migration cleanup is to rename the last compatibility labels in live code (`isDesktopRuntime`, `desktop.ts`) and then explicitly document which remaining references are intentional historical records; otherwise audit output gets swamped by planning docs and old PR notes.

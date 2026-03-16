@@ -17,14 +17,14 @@ type CreateMainWindowOptions = {
 };
 
 function resolveSiblingPath(tsRelativePath: string, jsRelativePath: string) {
-  const currentFile = fileURLToPath(import.meta.url);
-  const currentDir = path.dirname(currentFile);
+  const currentFile = typeof __filename !== "undefined" ? __filename : fileURLToPath(import.meta.url);
+  const currentDir = typeof __dirname !== "undefined" ? __dirname : path.dirname(currentFile);
   const relativePath = currentFile.endsWith(".ts") ? tsRelativePath : jsRelativePath;
   return path.resolve(currentDir, relativePath);
 }
 
 export function resolvePreloadPath() {
-  return resolveSiblingPath("../preload.ts", "../preload.js");
+  return resolveSiblingPath("../preload.ts", "./preload.cjs");
 }
 
 export function resolveRendererTarget(): RendererTarget {
