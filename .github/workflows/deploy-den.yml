@@ -101,6 +101,7 @@ jobs:
           DEN_GOOGLE_CLIENT_ID: ${{ secrets.DEN_GOOGLE_CLIENT_ID }}
           DEN_GOOGLE_CLIENT_SECRET: ${{ secrets.DEN_GOOGLE_CLIENT_SECRET }}
           DEN_BETTER_AUTH_URL: ${{ vars.DEN_BETTER_AUTH_URL }}
+          DEN_BETTER_AUTH_TRUSTED_ORIGINS: ${{ vars.DEN_BETTER_AUTH_TRUSTED_ORIGINS }}
           DEN_RENDER_WORKER_PLAN: ${{ vars.DEN_RENDER_WORKER_PLAN }}
           DEN_RENDER_WORKER_OPENWORK_VERSION: ${{ vars.DEN_RENDER_WORKER_OPENWORK_VERSION }}
           DEN_CORS_ORIGINS: ${{ vars.DEN_CORS_ORIGINS }}
@@ -152,6 +153,7 @@ jobs:
           google_client_id = os.environ.get("DEN_GOOGLE_CLIENT_ID") or ""
           google_client_secret = os.environ.get("DEN_GOOGLE_CLIENT_SECRET") or ""
           better_auth_url = os.environ.get("DEN_BETTER_AUTH_URL") or "https://app.openwork.software"
+          configured_better_auth_trusted_origins = os.environ.get("DEN_BETTER_AUTH_TRUSTED_ORIGINS") or ""
 
           if bool(github_client_id) != bool(github_client_secret):
               raise RuntimeError(
@@ -237,10 +239,16 @@ jobs:
               ],
           )
 
+          better_auth_trusted_origins = build_cors_origins(
+              configured_better_auth_trusted_origins,
+              cors_origins.split(","),
+          )
+
           env_vars = [
               {"key": "DATABASE_URL", "value": os.environ["DEN_DATABASE_URL"]},
               {"key": "BETTER_AUTH_SECRET", "value": os.environ["DEN_BETTER_AUTH_SECRET"]},
               {"key": "BETTER_AUTH_URL", "value": better_auth_url},
+              {"key": "BETTER_AUTH_TRUSTED_ORIGINS", "value": better_auth_trusted_origins},
               {"key": "GITHUB_CLIENT_ID", "value": github_client_id},
               {"key": "GITHUB_CLIENT_SECRET", "value": github_client_secret},
               {"key": "GOOGLE_CLIENT_ID", "value": google_client_id},

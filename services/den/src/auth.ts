@@ -27,7 +27,7 @@ const socialProviders = {
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
-  trustedOrigins: env.corsOrigins.length > 0 ? env.corsOrigins : undefined,
+  trustedOrigins: env.betterAuthTrustedOrigins.length > 0 ? env.betterAuthTrustedOrigins : undefined,
   socialProviders: Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
   database: drizzleAdapter(db, {
     provider: "mysql",

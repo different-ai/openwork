@@ -4,6 +4,7 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.string().min(1),
+  BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
@@ -55,6 +56,13 @@ const corsOrigins = parsed.CORS_ORIGINS?.split(",")
   .map((origin) => normalizeOrigin(origin))
   .filter(Boolean);
 
+const betterAuthTrustedOrigins =
+  parsed.BETTER_AUTH_TRUSTED_ORIGINS?.split(",")
+    .map((origin) => normalizeOrigin(origin))
+    .filter(Boolean) ??
+  corsOrigins ??
+  [];
+
 const polarFeatureGateEnabled =
   (parsed.POLAR_FEATURE_GATE_ENABLED ?? "false").toLowerCase() === "true";
 
@@ -62,6 +70,7 @@ export const env = {
   databaseUrl: parsed.DATABASE_URL,
   betterAuthSecret: parsed.BETTER_AUTH_SECRET,
   betterAuthUrl: parsed.BETTER_AUTH_URL,
+  betterAuthTrustedOrigins,
   github: {
     clientId: parsed.GITHUB_CLIENT_ID?.trim() || undefined,
     clientSecret: parsed.GITHUB_CLIENT_SECRET?.trim() || undefined,
