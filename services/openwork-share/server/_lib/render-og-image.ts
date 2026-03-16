@@ -39,8 +39,8 @@ const BODY_Y = 116;
 const BODY_WIDTH = 1084;
 const BODY_HEIGHT = 454;
 const CHAR_WIDTH = 8.9;
-const OG_SANS_FONT = `"DejaVu Sans", "Liberation Sans", Arial, sans-serif`;
-const OG_MONO_FONT = `"DejaVu Sans Mono", "Liberation Mono", "Courier New", monospace`;
+const OG_SANS_FONT = "DejaVu Sans, Liberation Sans, Arial, sans-serif";
+const OG_MONO_FONT = "DejaVu Sans Mono, Liberation Mono, Courier New, monospace";
 const MAX_LINES = Math.floor(BODY_HEIGHT / LINE_HEIGHT);
 
 function escapeSvgText(value: unknown): string {
