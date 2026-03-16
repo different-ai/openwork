@@ -9,6 +9,7 @@ import { env } from "./env.js"
 import { adminRouter } from "./http/admin.js"
 import { asyncRoute, errorMiddleware } from "./http/errors.js"
 import { workersRouter } from "./http/workers.js"
+import { listUserOrgs } from "./orgs.js"
 
 const app = express()
 const currentFile = fileURLToPath(import.meta.url)
@@ -41,6 +42,22 @@ app.get("/v1/me", asyncRoute(async (req, res) => {
     return
   }
   res.json(session)
+}))
+
+app.get("/v1/me/orgs", asyncRoute(async (req, res) => {
+  const session = await auth.api.getSession({
+    headers: fromNodeHeaders(req.headers),
+  })
+  if (!session?.user?.id) {
+    res.status(401).json({ error: "unauthorized" })
+    return
+  }
+
+  const orgs = await listUserOrgs(session.user.id)
+  res.json({
+    orgs,
+    defaultOrgId: orgs[0]?.id ?? null,
+  })
 }))
 
 app.use("/v1/admin", adminRouter)

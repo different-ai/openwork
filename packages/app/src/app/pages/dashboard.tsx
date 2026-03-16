@@ -146,6 +146,12 @@ export type DashboardViewProps = {
   recoverWorkspace: (workspaceId: string) => Promise<boolean> | boolean;
   openCreateWorkspace: () => void;
   openCreateRemoteWorkspace: () => void;
+  connectRemoteWorkspace: (input: {
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    directory?: string | null;
+    displayName?: string | null;
+  }) => Promise<boolean>;
   importWorkspaceConfig: () => void;
   importingWorkspaceConfig: boolean;
   exportWorkspaceConfig: (workspaceId?: string) => void;
@@ -1441,6 +1447,7 @@ export default function DashboardView(props: DashboardViewProps) {
                   notionBusy={props.notionBusy}
                   connectNotion={props.connectNotion}
                   openDebugShareLink={props.openDebugShareLink}
+                  connectRemoteWorkspace={props.connectRemoteWorkspace}
                 />
 
             </Match>

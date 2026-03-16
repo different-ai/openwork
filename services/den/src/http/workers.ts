@@ -6,10 +6,10 @@ import { z } from "zod"
 import { auth } from "../auth.js"
 import { getCloudWorkerBillingStatus, requireCloudWorkerAccess, setCloudWorkerSubscriptionCancellation } from "../billing/polar.js"
 import { db } from "../db/index.js"
-import { AuditEventTable, OrgMembershipTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
+import { AuditEventTable, WorkerBundleTable, WorkerInstanceTable, WorkerTable, WorkerTokenTable } from "../db/schema.js"
 import { env } from "../env.js"
 import { asyncRoute, isTransientDbConnectionError } from "./errors.js"
-import { ensureDefaultOrg } from "../orgs.js"
+import { ensureDefaultOrg, listUserOrgs, resolveUserOrg } from "../orgs.js"
 import { deprovisionWorker, provisionWorker } from "../workers/provisioner.js"
 import { customDomainForWorker } from "../workers/vanity-domain.js"
 
@@ -253,16 +253,41 @@ async function requireSession(req: express.Request, res: express.Response) {
   return session
 }
 
-async function getOrgId(userId: string) {
-  const membership = await db
-    .select()
-    .from(OrgMembershipTable)
-    .where(eq(OrgMembershipTable.user_id, userId))
-    .limit(1)
-  if (membership.length === 0) {
-    return null
+function readRequestedOrgId(req: express.Request): string | null {
+  const queryValue = typeof req.query.orgId === "string" ? req.query.orgId : ""
+  if (queryValue.trim()) {
+    return queryValue.trim()
   }
-  return membership[0].org_id
+
+  if (isRecord(req.body) && typeof req.body.orgId === "string" && req.body.orgId.trim()) {
+    return req.body.orgId.trim()
+  }
+
+  return null
+}
+
+async function requireOrgContext(req: express.Request, res: express.Response, userId: string) {
+  const requestedOrgId = readRequestedOrgId(req)
+  const org = await resolveUserOrg(userId, requestedOrgId)
+
+  if (!org) {
+    const memberships = await listUserOrgs(userId)
+    if (memberships.length === 0) {
+      return null
+    }
+
+    if (requestedOrgId) {
+      res.status(403).json({
+        error: "org_forbidden",
+        message: "You do not have access to that org.",
+      })
+      return undefined
+    }
+
+    return memberships[0]
+  }
+
+  return org
 }
 
 async function countUserCloudWorkers(userId: string) {
@@ -376,8 +401,11 @@ workersRouter.get("/", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.json({ workers: [] })
     return
   }
@@ -391,7 +419,7 @@ workersRouter.get("/", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(eq(WorkerTable.org_id, orgId))
+    .where(eq(WorkerTable.org_id, org.id))
     .orderBy(desc(WorkerTable.created_at))
     .limit(parsed.data.limit)
 
@@ -443,8 +471,23 @@ workersRouter.post("/", asyncRoute(async (req, res) => {
     }
   }
 
-  const orgId =
-    (await getOrgId(session.user.id)) ?? (await ensureDefaultOrg(session.user.id, session.user.name ?? session.user.email ?? "Personal"))
+  const requestedOrgId = readRequestedOrgId(req)
+  let orgId = requestedOrgId
+  if (requestedOrgId) {
+    const org = await requireOrgContext(req, res, session.user.id)
+    if (org === undefined) {
+      return
+    }
+    if (!org) {
+      res.status(404).json({ error: "org_not_found" })
+      return
+    }
+    orgId = org.id
+  }
+
+  if (!orgId) {
+    orgId = (await ensureDefaultOrg(session.user.id, session.user.name ?? session.user.email ?? "Personal"))
+  }
   const workerId = randomUUID()
   let workerStatus: WorkerRow["status"] = parsed.data.destination === "cloud" ? "provisioning" : "healthy"
 
@@ -583,8 +626,11 @@ workersRouter.get("/:id", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -592,7 +638,7 @@ workersRouter.get("/:id", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -612,8 +658,11 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -624,7 +673,7 @@ workersRouter.post("/:id/tokens", asyncRoute(async (req, res) => {
     .where(eq(WorkerTable.id, req.params.id))
     .limit(1)
 
-  if (rows.length === 0 || rows[0].org_id !== orgId) {
+  if (rows.length === 0 || rows[0].org_id !== org.id) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -675,8 +724,11 @@ workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -684,7 +736,7 @@ workersRouter.get("/:id/runtime", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -704,8 +756,11 @@ workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -713,7 +768,7 @@ workersRouter.post("/:id/runtime/upgrade", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
     .limit(1)
 
   if (rows.length === 0) {
@@ -735,8 +790,11 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
   const session = await requireSession(req, res)
   if (!session) return
 
-  const orgId = await getOrgId(session.user.id)
-  if (!orgId) {
+  const org = await requireOrgContext(req, res, session.user.id)
+  if (org === undefined) {
+    return
+  }
+  if (!org) {
     res.status(404).json({ error: "worker_not_found" })
     return
   }
@@ -744,7 +802,7 @@ workersRouter.delete("/:id", asyncRoute(async (req, res) => {
   const rows = await db
     .select()
     .from(WorkerTable)
-    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, orgId)))
+    .where(and(eq(WorkerTable.id, req.params.id), eq(WorkerTable.org_id, org.id)))
     .limit(1)
 
   if (rows.length === 0) {

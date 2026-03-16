@@ -3,6 +3,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onMou
 import { formatBytes, formatRelativeTime, isTauriRuntime, isWindowsPlatform } from "../utils";
 
 import Button from "../components/button";
+import DenSettingsPanel from "../components/den-settings-panel";
 import { usePlatform } from "../context/platform";
 import { FEEDBACK_EMAIL_URL } from "../lib/feedback";
 import {
@@ -155,6 +156,12 @@ export type SettingsViewProps = {
   connectNotion: () => void;
   engineDoctorVersion: string | null;
   openDebugShareLink: (rawUrl: string) => Promise<{ ok: boolean; message: string }>;
+  connectRemoteWorkspace: (input: {
+    openworkHostUrl?: string | null;
+    openworkToken?: string | null;
+    directory?: string | null;
+    displayName?: string | null;
+  }) => Promise<boolean>;
 };
 
 const DISCORD_INVITE_URL = "https://discord.gg/VEhNQXxYMB";
@@ -687,6 +694,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
   const tabLabel = (tab: SettingsTab) => {
     switch (tab) {
+      case "den":
+        return "Cloud";
       case "model":
         return "Model";
       case "advanced":
@@ -699,7 +708,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   const availableTabs = createMemo<SettingsTab[]>(() => {
-    const tabs: SettingsTab[] = ["general", "model", "advanced"];
+    const tabs: SettingsTab[] = ["general", "den", "model", "advanced"];
     if (props.developerMode) tabs.push("debug");
     return tabs;
   });
@@ -1261,6 +1270,10 @@ export default function SettingsView(props: SettingsViewProps) {
               </div>
             </div>
           </div>
+        </Match>
+
+        <Match when={activeTab() === "den"}>
+          <DenSettingsPanel connectRemoteWorkspace={props.connectRemoteWorkspace} />
         </Match>
 
         <Match when={activeTab() === "model"}>
