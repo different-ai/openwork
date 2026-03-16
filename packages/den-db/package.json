@@ -3,7 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "db:generate": "drizzle-kit generate --config drizzle.config.ts",
+    "db:migrate": "drizzle-kit migrate --config drizzle.config.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.45.1",
@@ -11,6 +13,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "drizzle-kit": "^0.31.9",
     "typescript": "^5.5.4"
   }
 }
